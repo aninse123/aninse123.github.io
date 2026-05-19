@@ -1,9 +1,184 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <title>My Website</title>
-  </head>
-  <body>
-    <h1>Hello, World!</h1>
-  </body>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Douro Partners - acquiring and operating enduring businesses in Portugal.">
+  <title>Douro Partners</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav class="nav" id="nav" role="navigation">
+    <div class="nav__container">
+      <a href="#home" class="nav__logo">
+        <img src="assets/logo.png" alt="Douro Partners">
+      </a>
+      <ul class="nav__links" id="navLinks">
+        <li><a href="#about"    data-i18n="nav.about">About</a></li>
+        <li><a href="#criteria" data-i18n="nav.criteria">Criteria</a></li>
+        <li><a href="#team"     data-i18n="nav.team">Team</a></li>
+        <li><a href="#contact"  data-i18n="nav.contact">Contact</a></li>
+      </ul>
+      <div class="nav__lang">
+        <button class="lang-btn active" id="btn-en" onclick="setLang('en')">EN</button>
+        <span>|</span>
+        <button class="lang-btn" id="btn-pt" onclick="setLang('pt')">PT</button>
+      </div>
+      <button class="nav__hamburger" id="hamburger" aria-label="Open menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero" id="home">
+    <div class="hero__container">
+      <img src="assets/logo.png" alt="Douro Partners" class="hero__logo">
+      <h1 class="hero__title" data-i18n="hero.title">Honoring Legacy. Driving the Future.</h1>
+      <p class="hero__subtitle" data-i18n="hero.subtitle">We acquire and operate enduring businesses in Portugal, partnering with founders who care about what they leave behind.</p>
+      <a href="#contact" class="btn btn--primary" data-i18n="hero.cta">Get in Touch</a>
+    </div>
+  </section>
+
+  <!-- ABOUT -->
+  <section class="about section" id="about">
+    <div class="container">
+      <h2 class="section__title" data-i18n="about.title">About Douro Partners</h2>
+      <p class="about__text" data-i18n="about.text">Douro Partners is a search fund focused on acquiring and operating a single high-quality business in the Portuguese market. We are two hands-on operators who partner with motivated founders to ensure their business continues to thrive and grow under new ownership.</p>
+    </div>
+  </section>
+
+  <!-- CRITERIA -->
+  <section class="criteria section" id="criteria">
+    <div class="container">
+      <h2 class="section__title" data-i18n="criteria.title">Investment Criteria</h2>
+      <div class="criteria__grid">
+
+        <div class="criteria__card">
+          <h3 data-i18n="criteria.financial.title">Financial</h3>
+          <ul>
+            <li data-i18n="criteria.financial.i1">Recurring and contractual revenue streams</li>
+            <li data-i18n="criteria.financial.i2">Annual revenues &gt; &euro;6 million</li>
+            <li data-i18n="criteria.financial.i3">Annual EBITDA &gt; &euro;1.5 million</li>
+            <li data-i18n="criteria.financial.i4">Profitable and cash flow positive</li>
+            <li data-i18n="criteria.financial.i5">EBITDA margins &gt; 15%</li>
+            <li data-i18n="criteria.financial.i6">Low debt</li>
+            <li data-i18n="criteria.financial.i7">Low cyclicality</li>
+            <li data-i18n="criteria.financial.i8">Low ongoing CAPEX needs</li>
+          </ul>
+        </div>
+
+        <div class="criteria__card">
+          <h3 data-i18n="criteria.industry.title">Industry</h3>
+          <ul>
+            <li data-i18n="criteria.industry.i1">High organic growth potential</li>
+            <li data-i18n="criteria.industry.i2">Large, fragmented market</li>
+            <li data-i18n="criteria.industry.i3">Low risk of adverse regulatory changes</li>
+            <li data-i18n="criteria.industry.i4">Low risk of technological obsolescence</li>
+            <li data-i18n="criteria.industry.i5">Non-commoditized product or service</li>
+            <li data-i18n="criteria.industry.i6">High barriers to entry</li>
+            <li data-i18n="criteria.industry.i7">Low external and exogenous risks</li>
+          </ul>
+        </div>
+
+        <div class="criteria__card">
+          <h3 data-i18n="criteria.business.title">Business</h3>
+          <ul>
+            <li data-i18n="criteria.business.i1">Private and concentrated ownership</li>
+            <li data-i18n="criteria.business.i2">Motivated sellers with &gt;70% equity</li>
+            <li data-i18n="criteria.business.i3">Opportunity for Douro Partners to add value</li>
+            <li data-i18n="criteria.business.i4">High operating leverage</li>
+            <li data-i18n="criteria.business.i5">Low customer concentration and churn</li>
+            <li data-i18n="criteria.business.i6">B2B Services</li>
+          </ul>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- TEAM -->
+  <section class="team section" id="team">
+    <div class="container">
+      <h2 class="section__title" data-i18n="team.title">The Searchers</h2>
+      <div class="team__grid">
+
+        <div class="team__card">
+          <div class="team__photo">
+            <span class="team__initials">AR</span>
+            <img src="assets/andre.jpg" alt="Andre Rocha" onerror="this.style.display='none'">
+          </div>
+          <h3>Andre Rocha</h3>
+          <p class="team__bio" data-i18n="team.andre.bio">6 years at Jeronimo Martins, one of Portugal's largest food retailers, leading a 1B EUR store revamp programme. Founded a D2C startup. Background in consumer goods, retail, e-commerce, digital products, food, and supply chain.</p>
+          <a href="https://linkedin.com/in/andrenorocha" target="_blank" rel="noopener noreferrer" class="team__linkedin" data-i18n="team.linkedin">LinkedIn &rarr;</a>
+        </div>
+
+        <div class="team__card">
+          <div class="team__photo">
+            <span class="team__initials">AC</span>
+            <img src="assets/antonio.jpg" alt="Antonio Carvalho" onerror="this.style.display='none'">
+          </div>
+          <h3>Antonio Carvalho</h3>
+          <p class="team__bio" data-i18n="team.antonio.bio">8 years at Idaho Forest Group managing a $40M portfolio to develop new revenue streams, with one patent granted and 2 pending. Also worked at Yazaki on the first fully electric Mercedes. Background in manufacturing, machinery, industrial, and operations.</p>
+          <a href="https://linkedin.com/in/amobnc" target="_blank" rel="noopener noreferrer" class="team__linkedin" data-i18n="team.linkedin">LinkedIn &rarr;</a>
+        </div>
+
+      </div>
+      <p class="team__footnote" data-i18n="team.footnote">We met at INSEAD, worked together across several projects, and believe our combined background gives us a differentiated perspective across a wide range of industries.</p>
+    </div>
+  </section>
+
+  <!-- CONTACT -->
+  <section class="contact section" id="contact">
+    <div class="container">
+      <h2 class="section__title" data-i18n="contact.title">Get in Touch</h2>
+      <p class="contact__subtitle" data-i18n="contact.subtitle">Whether you are a founder considering a sale, an investor, or simply curious - we would love to hear from you.</p>
+      <div class="contact__wrapper">
+        <form id="contactForm" class="contact__form"
+              action="https://formspree.io/f/REPLACE_WITH_YOUR_FORM_ID"
+              method="POST">
+          <input type="hidden" name="_cc" value="antonio.carvalho@douropartners.pt">
+          <div class="form__group">
+            <label for="fname" data-i18n="contact.form.name">Name</label>
+            <input type="text" id="fname" name="name" autocomplete="name" required>
+          </div>
+          <div class="form__group">
+            <label for="femail" data-i18n="contact.form.email">Email</label>
+            <input type="email" id="femail" name="_replyto" autocomplete="email" required>
+          </div>
+          <div class="form__group">
+            <label for="fmessage" data-i18n="contact.form.message">Message</label>
+            <textarea id="fmessage" name="message" rows="5" required></textarea>
+          </div>
+          <div class="form__message form__message--success" id="formSuccess"></div>
+          <div class="form__message form__message--error" id="formError"></div>
+          <button type="submit" class="btn btn--primary" data-i18n="contact.form.submit">Send Message</button>
+        </form>
+        <div class="contact__info">
+          <p class="contact__info-label" data-i18n="contact.info_label">Reach us directly</p>
+          <div class="contact__info-divider"></div>
+          <a href="mailto:andre.rocha@douropartners.pt">andre.rocha@douropartners.pt</a>
+          <a href="mailto:antonio.carvalho@douropartners.pt">antonio.carvalho@douropartners.pt</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container">
+      <img src="assets/logo.png" alt="Douro Partners" class="footer__logo">
+      <p class="footer__tagline" data-i18n="footer.tagline">Honoring Legacy. Driving the Future.</p>
+      <p class="footer__copy" data-i18n="footer.copy">&copy; 2026 Douro Partners. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script src="js/i18n.js"></script>
+  <script src="js/main.js"></script>
+</body>
 </html>
