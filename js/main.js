@@ -49,7 +49,7 @@ navLinks.querySelectorAll('a').forEach(link => {
   });
 });
 
-/* ===== CONTACT FORM (Formspree AJAX) ===== */
+/* ===== CONTACT FORM (Web3Forms) ===== */
 const form       = document.getElementById('contactForm');
 const msgSuccess = document.getElementById('formSuccess');
 const msgError   = document.getElementById('formError');
@@ -58,29 +58,33 @@ if (form) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const submitBtn = form.querySelector('[type="submit"]');
+    const originalText = submitBtn.innerHTML;
     submitBtn.disabled = true;
+    submitBtn.innerHTML = currentLang === 'pt' ? 'A enviar...' : 'Sending...';
     msgSuccess.style.display = 'none';
     msgError.style.display   = 'none';
 
     try {
-      const res = await fetch(form.action, {
+      const formData = new FormData(form);
+      const res = await fetch('https://api.web3forms.com/submit', {
         method: 'POST',
-        body: new FormData(form),
-        headers: { 'Accept': 'application/json' }
+        body: formData
       });
+      const data = await res.json();
 
       if (res.ok) {
         msgSuccess.style.display = 'block';
         msgSuccess.innerHTML = getNestedValue(translations[currentLang], 'contact.form.success');
         form.reset();
       } else {
-        throw new Error('Server error');
+        throw new Error(data.message || 'Server error');
       }
     } catch {
       msgError.style.display = 'block';
       msgError.innerHTML = getNestedValue(translations[currentLang], 'contact.form.error');
     } finally {
       submitBtn.disabled = false;
+      submitBtn.innerHTML = originalText;
     }
   });
 }

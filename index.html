@@ -140,9 +140,12 @@
       <p class="contact__subtitle" data-i18n="contact.subtitle">Whether you are a founder considering a sale, an investor, or simply curious - we would love to hear from you.</p>
       <div class="contact__wrapper">
         <form id="contactForm" class="contact__form"
-              action="https://formspree.io/f/REPLACE_WITH_YOUR_FORM_ID"
+              action="https://api.web3forms.com/submit"
               method="POST">
-          <input type="hidden" name="_cc" value="antonio.carvalho@douropartners.pt">
+          <input type="hidden" name="access_key" value="a47f89a1-a294-4089-b09e-d17dd65f093d">
+          <input type="hidden" name="cc" value="antonio.carvalho@douropartners.pt">
+          <input type="hidden" name="subject" value="New message from douropartners.pt">
+          <input type="checkbox" name="botcheck" style="display:none">
           <div class="form__group">
             <label for="fname" data-i18n="contact.form.name">Name</label>
             <input type="text" id="fname" name="name" autocomplete="name" required>
