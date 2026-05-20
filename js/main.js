@@ -89,5 +89,42 @@ if (form) {
   });
 }
 
+/* ===== GA4 CONSENT ===== */
+function loadGA4() {
+  if (document.getElementById('ga4-script')) return;
+  const s = document.createElement('script');
+  s.id  = 'ga4-script';
+  s.async = true;
+  s.src = 'https://www.googletagmanager.com/gtag/js?id=G-NGVM7PQ5RR';
+  document.head.appendChild(s);
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  window.gtag = gtag;
+  gtag('js', new Date());
+  gtag('config', 'G-NGVM7PQ5RR');
+}
+
+function initConsent() {
+  const consent = localStorage.getItem('dp_cookie_consent');
+  if (consent === 'accepted') { loadGA4(); return; }
+  if (consent === 'declined') return;
+
+  const banner = document.getElementById('cookieBanner');
+  if (banner) banner.style.display = 'flex';
+}
+
+function acceptCookies() {
+  localStorage.setItem('dp_cookie_consent', 'accepted');
+  const banner = document.getElementById('cookieBanner');
+  if (banner) banner.style.display = 'none';
+  loadGA4();
+}
+
+function declineCookies() {
+  localStorage.setItem('dp_cookie_consent', 'declined');
+  const banner = document.getElementById('cookieBanner');
+  if (banner) banner.style.display = 'none';
+}
+
 /* ===== INIT ===== */
-document.addEventListener('DOMContentLoaded', () => setLang(currentLang));
+document.addEventListener('DOMContentLoaded', () => { setLang(currentLang); initConsent(); });

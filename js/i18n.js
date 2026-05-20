@@ -75,6 +75,11 @@ const translations = {
     footer: {
       tagline: "Honoring Legacy. Driving the Future.",
       copy: "© {year} Douro Partners. All rights reserved."
+    },
+    cookie: {
+      text: "We use cookies to analyse traffic and improve your experience. Analytics cookies require your consent.",
+      accept: "Accept",
+      decline: "Decline"
     }
   },
 
@@ -154,6 +159,11 @@ const translations = {
     footer: {
       tagline: "Honrar o Legado. Impulsionar o Futuro.",
       copy: "© {year} Douro Partners. Todos os direitos reservados."
+    },
+    cookie: {
+      text: "Utilizamos cookies para analisar o tráfego e melhorar a sua experiência. Os cookies de análise requerem o seu consentimento.",
+      accept: "Aceitar",
+      decline: "Recusar"
     }
   }
 };

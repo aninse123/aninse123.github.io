@@ -17,14 +17,7 @@
         y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
     })(window, document, "clarity", "script", "wty42i8mjt");
   </script>
-  <!-- Google Analytics -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-NGVM7PQ5RR"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag("js", new Date());
-    gtag("config", "G-NGVM7PQ5RR");
-  </script>
+
 </head>
 <body>
 
@@ -199,5 +192,14 @@
 
   <script src="js/i18n.js"></script>
   <script src="js/main.js"></script>
+
+  <!-- Cookie Consent Banner -->
+  <div id="cookieBanner" class="cookie-banner" role="alertdialog" aria-label="Cookie consent">
+    <p class="cookie-banner__text" data-i18n="cookie.text"></p>
+    <div class="cookie-banner__actions">
+      <button class="cookie-btn cookie-btn--accept" onclick="acceptCookies()" data-i18n="cookie.accept"></button>
+      <button class="cookie-btn cookie-btn--decline" onclick="declineCookies()" data-i18n="cookie.decline"></button>
+    </div>
+  </div>
 </body>
 </html>

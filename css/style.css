@@ -428,6 +428,54 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   color: var(--text-light);
 }
 
+/* ===== COOKIE BANNER ===== */
+.cookie-banner {
+  display: none;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 999;
+  background: var(--bg-dark);
+  color: var(--white);
+  padding: 18px 24px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+}
+.cookie-banner__text {
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: rgba(255,255,255,0.85);
+  flex: 1;
+  min-width: 200px;
+}
+.cookie-banner__actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.cookie-btn {
+  padding: 9px 22px;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: var(--transition);
+}
+.cookie-btn--accept {
+  background: var(--primary);
+  color: var(--white);
+}
+.cookie-btn--accept:hover { background: var(--accent); }
+.cookie-btn--decline {
+  background: transparent;
+  color: rgba(255,255,255,0.7);
+  border: 1px solid rgba(255,255,255,0.3);
+}
+.cookie-btn--decline:hover { color: var(--white); border-color: var(--white); }
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 900px) {
   .criteria__grid { grid-template-columns: 1fr; }
