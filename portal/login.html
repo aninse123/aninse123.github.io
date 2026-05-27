@@ -165,7 +165,8 @@
       onAuthStateChanged
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 
-    const INVESTOR_URL = window.location.origin + '/portal/investor.html';
+    const INVESTOR_URL  = window.location.origin + '/portal/investor.html';
+    const LOGIN_URL     = window.location.origin + '/portal/login.html';
 
     // If already signed in, redirect immediately
     onAuthStateChanged(auth, (user) => {
@@ -218,7 +219,7 @@
       errorMsg.style.display   = 'none';
 
       const actionCodeSettings = {
-        url: INVESTOR_URL,
+        url: LOGIN_URL,
         handleCodeInApp: true
       };
 
