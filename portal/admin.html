@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Panel — Douro Partners</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary:      #4A6B8A;
+      --primary-dark: #3A5570;
+      --secondary:    #3D6430;
+      --danger:       #B33A3A;
+      --bg:           #F7F3EC;
+      --bg-dark:      #1E2A38;
+      --text:         #2C2C2C;
+      --text-light:   #6B7280;
+      --border:       #D8D3C8;
+      --white:        #FFFFFF;
+      --font-serif:   'Playfair Display', Georgia, serif;
+      --font-sans:    'Inter', sans-serif;
+      --radius:       8px;
+      --shadow:       0 4px 24px rgba(30,42,56,0.08);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Loading */
+    #loadingScreen {
+      position: fixed; inset: 0; background: var(--bg);
+      display: flex; align-items: center; justify-content: center; z-index: 100;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Nav */
+    .nav { background: var(--bg-dark); padding: 16px 0; }
+    .nav__inner {
+      max-width: 1100px; margin: 0 auto; padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav__left { display: flex; align-items: center; gap: 14px; }
+    .nav__logo { height: 36px; filter: brightness(0) invert(1); opacity: 0.85; }
+    .nav__label {
+      font-family: var(--font-serif);
+      color: rgba(255,255,255,0.8);
+      font-size: 0.95rem;
+      padding-left: 14px;
+      border-left: 1px solid rgba(255,255,255,0.2);
+    }
+    .nav__right { display: flex; align-items: center; gap: 14px; }
+    .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.55); }
+    .nav__portal-link {
+      font-size: 0.82rem; font-weight: 600;
+      color: rgba(255,255,255,0.75);
+      text-decoration: none;
+    }
+    .nav__portal-link:hover { color: white; }
+    .sign-out-btn {
+      font-size: 0.82rem; font-weight: 600;
+      color: rgba(255,255,255,0.65);
+      background: none; border: 1px solid rgba(255,255,255,0.3);
+      border-radius: var(--radius); padding: 6px 14px;
+      cursor: pointer; transition: 0.2s;
+    }
+    .sign-out-btn:hover { color: white; border-color: white; }
+
+    /* Main */
+    .main { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+
+    /* Section */
+    .section { margin-bottom: 52px; }
+    .section-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .section-title {
+      font-family: var(--font-serif);
+      font-size: 1.5rem; color: var(--primary);
+    }
+
+    /* Card + Table */
+    .card {
+      background: var(--white);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      font-size: 0.72rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--text-light);
+      padding: 10px 16px; text-align: left;
+      border-bottom: 2px solid var(--border);
+      background: #FAFAF8; white-space: nowrap;
+    }
+    td {
+      padding: 14px 16px; font-size: 0.88rem;
+      border-bottom: 1px solid var(--border); vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #FAFAF8; }
+    .empty-row td {
+      color: var(--text-light); font-style: italic;
+      text-align: center; padding: 40px;
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 100px;
+      font-size: 0.72rem; font-weight: 600; margin: 2px;
+    }
+    .badge--blue  { background: #E8F0F8; color: var(--primary); }
+    .badge--green { background: #EBF5EB; color: var(--secondary); }
+    .badge-remove {
+      cursor: pointer; opacity: 0.5; font-size: 0.85em;
+      line-height: 1; padding: 0 2px;
+    }
+    .badge-remove:hover { opacity: 1; color: var(--danger); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 20px; border-radius: var(--radius);
+      font-family: var(--font-sans); font-size: 0.88rem; font-weight: 600;
+      cursor: pointer; border: none; transition: 0.2s;
+    }
+    .btn--primary { background: var(--primary); color: white; }
+    .btn--primary:hover { background: var(--primary-dark); }
+    .btn--danger  { background: var(--danger);  color: white; }
+    .btn--danger:hover  { opacity: 0.85; }
+    .btn--ghost   { background: none; border: 1px solid var(--border); color: var(--text-light); }
+    .btn--ghost:hover   { border-color: var(--danger); color: var(--danger); }
+    .btn--sm { padding: 6px 12px; font-size: 0.78rem; }
+
+    .add-access-btn {
+      font-size: 0.72rem; font-weight: 600;
+      color: var(--primary);
+      background: none; border: 1px dashed var(--primary);
+      border-radius: 100px; padding: 3px 10px;
+      cursor: pointer; transition: 0.2s;
+    }
+    .add-access-btn:hover { background: var(--primary); color: white; }
+
+    .access-list { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+    /* Modal */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.45); z-index: 200;
+      align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--white); border-radius: var(--radius);
+      padding: 32px; width: 100%; max-width: 480px;
+      max-height: 90vh; overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    }
+    .modal h2 {
+      font-family: var(--font-serif); font-size: 1.4rem;
+      color: var(--primary); margin-bottom: 24px;
+    }
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+      display: block; font-size: 0.75rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text); margin-bottom: 6px;
+    }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%; padding: 11px 14px;
+      border: 1.5px solid var(--border); border-radius: var(--radius);
+      font-family: var(--font-sans); font-size: 0.9rem; color: var(--text);
+      background: var(--white);
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none; border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(74,107,138,0.1);
+    }
+    .form-group textarea { resize: vertical; min-height: 80px; }
+    .hint { font-size: 0.75rem; color: var(--text-light); margin-top: 5px; line-height: 1.5; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+
+    code { font-size: 0.8em; background: #F0EDE8; padding: 2px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+  <div id="loadingScreen"><div class="spinner"></div></div>
+
+  <div id="app" style="display:none;">
+
+    <nav class="nav">
+      <div class="nav__inner">
+        <div class="nav__left">
+          <img src="../assets/logo.png" alt="Douro Partners" class="nav__logo">
+          <span class="nav__label">Admin Panel</span>
+        </div>
+        <div class="nav__right">
+          <span class="nav__email" id="adminEmail"></span>
+          <a href="/portal/investor.html" class="nav__portal-link">Investor view</a>
+          <button class="sign-out-btn" id="signOutBtn">Sign out</button>
+        </div>
+      </div>
+    </nav>
+
+    <main class="main">
+
+      <!-- Documents -->
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">Documents</h2>
+          <button class="btn btn--primary" id="addDocBtn">+ Add Document</button>
+        </div>
+        <div class="card">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Category</th>
+                  <th>Filename</th>
+                  <th>Investor Access</th>
+                  <th>Added</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="docsTableBody">
+                <tr class="empty-row"><td colspan="6">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Investor summary -->
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">Investors</h2>
+        </div>
+        <div class="card">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Has access to</th>
+                </tr>
+              </thead>
+              <tbody id="investorsTableBody">
+                <tr class="empty-row"><td colspan="2">Derived from document access above.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Add Document Modal -->
+  <div class="modal-overlay" id="addDocModal">
+    <div class="modal">
+      <h2>Add Document</h2>
+      <div class="form-group">
+        <label>Document Name</label>
+        <input type="text" id="docName" placeholder="e.g. Douro Partners PPM v1">
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <select id="docCategory">
+          <option>PPM</option>
+          <option>Financials</option>
+          <option>Presentation</option>
+          <option>Legal</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Description <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+        <textarea id="docDescription" placeholder="Brief description shown to investors"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Filename</label>
+        <input type="text" id="docFilename" placeholder="e.g. douro-ppm-v1.pdf">
+        <p class="hint">
+          Place the PDF in the <code>/docs/</code> folder in the GitHub repo and commit it.<br>
+          Use a non-obvious filename (add a random string, e.g. <code>ppm-a7b3c9d2.pdf</code>).
+        </p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelDocBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
+        <button class="btn btn--primary" id="saveDocBtn">Add Document</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Grant Access Modal -->
+  <div class="modal-overlay" id="addAccessModal">
+    <div class="modal">
+      <h2>Grant Access</h2>
+      <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:20px;" id="grantDocName"></p>
+      <div class="form-group">
+        <label>Investor Email</label>
+        <input type="email" id="accessEmail" placeholder="investor@example.com">
+        <p class="hint">The investor will see and download this document after signing in with this email.</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelAccessBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
+        <button class="btn btn--primary" id="saveAccessBtn">Grant Access</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
+    import {
+      onAuthStateChanged, signOut
+    } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+    import {
+      collection, getDocs, addDoc, updateDoc, deleteDoc,
+      doc, serverTimestamp, arrayUnion, arrayRemove
+    } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+    let currentDocId = null;
+    let allDocs      = [];
+
+    /* ===== Auth guard ===== */
+    onAuthStateChanged(auth, async (user) => {
+      if (!user || !ADMIN_EMAILS.includes(user.email)) {
+        window.location.href = '/portal/login.html';
+        return;
+      }
+      document.getElementById('adminEmail').textContent      = user.email;
+      document.getElementById('loadingScreen').style.display = 'none';
+      document.getElementById('app').style.display           = 'block';
+      await loadDocs();
+    });
+
+    /* ===== Load & render ===== */
+    async function loadDocs() {
+      const snapshot = await getDocs(collection(db, 'documents'));
+      allDocs = [];
+      snapshot.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
+      allDocs.sort((a, b) => (b.addedAt?.seconds || 0) - (a.addedAt?.seconds || 0));
+      renderDocs();
+      renderInvestors();
+    }
+
+    function renderDocs() {
+      const tbody = document.getElementById('docsTableBody');
+      if (!allDocs.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No documents yet — add one above.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = allDocs.map(d => {
+        const date   = d.addedAt
+          ? new Date(d.addedAt.seconds * 1000).toLocaleDateString('en-GB')
+          : '—';
+        const emails = d.allowedEmails || [];
+        const badges = emails.map(e =>
+          `<span class="badge badge--blue">${e}
+             <span class="badge-remove" data-doc="${d.id}" data-email="${e}" title="Revoke access">×</span>
+           </span>`
+        ).join('');
+        return `<tr>
+          <td><strong>${d.name}</strong></td>
+          <td><span class="badge badge--green">${d.category || '—'}</span></td>
+          <td><code>${d.filename}</code></td>
+          <td>
+            <div class="access-list">
+              ${badges}
+              <button class="add-access-btn" data-doc="${d.id}" data-docname="${d.name}">+ Add</button>
+            </div>
+          </td>
+          <td style="white-space:nowrap;color:var(--text-light)">${date}</td>
+          <td>
+            <button class="btn btn--ghost btn--sm delete-doc-btn" data-doc="${d.id}">Delete</button>
+          </td>
+        </tr>`;
+      }).join('');
+
+      tbody.querySelectorAll('.badge-remove').forEach(el =>
+        el.addEventListener('click', () => revokeAccess(el.dataset.doc, el.dataset.email))
+      );
+      tbody.querySelectorAll('.add-access-btn').forEach(el =>
+        el.addEventListener('click', () => openAccessModal(el.dataset.doc, el.dataset.docname))
+      );
+      tbody.querySelectorAll('.delete-doc-btn').forEach(el =>
+        el.addEventListener('click', () => deleteDocument(el.dataset.doc))
+      );
+    }
+
+    function renderInvestors() {
+      const map = {};
+      allDocs.forEach(d =>
+        (d.allowedEmails || []).forEach(email => {
+          if (!map[email]) map[email] = [];
+          map[email].push(d.name);
+        })
+      );
+      const entries = Object.entries(map);
+      const tbody   = document.getElementById('investorsTableBody');
+
+      if (!entries.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="2">No investors with access yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = entries.map(([email, docs]) => `
+        <tr>
+          <td>${email}</td>
+          <td>${docs.map(n => `<span class="badge badge--green">${n}</span>`).join(' ')}</td>
+        </tr>
+      `).join('');
+    }
+
+    /* ===== Add document ===== */
+    document.getElementById('addDocBtn').addEventListener('click', () =>
+      document.getElementById('addDocModal').classList.add('open')
+    );
+    document.getElementById('cancelDocBtn').addEventListener('click', () =>
+      document.getElementById('addDocModal').classList.remove('open')
+    );
+    document.getElementById('saveDocBtn').addEventListener('click', async () => {
+      const name        = document.getElementById('docName').value.trim();
+      const category    = document.getElementById('docCategory').value;
+      const description = document.getElementById('docDescription').value.trim();
+      const filename    = document.getElementById('docFilename').value.trim();
+
+      if (!name || !filename) { alert('Name and filename are required.'); return; }
+
+      await addDoc(collection(db, 'documents'), {
+        name, category, description, filename,
+        allowedEmails: [],
+        addedAt: serverTimestamp()
+      });
+      document.getElementById('addDocModal').classList.remove('open');
+      ['docName','docDescription','docFilename'].forEach(id =>
+        document.getElementById(id).value = ''
+      );
+      await loadDocs();
+    });
+
+    /* ===== Grant access ===== */
+    function openAccessModal(docId, docName) {
+      currentDocId = docId;
+      document.getElementById('grantDocName').textContent  = `Document: ${docName}`;
+      document.getElementById('accessEmail').value         = '';
+      document.getElementById('addAccessModal').classList.add('open');
+      setTimeout(() => document.getElementById('accessEmail').focus(), 100);
+    }
+    document.getElementById('cancelAccessBtn').addEventListener('click', () =>
+      document.getElementById('addAccessModal').classList.remove('open')
+    );
+    document.getElementById('saveAccessBtn').addEventListener('click', async () => {
+      const email = document.getElementById('accessEmail').value.trim().toLowerCase();
+      if (!email) { alert('Please enter an email address.'); return; }
+      await updateDoc(doc(db, 'documents', currentDocId), {
+        allowedEmails: arrayUnion(email)
+      });
+      document.getElementById('addAccessModal').classList.remove('open');
+      await loadDocs();
+    });
+
+    /* ===== Revoke access ===== */
+    async function revokeAccess(docId, email) {
+      if (!confirm(`Revoke access for ${email}?`)) return;
+      await updateDoc(doc(db, 'documents', docId), {
+        allowedEmails: arrayRemove(email)
+      });
+      await loadDocs();
+    }
+
+    /* ===== Delete document ===== */
+    async function deleteDocument(docId) {
+      if (!confirm('Delete this document record?\n\n(The PDF file in the repo is NOT deleted — only the database record.)')) return;
+      await deleteDoc(doc(db, 'documents', docId));
+      await loadDocs();
+    }
+
+    /* ===== Sign out ===== */
+    document.getElementById('signOutBtn').addEventListener('click', async () => {
+      await signOut(auth);
+      window.location.href = '/portal/login.html';
+    });
+
+    /* Close modals on overlay click */
+    document.querySelectorAll('.modal-overlay').forEach(overlay =>
+      overlay.addEventListener('click', e => {
+        if (e.target === overlay) overlay.classList.remove('open');
+      })
+    );
+  </script>
+</body>
+</html>

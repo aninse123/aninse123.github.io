@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Investor Portal — Douro Partners</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary:      #4A6B8A;
+      --primary-dark: #3A5570;
+      --secondary:    #3D6430;
+      --bg:           #F7F3EC;
+      --bg-dark:      #1E2A38;
+      --text:         #2C2C2C;
+      --text-light:   #6B7280;
+      --border:       #D8D3C8;
+      --white:        #FFFFFF;
+      --font-serif:   'Playfair Display', Georgia, serif;
+      --font-sans:    'Inter', sans-serif;
+      --radius:       8px;
+      --shadow:       0 4px 24px rgba(30,42,56,0.08);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Loading */
+    #loadingScreen {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 100;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Admin bar */
+    .admin-bar {
+      background: var(--bg-dark);
+      color: rgba(255,255,255,0.7);
+      text-align: center;
+      padding: 10px 24px;
+      font-size: 0.82rem;
+    }
+    .admin-bar a { color: rgba(255,255,255,0.95); font-weight: 600; text-decoration: underline; }
+
+    /* Nav */
+    .nav {
+      background: var(--white);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 0;
+    }
+    .nav__inner {
+      max-width: 1000px; margin: 0 auto; padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav__logo { height: 42px; }
+    .nav__right { display: flex; align-items: center; gap: 16px; }
+    .nav__email { font-size: 0.82rem; color: var(--text-light); }
+    .sign-out-btn {
+      font-size: 0.82rem; font-weight: 600;
+      color: var(--text-light);
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .sign-out-btn:hover { color: var(--primary); border-color: var(--primary); }
+
+    /* Main content */
+    .main { max-width: 1000px; margin: 0 auto; padding: 48px 24px; }
+    .page-header { margin-bottom: 40px; }
+    .page-title {
+      font-family: var(--font-serif);
+      font-size: 2rem;
+      color: var(--primary);
+      margin-bottom: 8px;
+    }
+    .page-subtitle { color: var(--text-light); font-size: 0.95rem; }
+
+    /* Documents grid */
+    .docs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .doc-card {
+      background: var(--white);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: 0.2s;
+    }
+    .doc-card:hover { box-shadow: var(--shadow); transform: translateY(-2px); }
+    .doc-icon { font-size: 2rem; line-height: 1; }
+    .doc-category {
+      font-size: 0.72rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--secondary);
+    }
+    .doc-name {
+      font-family: var(--font-serif);
+      font-size: 1.1rem;
+      color: var(--bg-dark);
+    }
+    .doc-description {
+      font-size: 0.85rem;
+      color: var(--text-light);
+      line-height: 1.6;
+      flex: 1;
+    }
+    .doc-date { font-size: 0.75rem; color: var(--border); }
+    .doc-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--primary);
+      color: var(--white);
+      padding: 10px 20px;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: 0.2s;
+      align-self: flex-start;
+      margin-top: 6px;
+    }
+    .doc-download:hover { background: var(--primary-dark); }
+
+    /* Empty state */
+    .empty-state {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 80px 24px;
+      color: var(--text-light);
+    }
+    .empty-state .icon { font-size: 3rem; margin-bottom: 16px; }
+    .empty-state p { font-size: 0.95rem; line-height: 1.6; }
+
+    @media (max-width: 600px) {
+      .nav__email { display: none; }
+      .main { padding: 32px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="loadingScreen"><div class="spinner"></div></div>
+
+  <div id="app" style="display:none;">
+
+    <div id="adminBar" class="admin-bar" style="display:none;">
+      You are signed in as an admin —
+      <a href="/portal/admin.html">Go to Admin Panel →</a>
+    </div>
+
+    <nav class="nav">
+      <div class="nav__inner">
+        <img src="../assets/logo.png" alt="Douro Partners" class="nav__logo">
+        <div class="nav__right">
+          <span class="nav__email" id="userEmail"></span>
+          <button class="sign-out-btn" id="signOutBtn">Sign out</button>
+        </div>
+      </div>
+    </nav>
+
+    <main class="main">
+      <div class="page-header">
+        <h1 class="page-title">Investor Portal</h1>
+        <p class="page-subtitle" id="pageSubtitle">Loading your documents…</p>
+      </div>
+      <div id="docsGrid" class="docs-grid"></div>
+    </main>
+
+  </div>
+
+  <script type="module">
+    import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
+    import {
+      onAuthStateChanged, signOut
+    } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+    import {
+      collection, query, where, getDocs
+    } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+    const CATEGORY_ICONS = {
+      PPM: '📋', Financials: '📊', Legal: '⚖️',
+      Presentation: '📑', Other: '📄'
+    };
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        window.location.href = '/portal/login.html';
+        return;
+      }
+
+      const email = user.email;
+      document.getElementById('userEmail').textContent = email;
+      document.getElementById('loadingScreen').style.display = 'none';
+      document.getElementById('app').style.display = 'block';
+
+      if (ADMIN_EMAILS.includes(email)) {
+        document.getElementById('adminBar').style.display = 'block';
+      }
+
+      try {
+        const q = query(
+          collection(db, 'documents'),
+          where('allowedEmails', 'array-contains', email)
+        );
+        const snapshot = await getDocs(q);
+
+        const grid     = document.getElementById('docsGrid');
+        const subtitle = document.getElementById('pageSubtitle');
+
+        if (snapshot.empty) {
+          subtitle.textContent = 'No documents have been shared with you yet.';
+          grid.innerHTML = `
+            <div class="empty-state">
+              <div class="icon">📭</div>
+              <p>Documents will appear here once shared with you.<br>
+                 Please contact the Douro Partners team if you expected access.</p>
+            </div>`;
+          return;
+        }
+
+        const docs = [];
+        snapshot.forEach(d => docs.push({ id: d.id, ...d.data() }));
+        docs.sort((a, b) => (b.addedAt?.seconds || 0) - (a.addedAt?.seconds || 0));
+
+        subtitle.textContent = `${docs.length} document${docs.length !== 1 ? 's' : ''} shared with you`;
+
+        docs.forEach(d => {
+          const icon = CATEGORY_ICONS[d.category] || '📄';
+          const date = d.addedAt
+            ? new Date(d.addedAt.seconds * 1000).toLocaleDateString('en-GB', {
+                day: 'numeric', month: 'long', year: 'numeric'
+              })
+            : '';
+
+          const card = document.createElement('div');
+          card.className = 'doc-card';
+          card.innerHTML = `
+            <div class="doc-icon">${icon}</div>
+            <div class="doc-category">${d.category || 'Document'}</div>
+            <div class="doc-name">${d.name}</div>
+            ${d.description ? `<div class="doc-description">${d.description}</div>` : ''}
+            ${date ? `<div class="doc-date">Added ${date}</div>` : ''}
+            <a href="/docs/${d.filename}" class="doc-download" target="_blank">
+              ↓ &nbsp;Download PDF
+            </a>
+          `;
+          grid.appendChild(card);
+        });
+
+      } catch (err) {
+        document.getElementById('pageSubtitle').textContent =
+          'Error loading documents. Please refresh or contact support.';
+        console.error(err);
+      }
+    });
+
+    document.getElementById('signOutBtn').addEventListener('click', async () => {
+      await signOut(auth);
+      window.location.href = '/portal/login.html';
+    });
+  </script>
+</body>
+</html>
