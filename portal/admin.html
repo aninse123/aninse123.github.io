@@ -293,12 +293,15 @@
         <textarea id="docDescription" placeholder="Brief description shown to investors"></textarea>
       </div>
       <div class="form-group">
-        <label>Filename</label>
-        <input type="text" id="docFilename" placeholder="e.g. douro-ppm-v1.pdf">
-        <p class="hint">
-          Place the PDF in the <code>/docs/</code> folder in the GitHub repo and commit it.<br>
-          Use a non-obvious filename (add a random string, e.g. <code>ppm-a7b3c9d2.pdf</code>).
-        </p>
+        <label>PDF File</label>
+        <input type="file" id="docFile" accept="application/pdf">
+        <p class="hint">Select the PDF to upload. Max 20 MB.</p>
+      </div>
+      <div id="uploadProgress" style="display:none;margin-top:8px;">
+        <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;">
+          <div id="progressBar" style="height:100%;background:var(--primary);width:0%;transition:width 0.3s;"></div>
+        </div>
+        <p id="progressText" style="font-size:0.78rem;color:var(--text-light);margin-top:4px;">Uploading…</p>
       </div>
       <div class="modal-actions">
         <button class="btn btn--ghost" id="cancelDocBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
@@ -325,7 +328,7 @@
   </div>
 
   <script type="module">
-    import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
+    import { auth, db, storage, ADMIN_EMAILS } from './firebase-config.js';
     import {
       onAuthStateChanged, signOut
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -333,6 +336,9 @@
       collection, getDocs, addDoc, updateDoc, deleteDoc,
       doc, serverTimestamp, arrayUnion, arrayRemove
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+    import {
+      ref, uploadBytesResumable, getDownloadURL, deleteObject
+    } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
 
     let currentDocId = null;
     let allDocs      = [];
@@ -437,20 +443,55 @@
       const name        = document.getElementById('docName').value.trim();
       const category    = document.getElementById('docCategory').value;
       const description = document.getElementById('docDescription').value.trim();
-      const filename    = document.getElementById('docFilename').value.trim();
+      const file        = document.getElementById('docFile').files[0];
 
-      if (!name || !filename) { alert('Name and filename are required.'); return; }
+      if (!name)  { alert('Document name is required.'); return; }
+      if (!file)  { alert('Please select a PDF file.'); return; }
+      if (file.size > 20 * 1024 * 1024) { alert('File is too large. Max 20 MB.'); return; }
 
-      await addDoc(collection(db, 'documents'), {
-        name, category, description, filename,
-        allowedEmails: [],
-        addedAt: serverTimestamp()
-      });
-      document.getElementById('addDocModal').classList.remove('open');
-      ['docName','docDescription','docFilename'].forEach(id =>
-        document.getElementById(id).value = ''
+      const saveBtn = document.getElementById('saveDocBtn');
+      saveBtn.disabled  = true;
+      saveBtn.textContent = 'Uploading…';
+
+      // Upload to Firebase Storage
+      const filename  = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const storageRef = ref(storage, `documents/${filename}`);
+      const uploadTask = uploadBytesResumable(storageRef, file);
+
+      document.getElementById('uploadProgress').style.display = 'block';
+
+      uploadTask.on('state_changed',
+        (snapshot) => {
+          const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+          document.getElementById('progressBar').style.width  = pct + '%';
+          document.getElementById('progressText').textContent = `Uploading… ${pct}%`;
+        },
+        (error) => {
+          alert('Upload failed: ' + error.message);
+          saveBtn.disabled    = false;
+          saveBtn.textContent = 'Add Document';
+          document.getElementById('uploadProgress').style.display = 'none';
+        },
+        async () => {
+          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+          await addDoc(collection(db, 'documents'), {
+            name, category, description, filename,
+            downloadURL,
+            allowedEmails: [],
+            addedAt: serverTimestamp()
+          });
+          document.getElementById('addDocModal').classList.remove('open');
+          document.getElementById('uploadProgress').style.display = 'none';
+          document.getElementById('progressBar').style.width = '0%';
+          ['docName','docDescription'].forEach(id =>
+            document.getElementById(id).value = ''
+          );
+          document.getElementById('docFile').value = '';
+          saveBtn.disabled    = false;
+          saveBtn.textContent = 'Add Document';
+          await loadDocs();
+        }
       );
-      await loadDocs();
     });
 
     /* ===== Grant access ===== */

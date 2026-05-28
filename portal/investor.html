@@ -258,7 +258,7 @@
             <div class="doc-name">${d.name}</div>
             ${d.description ? `<div class="doc-description">${d.description}</div>` : ''}
             ${date ? `<div class="doc-date">Added ${date}</div>` : ''}
-            <a href="/docs/${d.filename}" class="doc-download" target="_blank">
+            <a href="${d.downloadURL}" class="doc-download" target="_blank">
               ↓ &nbsp;Download PDF
             </a>
           `;
