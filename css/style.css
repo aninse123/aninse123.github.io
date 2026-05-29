@@ -427,6 +427,36 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   font-size: 0.78rem;
   color: var(--text-light);
 }
+.footer__investor-login {
+  display: inline-block;
+  margin-top: 14px;
+  font-size: 0.75rem;
+  color: var(--text-light);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 14px;
+  transition: var(--transition);
+}
+.footer__investor-login:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.nav__investor-login {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-light);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.nav__investor-login:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
 
 /* ===== COOKIE BANNER ===== */
 .cookie-banner {

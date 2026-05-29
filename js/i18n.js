@@ -4,7 +4,8 @@ const translations = {
       about: "About",
       criteria: "Criteria",
       team: "Team",
-      contact: "Contact"
+      contact: "Contact",
+      investorLogin: "Investor Login"
     },
     hero: {
       title: "Honoring Legacy. Driving the Future.",
@@ -88,7 +89,8 @@ const translations = {
       about: "Sobre Nós",
       criteria: "Critérios",
       team: "Equipa",
-      contact: "Contacto"
+      contact: "Contacto",
+      investorLogin: "Área de Investidores"
     },
     hero: {
       title: "Honrar o Legado. Impulsionar o Futuro.",
