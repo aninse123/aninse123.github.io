@@ -605,7 +605,18 @@
 
     /* ===== Delete document ===== */
     async function deleteDocument(docId) {
-      if (!confirm('Delete this document record?\n\n(The PDF file in the repo is NOT deleted — only the database record.)')) return;
+      const d = allDocs.find(doc => doc.id === docId);
+      if (!d) return;
+      if (!confirm(`Delete "${d.name}"?\n\nThis will permanently remove the document and its PDF file.`)) return;
+      try {
+        const fileRef = ref(storage, `documents/${d.filename}`);
+        await deleteObject(fileRef);
+      } catch (err) {
+        if (err.code !== 'storage/object-not-found') {
+          alert('Failed to delete file from storage: ' + err.message);
+          return;
+        }
+      }
       await deleteDoc(doc(db, 'documents', docId));
       await loadDocs();
     }
