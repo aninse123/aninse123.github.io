@@ -171,10 +171,34 @@
     .empty-state .icon { font-size: 3rem; margin-bottom: 16px; }
     .empty-state p { font-size: 0.95rem; line-height: 1.8; max-width: 480px; margin: 0 auto; }
 
+    /* Stage bar */
+    .stage-bar {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 32px;
+    }
+    .stage-bar__label {
+      font-size: 0.72rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text-light); margin-bottom: 14px;
+    }
+    .stage-bar__track { display: flex; gap: 6px; align-items: flex-start; }
+    .stage-pill { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .stage-pill__bar { width: 100%; height: 8px; border-radius: 100px; }
+    .stage-pill__bar--done     { background: var(--primary); }
+    .stage-pill__bar--current  { background: var(--primary); animation: stagePulse 1.5s ease-in-out infinite; }
+    .stage-pill__bar--upcoming { background: transparent; border: 2px solid var(--border); box-sizing: border-box; }
+    .stage-pill__name { font-size: 0.68rem; color: var(--text-light); text-align: center; line-height: 1.3; }
+    .stage-pill__name--current { color: var(--primary); font-weight: 600; }
+    @keyframes stagePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
     @media (max-width: 600px) {
       .nav__email { display: none; }
       .main { padding: 32px 16px; }
       .doc-card { padding: 20px 16px; }
+      .stage-pill__name { font-size: 0.6rem; }
     }
   </style>
 </head>
@@ -205,6 +229,10 @@
         <h1 class="page-title">Investor Portal</h1>
         <p class="page-subtitle" id="pageSubtitle">Loading your documents…</p>
       </div>
+      <div id="stageBar" class="stage-bar" style="display:none;">
+        <div class="stage-bar__label">Fund Stage</div>
+        <div class="stage-bar__track" id="stageTrack"></div>
+      </div>
       <div id="filterBar" class="filter-bar" style="display:none;"></div>
       <div id="docsGrid" class="docs-grid"></div>
     </main>
@@ -217,8 +245,31 @@
       onAuthStateChanged, signOut
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
-      collection, query, where, getDocs
+      collection, query, where, getDocs, doc, getDoc
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+    const STAGES = [
+      { id: 1, label: 'Raise' },
+      { id: 2, label: 'Source & Evaluate' },
+      { id: 3, label: 'Finance & Close' },
+      { id: 4, label: 'Operate' },
+      { id: 5, label: 'Exit' },
+    ];
+
+    function renderStageBar(currentStage) {
+      const track = document.getElementById('stageTrack');
+      track.innerHTML = STAGES.map(s => {
+        let barClass = '', nameClass = '';
+        if (s.id < currentStage)       { barClass = 'stage-pill__bar--done'; }
+        else if (s.id === currentStage) { barClass = 'stage-pill__bar--current'; nameClass = 'stage-pill__name--current'; }
+        else                            { barClass = 'stage-pill__bar--upcoming'; }
+        return `<div class="stage-pill">
+          <div class="stage-pill__bar ${barClass}"></div>
+          <span class="stage-pill__name ${nameClass}">${s.label}</span>
+        </div>`;
+      }).join('');
+      document.getElementById('stageBar').style.display = 'block';
+    }
 
     const CATEGORY_ICONS = {
       PPM: '📋', Financials: '📊', Legal: '⚖️',
@@ -245,7 +296,16 @@
           collection(db, 'documents'),
           where('allowedEmails', 'array-contains', email)
         );
-        const snapshot = await getDocs(q);
+
+        // Fetch docs + stage config in parallel
+        const [snapshot, configSnap] = await Promise.all([
+          getDocs(q),
+          getDoc(doc(db, 'config', 'portal'))
+        ]);
+
+        // Render stage bar (always visible, regardless of documents)
+        const currentStage = configSnap.exists() ? (configSnap.data().currentStage || 1) : 1;
+        renderStageBar(currentStage);
 
         const grid     = document.getElementById('docsGrid');
         const subtitle = document.getElementById('pageSubtitle');

@@ -220,6 +220,23 @@
     th.sort-asc::after  { content: ' ↑'; opacity: 1; color: var(--primary); }
     th.sort-desc::after { content: ' ↓'; opacity: 1; color: var(--primary); }
 
+    /* Stage widget */
+    .stage-widget { padding: 20px 24px; }
+    .stage-widget__track { display: flex; gap: 6px; align-items: flex-start; margin-bottom: 12px; }
+    .stage-widget__pill {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px;
+      background: none; border: none; cursor: pointer; padding: 0;
+    }
+    .stage-widget__pill:hover .stage-widget__bar { filter: brightness(0.85); }
+    .stage-widget__bar { width: 100%; height: 8px; border-radius: 100px; transition: filter 0.2s; }
+    .stage-widget__bar--done     { background: var(--primary); }
+    .stage-widget__bar--current  { background: var(--primary); animation: stagePulse 1.5s ease-in-out infinite; }
+    .stage-widget__bar--upcoming { background: transparent; border: 2px solid var(--border); box-sizing: border-box; }
+    .stage-widget__name { font-size: 0.68rem; color: var(--text-light); text-align: center; line-height: 1.3; }
+    .stage-widget__name--current { color: var(--primary); font-weight: 600; }
+    .stage-widget__hint { font-size: 0.78rem; color: var(--text-light); }
+    @keyframes stagePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
     @media (max-width: 768px) {
       .nav__inner { flex-wrap: wrap; gap: 8px; }
       .nav__label { display: none; }
@@ -255,6 +272,17 @@
     </nav>
 
     <main class="main">
+
+      <!-- ── Fund Stage ── -->
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">Fund Stage</h2>
+        </div>
+        <div class="card stage-widget">
+          <div class="stage-widget__track" id="stageWidgetTrack"></div>
+          <p class="stage-widget__hint" id="stageWidgetHint">Loading…</p>
+        </div>
+      </div>
 
       <!-- ── Documents ── -->
       <div class="section">
@@ -453,11 +481,61 @@
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
       collection, getDocs, addDoc, updateDoc, deleteDoc,
-      doc, serverTimestamp, arrayUnion, arrayRemove
+      doc, getDoc, setDoc, serverTimestamp, arrayUnion, arrayRemove
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import {
       ref, uploadBytesResumable, getDownloadURL, deleteObject
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
+
+    // ── Stages ────────────────────────────────────────────────
+    const STAGES = [
+      { id: 1, label: 'Raise',             full: 'Raise Search Fund' },
+      { id: 2, label: 'Source & Evaluate', full: 'Source & Evaluate Opportunities' },
+      { id: 3, label: 'Finance & Close',   full: 'Finance & Close a Transaction' },
+      { id: 4, label: 'Operate',           full: 'Operate the Business' },
+      { id: 5, label: 'Exit',              full: 'Exit the Business' },
+    ];
+    let currentStage = 1;
+
+    async function loadStage() {
+      const snap = await getDoc(doc(db, 'config', 'portal'));
+      currentStage = snap.exists() ? (snap.data().currentStage || 1) : 1;
+      renderStageWidget();
+    }
+
+    function renderStageWidget() {
+      const track = document.getElementById('stageWidgetTrack');
+      const hint  = document.getElementById('stageWidgetHint');
+
+      track.innerHTML = STAGES.map(s => {
+        let barClass = '', nameClass = '';
+        if (s.id < currentStage)       { barClass = 'stage-widget__bar--done'; }
+        else if (s.id === currentStage) { barClass = 'stage-widget__bar--current'; nameClass = 'stage-widget__name--current'; }
+        else                            { barClass = 'stage-widget__bar--upcoming'; }
+        return `<button class="stage-widget__pill" data-stage="${s.id}" title="Set to Stage ${s.id}: ${s.full}">
+          <div class="stage-widget__bar ${barClass}"></div>
+          <span class="stage-widget__name ${nameClass}">${s.label}</span>
+        </button>`;
+      }).join('');
+
+      hint.textContent = `Current: Stage ${currentStage} — ${STAGES[currentStage - 1].full}. Click a stage to change it.`;
+
+      track.querySelectorAll('.stage-widget__pill').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const stage = parseInt(btn.dataset.stage);
+          if (stage === currentStage) return;
+          const stageFull = STAGES[stage - 1].full;
+          if (!confirm(`Move to Stage ${stage} — ${stageFull}?\n\nThis will update immediately for all investors.`)) return;
+          setStage(stage);
+        });
+      });
+    }
+
+    async function setStage(stage) {
+      await setDoc(doc(db, 'config', 'portal'), { currentStage: stage }, { merge: true });
+      currentStage = stage;
+      renderStageWidget();
+    }
 
     // ── State ──────────────────────────────────────────────────
     let allDocs      = [];
@@ -484,7 +562,7 @@
       document.getElementById('adminEmail').textContent      = user.email;
       document.getElementById('loadingScreen').style.display = 'none';
       document.getElementById('app').style.display           = 'block';
-      await loadAll();
+      await Promise.all([loadStage(), loadAll()]);
     });
 
     // ── Load everything ────────────────────────────────────────
