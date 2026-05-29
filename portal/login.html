@@ -95,36 +95,65 @@
       transition: 0.3s ease;
       margin-top: 8px;
     }
-    .btn:hover  { background: var(--primary-dark); }
+    .btn:hover    { background: var(--primary-dark); }
     .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-    .message {
-      margin-top: 20px;
-      padding: 14px 16px;
-      border-radius: var(--radius);
-      font-size: 0.9rem;
-      display: none;
-      text-align: left;
-      line-height: 1.5;
+    .btn--ghost {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-light);
+      margin-top: 10px;
     }
-    .message--success { background: #EBF5EB; color: var(--secondary); border: 1px solid #C3E0C3; }
-    .message--error   { background: #FBE9E9; color: #B33A3A;          border: 1px solid #F0C0C0; }
-    .message--info    { background: #EBF3FA; color: var(--primary);   border: 1px solid #C3D8EA; }
-    .spam-notice {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 10px;
-      margin-top: 16px;
-      padding: 16px 18px;
+    .btn--ghost:hover { border-color: var(--primary); color: var(--primary); background: none; }
+
+    /* Sent confirmation */
+    .sent-notice {
       background: #EBF5EB;
       border: 1px solid #C3E0C3;
       border-radius: var(--radius);
-      font-size: 0.88rem;
+      padding: 24px 20px;
       color: #2D5A2D;
-      line-height: 1.6;
-      text-align: center;
+      font-size: 0.9rem;
+      line-height: 1.65;
     }
-    .spam-notice__icon { font-size: 1.6rem; line-height: 1; }
+    .sent-notice__icon { font-size: 2rem; margin-bottom: 12px; }
+    .sent-notice__email {
+      display: inline-block;
+      font-weight: 600;
+      color: var(--primary);
+      word-break: break-all;
+      margin: 4px 0 8px;
+    }
+    .sent-notice__spam {
+      font-size: 0.82rem;
+      color: #4A7A4A;
+      margin-top: 10px;
+    }
+
+    /* Error */
+    .message--error {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      font-size: 0.88rem;
+      display: none;
+      text-align: left;
+      line-height: 1.5;
+      background: #FBE9E9;
+      color: #B33A3A;
+      border: 1px solid #F0C0C0;
+    }
+
+    /* Processing */
+    .message--info {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      font-size: 0.88rem;
+      background: #EBF3FA;
+      color: var(--primary);
+      border: 1px solid #C3D8EA;
+    }
+
     .back { margin-top: 28px; }
     .back a { font-size: 0.85rem; color: var(--text-light); text-decoration: none; }
     .back a:hover { color: var(--primary); }
@@ -145,7 +174,7 @@
   <div class="card">
     <img src="../assets/logo.png" alt="Douro Partners" class="logo">
 
-    <!-- Default view: send magic link -->
+    <!-- State 1: Email form -->
     <div id="formView">
       <h1>Investor Access</h1>
       <p class="subtitle">Enter your email address and we'll send you a secure, one-time sign-in link.</p>
@@ -156,23 +185,32 @@
         </div>
         <button type="submit" class="btn" id="submitBtn">Send sign-in link</button>
       </form>
-      <div id="successMsg" class="spam-notice" style="display:none;">
-        <div class="spam-notice__icon">📬</div>
+      <div id="errorMsg" class="message--error"></div>
+    </div>
+
+    <!-- State 2: Link sent confirmation -->
+    <div id="sentView" style="display:none;">
+      <div class="sent-notice">
+        <div class="sent-notice__icon">📬</div>
         <div>
-          Sign-in link sent. Check your inbox or <strong>SPAM</strong> folder!
+          We've sent a sign-in link to<br>
+          <span class="sent-notice__email" id="sentEmail"></span>
+        </div>
+        <div class="sent-notice__spam">
+          Don't see it? Check your <strong>SPAM</strong> folder.<br>
           The email comes from <strong>noreply@douro-partners.firebaseapp.com</strong>.
         </div>
       </div>
-      <div id="errorMsg" class="message message--error"></div>
+      <button class="btn" id="resendBtn" style="margin-top:20px;">Resend link</button>
+      <button class="btn btn--ghost" id="differentEmailBtn">Use a different email</button>
+      <div id="resendMsg" style="display:none;margin-top:12px;font-size:0.82rem;color:var(--secondary);">✓ Link resent.</div>
     </div>
 
-    <!-- Processing view: completing magic link sign-in -->
+    <!-- State 3: Processing magic link -->
     <div id="processingView" style="display:none;">
       <h1>Signing you in…</h1>
       <p class="subtitle">Please wait while we verify your link.</p>
-      <div id="processMsg" class="message message--info" style="display:block;">
-        Verifying…
-      </div>
+      <div id="processMsg" class="message--info">Verifying…</div>
     </div>
 
     <div class="back"><a href="/">← Back to Douro Partners</a></div>
@@ -187,10 +225,18 @@
       onAuthStateChanged
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 
-    const INVESTOR_URL  = window.location.origin + '/portal/investor.html';
-    const LOGIN_URL     = window.location.origin + '/portal/login.html';
+    const INVESTOR_URL = window.location.origin + '/portal/investor.html';
+    const LOGIN_URL    = window.location.origin + '/portal/login.html';
 
-    // If already signed in, redirect immediately
+    const actionCodeSettings = { url: LOGIN_URL, handleCodeInApp: true };
+
+    let sentToEmail = '';
+
+    function showForm()       { document.getElementById('formView').style.display       = 'block'; document.getElementById('sentView').style.display        = 'none';  document.getElementById('processingView').style.display = 'none'; }
+    function showSent(email)  { document.getElementById('formView').style.display       = 'none';  document.getElementById('sentView').style.display        = 'block'; document.getElementById('processingView').style.display = 'none'; document.getElementById('sentEmail').textContent = email; }
+    function showProcessing() { document.getElementById('formView').style.display       = 'none';  document.getElementById('sentView').style.display        = 'none';  document.getElementById('processingView').style.display = 'block'; }
+
+    // Already signed in → redirect
     onAuthStateChanged(auth, (user) => {
       if (user && !isSignInWithEmailLink(auth, window.location.href)) {
         window.location.href = INVESTOR_URL;
@@ -199,14 +245,11 @@
 
     // Handle magic link callback
     if (isSignInWithEmailLink(auth, window.location.href)) {
-      document.getElementById('formView').style.display      = 'none';
-      document.getElementById('processingView').style.display = 'block';
-
+      showProcessing();
       let email = window.localStorage.getItem('emailForSignIn');
       if (!email) {
         email = window.prompt('Please re-enter your email address to complete sign-in:');
       }
-
       if (email) {
         signInWithEmailLink(auth, email, window.location.href)
           .then(() => {
@@ -215,48 +258,70 @@
           })
           .catch(err => {
             const msg = document.getElementById('processMsg');
-            msg.className      = 'message message--error';
-            msg.style.display  = 'block';
-            msg.textContent    = 'Sign-in failed: ' + (err.message || 'Invalid or expired link. Please request a new one.');
-            document.getElementById('processingView').style.display = 'none';
-            document.getElementById('formView').style.display       = 'block';
+            msg.className   = 'message--error';
+            msg.textContent = 'Sign-in failed: ' + (err.message || 'Invalid or expired link. Please request a new one.');
+            showForm();
           });
       } else {
-        document.getElementById('processingView').style.display = 'none';
-        document.getElementById('formView').style.display       = 'block';
+        showForm();
       }
     }
 
     // Send magic link
+    async function sendLink(email) {
+      await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+      window.localStorage.setItem('emailForSignIn', email);
+    }
+
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const email      = document.getElementById('email').value.trim();
-      const btn        = document.getElementById('submitBtn');
-      const successMsg = document.getElementById('successMsg');
-      const errorMsg   = document.getElementById('errorMsg');
+      const email  = document.getElementById('email').value.trim();
+      const btn    = document.getElementById('submitBtn');
+      const errMsg = document.getElementById('errorMsg');
 
-      btn.disabled     = true;
-      btn.innerHTML    = '<span class="spinner"></span> Sending…';
-      successMsg.style.display = 'none';
-      errorMsg.style.display   = 'none';
-
-      const actionCodeSettings = {
-        url: LOGIN_URL,
-        handleCodeInApp: true
-      };
+      btn.disabled  = true;
+      btn.innerHTML = '<span class="spinner"></span> Sending…';
+      errMsg.style.display = 'none';
 
       try {
-        await sendSignInLinkToEmail(auth, email, actionCodeSettings);
-        window.localStorage.setItem('emailForSignIn', email);
-        successMsg.style.display = 'flex';
+        await sendLink(email);
+        sentToEmail = email;
+        showSent(email);
         document.getElementById('loginForm').reset();
       } catch (err) {
-        errorMsg.textContent  = err.message || 'Something went wrong. Please try again.';
-        errorMsg.style.display = 'block';
+        errMsg.textContent   = err.message || 'Something went wrong. Please try again.';
+        errMsg.style.display = 'block';
       } finally {
         btn.disabled  = false;
         btn.innerHTML = 'Send sign-in link';
       }
+    });
+
+    // Resend
+    document.getElementById('resendBtn').addEventListener('click', async () => {
+      const btn     = document.getElementById('resendBtn');
+      const resendMsg = document.getElementById('resendMsg');
+      btn.disabled  = true;
+      btn.innerHTML = '<span class="spinner"></span> Resending…';
+      resendMsg.style.display = 'none';
+      try {
+        await sendLink(sentToEmail);
+        resendMsg.style.display = 'block';
+      } catch (err) {
+        resendMsg.textContent   = 'Failed to resend. Please try again.';
+        resendMsg.style.color   = '#B33A3A';
+        resendMsg.style.display = 'block';
+      } finally {
+        btn.disabled  = false;
+        btn.innerHTML = 'Resend link';
+      }
+    });
+
+    // Different email
+    document.getElementById('differentEmailBtn').addEventListener('click', () => {
+      sentToEmail = '';
+      window.localStorage.removeItem('emailForSignIn');
+      showForm();
     });
   </script>
 </body>
