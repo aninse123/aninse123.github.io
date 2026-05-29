@@ -60,8 +60,7 @@
     .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.55); }
     .nav__portal-link {
       font-size: 0.82rem; font-weight: 600;
-      color: rgba(255,255,255,0.75);
-      text-decoration: none;
+      color: rgba(255,255,255,0.75); text-decoration: none;
     }
     .nav__portal-link:hover { color: white; }
     .sign-out-btn {
@@ -82,18 +81,10 @@
       display: flex; align-items: center; justify-content: space-between;
       margin-bottom: 16px;
     }
-    .section-title {
-      font-family: var(--font-serif);
-      font-size: 1.5rem; color: var(--primary);
-    }
+    .section-title { font-family: var(--font-serif); font-size: 1.5rem; color: var(--primary); }
 
     /* Card + Table */
-    .card {
-      background: var(--white);
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      overflow: hidden;
-    }
+    .card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; }
     th {
@@ -104,16 +95,10 @@
       border-bottom: 2px solid var(--border);
       background: #FAFAF8; white-space: nowrap;
     }
-    td {
-      padding: 14px 16px; font-size: 0.88rem;
-      border-bottom: 1px solid var(--border); vertical-align: middle;
-    }
+    td { padding: 14px 16px; font-size: 0.88rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #FAFAF8; }
-    .empty-row td {
-      color: var(--text-light); font-style: italic;
-      text-align: center; padding: 40px;
-    }
+    .empty-row td { color: var(--text-light); font-style: italic; text-align: center; padding: 40px; }
 
     /* Badges */
     .badge {
@@ -123,6 +108,7 @@
     }
     .badge--blue  { background: #E8F0F8; color: var(--primary); }
     .badge--green { background: #EBF5EB; color: var(--secondary); }
+    .badge--grey  { background: #F0EDE8; color: var(--text-light); }
     .badge-remove {
       cursor: pointer; opacity: 0.5; font-size: 0.85em;
       line-height: 1; padding: 0 2px;
@@ -138,10 +124,11 @@
     }
     .btn--primary { background: var(--primary); color: white; }
     .btn--primary:hover { background: var(--primary-dark); }
-    .btn--danger  { background: var(--danger);  color: white; }
+    .btn--danger  { background: var(--danger); color: white; }
     .btn--danger:hover  { opacity: 0.85; }
     .btn--ghost   { background: none; border: 1px solid var(--border); color: var(--text-light); }
-    .btn--ghost:hover   { border-color: var(--danger); color: var(--danger); }
+    .btn--ghost:hover   { border-color: var(--primary); color: var(--primary); }
+    .btn--ghost-danger:hover { border-color: var(--danger); color: var(--danger); }
     .btn--sm { padding: 6px 12px; font-size: 0.78rem; }
 
     .add-access-btn {
@@ -169,10 +156,7 @@
       max-height: 90vh; overflow-y: auto;
       box-shadow: 0 20px 60px rgba(0,0,0,0.2);
     }
-    .modal h2 {
-      font-family: var(--font-serif); font-size: 1.4rem;
-      color: var(--primary); margin-bottom: 24px;
-    }
+    .modal h2 { font-family: var(--font-serif); font-size: 1.4rem; color: var(--primary); margin-bottom: 24px; }
     .form-group { margin-bottom: 16px; }
     .form-group label {
       display: block; font-size: 0.75rem; font-weight: 700;
@@ -189,13 +173,26 @@
     }
     .form-group input:focus,
     .form-group select:focus,
-    .form-group textarea:focus {
-      outline: none; border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(74,107,138,0.1);
-    }
+    .form-group textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(74,107,138,0.1); }
     .form-group textarea { resize: vertical; min-height: 80px; }
     .hint { font-size: 0.75rem; color: var(--text-light); margin-top: 5px; line-height: 1.5; }
     .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+
+    /* Email input row */
+    .email-input-row { display: flex; gap: 8px; }
+    .email-input-row input { flex: 1; }
+    .email-input-row button { white-space: nowrap; flex-shrink: 0; }
+
+    /* Email list inside modal */
+    .email-badge-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; min-height: 28px; }
+
+    /* Section divider inside modal */
+    .modal-section { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+    .modal-section-label {
+      font-size: 0.75rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text); margin-bottom: 10px;
+    }
 
     code { font-size: 0.8em; background: #F0EDE8; padding: 2px 6px; border-radius: 4px; }
 
@@ -259,7 +256,7 @@
 
     <main class="main">
 
-      <!-- Documents -->
+      <!-- ── Documents ── -->
       <div class="section">
         <div class="section-header">
           <h2 class="section-title">Documents</h2>
@@ -297,27 +294,28 @@
         </div>
       </div>
 
-      <!-- Investor summary -->
+      <!-- ── Investors ── -->
       <div class="section">
         <div class="section-header">
           <h2 class="section-title">Investors</h2>
+          <button class="btn btn--primary" id="addInvestorBtn">+ New Investor</button>
         </div>
         <div class="card">
           <div class="filter-bar">
-            <input type="text" id="investorSearch" placeholder="Search by email…">
+            <input type="text" id="investorSearch" placeholder="Search by name…">
           </div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th class="sortable sort-asc" data-sort-inv="email">Email</th>
-                  <th class="sortable" data-sort-inv="count">Documents</th>
-                  <th>Access</th>
+                  <th class="sortable sort-asc" data-sort-inv="name">Investor</th>
+                  <th>Members</th>
+                  <th class="sortable" data-sort-inv="docs">Documents</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody id="investorsTableBody">
-                <tr class="empty-row"><td colspan="4">Derived from document access above.</td></tr>
+                <tr class="empty-row"><td colspan="4">Loading…</td></tr>
               </tbody>
             </table>
           </div>
@@ -327,7 +325,7 @@
     </main>
   </div>
 
-  <!-- Add Document Modal -->
+  <!-- ══ Add Document Modal ══ -->
   <div class="modal-overlay" id="addDocModal">
     <div class="modal">
       <h2>Add Document</h2>
@@ -338,11 +336,8 @@
       <div class="form-group">
         <label>Category</label>
         <select id="docCategory">
-          <option>PPM</option>
-          <option>Financials</option>
-          <option>Presentation</option>
-          <option>Legal</option>
-          <option>Other</option>
+          <option>PPM</option><option>Financials</option>
+          <option>Presentation</option><option>Legal</option><option>Other</option>
         </select>
       </div>
       <div class="form-group">
@@ -361,70 +356,92 @@
         <p id="progressText" style="font-size:0.78rem;color:var(--text-light);margin-top:4px;">Uploading…</p>
       </div>
       <div class="modal-actions">
-        <button class="btn btn--ghost" id="cancelDocBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
+        <button class="btn btn--ghost" id="cancelDocBtn">Cancel</button>
         <button class="btn btn--primary" id="saveDocBtn">Add Document</button>
       </div>
     </div>
   </div>
 
-  <!-- Grant Document to Investor Modal -->
-  <div class="modal-overlay" id="grantDocModal">
-    <div class="modal">
-      <h2>Grant Document Access</h2>
-      <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:20px;" id="grantDocInvestorEmail"></p>
-      <div class="form-group">
-        <label>Select Document</label>
-        <select id="grantDocSelect"></select>
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn--ghost" id="cancelGrantDocBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
-        <button class="btn btn--primary" id="saveGrantDocBtn">Grant Access</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Edit Document Modal -->
+  <!-- ══ Edit Document Modal ══ -->
   <div class="modal-overlay" id="editDocModal">
     <div class="modal">
       <h2>Edit Document</h2>
       <div class="form-group">
         <label>Document Name</label>
-        <input type="text" id="editDocName" placeholder="e.g. Douro Partners PPM v1">
+        <input type="text" id="editDocName">
       </div>
       <div class="form-group">
         <label>Category</label>
         <select id="editDocCategory">
-          <option>PPM</option>
-          <option>Financials</option>
-          <option>Presentation</option>
-          <option>Legal</option>
-          <option>Other</option>
+          <option>PPM</option><option>Financials</option>
+          <option>Presentation</option><option>Legal</option><option>Other</option>
         </select>
       </div>
       <div class="form-group">
         <label>Description <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
-        <textarea id="editDocDescription" placeholder="Brief description shown to investors"></textarea>
+        <textarea id="editDocDescription"></textarea>
       </div>
       <div class="modal-actions">
-        <button class="btn btn--ghost" id="cancelEditBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
+        <button class="btn btn--ghost" id="cancelEditBtn">Cancel</button>
         <button class="btn btn--primary" id="saveEditBtn">Save Changes</button>
       </div>
     </div>
   </div>
 
-  <!-- Grant Access Modal -->
-  <div class="modal-overlay" id="addAccessModal">
+  <!-- ══ Grant Investor Access to Document Modal ══ -->
+  <div class="modal-overlay" id="grantAccessModal">
     <div class="modal">
       <h2>Grant Access</h2>
-      <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:20px;" id="grantDocName"></p>
+      <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:20px;" id="grantAccessDocName"></p>
       <div class="form-group">
-        <label>Investor Email</label>
-        <input type="email" id="accessEmail" placeholder="investor@example.com">
-        <p class="hint">The investor will see and download this document after signing in with this email.</p>
+        <label>Select Investor</label>
+        <select id="grantInvestorSelect"></select>
+        <p class="hint" id="grantInvestorHint"></p>
       </div>
       <div class="modal-actions">
-        <button class="btn btn--ghost" id="cancelAccessBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
-        <button class="btn btn--primary" id="saveAccessBtn">Grant Access</button>
+        <button class="btn btn--ghost" id="cancelGrantAccessBtn">Cancel</button>
+        <button class="btn btn--primary" id="saveGrantAccessBtn">Grant Access</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Grant Document to Investor Modal ══ -->
+  <div class="modal-overlay" id="grantDocToInvestorModal">
+    <div class="modal">
+      <h2>Grant Document</h2>
+      <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:20px;" id="grantDocInvestorName"></p>
+      <div class="form-group">
+        <label>Select Document</label>
+        <select id="grantDocForInvestorSelect"></select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelGrantDocToInvestorBtn">Cancel</button>
+        <button class="btn btn--primary" id="saveGrantDocToInvestorBtn">Grant Access</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Create / Edit Investor Modal ══ -->
+  <div class="modal-overlay" id="editInvestorModal">
+    <div class="modal">
+      <h2 id="editInvestorModalTitle">New Investor</h2>
+      <div class="form-group">
+        <label>Investor Name</label>
+        <input type="text" id="editInvestorName" placeholder="e.g. Sequoia Capital">
+      </div>
+
+      <div class="modal-section">
+        <div class="modal-section-label">Members</div>
+        <div class="email-input-row">
+          <input type="email" id="editInvestorEmailInput" placeholder="member@example.com">
+          <button class="btn btn--primary btn--sm" id="addInvestorEmailBtn">+ Add</button>
+        </div>
+        <div class="email-badge-list" id="editInvestorEmailList"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelEditInvestorBtn">Cancel</button>
+        <button class="btn btn--primary" id="saveInvestorBtn">Save</button>
       </div>
     </div>
   </div>
@@ -442,12 +459,23 @@
       ref, uploadBytesResumable, getDownloadURL, deleteObject
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
 
-    let currentDocId = null;
+    // ── State ──────────────────────────────────────────────────
     let allDocs      = [];
+    let allInvestors = [];
+    let currentDocId = null;
     let docSort      = { field: 'addedAt', dir: 'desc' };
-    let invSort      = { field: 'email',   dir: 'asc'  };
+    let invSort      = { field: 'name',    dir: 'asc'  };
 
-    /* ===== Auth guard ===== */
+    // Investor modal local state
+    let editInvestorId             = null;
+    let editInvestorEmails         = [];
+    let editInvestorOriginalEmails = [];
+
+    // Grant modal state
+    let grantAccessDocId      = null;
+    let grantDocInvestorId    = null;
+
+    // ── Auth guard ─────────────────────────────────────────────
     onAuthStateChanged(auth, async (user) => {
       if (!user || !ADMIN_EMAILS.includes(user.email)) {
         window.location.href = '/portal/login.html';
@@ -456,22 +484,59 @@
       document.getElementById('adminEmail').textContent      = user.email;
       document.getElementById('loadingScreen').style.display = 'none';
       document.getElementById('app').style.display           = 'block';
-      await loadDocs();
+      await loadAll();
     });
 
-    /* ===== Load & render ===== */
-    async function loadDocs() {
-      const snapshot = await getDocs(collection(db, 'documents'));
+    // ── Load everything ────────────────────────────────────────
+    async function loadAll() {
+      const [docsSnap, investorsSnap] = await Promise.all([
+        getDocs(collection(db, 'documents')),
+        getDocs(collection(db, 'investors'))
+      ]);
+
       allDocs = [];
-      snapshot.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
-      // raw load — sorting handled by renderDocs()
+      docsSnap.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
+
+      allInvestors = [];
+      investorsSnap.forEach(d => allInvestors.push({ id: d.id, ...d.data() }));
+
+      // Migration: if no investors exist but some docs have allowedEmails → create "Testing"
+      const hasEmails = allDocs.some(d => (d.allowedEmails || []).length > 0);
+      if (allInvestors.length === 0 && hasEmails) {
+        await runMigration();
+        return; // loadAll called again after migration
+      }
+
       renderDocs();
       renderInvestors();
     }
 
+    // ── Migration ──────────────────────────────────────────────
+    async function runMigration() {
+      const allEmails = new Set();
+      allDocs.forEach(d => (d.allowedEmails || []).forEach(e => allEmails.add(e)));
+
+      // Create "Testing" investor with all existing emails
+      const testingRef = await addDoc(collection(db, 'investors'), {
+        name: 'Testing',
+        emails: [...allEmails],
+        createdAt: serverTimestamp()
+      });
+
+      // Tag all docs that had emails with this investor
+      const updates = allDocs
+        .filter(d => (d.allowedEmails || []).length > 0)
+        .map(d => updateDoc(doc(db, 'documents', d.id), {
+          allowedInvestors: arrayUnion(testingRef.id)
+        }));
+      await Promise.all(updates);
+      await loadAll();
+    }
+
+    // ── Render Documents ───────────────────────────────────────
     function renderDocs() {
-      const tbody    = document.getElementById('docsTableBody');
-      const search   = (document.getElementById('docSearch')?.value || '').toLowerCase();
+      const tbody     = document.getElementById('docsTableBody');
+      const search    = (document.getElementById('docSearch')?.value || '').toLowerCase();
       const catFilter = document.getElementById('docCategoryFilter')?.value || '';
 
       let docs = [...allDocs];
@@ -480,18 +545,13 @@
 
       docs.sort((a, b) => {
         let va, vb;
-        if (docSort.field === 'addedAt') {
-          va = a.addedAt?.seconds || 0; vb = b.addedAt?.seconds || 0;
-        } else {
-          va = (a[docSort.field] || '').toLowerCase();
-          vb = (b[docSort.field] || '').toLowerCase();
-        }
+        if (docSort.field === 'addedAt') { va = a.addedAt?.seconds || 0; vb = b.addedAt?.seconds || 0; }
+        else { va = (a[docSort.field] || '').toLowerCase(); vb = (b[docSort.field] || '').toLowerCase(); }
         if (va < vb) return docSort.dir === 'asc' ? -1 :  1;
         if (va > vb) return docSort.dir === 'asc' ?  1 : -1;
         return 0;
       });
 
-      // Update header indicators
       document.querySelectorAll('th[data-sort]').forEach(th => {
         th.classList.remove('sort-asc', 'sort-desc');
         if (th.dataset.sort === docSort.field)
@@ -502,39 +562,45 @@
         tbody.innerHTML = `<tr class="empty-row"><td colspan="6">${allDocs.length ? 'No documents match the filter.' : 'No documents yet — add one above.'}</td></tr>`;
         return;
       }
+
       tbody.innerHTML = docs.map(d => {
-        const date   = d.addedAt
+        const date = d.addedAt
           ? new Date(d.addedAt.seconds * 1000).toLocaleDateString('en-GB')
           : '—';
-        const emails = d.allowedEmails || [];
-        const badges = emails.map(e =>
-          `<span class="badge badge--blue">${e}
-             <span class="badge-remove" data-doc="${d.id}" data-email="${e}" title="Revoke access">×</span>
-           </span>`
-        ).join('');
+
+        // Investor access badges (by investor entity)
+        const invIds = d.allowedInvestors || [];
+        const invBadges = invIds.map(invId => {
+          const inv  = allInvestors.find(i => i.id === invId);
+          const name = inv ? inv.name : '[deleted]';
+          return `<span class="badge badge--blue">${escHtml(name)}
+            <span class="badge-remove" data-doc="${d.id}" data-inv="${invId}" title="Revoke access">×</span>
+          </span>`;
+        }).join('');
+
         return `<tr>
-          <td><strong>${d.name}</strong></td>
+          <td><strong>${escHtml(d.name)}</strong></td>
           <td><span class="badge badge--green">${d.category || '—'}</span></td>
-          <td><code>${d.filename}</code></td>
+          <td><code>${escHtml(d.filename || '')}</code></td>
           <td>
             <div class="access-list">
-              ${badges}
-              <button class="add-access-btn" data-doc="${d.id}" data-docname="${d.name}">+ Add</button>
+              ${invBadges}
+              <button class="add-access-btn" data-doc="${d.id}" data-docname="${escHtml(d.name)}">+ Grant</button>
             </div>
           </td>
           <td style="white-space:nowrap;color:var(--text-light)">${date}</td>
           <td style="white-space:nowrap;">
             <button class="btn btn--ghost btn--sm edit-doc-btn" data-doc="${d.id}" style="margin-right:6px;">Edit</button>
-            <button class="btn btn--ghost btn--sm delete-doc-btn" data-doc="${d.id}">Delete</button>
+            <button class="btn btn--ghost btn--sm btn--ghost-danger delete-doc-btn" data-doc="${d.id}">Delete</button>
           </td>
         </tr>`;
       }).join('');
 
-      tbody.querySelectorAll('.badge-remove').forEach(el =>
-        el.addEventListener('click', () => revokeAccess(el.dataset.doc, el.dataset.email))
+      tbody.querySelectorAll('.badge-remove[data-inv]').forEach(el =>
+        el.addEventListener('click', () => revokeInvestorFromDoc(el.dataset.doc, el.dataset.inv))
       );
       tbody.querySelectorAll('.add-access-btn').forEach(el =>
-        el.addEventListener('click', () => openAccessModal(el.dataset.doc, el.dataset.docname))
+        el.addEventListener('click', () => openGrantAccessModal(el.dataset.doc, el.dataset.docname))
       );
       tbody.querySelectorAll('.edit-doc-btn').forEach(el =>
         el.addEventListener('click', () => openEditModal(el.dataset.doc))
@@ -544,64 +610,329 @@
       );
     }
 
+    // ── Render Investors ───────────────────────────────────────
     function renderInvestors() {
-      const map = {};
-      allDocs.forEach(d =>
-        (d.allowedEmails || []).forEach(email => {
-          if (!map[email]) map[email] = [];
-          map[email].push({ id: d.id, name: d.name });
-        })
-      );
+      const tbody  = document.getElementById('investorsTableBody');
       const search = (document.getElementById('investorSearch')?.value || '').toLowerCase();
-      let entries = Object.entries(map);
-      if (search) entries = entries.filter(([email]) => email.toLowerCase().includes(search));
 
-      entries.sort((a, b) => {
-        const va = invSort.field === 'email' ? a[0].toLowerCase() : a[1].length;
-        const vb = invSort.field === 'email' ? b[0].toLowerCase() : b[1].length;
+      let investors = [...allInvestors];
+      if (search) investors = investors.filter(i => i.name.toLowerCase().includes(search));
+
+      investors.sort((a, b) => {
+        let va, vb;
+        if (invSort.field === 'docs') {
+          va = allDocs.filter(d => (d.allowedInvestors || []).includes(a.id)).length;
+          vb = allDocs.filter(d => (d.allowedInvestors || []).includes(b.id)).length;
+        } else {
+          va = (a.name || '').toLowerCase();
+          vb = (b.name || '').toLowerCase();
+        }
         if (va < vb) return invSort.dir === 'asc' ? -1 :  1;
         if (va > vb) return invSort.dir === 'asc' ?  1 : -1;
         return 0;
       });
 
-      // Update header indicators
       document.querySelectorAll('th[data-sort-inv]').forEach(th => {
         th.classList.remove('sort-asc', 'sort-desc');
         if (th.dataset.sortInv === invSort.field)
           th.classList.add(invSort.dir === 'asc' ? 'sort-asc' : 'sort-desc');
       });
 
-      const tbody = document.getElementById('investorsTableBody');
-      if (!entries.length) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No investors with access yet.</td></tr>';
+      if (!investors.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No investors yet — create one above.</td></tr>';
         return;
       }
-      tbody.innerHTML = entries.map(([email, docs]) => `
-        <tr>
-          <td><strong>${email}</strong></td>
-          <td style="color:var(--text-light);font-size:0.82rem;">${docs.length} / ${allDocs.length}</td>
-          <td>
-            <div class="access-list">
-              ${docs.map(d => `
-                <span class="badge badge--green">${d.name}
-                  <span class="badge-remove inv-revoke" data-doc="${d.id}" data-email="${email}" title="Revoke access">×</span>
-                </span>`).join('')}
-              <button class="add-access-btn inv-grant" data-email="${email}">+ Grant Document</button>
-            </div>
-          </td>
-          <td></td>
-        </tr>
-      `).join('');
 
-      tbody.querySelectorAll('.inv-revoke').forEach(el =>
-        el.addEventListener('click', () => revokeAccess(el.dataset.doc, el.dataset.email))
+      tbody.innerHTML = investors.map(inv => {
+        const docCount   = allDocs.filter(d => (d.allowedInvestors || []).includes(inv.id)).length;
+        const emailCount = (inv.emails || []).length;
+        const emailsStr  = emailCount === 1 ? '1 member' : `${emailCount} members`;
+        return `<tr>
+          <td><strong>${escHtml(inv.name)}</strong></td>
+          <td>
+            <span class="badge badge--grey">${emailsStr}</span>
+          </td>
+          <td>
+            <span style="color:var(--text-light);font-size:0.82rem;">${docCount} / ${allDocs.length}</span>
+            ${docCount < allDocs.length
+              ? `<button class="add-access-btn inv-grant-doc" data-inv="${inv.id}" style="margin-left:8px;">+ Grant Doc</button>`
+              : ''}
+          </td>
+          <td style="white-space:nowrap;">
+            <button class="btn btn--ghost btn--sm edit-inv-btn" data-inv="${inv.id}" style="margin-right:6px;">Edit</button>
+            <button class="btn btn--ghost btn--sm btn--ghost-danger delete-inv-btn" data-inv="${inv.id}">Delete</button>
+          </td>
+        </tr>`;
+      }).join('');
+
+      tbody.querySelectorAll('.edit-inv-btn').forEach(el =>
+        el.addEventListener('click', () => openEditInvestorModal(el.dataset.inv))
       );
-      tbody.querySelectorAll('.inv-grant').forEach(el =>
-        el.addEventListener('click', () => openGrantDocModal(el.dataset.email))
+      tbody.querySelectorAll('.delete-inv-btn').forEach(el =>
+        el.addEventListener('click', () => deleteInvestor(el.dataset.inv))
+      );
+      tbody.querySelectorAll('.inv-grant-doc').forEach(el =>
+        el.addEventListener('click', () => openGrantDocToInvestorModal(el.dataset.inv))
       );
     }
 
-    /* ===== Add document ===== */
+    // ── Grant investor access to a document (from docs table) ──
+    function openGrantAccessModal(docId, docName) {
+      grantAccessDocId = docId;
+      document.getElementById('grantAccessDocName').textContent = `Document: ${docName}`;
+
+      const d = allDocs.find(dd => dd.id === docId);
+      const alreadyGranted = d ? (d.allowedInvestors || []) : [];
+      const available = allInvestors.filter(i => !alreadyGranted.includes(i.id));
+
+      const select = document.getElementById('grantInvestorSelect');
+      const hint   = document.getElementById('grantInvestorHint');
+
+      if (!allInvestors.length) {
+        select.innerHTML = '<option disabled>No investors yet — create one first</option>';
+        hint.textContent = '';
+      } else if (!available.length) {
+        select.innerHTML = '<option disabled>All investors already have access</option>';
+        hint.textContent = '';
+      } else {
+        select.innerHTML = available.map(i =>
+          `<option value="${i.id}">${escHtml(i.name)} (${(i.emails||[]).length} member${(i.emails||[]).length !== 1 ? 's' : ''})</option>`
+        ).join('');
+        select.addEventListener('change', updateGrantHint);
+        updateGrantHint();
+      }
+      document.getElementById('grantAccessModal').classList.add('open');
+    }
+
+    function updateGrantHint() {
+      const invId = document.getElementById('grantInvestorSelect').value;
+      const inv   = allInvestors.find(i => i.id === invId);
+      const hint  = document.getElementById('grantInvestorHint');
+      if (!inv || !(inv.emails || []).length) {
+        hint.textContent = 'This investor has no members yet — add emails first.';
+      } else {
+        hint.textContent = `Will grant access to: ${inv.emails.join(', ')}`;
+      }
+    }
+
+    document.getElementById('cancelGrantAccessBtn').addEventListener('click', () =>
+      document.getElementById('grantAccessModal').classList.remove('open')
+    );
+    document.getElementById('saveGrantAccessBtn').addEventListener('click', async () => {
+      const investorId = document.getElementById('grantInvestorSelect').value;
+      if (!investorId) return;
+      const inv = allInvestors.find(i => i.id === investorId);
+      if (!inv) return;
+
+      const updateData = { allowedInvestors: arrayUnion(investorId) };
+      if ((inv.emails || []).length > 0) {
+        updateData.allowedEmails = arrayUnion(...inv.emails);
+      }
+      await updateDoc(doc(db, 'documents', grantAccessDocId), updateData);
+      document.getElementById('grantAccessModal').classList.remove('open');
+      await loadAll();
+    });
+
+    // ── Revoke investor from document ──────────────────────────
+    async function revokeInvestorFromDoc(docId, investorId) {
+      const d   = allDocs.find(dd => dd.id === docId);
+      const inv = allInvestors.find(i  => i.id === investorId);
+      const name = inv ? inv.name : 'this investor';
+      if (!d) return;
+      if (!confirm(`Revoke access for "${name}"?`)) return;
+
+      const newInvIds = (d.allowedInvestors || []).filter(id => id !== investorId);
+
+      // Recompute allowedEmails from remaining investors only
+      const remainingEmails = new Set(
+        newInvIds.flatMap(id => {
+          const ri = allInvestors.find(i => i.id === id);
+          return ri ? (ri.emails || []) : [];
+        })
+      );
+
+      await updateDoc(doc(db, 'documents', docId), {
+        allowedInvestors: newInvIds,
+        allowedEmails:    [...remainingEmails]
+      });
+      await loadAll();
+    }
+
+    // ── Grant document to investor (from investors table) ──────
+    function openGrantDocToInvestorModal(investorId) {
+      grantDocInvestorId = investorId;
+      const inv = allInvestors.find(i => i.id === investorId);
+      document.getElementById('grantDocInvestorName').textContent = `Investor: ${inv?.name || ''}`;
+
+      const alreadyHas = allDocs.filter(d => (d.allowedInvestors || []).includes(investorId)).map(d => d.id);
+      const available  = allDocs.filter(d => !alreadyHas.includes(d.id));
+
+      const select = document.getElementById('grantDocForInvestorSelect');
+      if (!available.length) {
+        select.innerHTML = '<option disabled>All documents already granted</option>';
+      } else {
+        select.innerHTML = available.map(d => `<option value="${d.id}">${escHtml(d.name)}</option>`).join('');
+      }
+      document.getElementById('grantDocToInvestorModal').classList.add('open');
+    }
+
+    document.getElementById('cancelGrantDocToInvestorBtn').addEventListener('click', () =>
+      document.getElementById('grantDocToInvestorModal').classList.remove('open')
+    );
+    document.getElementById('saveGrantDocToInvestorBtn').addEventListener('click', async () => {
+      const docId = document.getElementById('grantDocForInvestorSelect').value;
+      if (!docId) return;
+      const inv = allInvestors.find(i => i.id === grantDocInvestorId);
+      if (!inv) return;
+
+      const updateData = { allowedInvestors: arrayUnion(grantDocInvestorId) };
+      if ((inv.emails || []).length > 0) {
+        updateData.allowedEmails = arrayUnion(...inv.emails);
+      }
+      await updateDoc(doc(db, 'documents', docId), updateData);
+      document.getElementById('grantDocToInvestorModal').classList.remove('open');
+      await loadAll();
+    });
+
+    // ── Create / Edit Investor Modal ───────────────────────────
+    function openEditInvestorModal(investorId) {
+      editInvestorId = investorId || null;
+      const inv = investorId ? allInvestors.find(i => i.id === investorId) : null;
+
+      document.getElementById('editInvestorModalTitle').textContent = inv ? 'Edit Investor' : 'New Investor';
+      document.getElementById('editInvestorName').value = inv ? inv.name : '';
+      document.getElementById('editInvestorEmailInput').value = '';
+
+      editInvestorEmails         = inv ? [...(inv.emails || [])] : [];
+      editInvestorOriginalEmails = [...editInvestorEmails];
+
+      renderInvestorModalEmails();
+      document.getElementById('editInvestorModal').classList.add('open');
+      setTimeout(() => document.getElementById('editInvestorName').focus(), 100);
+    }
+
+    function renderInvestorModalEmails() {
+      const container = document.getElementById('editInvestorEmailList');
+      if (!editInvestorEmails.length) {
+        container.innerHTML = '<span style="color:var(--text-light);font-size:0.82rem;font-style:italic;">No members yet.</span>';
+        return;
+      }
+      container.innerHTML = editInvestorEmails.map(e =>
+        `<span class="badge badge--blue" style="margin:2px;">
+          ${escHtml(e)}
+          <span class="badge-remove modal-email-remove" data-email="${escAttr(e)}" title="Remove">×</span>
+        </span>`
+      ).join('');
+      container.querySelectorAll('.modal-email-remove').forEach(el =>
+        el.addEventListener('click', () => {
+          editInvestorEmails = editInvestorEmails.filter(x => x !== el.dataset.email);
+          renderInvestorModalEmails();
+        })
+      );
+    }
+
+    document.getElementById('addInvestorEmailBtn').addEventListener('click', addEmailToModal);
+    document.getElementById('editInvestorEmailInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); addEmailToModal(); }
+    });
+
+    function addEmailToModal() {
+      const input = document.getElementById('editInvestorEmailInput');
+      const email = input.value.trim().toLowerCase();
+      if (!email) return;
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        alert('Please enter a valid email address.'); return;
+      }
+      if (editInvestorEmails.includes(email)) {
+        alert('This email is already in the list.'); return;
+      }
+      editInvestorEmails.push(email);
+      input.value = '';
+      renderInvestorModalEmails();
+      input.focus();
+    }
+
+    document.getElementById('cancelEditInvestorBtn').addEventListener('click', () =>
+      document.getElementById('editInvestorModal').classList.remove('open')
+    );
+
+    document.getElementById('saveInvestorBtn').addEventListener('click', async () => {
+      const name = document.getElementById('editInvestorName').value.trim();
+      if (!name) { alert('Investor name is required.'); return; }
+
+      const btn = document.getElementById('saveInvestorBtn');
+      btn.disabled = true; btn.textContent = 'Saving…';
+
+      if (!editInvestorId) {
+        // ── CREATE ──────────────────────────────
+        await addDoc(collection(db, 'investors'), {
+          name,
+          emails: editInvestorEmails,
+          createdAt: serverTimestamp()
+        });
+      } else {
+        // ── UPDATE ──────────────────────────────
+        const added   = editInvestorEmails.filter(e => !editInvestorOriginalEmails.includes(e));
+        const removed = editInvestorOriginalEmails.filter(e => !editInvestorEmails.includes(e));
+
+        await updateDoc(doc(db, 'investors', editInvestorId), { name, emails: editInvestorEmails });
+
+        const docsWithAccess = allDocs.filter(d => (d.allowedInvestors || []).includes(editInvestorId));
+
+        // Add new emails to all docs this investor can access
+        for (const email of added) {
+          await Promise.all(docsWithAccess.map(d =>
+            updateDoc(doc(db, 'documents', d.id), { allowedEmails: arrayUnion(email) })
+          ));
+        }
+
+        // Remove emails from docs — only if no other investor with access has that email
+        for (const email of removed) {
+          await Promise.all(docsWithAccess.map(async d => {
+            const otherInvIds = (d.allowedInvestors || []).filter(id => id !== editInvestorId);
+            const stillCovered = otherInvIds.some(id => {
+              const oi = allInvestors.find(i => i.id === id);
+              return oi && (oi.emails || []).includes(email);
+            });
+            if (!stillCovered) {
+              await updateDoc(doc(db, 'documents', d.id), { allowedEmails: arrayRemove(email) });
+            }
+          }));
+        }
+      }
+
+      document.getElementById('editInvestorModal').classList.remove('open');
+      btn.disabled = false; btn.textContent = 'Save';
+      await loadAll();
+    });
+
+    // ── Delete Investor ────────────────────────────────────────
+    async function deleteInvestor(investorId) {
+      const inv = allInvestors.find(i => i.id === investorId);
+      if (!inv) return;
+      if (!confirm(`Delete investor "${inv.name}"?\n\nAll document access for this investor will be revoked.`)) return;
+
+      await Promise.all(allDocs.map(async d => {
+        if (!(d.allowedInvestors || []).includes(investorId)) return;
+
+        const newInvIds = (d.allowedInvestors || []).filter(id => id !== investorId);
+        const remainingEmails = new Set(
+          newInvIds.flatMap(id => {
+            const ri = allInvestors.find(i => i.id === id);
+            return ri ? (ri.emails || []) : [];
+          })
+        );
+        await updateDoc(doc(db, 'documents', d.id), {
+          allowedInvestors: newInvIds,
+          allowedEmails:    [...remainingEmails]
+        });
+      }));
+
+      await deleteDoc(doc(db, 'investors', investorId));
+      await loadAll();
+    }
+
+    // ── Add Document ───────────────────────────────────────────
     document.getElementById('addDocBtn').addEventListener('click', () =>
       document.getElementById('addDocModal').classList.add('open')
     );
@@ -614,16 +945,14 @@
       const description = document.getElementById('docDescription').value.trim();
       const file        = document.getElementById('docFile').files[0];
 
-      if (!name)  { alert('Document name is required.'); return; }
-      if (!file)  { alert('Please select a PDF file.'); return; }
+      if (!name) { alert('Document name is required.'); return; }
+      if (!file) { alert('Please select a PDF file.'); return; }
       if (file.size > 20 * 1024 * 1024) { alert('File is too large. Max 20 MB.'); return; }
 
       const saveBtn = document.getElementById('saveDocBtn');
-      saveBtn.disabled  = true;
-      saveBtn.textContent = 'Uploading…';
+      saveBtn.disabled = true; saveBtn.textContent = 'Uploading…';
 
-      // Upload to Firebase Storage
-      const filename  = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const filename   = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
       const storageRef = ref(storage, `documents/${filename}`);
       const uploadTask = uploadBytesResumable(storageRef, file);
 
@@ -637,63 +966,31 @@
         },
         (error) => {
           alert('Upload failed: ' + error.message);
-          saveBtn.disabled    = false;
-          saveBtn.textContent = 'Add Document';
+          saveBtn.disabled = false; saveBtn.textContent = 'Add Document';
           document.getElementById('uploadProgress').style.display = 'none';
         },
         async () => {
           const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
           await addDoc(collection(db, 'documents'), {
-            name, category, description, filename,
-            downloadURL,
-            allowedEmails: [],
+            name, category, description, filename, downloadURL,
+            allowedEmails:    [],
+            allowedInvestors: [],
             addedAt: serverTimestamp()
           });
           document.getElementById('addDocModal').classList.remove('open');
           document.getElementById('uploadProgress').style.display = 'none';
           document.getElementById('progressBar').style.width = '0%';
-          ['docName','docDescription'].forEach(id =>
-            document.getElementById(id).value = ''
-          );
+          ['docName', 'docDescription'].forEach(id => document.getElementById(id).value = '');
           document.getElementById('docFile').value = '';
-          saveBtn.disabled    = false;
-          saveBtn.textContent = 'Add Document';
-          await loadDocs();
+          saveBtn.disabled = false; saveBtn.textContent = 'Add Document';
+          await loadAll();
         }
       );
     });
 
-    /* ===== Grant document to investor ===== */
-    let grantTargetEmail = null;
-    function openGrantDocModal(email) {
-      grantTargetEmail = email;
-      document.getElementById('grantDocInvestorEmail').textContent = `Investor: ${email}`;
-      const alreadyHas = allDocs
-        .filter(d => (d.allowedEmails || []).includes(email))
-        .map(d => d.id);
-      const available = allDocs.filter(d => !alreadyHas.includes(d.id));
-      const select = document.getElementById('grantDocSelect');
-      if (!available.length) {
-        select.innerHTML = '<option disabled>All documents already granted</option>';
-      } else {
-        select.innerHTML = available.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
-      }
-      document.getElementById('grantDocModal').classList.add('open');
-    }
-    document.getElementById('cancelGrantDocBtn').addEventListener('click', () =>
-      document.getElementById('grantDocModal').classList.remove('open')
-    );
-    document.getElementById('saveGrantDocBtn').addEventListener('click', async () => {
-      const docId = document.getElementById('grantDocSelect').value;
-      if (!docId) return;
-      await updateDoc(doc(db, 'documents', docId), { allowedEmails: arrayUnion(grantTargetEmail) });
-      document.getElementById('grantDocModal').classList.remove('open');
-      await loadDocs();
-    });
-
-    /* ===== Edit document ===== */
+    // ── Edit Document ──────────────────────────────────────────
     function openEditModal(docId) {
-      const d = allDocs.find(doc => doc.id === docId);
+      const d = allDocs.find(dd => dd.id === docId);
       if (!d) return;
       currentDocId = docId;
       document.getElementById('editDocName').value        = d.name || '';
@@ -711,48 +1008,16 @@
       const description = document.getElementById('editDocDescription').value.trim();
       if (!name) { alert('Document name is required.'); return; }
       const btn = document.getElementById('saveEditBtn');
-      btn.disabled = true;
-      btn.textContent = 'Saving…';
+      btn.disabled = true; btn.textContent = 'Saving…';
       await updateDoc(doc(db, 'documents', currentDocId), { name, category, description });
       document.getElementById('editDocModal').classList.remove('open');
-      btn.disabled = false;
-      btn.textContent = 'Save Changes';
-      await loadDocs();
+      btn.disabled = false; btn.textContent = 'Save Changes';
+      await loadAll();
     });
 
-    /* ===== Grant access ===== */
-    function openAccessModal(docId, docName) {
-      currentDocId = docId;
-      document.getElementById('grantDocName').textContent  = `Document: ${docName}`;
-      document.getElementById('accessEmail').value         = '';
-      document.getElementById('addAccessModal').classList.add('open');
-      setTimeout(() => document.getElementById('accessEmail').focus(), 100);
-    }
-    document.getElementById('cancelAccessBtn').addEventListener('click', () =>
-      document.getElementById('addAccessModal').classList.remove('open')
-    );
-    document.getElementById('saveAccessBtn').addEventListener('click', async () => {
-      const email = document.getElementById('accessEmail').value.trim().toLowerCase();
-      if (!email) { alert('Please enter an email address.'); return; }
-      await updateDoc(doc(db, 'documents', currentDocId), {
-        allowedEmails: arrayUnion(email)
-      });
-      document.getElementById('addAccessModal').classList.remove('open');
-      await loadDocs();
-    });
-
-    /* ===== Revoke access ===== */
-    async function revokeAccess(docId, email) {
-      if (!confirm(`Revoke access for ${email}?`)) return;
-      await updateDoc(doc(db, 'documents', docId), {
-        allowedEmails: arrayRemove(email)
-      });
-      await loadDocs();
-    }
-
-    /* ===== Delete document ===== */
+    // ── Delete Document ────────────────────────────────────────
     async function deleteDocument(docId) {
-      const d = allDocs.find(doc => doc.id === docId);
+      const d = allDocs.find(dd => dd.id === docId);
       if (!d) return;
       if (!confirm(`Delete "${d.name}"?\n\nThis will permanently remove the document and its PDF file.`)) return;
       try {
@@ -765,10 +1030,10 @@
         }
       }
       await deleteDoc(doc(db, 'documents', docId));
-      await loadDocs();
+      await loadAll();
     }
 
-    /* ===== Sort & filter ===== */
+    // ── Sort & filter ──────────────────────────────────────────
     document.getElementById('docSearch').addEventListener('input', renderDocs);
     document.getElementById('docCategoryFilter').addEventListener('change', renderDocs);
     document.getElementById('investorSearch').addEventListener('input', renderInvestors);
@@ -797,18 +1062,33 @@
       });
     });
 
-    /* ===== Sign out ===== */
+    // ── New Investor button ────────────────────────────────────
+    document.getElementById('addInvestorBtn').addEventListener('click', () =>
+      openEditInvestorModal(null)
+    );
+
+    // ── Sign out ───────────────────────────────────────────────
     document.getElementById('signOutBtn').addEventListener('click', async () => {
       await signOut(auth);
       window.location.href = '/portal/login.html';
     });
 
-    /* Close modals on overlay click */
+    // ── Close modals on overlay click ──────────────────────────
     document.querySelectorAll('.modal-overlay').forEach(overlay =>
       overlay.addEventListener('click', e => {
         if (e.target === overlay) overlay.classList.remove('open');
       })
     );
+
+    // ── Helpers ────────────────────────────────────────────────
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    function escAttr(str) {
+      return String(str).replace(/"/g,'&quot;');
+    }
   </script>
 </body>
 </html>
