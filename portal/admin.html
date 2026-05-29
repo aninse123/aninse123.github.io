@@ -489,26 +489,35 @@
 
     // ── Load everything ────────────────────────────────────────
     async function loadAll() {
-      const [docsSnap, investorsSnap] = await Promise.all([
-        getDocs(collection(db, 'documents')),
-        getDocs(collection(db, 'investors'))
-      ]);
+      try {
+        const [docsSnap, investorsSnap] = await Promise.all([
+          getDocs(collection(db, 'documents')),
+          getDocs(collection(db, 'investors'))
+        ]);
 
-      allDocs = [];
-      docsSnap.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
+        allDocs = [];
+        docsSnap.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
 
-      allInvestors = [];
-      investorsSnap.forEach(d => allInvestors.push({ id: d.id, ...d.data() }));
+        allInvestors = [];
+        investorsSnap.forEach(d => allInvestors.push({ id: d.id, ...d.data() }));
 
-      // Migration: if no investors exist but some docs have allowedEmails → create "Testing"
-      const hasEmails = allDocs.some(d => (d.allowedEmails || []).length > 0);
-      if (allInvestors.length === 0 && hasEmails) {
-        await runMigration();
-        return; // loadAll called again after migration
+        // Migration: if no investors exist but some docs have allowedEmails → create "Testing"
+        const hasEmails = allDocs.some(d => (d.allowedEmails || []).length > 0);
+        if (allInvestors.length === 0 && hasEmails) {
+          await runMigration();
+          return; // loadAll called again after migration
+        }
+
+        renderDocs();
+        renderInvestors();
+      } catch (err) {
+        console.error('loadAll error:', err);
+        const errMsg = `Error loading data: ${err.message || err.code || err}. Check Firestore security rules.`;
+        document.getElementById('docsTableBody').innerHTML =
+          `<tr class="empty-row"><td colspan="6" style="color:var(--danger);">${errMsg}</td></tr>`;
+        document.getElementById('investorsTableBody').innerHTML =
+          `<tr class="empty-row"><td colspan="4" style="color:var(--danger);">${errMsg}</td></tr>`;
       }
-
-      renderDocs();
-      renderInvestors();
     }
 
     // ── Migration ──────────────────────────────────────────────
