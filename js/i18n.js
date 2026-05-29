@@ -8,7 +8,7 @@ const translations = {
       investorLogin: "Investor Login"
     },
     hero: {
-      title: "Honoring Legacy. Driving the Future.",
+      title: "Honoring the Heritage. Building the Future.",
       subtitle: "We acquire and operate enduring businesses in Portugal, partnering with founders who care about what they leave behind.",
       cta: "Get in Touch"
     },
@@ -74,7 +74,7 @@ const translations = {
       }
     },
     footer: {
-      tagline: "Honoring Legacy. Driving the Future.",
+      tagline: "Honoring the Heritage. Building the Future.",
       copy: "© {year} Douro Partners. All rights reserved."
     },
     cookie: {
@@ -93,7 +93,7 @@ const translations = {
       investorLogin: "Área de Investidores"
     },
     hero: {
-      title: "Honrar o Legado. Impulsionar o Futuro.",
+      title: "Honrar o Património. Construir o Futuro.",
       subtitle: "Adquirimos e gerimos empresas duradouras em Portugal, em parceria com fundadores que se preocupam com o legado que deixam.",
       cta: "Contacte-nos"
     },
@@ -159,7 +159,7 @@ const translations = {
       }
     },
     footer: {
-      tagline: "Honrar o Legado. Impulsionar o Futuro.",
+      tagline: "Honrar o Património. Construir o Futuro.",
       copy: "© {year} Douro Partners. Todos os direitos reservados."
     },
     cookie: {
