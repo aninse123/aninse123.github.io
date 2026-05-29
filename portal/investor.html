@@ -65,6 +65,8 @@
     }
     .nav__logo { height: 65px; }
     .nav__right { display: flex; align-items: center; gap: 16px; }
+    .nav__main-link { font-size: 0.82rem; color: var(--text-light); text-decoration: none; transition: color 0.2s; }
+    .nav__main-link:hover { color: var(--primary); }
     .nav__email { font-size: 0.82rem; color: var(--text-light); }
     .sign-out-btn {
       font-size: 0.82rem; font-weight: 600;
@@ -170,8 +172,9 @@
 
     <nav class="nav">
       <div class="nav__inner">
-        <img src="../assets/logo.png" alt="Douro Partners" class="nav__logo">
+        <a href="/"><img src="../assets/logo.png" alt="Douro Partners" class="nav__logo"></a>
         <div class="nav__right">
+          <a href="/" class="nav__main-link">← Main site</a>
           <span class="nav__email" id="userEmail"></span>
           <button class="sign-out-btn" id="signOutBtn">Sign out</button>
         </div>
