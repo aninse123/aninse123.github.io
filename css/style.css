@@ -90,7 +90,7 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   align-items: center;
   gap: 24px;
 }
-.nav__logo img { height: 52px; }
+.nav__logo img { height: 65px; }
 .nav__links {
   display: flex;
   gap: 36px;
