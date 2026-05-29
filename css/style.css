@@ -262,7 +262,7 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   border-radius: 50%;
   overflow: hidden;
   margin: 0 auto 24px;
-  background: var(--bg);
+  background: var(--white);
   border: 3px solid var(--primary);
   display: flex;
   align-items: center;
