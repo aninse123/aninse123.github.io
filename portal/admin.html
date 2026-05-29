@@ -327,6 +327,35 @@
     </div>
   </div>
 
+  <!-- Edit Document Modal -->
+  <div class="modal-overlay" id="editDocModal">
+    <div class="modal">
+      <h2>Edit Document</h2>
+      <div class="form-group">
+        <label>Document Name</label>
+        <input type="text" id="editDocName" placeholder="e.g. Douro Partners PPM v1">
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <select id="editDocCategory">
+          <option>PPM</option>
+          <option>Financials</option>
+          <option>Presentation</option>
+          <option>Legal</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Description <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+        <textarea id="editDocDescription" placeholder="Brief description shown to investors"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelEditBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
+        <button class="btn btn--primary" id="saveEditBtn">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Grant Access Modal -->
   <div class="modal-overlay" id="addAccessModal">
     <div class="modal">
@@ -409,7 +438,8 @@
             </div>
           </td>
           <td style="white-space:nowrap;color:var(--text-light)">${date}</td>
-          <td>
+          <td style="white-space:nowrap;">
+            <button class="btn btn--ghost btn--sm edit-doc-btn" data-doc="${d.id}" style="margin-right:6px;">Edit</button>
             <button class="btn btn--ghost btn--sm delete-doc-btn" data-doc="${d.id}">Delete</button>
           </td>
         </tr>`;
@@ -420,6 +450,9 @@
       );
       tbody.querySelectorAll('.add-access-btn').forEach(el =>
         el.addEventListener('click', () => openAccessModal(el.dataset.doc, el.dataset.docname))
+      );
+      tbody.querySelectorAll('.edit-doc-btn').forEach(el =>
+        el.addEventListener('click', () => openEditModal(el.dataset.doc))
       );
       tbody.querySelectorAll('.delete-doc-btn').forEach(el =>
         el.addEventListener('click', () => deleteDocument(el.dataset.doc))
@@ -509,6 +542,35 @@
           await loadDocs();
         }
       );
+    });
+
+    /* ===== Edit document ===== */
+    function openEditModal(docId) {
+      const d = allDocs.find(doc => doc.id === docId);
+      if (!d) return;
+      currentDocId = docId;
+      document.getElementById('editDocName').value        = d.name || '';
+      document.getElementById('editDocCategory').value   = d.category || 'Other';
+      document.getElementById('editDocDescription').value = d.description || '';
+      document.getElementById('editDocModal').classList.add('open');
+      setTimeout(() => document.getElementById('editDocName').focus(), 100);
+    }
+    document.getElementById('cancelEditBtn').addEventListener('click', () =>
+      document.getElementById('editDocModal').classList.remove('open')
+    );
+    document.getElementById('saveEditBtn').addEventListener('click', async () => {
+      const name        = document.getElementById('editDocName').value.trim();
+      const category    = document.getElementById('editDocCategory').value;
+      const description = document.getElementById('editDocDescription').value.trim();
+      if (!name) { alert('Document name is required.'); return; }
+      const btn = document.getElementById('saveEditBtn');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      await updateDoc(doc(db, 'documents', currentDocId), { name, category, description });
+      document.getElementById('editDocModal').classList.remove('open');
+      btn.disabled = false;
+      btn.textContent = 'Save Changes';
+      await loadDocs();
     });
 
     /* ===== Grant access ===== */
