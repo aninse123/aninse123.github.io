@@ -534,7 +534,6 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   .nav__links.open { display: flex; }
   .nav__links a {
     padding: 14px 24px;
-    border-bottom: 1px solid var(--border);
     font-size: 0.95rem;
   }
 
