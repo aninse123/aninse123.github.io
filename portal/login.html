@@ -109,6 +109,21 @@
     .message--success { background: #EBF5EB; color: var(--secondary); border: 1px solid #C3E0C3; }
     .message--error   { background: #FBE9E9; color: #B33A3A;          border: 1px solid #F0C0C0; }
     .message--info    { background: #EBF3FA; color: var(--primary);   border: 1px solid #C3D8EA; }
+    .spam-notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-top: 16px;
+      padding: 14px 16px;
+      background: #FFF8EC;
+      border: 1px solid #F0D9A0;
+      border-radius: var(--radius);
+      font-size: 0.88rem;
+      color: #7A5C1A;
+      line-height: 1.55;
+      text-align: left;
+    }
+    .spam-notice__icon { font-size: 1.4rem; flex-shrink: 0; line-height: 1; }
     .back { margin-top: 28px; }
     .back a { font-size: 0.85rem; color: var(--text-light); text-decoration: none; }
     .back a:hover { color: var(--primary); }
@@ -141,6 +156,14 @@
         <button type="submit" class="btn" id="submitBtn">Send sign-in link</button>
       </form>
       <div id="successMsg" class="message message--success"></div>
+      <div id="spamNotice" class="spam-notice" style="display:none;">
+        <div class="spam-notice__icon">📬</div>
+        <div>
+          <strong>Check your inbox</strong> — and if you don't see it within a minute,
+          <strong>check your spam or junk folder.</strong>
+          The email comes from <span style="white-space:nowrap">noreply@douro-partners.firebaseapp.com</span>.
+        </div>
+      </div>
       <div id="errorMsg"   class="message message--error"></div>
     </div>
 
@@ -226,8 +249,9 @@
       try {
         await sendSignInLinkToEmail(auth, email, actionCodeSettings);
         window.localStorage.setItem('emailForSignIn', email);
-        successMsg.textContent  = '✓ Link sent! Check your inbox and click the sign-in link. You can close this tab.';
+        successMsg.textContent   = `✓ Sign-in link sent to ${email}.`;
         successMsg.style.display = 'block';
+        document.getElementById('spamNotice').style.display = 'flex';
         document.getElementById('loginForm').reset();
       } catch (err) {
         errorMsg.textContent  = err.message || 'Something went wrong. Please try again.';
