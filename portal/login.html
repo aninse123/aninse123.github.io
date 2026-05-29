@@ -110,23 +110,23 @@
       background: #EBF5EB;
       border: 1px solid #C3E0C3;
       border-radius: var(--radius);
-      padding: 24px 20px;
+      padding: 16px 18px;
       color: #2D5A2D;
-      font-size: 0.9rem;
-      line-height: 1.65;
+      font-size: 0.88rem;
+      line-height: 1.6;
     }
-    .sent-notice__icon { font-size: 2rem; margin-bottom: 12px; }
+    .sent-notice__icon { font-size: 1.5rem; margin-bottom: 6px; }
     .sent-notice__email {
       display: inline-block;
       font-weight: 600;
       color: var(--primary);
       word-break: break-all;
-      margin: 4px 0 8px;
+      margin: 2px 0 6px;
     }
     .sent-notice__spam {
-      font-size: 0.82rem;
+      font-size: 0.80rem;
       color: #4A7A4A;
-      margin-top: 10px;
+      margin-top: 8px;
     }
 
     /* Error */
@@ -174,9 +174,10 @@
   <div class="card">
     <img src="../assets/logo.png" alt="Douro Partners" class="logo">
 
+    <h1>Investor Access</h1>
+
     <!-- State 1: Email form -->
     <div id="formView">
-      <h1>Investor Access</h1>
       <p class="subtitle">Enter your email address and we'll send you a secure, one-time sign-in link.</p>
       <form id="loginForm">
         <div class="form-group">
@@ -189,7 +190,7 @@
     </div>
 
     <!-- State 2: Link sent confirmation -->
-    <div id="sentView" style="display:none;">
+    <div id="sentView" style="display:none;margin-top:24px;">
       <div class="sent-notice">
         <div class="sent-notice__icon">📬</div>
         <div>
