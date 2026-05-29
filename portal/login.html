@@ -111,19 +111,20 @@
     .message--info    { background: #EBF3FA; color: var(--primary);   border: 1px solid #C3D8EA; }
     .spam-notice {
       display: flex;
-      align-items: flex-start;
-      gap: 12px;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
       margin-top: 16px;
-      padding: 14px 16px;
+      padding: 16px 18px;
       background: #FFF8EC;
       border: 1px solid #F0D9A0;
       border-radius: var(--radius);
       font-size: 0.88rem;
       color: #7A5C1A;
-      line-height: 1.55;
-      text-align: left;
+      line-height: 1.6;
+      text-align: center;
     }
-    .spam-notice__icon { font-size: 1.4rem; flex-shrink: 0; line-height: 1; }
+    .spam-notice__icon { font-size: 1.6rem; line-height: 1; }
     .back { margin-top: 28px; }
     .back a { font-size: 0.85rem; color: var(--text-light); text-decoration: none; }
     .back a:hover { color: var(--primary); }
@@ -155,16 +156,14 @@
         </div>
         <button type="submit" class="btn" id="submitBtn">Send sign-in link</button>
       </form>
-      <div id="successMsg" class="message message--success"></div>
-      <div id="spamNotice" class="spam-notice" style="display:none;">
+      <div id="successMsg" class="spam-notice" style="display:none;">
         <div class="spam-notice__icon">📬</div>
         <div>
-          <strong>Check your inbox</strong> — and if you don't see it within a minute,
-          <strong>check your spam or junk folder.</strong>
-          The email comes from <span style="white-space:nowrap">noreply@douro-partners.firebaseapp.com</span>.
+          Sign-in link sent. Check your inbox or <strong>SPAM</strong> folder!
+          The email comes from <strong>noreply@douro-partners.firebaseapp.com</strong>.
         </div>
       </div>
-      <div id="errorMsg"   class="message message--error"></div>
+      <div id="errorMsg" class="message message--error"></div>
     </div>
 
     <!-- Processing view: completing magic link sign-in -->
@@ -249,9 +248,7 @@
       try {
         await sendSignInLinkToEmail(auth, email, actionCodeSettings);
         window.localStorage.setItem('emailForSignIn', email);
-        successMsg.textContent   = `✓ Sign-in link sent to ${email}.`;
-        successMsg.style.display = 'block';
-        document.getElementById('spamNotice').style.display = 'flex';
+        successMsg.style.display = 'flex';
         document.getElementById('loginForm').reset();
       } catch (err) {
         errorMsg.textContent  = err.message || 'Something went wrong. Please try again.';
