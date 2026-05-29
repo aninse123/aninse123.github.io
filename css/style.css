@@ -408,6 +408,8 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   margin: 4px 0;
 }
 
+.nav__links--investor { display: none; }
+
 /* ===== FOOTER ===== */
 .footer {
   background: var(--bg);
@@ -519,6 +521,7 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   .nav__hamburger { display: flex; }
   .nav__lang { margin-left: 0; }
   .nav__investor-login { display: none; }
+  .nav__links--investor { display: block; }
   .nav__links {
     display: none;
     position: absolute;
