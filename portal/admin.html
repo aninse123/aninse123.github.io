@@ -273,11 +273,13 @@
               <thead>
                 <tr>
                   <th>Email</th>
-                  <th>Has access to</th>
+                  <th>Documents</th>
+                  <th>Access</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody id="investorsTableBody">
-                <tr class="empty-row"><td colspan="2">Derived from document access above.</td></tr>
+                <tr class="empty-row"><td colspan="4">Derived from document access above.</td></tr>
               </tbody>
             </table>
           </div>
@@ -323,6 +325,22 @@
       <div class="modal-actions">
         <button class="btn btn--ghost" id="cancelDocBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
         <button class="btn btn--primary" id="saveDocBtn">Add Document</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Grant Document to Investor Modal -->
+  <div class="modal-overlay" id="grantDocModal">
+    <div class="modal">
+      <h2>Grant Document Access</h2>
+      <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:20px;" id="grantDocInvestorEmail"></p>
+      <div class="form-group">
+        <label>Select Document</label>
+        <select id="grantDocSelect"></select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelGrantDocBtn" style="border-color:var(--border);color:var(--text-light);">Cancel</button>
+        <button class="btn btn--primary" id="saveGrantDocBtn">Grant Access</button>
       </div>
     </div>
   </div>
@@ -464,22 +482,39 @@
       allDocs.forEach(d =>
         (d.allowedEmails || []).forEach(email => {
           if (!map[email]) map[email] = [];
-          map[email].push(d.name);
+          map[email].push({ id: d.id, name: d.name });
         })
       );
-      const entries = Object.entries(map);
+      const entries = Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
       const tbody   = document.getElementById('investorsTableBody');
 
       if (!entries.length) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="2">No investors with access yet.</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No investors with access yet.</td></tr>';
         return;
       }
       tbody.innerHTML = entries.map(([email, docs]) => `
         <tr>
-          <td>${email}</td>
-          <td>${docs.map(n => `<span class="badge badge--green">${n}</span>`).join(' ')}</td>
+          <td><strong>${email}</strong></td>
+          <td style="color:var(--text-light);font-size:0.82rem;">${docs.length} / ${allDocs.length}</td>
+          <td>
+            <div class="access-list">
+              ${docs.map(d => `
+                <span class="badge badge--green">${d.name}
+                  <span class="badge-remove inv-revoke" data-doc="${d.id}" data-email="${email}" title="Revoke access">×</span>
+                </span>`).join('')}
+              <button class="add-access-btn inv-grant" data-email="${email}">+ Grant Document</button>
+            </div>
+          </td>
+          <td></td>
         </tr>
       `).join('');
+
+      tbody.querySelectorAll('.inv-revoke').forEach(el =>
+        el.addEventListener('click', () => revokeAccess(el.dataset.doc, el.dataset.email))
+      );
+      tbody.querySelectorAll('.inv-grant').forEach(el =>
+        el.addEventListener('click', () => openGrantDocModal(el.dataset.email))
+      );
     }
 
     /* ===== Add document ===== */
@@ -542,6 +577,34 @@
           await loadDocs();
         }
       );
+    });
+
+    /* ===== Grant document to investor ===== */
+    let grantTargetEmail = null;
+    function openGrantDocModal(email) {
+      grantTargetEmail = email;
+      document.getElementById('grantDocInvestorEmail').textContent = `Investor: ${email}`;
+      const alreadyHas = allDocs
+        .filter(d => (d.allowedEmails || []).includes(email))
+        .map(d => d.id);
+      const available = allDocs.filter(d => !alreadyHas.includes(d.id));
+      const select = document.getElementById('grantDocSelect');
+      if (!available.length) {
+        select.innerHTML = '<option disabled>All documents already granted</option>';
+      } else {
+        select.innerHTML = available.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+      }
+      document.getElementById('grantDocModal').classList.add('open');
+    }
+    document.getElementById('cancelGrantDocBtn').addEventListener('click', () =>
+      document.getElementById('grantDocModal').classList.remove('open')
+    );
+    document.getElementById('saveGrantDocBtn').addEventListener('click', async () => {
+      const docId = document.getElementById('grantDocSelect').value;
+      if (!docId) return;
+      await updateDoc(doc(db, 'documents', docId), { allowedEmails: arrayUnion(grantTargetEmail) });
+      document.getElementById('grantDocModal').classList.remove('open');
+      await loadDocs();
     });
 
     /* ===== Edit document ===== */
