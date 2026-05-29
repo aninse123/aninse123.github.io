@@ -518,6 +518,7 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
 
   .nav__hamburger { display: flex; }
   .nav__lang { margin-left: 0; }
+  .nav__investor-login { display: none; }
   .nav__links {
     display: none;
     position: absolute;
