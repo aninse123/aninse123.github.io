@@ -978,7 +978,7 @@
         const lastSeenTs = Math.max(0, ...(inv.emails || []).map(e => lastSeenMap[e] || 0));
         const lastSeenHtml = lastSeenTs
           ? `<span style="color:var(--text);font-size:0.82rem;">${relativeTime(lastSeenTs)}</span>`
-          : `<span style="color:var(--text-light);font-size:0.82rem;font-style:italic;">Not yet</span>`;
+          : `<span style="color:var(--text-light);font-size:0.82rem;font-style:italic;">Never</span>`;
 
         return `<tr>
           <td><strong>${escHtml(inv.name)}</strong></td>
