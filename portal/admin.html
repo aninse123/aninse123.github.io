@@ -285,6 +285,7 @@
           <a href="/" class="nav__main-link">← Main site</a>
           <span class="nav__email" id="adminEmail"></span>
           <a href="/portal/investor.html" class="nav__portal-link">Investor view</a>
+          <a href="/portal/log.html" class="nav__portal-link">Activity Log</a>
           <button class="sign-out-btn" id="signOutBtn">Sign out</button>
         </div>
       </div>
@@ -365,49 +366,6 @@
                 </tr>
               </thead>
               <tbody id="investorsTableBody">
-                <tr class="empty-row"><td colspan="4">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- ── Activity Log ── -->
-      <div class="section">
-        <div class="section-header">
-          <h2 class="section-title">Activity Log</h2>
-          <button class="btn btn--ghost btn--sm" id="refreshLogBtn">↻ Refresh</button>
-        </div>
-        <div class="card">
-          <div class="filter-bar">
-            <input type="text" id="logSearch" placeholder="Search email or document…" style="min-width:180px;">
-            <select id="logTypeFilter">
-              <option value="">All events</option>
-              <option value="investor_actions">Investor actions</option>
-              <option value="admin_actions">Admin actions</option>
-              <option value="login">Logins</option>
-              <option value="portal_visit">Portal visits</option>
-              <option value="doc_downloaded">Downloads</option>
-              <option value="doc_added">Docs added</option>
-              <option value="access_granted">Access granted</option>
-              <option value="access_revoked">Access revoked</option>
-              <option value="stage_changed">Stage changes</option>
-            </select>
-            <select id="logPersonFilter"><option value="">All people</option></select>
-            <input type="date" id="logDateFrom" title="From date">
-            <input type="date" id="logDateTo"   title="To date">
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th style="white-space:nowrap;">Time</th>
-                  <th>Event</th>
-                  <th>Who</th>
-                  <th>Details</th>
-                </tr>
-              </thead>
-              <tbody id="logTableBody">
                 <tr class="empty-row"><td colspan="4">Loading…</td></tr>
               </tbody>
             </table>
@@ -546,8 +504,7 @@
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
       collection, getDocs, addDoc, updateDoc, deleteDoc,
-      doc, getDoc, setDoc, serverTimestamp, arrayUnion, arrayRemove,
-      query, orderBy, limit
+      doc, getDoc, setDoc, serverTimestamp, arrayUnion, arrayRemove
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import {
       ref, uploadBytesResumable, getDownloadURL, deleteObject
@@ -645,7 +602,7 @@
       document.getElementById('adminEmail').textContent      = user.email;
       document.getElementById('loadingScreen').style.display = 'none';
       document.getElementById('app').style.display           = 'block';
-      await Promise.all([loadStage(), loadAll(), loadLog()]);
+      await Promise.all([loadStage(), loadAll()]);
     });
 
     // ── Load everything ────────────────────────────────────────
@@ -1247,129 +1204,6 @@
     document.getElementById('addInvestorBtn').addEventListener('click', () =>
       openEditInvestorModal(null)
     );
-
-    // ── Activity Log ───────────────────────────────────────────
-    let allLogs = [];
-
-    const LOG_BADGES = {
-      login:            { label: 'Login',            cls: 'badge--blue'  },
-      logout:           { label: 'Logout',           cls: 'badge--grey'  },
-      portal_visit:     { label: 'Portal visit',     cls: 'badge--grey'  },
-      doc_downloaded:   { label: 'Download',         cls: 'badge--green' },
-      doc_added:        { label: 'Doc added',        cls: 'badge--blue'  },
-      doc_edited:       { label: 'Doc edited',       cls: 'badge--grey'  },
-      doc_deleted:      { label: 'Doc deleted',      cls: 'badge--red'   },
-      access_granted:   { label: 'Access granted',   cls: 'badge--green' },
-      access_revoked:   { label: 'Access revoked',   cls: 'badge--red'   },
-      investor_created: { label: 'Investor created', cls: 'badge--blue'  },
-      investor_edited:  { label: 'Investor edited',  cls: 'badge--grey'  },
-      investor_deleted: { label: 'Investor deleted', cls: 'badge--red'   },
-      stage_changed:    { label: 'Stage changed',    cls: 'badge--blue'  },
-    };
-
-    const INVESTOR_EVENTS = new Set(['login','logout','portal_visit','doc_downloaded']);
-    const ADMIN_EVENTS    = new Set(['doc_added','doc_edited','doc_deleted','access_granted','access_revoked','investor_created','investor_edited','investor_deleted','stage_changed']);
-
-    async function loadLog() {
-      try {
-        const q    = query(collection(db, 'activityLog'), orderBy('timestamp', 'desc'), limit(300));
-        const snap = await getDocs(q);
-        allLogs = [];
-        snap.forEach(d => allLogs.push({ id: d.id, ...d.data() }));
-        populateLogPersonFilter();
-        renderLog();
-      } catch (e) {
-        document.getElementById('logTableBody').innerHTML =
-          `<tr class="empty-row"><td colspan="4" style="color:var(--danger);">Error loading log: ${escHtml(e.message)}</td></tr>`;
-      }
-    }
-
-    function populateLogPersonFilter() {
-      const sel    = document.getElementById('logPersonFilter');
-      const people = [...new Set(allLogs.map(l => l.email).filter(Boolean))].sort();
-      const cur    = sel.value;
-      sel.innerHTML = '<option value="">All people</option>' +
-        people.map(e => `<option value="${escAttr(e)}">${escHtml(e)}</option>`).join('');
-      sel.value = cur;
-    }
-
-    function renderLog() {
-      const tbody      = document.getElementById('logTableBody');
-      const search     = (document.getElementById('logSearch')?.value     || '').toLowerCase();
-      const typeFilter = document.getElementById('logTypeFilter')?.value  || '';
-      const invFilter  = document.getElementById('logPersonFilter')?.value || '';
-      const dateFrom   = document.getElementById('logDateFrom')?.value;
-      const dateTo     = document.getElementById('logDateTo')?.value;
-
-      let logs = [...allLogs];
-
-      if (search) logs = logs.filter(l =>
-        (l.email        || '').toLowerCase().includes(search) ||
-        (l.docName      || '').toLowerCase().includes(search) ||
-        (l.investorName || '').toLowerCase().includes(search) ||
-        (l.detail       || '').toLowerCase().includes(search)
-      );
-
-      if (typeFilter === 'investor_actions') logs = logs.filter(l => INVESTOR_EVENTS.has(l.type));
-      else if (typeFilter === 'admin_actions') logs = logs.filter(l => ADMIN_EVENTS.has(l.type));
-      else if (typeFilter) logs = logs.filter(l => l.type === typeFilter);
-
-      if (invFilter) logs = logs.filter(l => l.email === invFilter);
-
-      if (dateFrom) {
-        const from = new Date(dateFrom);
-        logs = logs.filter(l => l.timestamp && new Date(l.timestamp.seconds * 1000) >= from);
-      }
-      if (dateTo) {
-        const to = new Date(dateTo); to.setHours(23, 59, 59);
-        logs = logs.filter(l => l.timestamp && new Date(l.timestamp.seconds * 1000) <= to);
-      }
-
-      if (!logs.length) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No entries match the filter.</td></tr>';
-        return;
-      }
-
-      tbody.innerHTML = logs.map(l => {
-        const ts = l.timestamp
-          ? new Date(l.timestamp.seconds * 1000).toLocaleString('en-GB', {
-              day: '2-digit', month: 'short', year: 'numeric',
-              hour: '2-digit', minute: '2-digit'
-            })
-          : '—';
-        const badge   = LOG_BADGES[l.type] || { label: l.type, cls: 'badge--grey' };
-        const details = buildLogDetail(l);
-        return `<tr>
-          <td style="white-space:nowrap;color:var(--text-light);font-size:0.8rem;">${ts}</td>
-          <td><span class="badge ${badge.cls}">${badge.label}</span></td>
-          <td style="font-size:0.82rem;">${escHtml(l.email || '—')}</td>
-          <td style="font-size:0.82rem;color:var(--text-light);">${escHtml(details)}</td>
-        </tr>`;
-      }).join('');
-    }
-
-    function buildLogDetail(l) {
-      switch (l.type) {
-        case 'doc_downloaded':
-        case 'doc_added':
-        case 'doc_edited':
-        case 'doc_deleted':   return l.docName || '';
-        case 'access_granted':
-        case 'access_revoked': return [l.investorName, l.docName].filter(Boolean).join(' → ');
-        case 'investor_created':
-        case 'investor_edited':
-        case 'investor_deleted': return l.investorName || '';
-        case 'stage_changed':  return l.detail || '';
-        default:               return l.detail || '';
-      }
-    }
-
-    document.getElementById('logSearch').addEventListener('input', renderLog);
-    document.getElementById('logTypeFilter').addEventListener('change', renderLog);
-    document.getElementById('logPersonFilter').addEventListener('change', renderLog);
-    document.getElementById('logDateFrom').addEventListener('change', renderLog);
-    document.getElementById('logDateTo').addEventListener('change', renderLog);
-    document.getElementById('refreshLogBtn').addEventListener('click', loadLog);
 
     // ── Sign out ───────────────────────────────────────────────
     document.getElementById('signOutBtn').addEventListener('click', async () => {
