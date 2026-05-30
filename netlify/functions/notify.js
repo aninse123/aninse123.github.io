@@ -177,6 +177,9 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
               To update your contact details, reach us at
               <a href="mailto:andre.rocha@douropartners.pt"
                  style="color:#9CA3AF;">andre.rocha@douropartners.pt</a>
+              or
+              <a href="mailto:antonio.carvalho@douropartners.pt"
+                 style="color:#9CA3AF;">antonio.carvalho@douropartners.pt</a>
             </p>
           </td>
         </tr>
