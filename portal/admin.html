@@ -256,7 +256,7 @@
     .stage-name-admin:hover { color: var(--primary); }
     .stage-name-admin.active { color: var(--primary); font-weight: 700; }
 
-    /* Welcome message preview card (admin) */
+    /* Message preview card (admin) */
     .welcome-preview-card {
       display: flex; gap: 14px; align-items: flex-start;
       background: var(--bg); border-radius: var(--radius);
@@ -268,6 +268,14 @@
     .welcome-preview-card__title { font-family: var(--font-serif); font-size: 1rem; color: var(--primary); margin-bottom: 5px; }
     .welcome-preview-card__message { font-size: 0.88rem; color: var(--text); line-height: 1.7; white-space: pre-line; }
     .welcome-preview-card__date { font-size: 0.75rem; color: var(--text-light); margin-top: 8px; }
+
+    /* Message list item */
+    .message-item { padding: 20px; border-bottom: 1px solid var(--border); }
+    .message-item:last-child { border-bottom: none; }
+    .message-item__header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 12px; flex-wrap: wrap; gap: 8px;
+    }
 
     /* Notify modal — recipient list */
     .notify-recipient-item {
@@ -340,56 +348,14 @@
         </div>
       </div>
 
-      <!-- ── Investor Message ── -->
+      <!-- ── Investor Messages ── -->
       <div class="section">
         <div class="section-header">
-          <h2 class="section-title">Investor Message</h2>
+          <h2 class="section-title">Investor Messages</h2>
+          <button class="btn btn--primary" id="addMessageBtn">+ Add Message</button>
         </div>
-        <div class="card" style="padding:24px;">
-          <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:20px;">
-            Shown as a notice card at the top of the investor portal.
-          </p>
-
-          <!-- Published state -->
-          <div id="welcomePreviewView" style="display:none;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
-              <div id="welcomeStatusBadge"></div>
-              <div style="display:flex;gap:8px;">
-                <button class="btn btn--ghost btn--sm" id="editWelcomeBtn">Edit</button>
-                <button class="btn btn--ghost btn--sm btn--ghost-danger" id="clearWelcomeBtn" style="border:1px solid var(--border);">Clear</button>
-              </div>
-            </div>
-            <div class="welcome-preview-card">
-              <div class="welcome-preview-card__icon">📢</div>
-              <div class="welcome-preview-card__body">
-                <h3 id="welcomePreviewTitle" class="welcome-preview-card__title" style="display:none;"></h3>
-                <p id="welcomePreviewMessage" class="welcome-preview-card__message"></p>
-                <p id="welcomePreviewDate" class="welcome-preview-card__date"></p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Form state -->
-          <div id="welcomeFormView">
-            <div class="form-group">
-              <label>Title <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
-              <input type="text" id="welcomeTitle" placeholder="e.g. PPM v2 now available">
-            </div>
-            <div class="form-group">
-              <label>Message</label>
-              <textarea id="welcomeMessage" rows="4" placeholder="Write your message to investors…"></textarea>
-            </div>
-            <div class="form-group">
-              <label>Expires on <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
-              <input type="date" id="welcomeExpiry" style="width:auto;">
-              <p class="hint">Leave empty for no expiry. The card disappears automatically on this date.</p>
-            </div>
-            <div style="display:flex;gap:10px;margin-top:8px;">
-              <button class="btn btn--primary" id="saveWelcomeBtn">Save & Publish</button>
-              <button class="btn btn--ghost" id="cancelWelcomeEditBtn" style="display:none;">Cancel</button>
-            </div>
-          </div>
-
+        <div class="card" id="messagesCard">
+          <div style="padding:40px;text-align:center;color:var(--text-light);font-style:italic;">Loading…</div>
         </div>
       </div>
 
@@ -460,6 +426,30 @@
       </div>
 
     </main>
+  </div>
+
+  <!-- ══ Add / Edit Message Modal ══ -->
+  <div class="modal-overlay" id="messageModal">
+    <div class="modal">
+      <h2 id="messageModalTitle">New Message</h2>
+      <div class="form-group">
+        <label>Title <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+        <input type="text" id="msgTitle" placeholder="e.g. PPM v2 now available">
+      </div>
+      <div class="form-group">
+        <label>Message</label>
+        <textarea id="msgMessage" rows="5" placeholder="Write your message to investors…"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Expires on <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+        <input type="date" id="msgExpiry" style="width:auto;">
+        <p class="hint">Leave empty for no expiry. The card disappears automatically on this date.</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelMessageBtn">Cancel</button>
+        <button class="btn btn--primary" id="saveMessageBtn">Publish</button>
+      </div>
+    </div>
   </div>
 
   <!-- ══ Add Document Modal ══ -->
@@ -676,68 +666,11 @@
           const d = snap.data();
           currentStage = d.currentStage || 1;
           notifySecret = d.notifySecret  || '';
-          document.getElementById('welcomeTitle').value   = d.welcomeTitle   || '';
-          document.getElementById('welcomeMessage').value = d.welcomeMessage || '';
-          document.getElementById('welcomeExpiry').value  = d.welcomeExpiry  || '';
-          renderWelcomeAdmin(d);
         }
       } catch (e) {
         currentStage = 1;
       }
       renderAdminStageBar();
-    }
-
-    function renderWelcomeAdmin(d) {
-      const msg     = d?.welcomeMessage || '';
-      const formEl  = document.getElementById('welcomeFormView');
-      const prevEl  = document.getElementById('welcomePreviewView');
-      const cancelBtn = document.getElementById('cancelWelcomeEditBtn');
-
-      if (!msg) {
-        formEl.style.display = 'block';
-        prevEl.style.display = 'none';
-        cancelBtn.style.display = 'none';
-        return;
-      }
-
-      // Show preview, hide form
-      formEl.style.display = 'none';
-      prevEl.style.display = 'block';
-
-      // Status badge
-      const expiry = d?.welcomeExpiry || '';
-      const today  = new Date().toISOString().slice(0, 10);
-      let badge;
-      const expiryFmt = expiry
-        ? new Date(expiry + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-        : '';
-      if (expiry && today > expiry) {
-        badge = `<span class="badge badge--grey">Expired · ${expiryFmt}</span>`;
-      } else if (expiry) {
-        badge = `<span class="badge badge--green">Active · expires ${expiryFmt}</span>`;
-      } else {
-        badge = `<span class="badge badge--green">Active · no expiry</span>`;
-      }
-      document.getElementById('welcomeStatusBadge').innerHTML = badge;
-
-      // Preview card
-      const titleEl = document.getElementById('welcomePreviewTitle');
-      const title   = d?.welcomeTitle || '';
-      if (title) { titleEl.textContent = title; titleEl.style.display = 'block'; }
-      else        { titleEl.style.display = 'none'; }
-
-      document.getElementById('welcomePreviewMessage').textContent = msg;
-
-      const dateEl    = document.getElementById('welcomePreviewDate');
-      const updatedAt = d?.welcomeUpdatedAt;
-      if (updatedAt) {
-        const date = new Date(updatedAt.seconds * 1000).toLocaleDateString('en-GB', {
-          day: 'numeric', month: 'long', year: 'numeric'
-        });
-        dateEl.textContent = `— André & António  ·  ${date}`;
-      } else {
-        dateEl.textContent = '— André & António';
-      }
     }
 
     function renderAdminStageBar() {
@@ -784,7 +717,7 @@
       document.getElementById('adminEmail').textContent      = user.email;
       document.getElementById('loadingScreen').style.display = 'none';
       document.getElementById('app').style.display           = 'block';
-      await Promise.all([loadStage(), loadAll()]);
+      await Promise.all([loadStage(), loadAll(), loadMessages()]);
     });
 
     // ── Load everything ────────────────────────────────────────
@@ -1391,54 +1324,136 @@
       openEditInvestorModal(null)
     );
 
-    // ── Investor Message ───────────────────────────────────────
-    document.getElementById('saveWelcomeBtn').addEventListener('click', async () => {
-      const title   = document.getElementById('welcomeTitle').value.trim();
-      const message = document.getElementById('welcomeMessage').value.trim();
-      const expiry  = document.getElementById('welcomeExpiry').value;
-      if (!message) { alert('Please write a message before saving.'); return; }
-      const btn = document.getElementById('saveWelcomeBtn');
-      btn.disabled = true; btn.textContent = 'Saving…';
+    // ── Investor Messages ──────────────────────────────────────
+    let allMessages   = [];
+    let editMessageId = null;
+
+    async function loadMessages() {
       try {
-        const data = {
-          welcomeTitle:     title,
-          welcomeMessage:   message,
-          welcomeExpiry:    expiry || '',
-          welcomeUpdatedAt: serverTimestamp(),
-        };
-        await setDoc(doc(db, 'config', 'portal'), data, { merge: true });
-        logEvent('welcome_message_updated', { title, expiry: expiry || 'none' });
-        // Re-read to get server timestamp then render
-        await loadStage();
+        const snap = await getDocs(collection(db, 'portalMessages'));
+        allMessages = [];
+        snap.forEach(d => allMessages.push({ id: d.id, ...d.data() }));
+        allMessages.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+        renderMessages();
+      } catch (e) {
+        console.error('loadMessages error:', e);
+      }
+    }
+
+    function renderMessages() {
+      const card  = document.getElementById('messagesCard');
+      const today = new Date().toISOString().slice(0, 10);
+
+      if (!allMessages.length) {
+        card.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-light);font-style:italic;">No messages yet. Click "+ Add Message" to create one.</div>`;
+        return;
+      }
+
+      card.innerHTML = allMessages.map(m => {
+        const expiry = m.expiry || '';
+        let badgeHtml;
+        if (expiry && today > expiry) {
+          const fmt = new Date(expiry + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+          badgeHtml = `<span class="badge badge--grey">Expired · ${escHtml(fmt)}</span>`;
+        } else if (expiry) {
+          const fmt = new Date(expiry + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+          badgeHtml = `<span class="badge badge--green">Active · expires ${escHtml(fmt)}</span>`;
+        } else {
+          badgeHtml = `<span class="badge badge--green">Active · no expiry</span>`;
+        }
+        const titleHtml = m.title
+          ? `<h3 class="welcome-preview-card__title">${escHtml(m.title)}</h3>`
+          : '';
+        const ts = m.updatedAt || m.createdAt;
+        const dateLabel = ts
+          ? `— André & António  ·  ${new Date(ts.seconds * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`
+          : '— André & António';
+
+        return `<div class="message-item">
+          <div class="message-item__header">
+            ${badgeHtml}
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn--ghost btn--sm edit-msg-btn" data-id="${escAttr(m.id)}">Edit</button>
+              <button class="btn btn--ghost btn--sm btn--ghost-danger delete-msg-btn" data-id="${escAttr(m.id)}" style="border:1px solid var(--border);">Delete</button>
+            </div>
+          </div>
+          <div class="welcome-preview-card">
+            <div class="welcome-preview-card__icon">📢</div>
+            <div class="welcome-preview-card__body">
+              ${titleHtml}
+              <p class="welcome-preview-card__message">${escHtml(m.message)}</p>
+              <p class="welcome-preview-card__date">${escHtml(dateLabel)}</p>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+
+      card.querySelectorAll('.edit-msg-btn').forEach(el =>
+        el.addEventListener('click', () => openMessageModal(el.dataset.id))
+      );
+      card.querySelectorAll('.delete-msg-btn').forEach(el =>
+        el.addEventListener('click', () => deleteMessage(el.dataset.id))
+      );
+    }
+
+    function openMessageModal(messageId) {
+      editMessageId = messageId || null;
+      const m = messageId ? allMessages.find(x => x.id === messageId) : null;
+      document.getElementById('messageModalTitle').textContent   = m ? 'Edit Message' : 'New Message';
+      document.getElementById('msgTitle').value                  = m ? (m.title   || '') : '';
+      document.getElementById('msgMessage').value                = m ? (m.message || '') : '';
+      document.getElementById('msgExpiry').value                 = m ? (m.expiry  || '') : '';
+      document.getElementById('saveMessageBtn').textContent      = m ? 'Save Changes' : 'Publish';
+      document.getElementById('messageModal').classList.add('open');
+      setTimeout(() => document.getElementById('msgMessage').focus(), 100);
+    }
+
+    async function deleteMessage(messageId) {
+      const m = allMessages.find(x => x.id === messageId);
+      if (!m) return;
+      if (!confirm('Delete this message?\n\nIt will no longer be visible in the investor portal.')) return;
+      await deleteDoc(doc(db, 'portalMessages', messageId));
+      logEvent('message_deleted', { title: m.title || '(untitled)', messageId });
+      await loadMessages();
+    }
+
+    document.getElementById('addMessageBtn').addEventListener('click', () => openMessageModal(null));
+    document.getElementById('cancelMessageBtn').addEventListener('click', () =>
+      document.getElementById('messageModal').classList.remove('open')
+    );
+    document.getElementById('saveMessageBtn').addEventListener('click', async () => {
+      const title   = document.getElementById('msgTitle').value.trim();
+      const message = document.getElementById('msgMessage').value.trim();
+      const expiry  = document.getElementById('msgExpiry').value;
+      if (!message) { alert('Please write a message before saving.'); return; }
+
+      const btn = document.getElementById('saveMessageBtn');
+      btn.disabled = true; btn.textContent = 'Saving…';
+
+      try {
+        if (!editMessageId) {
+          await addDoc(collection(db, 'portalMessages'), {
+            title, message, expiry: expiry || '',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          logEvent('message_published', { title: title || '(untitled)', expiry: expiry || 'none' });
+        } else {
+          await updateDoc(doc(db, 'portalMessages', editMessageId), {
+            title, message, expiry: expiry || '',
+            updatedAt: serverTimestamp(),
+          });
+          logEvent('message_updated', { messageId: editMessageId, title: title || '(untitled)', expiry: expiry || 'none' });
+        }
+        document.getElementById('messageModal').classList.remove('open');
+        await loadMessages();
       } catch (err) {
         alert('Failed to save: ' + err.message);
-        console.error('saveWelcome error:', err);
+        console.error('saveMessage error:', err);
       } finally {
-        btn.disabled = false; btn.textContent = 'Save & Publish';
+        btn.disabled = false;
+        btn.textContent = editMessageId ? 'Save Changes' : 'Publish';
       }
-    });
-
-    document.getElementById('editWelcomeBtn').addEventListener('click', () => {
-      document.getElementById('welcomePreviewView').style.display = 'none';
-      document.getElementById('welcomeFormView').style.display    = 'block';
-      document.getElementById('cancelWelcomeEditBtn').style.display = 'inline-flex';
-      document.getElementById('welcomeMessage').focus();
-    });
-
-    document.getElementById('cancelWelcomeEditBtn').addEventListener('click', async () => {
-      await loadStage(); // restores preview state
-    });
-
-    document.getElementById('clearWelcomeBtn').addEventListener('click', async () => {
-      if (!confirm('Clear the investor message?\n\nIt will no longer be visible in the portal.')) return;
-      await setDoc(doc(db, 'config', 'portal'), {
-        welcomeTitle: '', welcomeMessage: '', welcomeExpiry: ''
-      }, { merge: true });
-      logEvent('welcome_message_cleared', {});
-      document.getElementById('welcomeTitle').value   = '';
-      document.getElementById('welcomeMessage').value = '';
-      document.getElementById('welcomeExpiry').value  = '';
-      renderWelcomeAdmin({});
     });
 
     // ── Notify Investors ───────────────────────────────────────
