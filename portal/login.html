@@ -221,13 +221,16 @@
   </div>
 
   <script type="module">
-    import { auth } from './firebase-config.js';
+    import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
     import {
       sendSignInLinkToEmail,
       isSignInWithEmailLink,
       signInWithEmailLink,
       onAuthStateChanged
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+    import {
+      collection, query, where, getDocs
+    } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
     const INVESTOR_URL = window.location.origin + '/portal/investor.html';
     const LOGIN_URL    = window.location.origin + '/portal/login.html';
@@ -258,7 +261,7 @@
         signInWithEmailLink(auth, email, window.location.href)
           .then(() => {
             window.localStorage.removeItem('emailForSignIn');
-            window.location.href = INVESTOR_URL;
+            window.location.href = INVESTOR_URL + '?login=1';
           })
           .catch(err => {
             const msg = document.getElementById('processMsg');
@@ -271,8 +274,20 @@
       }
     }
 
+    // Check if email is registered (investor member or admin)
+    async function isRegistered(email) {
+      if (ADMIN_EMAILS.includes(email)) return true;
+      const q    = query(collection(db, 'investors'), where('emails', 'array-contains', email));
+      const snap = await getDocs(q);
+      return !snap.empty;
+    }
+
     // Send magic link
     async function sendLink(email) {
+      const registered = await isRegistered(email);
+      if (!registered) {
+        throw new Error('This email isn\'t registered in our investor portal. Please contact us at andre.rocha@douropartners.pt or antonio.carvalho@douropartners.pt.');
+      }
       await sendSignInLinkToEmail(auth, email, actionCodeSettings);
       window.localStorage.setItem('emailForSignIn', email);
     }

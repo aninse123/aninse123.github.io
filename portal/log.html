@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Activity Log — Douro Partners</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+  <link rel="apple-touch-icon" href="/assets/favicon.svg">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary:      #4A6B8A;
+      --primary-dark: #3A5570;
+      --secondary:    #3D6430;
+      --danger:       #B33A3A;
+      --bg:           #F7F3EC;
+      --bg-dark:      #1E2A38;
+      --text:         #2C2C2C;
+      --text-light:   #6B7280;
+      --border:       #D8D3C8;
+      --white:        #FFFFFF;
+      --font-serif:   'Playfair Display', Georgia, serif;
+      --font-sans:    'Inter', sans-serif;
+      --radius:       8px;
+      --shadow:       0 4px 24px rgba(30,42,56,0.08);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Loading */
+    #loadingScreen {
+      position: fixed; inset: 0; background: var(--bg);
+      display: flex; align-items: center; justify-content: center; z-index: 100;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Nav */
+    .nav { background: var(--bg-dark); padding: 16px 0; }
+    .nav__inner {
+      max-width: 1100px; margin: 0 auto; padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav__left { display: flex; align-items: center; gap: 14px; }
+    .nav__main-link { font-size: 0.82rem; color: rgba(255,255,255,0.6); text-decoration: none; transition: color 0.2s; }
+    .nav__main-link:hover { color: rgba(255,255,255,1); }
+    .nav__logo { height: 65px; filter: brightness(0) invert(1); opacity: 0.85; }
+    .nav__label {
+      font-family: var(--font-serif);
+      color: rgba(255,255,255,0.8);
+      font-size: 0.95rem;
+      padding-left: 14px;
+      border-left: 1px solid rgba(255,255,255,0.2);
+    }
+    .nav__right { display: flex; align-items: center; gap: 14px; }
+    .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.55); }
+    .nav__portal-link {
+      font-size: 0.82rem; font-weight: 600;
+      color: rgba(255,255,255,0.75); text-decoration: none;
+    }
+    .nav__portal-link:hover { color: white; }
+    .sign-out-btn {
+      font-size: 0.82rem; font-weight: 600;
+      color: rgba(255,255,255,0.65);
+      background: none; border: 1px solid rgba(255,255,255,0.3);
+      border-radius: var(--radius); padding: 6px 14px;
+      cursor: pointer; transition: 0.2s;
+    }
+    .sign-out-btn:hover { color: white; border-color: white; }
+
+    /* Main */
+    .main { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+
+    /* Section */
+    .section { margin-bottom: 52px; }
+    .section-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .section-title { font-family: var(--font-serif); font-size: 1.5rem; color: var(--primary); }
+
+    /* Card + Table */
+    .card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      font-size: 0.72rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--text-light);
+      padding: 10px 16px; text-align: left;
+      border-bottom: 2px solid var(--border);
+      background: #FAFAF8; white-space: nowrap;
+    }
+    td { padding: 14px 16px; font-size: 0.88rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #FAFAF8; }
+    .empty-row td { color: var(--text-light); font-style: italic; text-align: center; padding: 40px; }
+
+    /* Badges */
+    .badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 100px;
+      font-size: 0.72rem; font-weight: 600;
+    }
+    .badge--blue  { background: #E8F0F8; color: var(--primary); }
+    .badge--green { background: #EBF5EB; color: var(--secondary); }
+    .badge--grey  { background: #F0EDE8; color: var(--text-light); }
+    .badge--red   { background: #FBEDED; color: var(--danger); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 20px; border-radius: var(--radius);
+      font-family: var(--font-sans); font-size: 0.88rem; font-weight: 600;
+      cursor: pointer; border: none; transition: 0.2s;
+    }
+    .btn--ghost { background: none; border: 1px solid var(--border); color: var(--text-light); }
+    .btn--ghost:hover { border-color: var(--primary); color: var(--primary); }
+    .btn--sm { padding: 6px 12px; font-size: 0.78rem; }
+
+    /* Filter bar */
+    .filter-bar {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      background: #FAFAF8;
+    }
+    .filter-bar input[type="text"],
+    .filter-bar select {
+      padding: 7px 12px; border: 1.5px solid var(--border);
+      border-radius: var(--radius); font-family: var(--font-sans);
+      font-size: 0.85rem; color: var(--text); background: var(--white);
+      outline: none; transition: 0.2s;
+    }
+    .filter-bar input[type="text"]:focus,
+    .filter-bar select:focus { border-color: var(--primary); }
+    .filter-bar input[type="text"] { min-width: 200px; }
+
+    /* Date filter with label */
+    .date-filter-group {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .date-filter-group label {
+      font-size: 0.75rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-light); white-space: nowrap;
+    }
+    .date-filter-group input[type="date"] {
+      padding: 7px 10px; border: 1.5px solid var(--border);
+      border-radius: var(--radius); font-family: var(--font-sans);
+      font-size: 0.85rem; color: var(--text); background: var(--white);
+      outline: none; transition: 0.2s; cursor: pointer;
+    }
+    .date-filter-group input[type="date"]:focus { border-color: var(--primary); }
+
+    .filter-divider {
+      width: 1px; height: 24px; background: var(--border);
+      flex-shrink: 0;
+    }
+
+    @media (max-width: 768px) {
+      .nav__inner { flex-wrap: wrap; gap: 8px; }
+      .nav__label { display: none; }
+      .nav__email { display: none; }
+      .main { padding: 24px 16px; }
+      .section-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+      td, th { padding: 10px 8px; font-size: 0.8rem; }
+      .filter-bar { gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="loadingScreen"><div class="spinner"></div></div>
+
+  <div id="app" style="display:none;">
+
+    <nav class="nav">
+      <div class="nav__inner">
+        <div class="nav__left">
+          <a href="/"><img src="../assets/logo.png" alt="Douro Partners" class="nav__logo"></a>
+          <span class="nav__label">Activity Log</span>
+        </div>
+        <div class="nav__right">
+          <a href="/portal/admin.html" class="nav__main-link">← Admin Panel</a>
+          <span class="nav__email" id="adminEmail"></span>
+          <button class="sign-out-btn" id="signOutBtn">Sign out</button>
+        </div>
+      </div>
+    </nav>
+
+    <main class="main">
+
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">Activity Log</h2>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn--ghost btn--sm" id="exportCsvBtn">↓ Export CSV</button>
+            <button class="btn btn--ghost btn--sm" id="refreshLogBtn">↻ Refresh</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="filter-bar">
+            <input type="text" id="logSearch" placeholder="Search email or document…">
+            <select id="logTypeFilter">
+              <option value="">All events</option>
+              <option value="investor_actions">Investor actions</option>
+              <option value="admin_actions">Admin actions</option>
+              <option value="login">Logins</option>
+              <option value="portal_visit">Portal visits</option>
+              <option value="doc_downloaded">Downloads</option>
+              <option value="doc_added">Docs added</option>
+              <option value="access_granted">Access granted</option>
+              <option value="access_revoked">Access revoked</option>
+              <option value="stage_changed">Stage changes</option>
+              <option value="notification_sent">Notifications sent</option>
+              <option value="message_published">Messages published</option>
+              <option value="message_updated">Messages updated</option>
+              <option value="message_deleted">Messages deleted</option>
+            </select>
+            <select id="logPersonFilter"><option value="">All people</option></select>
+            <div class="filter-divider"></div>
+            <div class="date-filter-group">
+              <label for="logDateFrom">From</label>
+              <input type="date" id="logDateFrom">
+            </div>
+            <div class="date-filter-group">
+              <label for="logDateTo">To</label>
+              <input type="date" id="logDateTo">
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style="white-space:nowrap;">Time</th>
+                  <th>Event</th>
+                  <th>Who</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="logTableBody">
+                <tr class="empty-row"><td colspan="4">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script type="module">
+    import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
+    import {
+      onAuthStateChanged, signOut
+    } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+    import {
+      collection, getDocs, query, orderBy, limit
+    } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+    // ── State ──────────────────────────────────────────────────
+    let allLogs = [];
+
+    // ── Badge map ──────────────────────────────────────────────
+    const LOG_BADGES = {
+      login:            { label: 'Login',            cls: 'badge--blue'  },
+      logout:           { label: 'Logout',           cls: 'badge--grey'  },
+      portal_visit:     { label: 'Portal visit',     cls: 'badge--grey'  },
+      doc_downloaded:   { label: 'Download',         cls: 'badge--green' },
+      doc_added:        { label: 'Doc added',        cls: 'badge--blue'  },
+      doc_edited:       { label: 'Doc edited',       cls: 'badge--grey'  },
+      doc_deleted:      { label: 'Doc deleted',      cls: 'badge--red'   },
+      access_granted:   { label: 'Access granted',   cls: 'badge--green' },
+      access_revoked:   { label: 'Access revoked',   cls: 'badge--red'   },
+      investor_created: { label: 'Investor created', cls: 'badge--blue'  },
+      investor_edited:  { label: 'Investor edited',  cls: 'badge--grey'  },
+      investor_deleted: { label: 'Investor deleted', cls: 'badge--red'   },
+      stage_changed:    { label: 'Stage changed',    cls: 'badge--blue'  },
+      notification_sent:       { label: 'Notification sent',   cls: 'badge--green' },
+      welcome_message_updated: { label: 'Message published',   cls: 'badge--blue'  },
+      welcome_message_cleared: { label: 'Message cleared',     cls: 'badge--grey'  },
+      message_published:       { label: 'Message published',   cls: 'badge--blue'  },
+      message_updated:         { label: 'Message updated',     cls: 'badge--grey'  },
+      message_deleted:         { label: 'Message deleted',     cls: 'badge--red'   },
+    };
+
+    const INVESTOR_EVENTS = new Set(['login','logout','portal_visit','doc_downloaded']);
+    const ADMIN_EVENTS    = new Set(['doc_added','doc_edited','doc_deleted','access_granted','access_revoked','investor_created','investor_edited','investor_deleted','stage_changed']);
+
+    // ── Auth guard ─────────────────────────────────────────────
+    onAuthStateChanged(auth, async (user) => {
+      if (!user || !ADMIN_EMAILS.includes(user.email)) {
+        window.location.href = '/portal/login.html';
+        return;
+      }
+      document.getElementById('adminEmail').textContent      = user.email;
+      document.getElementById('loadingScreen').style.display = 'none';
+      document.getElementById('app').style.display           = 'block';
+      await loadLog();
+    });
+
+    // ── Load log ───────────────────────────────────────────────
+    async function loadLog() {
+      const tbody = document.getElementById('logTableBody');
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="4">Loading…</td></tr>';
+      try {
+        const q    = query(collection(db, 'activityLog'), orderBy('timestamp', 'desc'), limit(500));
+        const snap = await getDocs(q);
+        allLogs = [];
+        snap.forEach(d => allLogs.push({ id: d.id, ...d.data() }));
+        populateLogPersonFilter();
+        renderLog();
+      } catch (e) {
+        tbody.innerHTML =
+          `<tr class="empty-row"><td colspan="4" style="color:#B33A3A;">Error loading log: ${escHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    function populateLogPersonFilter() {
+      const sel    = document.getElementById('logPersonFilter');
+      const people = [...new Set(allLogs.map(l => l.email).filter(Boolean))].sort();
+      const cur    = sel.value;
+      sel.innerHTML = '<option value="">All people</option>' +
+        people.map(e => `<option value="${escAttr(e)}">${escHtml(e)}</option>`).join('');
+      sel.value = cur;
+    }
+
+    function getFilteredLogs() {
+      const search     = (document.getElementById('logSearch')?.value     || '').toLowerCase();
+      const typeFilter = document.getElementById('logTypeFilter')?.value  || '';
+      const invFilter  = document.getElementById('logPersonFilter')?.value || '';
+      const dateFrom   = document.getElementById('logDateFrom')?.value;
+      const dateTo     = document.getElementById('logDateTo')?.value;
+
+      let logs = [...allLogs];
+
+      if (search) logs = logs.filter(l =>
+        (l.email        || '').toLowerCase().includes(search) ||
+        (l.docName      || '').toLowerCase().includes(search) ||
+        (l.investorName || '').toLowerCase().includes(search) ||
+        (l.detail       || '').toLowerCase().includes(search)
+      );
+
+      if (typeFilter === 'investor_actions') logs = logs.filter(l => INVESTOR_EVENTS.has(l.type));
+      else if (typeFilter === 'admin_actions') logs = logs.filter(l => ADMIN_EVENTS.has(l.type));
+      else if (typeFilter) logs = logs.filter(l => l.type === typeFilter);
+
+      if (invFilter) logs = logs.filter(l => l.email === invFilter);
+
+      if (dateFrom) {
+        const from = new Date(dateFrom);
+        logs = logs.filter(l => l.timestamp && new Date(l.timestamp.seconds * 1000) >= from);
+      }
+      if (dateTo) {
+        const to = new Date(dateTo); to.setHours(23, 59, 59);
+        logs = logs.filter(l => l.timestamp && new Date(l.timestamp.seconds * 1000) <= to);
+      }
+      return logs;
+    }
+
+    function renderLog() {
+      const tbody = document.getElementById('logTableBody');
+      const logs  = getFilteredLogs();
+
+      if (!logs.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No entries match the filter.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = logs.map(l => {
+        const ts = l.timestamp
+          ? new Date(l.timestamp.seconds * 1000).toLocaleString('en-GB', {
+              day: '2-digit', month: 'short', year: 'numeric',
+              hour: '2-digit', minute: '2-digit'
+            })
+          : '—';
+        const badge   = LOG_BADGES[l.type] || { label: l.type, cls: 'badge--grey' };
+        const details = buildLogDetail(l);
+        return `<tr>
+          <td style="white-space:nowrap;color:var(--text-light);font-size:0.8rem;">${ts}</td>
+          <td><span class="badge ${badge.cls}">${badge.label}</span></td>
+          <td style="font-size:0.82rem;">${escHtml(l.email || '—')}</td>
+          <td style="font-size:0.82rem;color:var(--text-light);">${escHtml(details)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function buildLogDetail(l) {
+      switch (l.type) {
+        case 'doc_downloaded':
+        case 'doc_added':
+        case 'doc_edited':
+        case 'doc_deleted':    return l.docName || '';
+        case 'access_granted':
+        case 'access_revoked': return [l.investorName, l.docName].filter(Boolean).join(' → ');
+        case 'investor_created':
+        case 'investor_edited':
+        case 'investor_deleted': return l.investorName || '';
+        case 'stage_changed':  return l.detail || '';
+        case 'notification_sent': return [l.docName, l.investorNames ? `→ ${l.investorNames}` : '', l.recipientCount ? `(${l.recipientCount} emails)` : ''].filter(Boolean).join(' ');
+        case 'message_published':
+        case 'message_updated':
+        case 'message_deleted': return [l.title ? `"${l.title}"` : '', l.expiry && l.expiry !== 'none' ? `expires ${l.expiry}` : ''].filter(Boolean).join(' · ');
+        default:               return l.detail || '';
+      }
+    }
+
+    // ── CSV Export ─────────────────────────────────────────────
+    function exportCsv() {
+      const logs = getFilteredLogs();
+      if (!logs.length) { alert('No entries to export.'); return; }
+
+      const csvCell = v => `"${String(v || '').replace(/"/g, '""')}"`;
+
+      const rows = [
+        ['Time', 'Event', 'Who', 'Details'].map(csvCell).join(','),
+        ...logs.map(l => {
+          const ts = l.timestamp
+            ? new Date(l.timestamp.seconds * 1000).toLocaleString('en-GB', {
+                day: '2-digit', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+              })
+            : '';
+          const event   = LOG_BADGES[l.type]?.label || l.type || '';
+          const who     = l.email  || '';
+          const details = buildLogDetail(l);
+          return [ts, event, who, details].map(csvCell).join(',');
+        })
+      ];
+
+      const blob     = new Blob([rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+      const url      = URL.createObjectURL(blob);
+      const date     = new Date().toISOString().slice(0, 10);
+      const filename = `activity-log-${date}.csv`;
+      const a        = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // ── Filter wiring ──────────────────────────────────────────
+    document.getElementById('logSearch').addEventListener('input', renderLog);
+    document.getElementById('logTypeFilter').addEventListener('change', renderLog);
+    document.getElementById('logPersonFilter').addEventListener('change', renderLog);
+    document.getElementById('logDateFrom').addEventListener('change', renderLog);
+    document.getElementById('logDateTo').addEventListener('change', renderLog);
+    document.getElementById('refreshLogBtn').addEventListener('click', loadLog);
+    document.getElementById('exportCsvBtn').addEventListener('click', exportCsv);
+
+    // ── Sign out ───────────────────────────────────────────────
+    document.getElementById('signOutBtn').addEventListener('click', async () => {
+      await signOut(auth);
+      window.location.href = '/portal/login.html';
+    });
+
+    // ── Helpers ────────────────────────────────────────────────
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    function escAttr(str) {
+      return String(str).replace(/"/g,'&quot;');
+    }
+  </script>
+</body>
+</html>
