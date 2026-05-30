@@ -1373,7 +1373,7 @@
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-          throw new Error(err.error || `HTTP ${res.status}`);
+          throw new Error(JSON.stringify(err));
         }
 
         const { sent } = await res.json();
