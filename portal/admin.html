@@ -256,6 +256,26 @@
     .stage-name-admin:hover { color: var(--primary); }
     .stage-name-admin.active { color: var(--primary); font-weight: 700; }
 
+    /* Notify modal — recipient list */
+    .notify-recipient-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 0; border-bottom: 1px solid var(--border);
+      cursor: pointer; font-size: 0.88rem; line-height: 1.4;
+    }
+    .notify-recipient-item:last-child { border-bottom: none; }
+    .notify-recipient-item input[type="checkbox"] {
+      width: 16px; height: 16px; flex-shrink: 0;
+      cursor: pointer; accent-color: var(--primary);
+    }
+    .notify-recipient-info { display: flex; flex-direction: column; gap: 2px; }
+    .notify-recipient-count { font-size: 0.78rem; color: var(--text-light); }
+    .spinner-sm {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid rgba(255,255,255,0.4); border-top-color: white;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+      vertical-align: middle; margin-right: 4px;
+    }
+
     @media (max-width: 768px) {
       .nav__inner { flex-wrap: wrap; gap: 8px; }
       .nav__label { display: none; }
@@ -472,6 +492,37 @@
     </div>
   </div>
 
+  <!-- ══ Notify Investors Modal ══ -->
+  <div class="modal-overlay" id="notifyModal">
+    <div class="modal" style="max-width:520px;">
+      <h2>Notify Investors</h2>
+      <p id="notifyModalDocName" style="color:var(--text-light);font-size:0.88rem;margin-bottom:20px;font-weight:600;"></p>
+
+      <div class="modal-section">
+        <div class="modal-section-label">Recipients</div>
+        <div id="notifyRecipientList"></div>
+        <p id="notifySendCount" class="hint" style="margin-top:10px;"></p>
+      </div>
+
+      <div class="form-group" style="margin-top:20px;">
+        <label>Subject line</label>
+        <input type="text" id="notifySubject" placeholder="New document available — Douro Partners">
+      </div>
+
+      <div class="form-group">
+        <label>Message</label>
+        <textarea id="notifyMessage" rows="6"
+          placeholder="Write your message to investors. It will appear above the document card in the email."></textarea>
+        <p class="hint">The email will include the document name, category, and a link to the investor portal.</p>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelNotifyBtn">Cancel</button>
+        <button class="btn btn--primary" id="sendNotifyBtn">Send Notification</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ Create / Edit Investor Modal ══ -->
   <div class="modal-overlay" id="editInvestorModal">
     <div class="modal">
@@ -526,6 +577,10 @@
     let grantAccessDocId      = null;
     let grantDocInvestorId    = null;
 
+    // Notify modal state
+    let notifyDocId    = null;
+    let notifySecret   = '';   // read from Firestore config/portal
+
     // ── Admin identity ─────────────────────────────────────────
     let adminEmail = '';
 
@@ -551,7 +606,10 @@
     async function loadStage() {
       try {
         const snap = await getDoc(doc(db, 'config', 'portal'));
-        currentStage = snap.exists() ? (snap.data().currentStage || 1) : 1;
+        if (snap.exists()) {
+          currentStage = snap.data().currentStage || 1;
+          notifySecret = snap.data().notifySecret  || '';
+        }
       } catch (e) {
         currentStage = 1;
       }
@@ -717,6 +775,7 @@
           </td>
           <td style="white-space:nowrap;color:var(--text-light)">${date}</td>
           <td style="white-space:nowrap;">
+            ${(d.allowedInvestors||[]).length > 0 ? `<button class="btn btn--ghost btn--sm notify-doc-btn" data-doc="${d.id}" style="margin-right:6px;" title="Send email notification to investors with access">Notify</button>` : ''}
             <button class="btn btn--ghost btn--sm edit-doc-btn" data-doc="${d.id}" style="margin-right:6px;">Edit</button>
             <button class="btn btn--ghost btn--sm btn--ghost-danger delete-doc-btn" data-doc="${d.id}">Delete</button>
           </td>
@@ -734,6 +793,9 @@
       );
       tbody.querySelectorAll('.delete-doc-btn').forEach(el =>
         el.addEventListener('click', () => deleteDocument(el.dataset.doc))
+      );
+      tbody.querySelectorAll('.notify-doc-btn').forEach(el =>
+        el.addEventListener('click', () => openNotifyModal(el.dataset.doc))
       );
     }
 
@@ -1204,6 +1266,142 @@
     document.getElementById('addInvestorBtn').addEventListener('click', () =>
       openEditInvestorModal(null)
     );
+
+    // ── Notify Investors ───────────────────────────────────────
+    function openNotifyModal(docId) {
+      notifyDocId = docId;
+      const d = allDocs.find(dd => dd.id === docId);
+      if (!d) return;
+
+      document.getElementById('notifyModalDocName').textContent = d.name;
+      document.getElementById('notifySubject').value  = `New document available — Douro Partners`;
+      document.getElementById('notifyMessage').value  = '';
+      document.getElementById('notifySendCount').textContent = '';
+
+      const invIds    = d.allowedInvestors || [];
+      const investors = invIds.map(id => allInvestors.find(i => i.id === id)).filter(Boolean);
+      const list      = document.getElementById('notifyRecipientList');
+
+      if (!investors.length) {
+        list.innerHTML = '<p style="color:var(--text-light);font-size:0.85rem;padding:8px 0;">No investors have access to this document yet.</p>';
+      } else {
+        list.innerHTML = investors.map(inv => {
+          const count = (inv.emails || []).length;
+          return `<label class="notify-recipient-item">
+            <input type="checkbox" class="notify-check" data-inv="${escAttr(inv.id)}" checked>
+            <span class="notify-recipient-info">
+              <strong>${escHtml(inv.name)}</strong>
+              <span class="notify-recipient-count">${count} ${count === 1 ? 'member' : 'members'}</span>
+            </span>
+          </label>`;
+        }).join('');
+        list.querySelectorAll('.notify-check').forEach(cb =>
+          cb.addEventListener('change', updateNotifyCount)
+        );
+      }
+
+      updateNotifyCount();
+      document.getElementById('notifyModal').classList.add('open');
+      setTimeout(() => document.getElementById('notifyMessage').focus(), 120);
+    }
+
+    function updateNotifyCount() {
+      const checked  = [...document.querySelectorAll('.notify-check:checked')];
+      const invIds   = checked.map(cb => cb.dataset.inv);
+      const total    = invIds.reduce((sum, id) => {
+        const inv = allInvestors.find(i => i.id === id);
+        return sum + (inv ? (inv.emails || []).length : 0);
+      }, 0);
+      const countEl  = document.getElementById('notifySendCount');
+      if (!checked.length) {
+        countEl.textContent = 'No investors selected.';
+      } else {
+        const invWord = checked.length === 1 ? 'investor' : 'investors';
+        const emlWord = total === 1 ? 'email' : 'emails';
+        countEl.textContent = `Will send to ${checked.length} ${invWord} — ${total} ${emlWord} total.`;
+      }
+    }
+
+    async function sendNotification() {
+      const d = allDocs.find(dd => dd.id === notifyDocId);
+      if (!d) return;
+
+      const subject = document.getElementById('notifySubject').value.trim();
+      const message = document.getElementById('notifyMessage').value.trim();
+      if (!subject) { alert('Please enter a subject line.'); return; }
+      if (!message) { alert('Please write a message to investors.'); return; }
+
+      if (!notifySecret) {
+        alert('Notification not configured.\n\nPlease add the "notifySecret" field to Firestore → config/portal, and set NOTIFY_SECRET as a Netlify environment variable.');
+        return;
+      }
+
+      const checked = [...document.querySelectorAll('.notify-check:checked')];
+      const invIds  = checked.map(cb => cb.dataset.inv);
+      if (!invIds.length) { alert('Please select at least one investor.'); return; }
+
+      const recipients = [];
+      for (const id of invIds) {
+        const inv = allInvestors.find(i => i.id === id);
+        if (!inv) continue;
+        for (const email of (inv.emails || [])) {
+          recipients.push({ email, name: inv.name });
+        }
+      }
+      if (!recipients.length) { alert('No email addresses found for the selected investors.'); return; }
+
+      const btn = document.getElementById('sendNotifyBtn');
+      btn.disabled  = true;
+      btn.innerHTML = '<span class="spinner-sm"></span> Sending…';
+
+      try {
+        const res = await fetch('/.netlify/functions/notify', {
+          method:  'POST',
+          headers: {
+            'Content-Type':    'application/json',
+            'x-notify-secret': notifySecret,
+          },
+          body: JSON.stringify({
+            recipients,
+            subject,
+            message,
+            docName:        d.name,
+            docCategory:    d.category        || '',
+            docDescription: d.description     || '',
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        const { sent } = await res.json();
+        const invNames  = invIds.map(id => allInvestors.find(i => i.id === id)?.name).filter(Boolean).join(', ');
+
+        await logEvent('notification_sent', {
+          docId:          notifyDocId,
+          docName:        d.name,
+          subject,
+          recipientCount: sent,
+          investorNames:  invNames,
+        });
+
+        document.getElementById('notifyModal').classList.remove('open');
+        alert(`Done! ${sent} email${sent !== 1 ? 's' : ''} sent successfully.`);
+
+      } catch (err) {
+        alert('Failed to send notification:\n' + err.message);
+      } finally {
+        btn.disabled  = false;
+        btn.textContent = 'Send Notification';
+      }
+    }
+
+    document.getElementById('cancelNotifyBtn').addEventListener('click', () =>
+      document.getElementById('notifyModal').classList.remove('open')
+    );
+    document.getElementById('sendNotifyBtn').addEventListener('click', sendNotification);
 
     // ── Sign out ───────────────────────────────────────────────
     document.getElementById('signOutBtn').addEventListener('click', async () => {

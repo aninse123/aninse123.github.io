@@ -213,6 +213,7 @@
               <option value="access_granted">Access granted</option>
               <option value="access_revoked">Access revoked</option>
               <option value="stage_changed">Stage changes</option>
+              <option value="notification_sent">Notifications sent</option>
             </select>
             <select id="logPersonFilter"><option value="">All people</option></select>
             <div class="filter-divider"></div>
@@ -273,6 +274,7 @@
       investor_edited:  { label: 'Investor edited',  cls: 'badge--grey'  },
       investor_deleted: { label: 'Investor deleted', cls: 'badge--red'   },
       stage_changed:    { label: 'Stage changed',    cls: 'badge--blue'  },
+      notification_sent:{ label: 'Notification sent',cls: 'badge--green' },
     };
 
     const INVESTOR_EVENTS = new Set(['login','logout','portal_visit','doc_downloaded']);
@@ -383,6 +385,7 @@
         case 'investor_edited':
         case 'investor_deleted': return l.investorName || '';
         case 'stage_changed':  return l.detail || '';
+        case 'notification_sent': return [l.docName, l.investorNames ? `→ ${l.investorNames}` : '', l.recipientCount ? `(${l.recipientCount} emails)` : ''].filter(Boolean).join(' ');
         default:               return l.detail || '';
       }
     }
