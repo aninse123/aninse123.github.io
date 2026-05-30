@@ -327,6 +327,36 @@
         </div>
       </div>
 
+      <!-- ── Investor Message ── -->
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">Investor Message</h2>
+        </div>
+        <div class="card" style="padding:24px;">
+          <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:16px;">
+            Shown as a notice card at the top of the investor portal. Leave empty to hide.
+          </p>
+          <div id="welcomeStatus" style="margin-bottom:16px;min-height:22px;"></div>
+          <div class="form-group">
+            <label>Title <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+            <input type="text" id="welcomeTitle" placeholder="e.g. PPM v2 now available">
+          </div>
+          <div class="form-group">
+            <label>Message</label>
+            <textarea id="welcomeMessage" rows="4" placeholder="Write your message to investors…"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Expires on <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional — leave empty for no expiry)</span></label>
+            <input type="date" id="welcomeExpiry" style="width:auto;">
+            <p class="hint">The card disappears automatically on this date.</p>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:8px;">
+            <button class="btn btn--primary" id="saveWelcomeBtn">Save & Publish</button>
+            <button class="btn btn--ghost btn--ghost-danger" id="clearWelcomeBtn" style="border:1px solid var(--border);">Clear Message</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ── Documents ── -->
       <div class="section">
         <div class="section-header">
@@ -607,13 +637,39 @@
       try {
         const snap = await getDoc(doc(db, 'config', 'portal'));
         if (snap.exists()) {
-          currentStage = snap.data().currentStage || 1;
-          notifySecret = snap.data().notifySecret  || '';
+          const d = snap.data();
+          currentStage = d.currentStage || 1;
+          notifySecret = d.notifySecret  || '';
+          document.getElementById('welcomeTitle').value   = d.welcomeTitle   || '';
+          document.getElementById('welcomeMessage').value = d.welcomeMessage || '';
+          document.getElementById('welcomeExpiry').value  = d.welcomeExpiry  || '';
+          renderWelcomeStatus(d);
         }
       } catch (e) {
         currentStage = 1;
       }
       renderAdminStageBar();
+    }
+
+    function renderWelcomeStatus(d) {
+      const el  = document.getElementById('welcomeStatus');
+      if (!el) return;
+      const msg = d?.welcomeMessage;
+      if (!msg) {
+        el.innerHTML = '<span style="font-size:0.82rem;color:var(--text-light);">No message set — investors see nothing.</span>';
+        return;
+      }
+      const expiry = d?.welcomeExpiry;
+      const today  = new Date().toISOString().slice(0, 10);
+      let badge;
+      if (expiry && today > expiry) {
+        badge = `<span class="badge badge--grey">Expired · ${expiry}</span>`;
+      } else if (expiry) {
+        badge = `<span class="badge badge--green">Active · expires ${expiry}</span>`;
+      } else {
+        badge = `<span class="badge badge--green">Active · no expiry</span>`;
+      }
+      el.innerHTML = badge;
     }
 
     function renderAdminStageBar() {
@@ -1266,6 +1322,37 @@
     document.getElementById('addInvestorBtn').addEventListener('click', () =>
       openEditInvestorModal(null)
     );
+
+    // ── Investor Message ───────────────────────────────────────
+    document.getElementById('saveWelcomeBtn').addEventListener('click', async () => {
+      const title   = document.getElementById('welcomeTitle').value.trim();
+      const message = document.getElementById('welcomeMessage').value.trim();
+      const expiry  = document.getElementById('welcomeExpiry').value;
+      if (!message) { alert('Please write a message before saving.'); return; }
+      const btn = document.getElementById('saveWelcomeBtn');
+      btn.disabled = true; btn.textContent = 'Saving…';
+      await setDoc(doc(db, 'config', 'portal'), {
+        welcomeTitle:     title,
+        welcomeMessage:   message,
+        welcomeExpiry:    expiry || '',
+        welcomeUpdatedAt: serverTimestamp(),
+      }, { merge: true });
+      logEvent('welcome_message_updated', { title, expiry: expiry || 'none' });
+      await loadStage();
+      btn.disabled = false; btn.textContent = 'Save & Publish';
+    });
+
+    document.getElementById('clearWelcomeBtn').addEventListener('click', async () => {
+      if (!confirm('Clear the investor message?\n\nIt will no longer be visible in the portal.')) return;
+      await setDoc(doc(db, 'config', 'portal'), {
+        welcomeTitle: '', welcomeMessage: '', welcomeExpiry: ''
+      }, { merge: true });
+      logEvent('welcome_message_cleared', {});
+      document.getElementById('welcomeTitle').value   = '';
+      document.getElementById('welcomeMessage').value = '';
+      document.getElementById('welcomeExpiry').value  = '';
+      renderWelcomeStatus({});
+    });
 
     // ── Notify Investors ───────────────────────────────────────
     function openNotifyModal(docId) {

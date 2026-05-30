@@ -194,6 +194,29 @@
     .stage-pill__name--current { color: var(--primary); font-weight: 600; }
     @keyframes stagePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
+    /* Welcome message card */
+    .welcome-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--primary);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 28px;
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .welcome-card__icon { font-size: 1.4rem; flex-shrink: 0; margin-top: 2px; }
+    .welcome-card__body { flex: 1; }
+    .welcome-card__title {
+      font-family: var(--font-serif);
+      font-size: 1.05rem;
+      color: var(--primary);
+      margin-bottom: 6px;
+    }
+    .welcome-card__message { font-size: 0.92rem; color: var(--text); line-height: 1.75; white-space: pre-line; }
+    .welcome-card__date { font-size: 0.75rem; color: var(--text-light); margin-top: 10px; }
+
     @media (max-width: 600px) {
       .nav__email { display: none; }
       .main { padding: 32px 16px; }
@@ -233,6 +256,14 @@
         <div class="stage-bar__label">Fund Stage</div>
         <div class="stage-bar__track" id="stageTrack"></div>
       </div>
+      <div id="welcomeCard" class="welcome-card" style="display:none;">
+        <div class="welcome-card__icon">📢</div>
+        <div class="welcome-card__body">
+          <h3 id="welcomeCardTitle" class="welcome-card__title" style="display:none;"></h3>
+          <p id="welcomeCardMessage" class="welcome-card__message"></p>
+          <p id="welcomeCardDate" class="welcome-card__date"></p>
+        </div>
+      </div>
       <div id="filterBar" class="filter-bar" style="display:none;"></div>
       <div id="docsGrid" class="docs-grid"></div>
     </main>
@@ -264,6 +295,30 @@
       { id: 4, label: 'Operate' },
       { id: 5, label: 'Exit' },
     ];
+
+    function renderWelcomeCard(title, message, expiry, updatedAt) {
+      const card = document.getElementById('welcomeCard');
+      if (!message) { card.style.display = 'none'; return; }
+      // Check expiry
+      if (expiry) {
+        const today = new Date().toISOString().slice(0, 10);
+        if (today > expiry) { card.style.display = 'none'; return; }
+      }
+      const titleEl = document.getElementById('welcomeCardTitle');
+      if (title) { titleEl.textContent = title; titleEl.style.display = 'block'; }
+      else        { titleEl.style.display = 'none'; }
+      document.getElementById('welcomeCardMessage').textContent = message;
+      const dateEl = document.getElementById('welcomeCardDate');
+      if (updatedAt) {
+        const d = new Date(updatedAt.seconds * 1000).toLocaleDateString('en-GB', {
+          day: 'numeric', month: 'long', year: 'numeric'
+        });
+        dateEl.textContent = `— André & António  ·  ${d}`;
+      } else {
+        dateEl.textContent = '— André & António';
+      }
+      card.style.display = 'flex';
+    }
 
     function renderStageBar(currentStage) {
       const track = document.getElementById('stageTrack');
@@ -322,8 +377,10 @@
         ]);
 
         // Render stage bar (always visible, regardless of documents)
-        const currentStage = configSnap.exists() ? (configSnap.data().currentStage || 1) : 1;
+        const cfg          = configSnap.exists() ? configSnap.data() : {};
+        const currentStage = cfg.currentStage || 1;
         renderStageBar(currentStage);
+        renderWelcomeCard(cfg.welcomeTitle || '', cfg.welcomeMessage || '', cfg.welcomeExpiry || '', cfg.welcomeUpdatedAt || null);
 
         const grid     = document.getElementById('docsGrid');
         const subtitle = document.getElementById('pageSubtitle');
