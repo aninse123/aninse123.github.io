@@ -237,6 +237,24 @@
     .stage-widget__hint { font-size: 0.78rem; color: var(--text-light); }
     @keyframes stagePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
+    /* Stage bar — admin */
+    .stage-track { display: flex; gap: 6px; margin-bottom: 10px; }
+    .stage-pill-admin {
+      flex: 1; height: 10px; border-radius: 100px;
+      background: var(--border);
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    .stage-pill-admin:hover { opacity: 0.7; }
+    .stage-pill-admin.done    { background: var(--primary); }
+    .stage-pill-admin.current { background: var(--primary); }
+    .stage-names-admin { display: flex; gap: 6px; }
+    .stage-name-admin {
+      flex: 1; font-size: 0.68rem; color: var(--text-light);
+      text-align: center; line-height: 1.3; cursor: pointer;
+    }
+    .stage-name-admin:hover { color: var(--primary); }
+    .stage-name-admin.active { color: var(--primary); font-weight: 700; }
+
     @media (max-width: 768px) {
       .nav__inner { flex-wrap: wrap; gap: 8px; }
       .nav__label { display: none; }
@@ -281,6 +299,20 @@
         <div class="card stage-widget">
           <div class="stage-widget__track" id="stageWidgetTrack"></div>
           <p class="stage-widget__hint" id="stageWidgetHint">Loading…</p>
+        </div>
+      </div>
+
+      <!-- ── Fund Stage ── -->
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">Fund Stage</h2>
+        </div>
+        <div class="card" style="padding: 24px 24px 20px;">
+          <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:16px;">
+            Visible to all investors in their portal. Click a stage to update.
+          </p>
+          <div class="stage-track" id="adminStageTrack"></div>
+          <div class="stage-names-admin" id="adminStageNames"></div>
         </div>
       </div>
 
@@ -552,6 +584,59 @@
     // Grant modal state
     let grantAccessDocId      = null;
     let grantDocInvestorId    = null;
+
+    // ── Stage ──────────────────────────────────────────────────
+    const STAGES = [
+      { id: 1, label: 'Raise' },
+      { id: 2, label: 'Source & Evaluate' },
+      { id: 3, label: 'Finance & Close' },
+      { id: 4, label: 'Operate' },
+      { id: 5, label: 'Exit' },
+    ];
+    let currentStage = 1;
+
+    async function loadStage() {
+      try {
+        const snap = await getDoc(doc(db, 'config', 'portal'));
+        currentStage = snap.exists() ? (snap.data().currentStage || 1) : 1;
+      } catch (e) {
+        currentStage = 1;
+      }
+      renderAdminStageBar();
+    }
+
+    function renderAdminStageBar() {
+      const track = document.getElementById('adminStageTrack');
+      const names = document.getElementById('adminStageNames');
+
+      track.innerHTML = STAGES.map(s => {
+        let cls = 'stage-pill-admin';
+        if (s.id < currentStage)       cls += ' done';
+        else if (s.id === currentStage) cls += ' current';
+        return `<div class="${cls}" data-stage="${s.id}"></div>`;
+      }).join('');
+
+      names.innerHTML = STAGES.map(s => {
+        const active = s.id === currentStage ? ' active' : '';
+        return `<span class="stage-name-admin${active}" data-stage="${s.id}">${s.label}</span>`;
+      }).join('');
+
+      track.querySelectorAll('.stage-pill-admin').forEach(el =>
+        el.addEventListener('click', () => confirmSetStage(parseInt(el.dataset.stage)))
+      );
+      names.querySelectorAll('.stage-name-admin').forEach(el =>
+        el.addEventListener('click', () => confirmSetStage(parseInt(el.dataset.stage)))
+      );
+    }
+
+    async function confirmSetStage(n) {
+      if (n === currentStage) return;
+      const stageName = STAGES[n - 1].label;
+      if (!confirm(`Move to Stage ${n} — ${stageName}?\n\nThis will update immediately for all investors.`)) return;
+      await setDoc(doc(db, 'config', 'portal'), { currentStage: n }, { merge: true });
+      currentStage = n;
+      renderAdminStageBar();
+    }
 
     // ── Auth guard ─────────────────────────────────────────────
     onAuthStateChanged(auth, async (user) => {
