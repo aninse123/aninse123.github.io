@@ -256,6 +256,19 @@
     .stage-name-admin:hover { color: var(--primary); }
     .stage-name-admin.active { color: var(--primary); font-weight: 700; }
 
+    /* Welcome message preview card (admin) */
+    .welcome-preview-card {
+      display: flex; gap: 14px; align-items: flex-start;
+      background: var(--bg); border-radius: var(--radius);
+      border-left: 4px solid var(--primary);
+      padding: 16px 20px;
+    }
+    .welcome-preview-card__icon { font-size: 1.3rem; flex-shrink: 0; margin-top: 2px; }
+    .welcome-preview-card__body { flex: 1; }
+    .welcome-preview-card__title { font-family: var(--font-serif); font-size: 1rem; color: var(--primary); margin-bottom: 5px; }
+    .welcome-preview-card__message { font-size: 0.88rem; color: var(--text); line-height: 1.7; white-space: pre-line; }
+    .welcome-preview-card__date { font-size: 0.75rem; color: var(--text-light); margin-top: 8px; }
+
     /* Notify modal — recipient list */
     .notify-recipient-item {
       display: flex; align-items: center; gap: 12px;
@@ -333,27 +346,50 @@
           <h2 class="section-title">Investor Message</h2>
         </div>
         <div class="card" style="padding:24px;">
-          <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:16px;">
-            Shown as a notice card at the top of the investor portal. Leave empty to hide.
+          <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:20px;">
+            Shown as a notice card at the top of the investor portal.
           </p>
-          <div id="welcomeStatus" style="margin-bottom:16px;min-height:22px;"></div>
-          <div class="form-group">
-            <label>Title <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
-            <input type="text" id="welcomeTitle" placeholder="e.g. PPM v2 now available">
+
+          <!-- Published state -->
+          <div id="welcomePreviewView" style="display:none;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+              <div id="welcomeStatusBadge"></div>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn--ghost btn--sm" id="editWelcomeBtn">Edit</button>
+                <button class="btn btn--ghost btn--sm btn--ghost-danger" id="clearWelcomeBtn" style="border:1px solid var(--border);">Clear</button>
+              </div>
+            </div>
+            <div class="welcome-preview-card">
+              <div class="welcome-preview-card__icon">📢</div>
+              <div class="welcome-preview-card__body">
+                <h3 id="welcomePreviewTitle" class="welcome-preview-card__title" style="display:none;"></h3>
+                <p id="welcomePreviewMessage" class="welcome-preview-card__message"></p>
+                <p id="welcomePreviewDate" class="welcome-preview-card__date"></p>
+              </div>
+            </div>
           </div>
-          <div class="form-group">
-            <label>Message</label>
-            <textarea id="welcomeMessage" rows="4" placeholder="Write your message to investors…"></textarea>
+
+          <!-- Form state -->
+          <div id="welcomeFormView">
+            <div class="form-group">
+              <label>Title <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+              <input type="text" id="welcomeTitle" placeholder="e.g. PPM v2 now available">
+            </div>
+            <div class="form-group">
+              <label>Message</label>
+              <textarea id="welcomeMessage" rows="4" placeholder="Write your message to investors…"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Expires on <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+              <input type="date" id="welcomeExpiry" style="width:auto;">
+              <p class="hint">Leave empty for no expiry. The card disappears automatically on this date.</p>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:8px;">
+              <button class="btn btn--primary" id="saveWelcomeBtn">Save & Publish</button>
+              <button class="btn btn--ghost" id="cancelWelcomeEditBtn" style="display:none;">Cancel</button>
+            </div>
           </div>
-          <div class="form-group">
-            <label>Expires on <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional — leave empty for no expiry)</span></label>
-            <input type="date" id="welcomeExpiry" style="width:auto;">
-            <p class="hint">The card disappears automatically on this date.</p>
-          </div>
-          <div style="display:flex;gap:10px;margin-top:8px;">
-            <button class="btn btn--primary" id="saveWelcomeBtn">Save & Publish</button>
-            <button class="btn btn--ghost btn--ghost-danger" id="clearWelcomeBtn" style="border:1px solid var(--border);">Clear Message</button>
-          </div>
+
         </div>
       </div>
 
@@ -643,7 +679,7 @@
           document.getElementById('welcomeTitle').value   = d.welcomeTitle   || '';
           document.getElementById('welcomeMessage').value = d.welcomeMessage || '';
           document.getElementById('welcomeExpiry').value  = d.welcomeExpiry  || '';
-          renderWelcomeStatus(d);
+          renderWelcomeAdmin(d);
         }
       } catch (e) {
         currentStage = 1;
@@ -651,15 +687,25 @@
       renderAdminStageBar();
     }
 
-    function renderWelcomeStatus(d) {
-      const el  = document.getElementById('welcomeStatus');
-      if (!el) return;
-      const msg = d?.welcomeMessage;
+    function renderWelcomeAdmin(d) {
+      const msg     = d?.welcomeMessage || '';
+      const formEl  = document.getElementById('welcomeFormView');
+      const prevEl  = document.getElementById('welcomePreviewView');
+      const cancelBtn = document.getElementById('cancelWelcomeEditBtn');
+
       if (!msg) {
-        el.innerHTML = '<span style="font-size:0.82rem;color:var(--text-light);">No message set — investors see nothing.</span>';
+        formEl.style.display = 'block';
+        prevEl.style.display = 'none';
+        cancelBtn.style.display = 'none';
         return;
       }
-      const expiry = d?.welcomeExpiry;
+
+      // Show preview, hide form
+      formEl.style.display = 'none';
+      prevEl.style.display = 'block';
+
+      // Status badge
+      const expiry = d?.welcomeExpiry || '';
       const today  = new Date().toISOString().slice(0, 10);
       let badge;
       if (expiry && today > expiry) {
@@ -669,7 +715,26 @@
       } else {
         badge = `<span class="badge badge--green">Active · no expiry</span>`;
       }
-      el.innerHTML = badge;
+      document.getElementById('welcomeStatusBadge').innerHTML = badge;
+
+      // Preview card
+      const titleEl = document.getElementById('welcomePreviewTitle');
+      const title   = d?.welcomeTitle || '';
+      if (title) { titleEl.textContent = title; titleEl.style.display = 'block'; }
+      else        { titleEl.style.display = 'none'; }
+
+      document.getElementById('welcomePreviewMessage').textContent = msg;
+
+      const dateEl    = document.getElementById('welcomePreviewDate');
+      const updatedAt = d?.welcomeUpdatedAt;
+      if (updatedAt) {
+        const date = new Date(updatedAt.seconds * 1000).toLocaleDateString('en-GB', {
+          day: 'numeric', month: 'long', year: 'numeric'
+        });
+        dateEl.textContent = `— André & António  ·  ${date}`;
+      } else {
+        dateEl.textContent = '— André & António';
+      }
     }
 
     function renderAdminStageBar() {
@@ -1332,13 +1397,15 @@
       const btn = document.getElementById('saveWelcomeBtn');
       btn.disabled = true; btn.textContent = 'Saving…';
       try {
-        await setDoc(doc(db, 'config', 'portal'), {
+        const data = {
           welcomeTitle:     title,
           welcomeMessage:   message,
           welcomeExpiry:    expiry || '',
           welcomeUpdatedAt: serverTimestamp(),
-        }, { merge: true });
+        };
+        await setDoc(doc(db, 'config', 'portal'), data, { merge: true });
         logEvent('welcome_message_updated', { title, expiry: expiry || 'none' });
+        // Re-read to get server timestamp then render
         await loadStage();
       } catch (err) {
         alert('Failed to save: ' + err.message);
@@ -1346,6 +1413,17 @@
       } finally {
         btn.disabled = false; btn.textContent = 'Save & Publish';
       }
+    });
+
+    document.getElementById('editWelcomeBtn').addEventListener('click', () => {
+      document.getElementById('welcomePreviewView').style.display = 'none';
+      document.getElementById('welcomeFormView').style.display    = 'block';
+      document.getElementById('cancelWelcomeEditBtn').style.display = 'inline-flex';
+      document.getElementById('welcomeMessage').focus();
+    });
+
+    document.getElementById('cancelWelcomeEditBtn').addEventListener('click', async () => {
+      await loadStage(); // restores preview state
     });
 
     document.getElementById('clearWelcomeBtn').addEventListener('click', async () => {
@@ -1357,7 +1435,7 @@
       document.getElementById('welcomeTitle').value   = '';
       document.getElementById('welcomeMessage').value = '';
       document.getElementById('welcomeExpiry').value  = '';
-      renderWelcomeStatus({});
+      renderWelcomeAdmin({});
     });
 
     // ── Notify Investors ───────────────────────────────────────
