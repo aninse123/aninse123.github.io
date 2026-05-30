@@ -87,6 +87,25 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
     ? `<p style="margin:8px 0 0;font-size:13px;color:#6B7280;line-height:1.6;">${esc(docDescription)}</p>`
     : '';
 
+  // Document card is optional — omit when no docName provided
+  const docCard = docName ? `
+            <!-- Document card -->
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+                   style="background:#F7F3EC;border-radius:8px;margin-bottom:28px;">
+              <tr>
+                <td style="padding:20px 24px;">
+                  <p style="margin:0 0 4px;font-size:10px;font-weight:700;
+                            text-transform:uppercase;letter-spacing:0.1em;color:#6B7280;">
+                    ${esc(docCategory)}
+                  </p>
+                  <p style="margin:0;font-size:17px;font-weight:600;color:#2C2C2C;">
+                    ${esc(docName)}
+                  </p>
+                  ${descriptionRow}
+                </td>
+              </tr>
+            </table>` : '';
+
   const messageHtml = esc(message).replace(/\n/g, '<br>');
 
   return `<!DOCTYPE html>
@@ -94,7 +113,7 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>${esc(docName)} — Douro Partners</title>
+  <title>${esc(docName || 'Update')} — Douro Partners</title>
 </head>
 <body style="margin:0;padding:0;background:#F7F3EC;font-family:'Helvetica Neue',Arial,sans-serif;-webkit-text-size-adjust:100%;">
 
@@ -130,22 +149,7 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
               ${messageHtml}
             </p>
 
-            <!-- Document card -->
-            <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
-                   style="background:#F7F3EC;border-radius:8px;margin-bottom:28px;">
-              <tr>
-                <td style="padding:20px 24px;">
-                  <p style="margin:0 0 4px;font-size:10px;font-weight:700;
-                            text-transform:uppercase;letter-spacing:0.1em;color:#6B7280;">
-                    ${esc(docCategory)}
-                  </p>
-                  <p style="margin:0;font-size:17px;font-weight:600;color:#2C2C2C;">
-                    ${esc(docName)}
-                  </p>
-                  ${descriptionRow}
-                </td>
-              </tr>
-            </table>
+            ${docCard}
 
             <!-- CTA button -->
             <table width="100%" cellpadding="0" cellspacing="0" role="presentation">

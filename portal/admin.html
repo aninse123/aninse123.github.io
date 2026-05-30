@@ -327,6 +327,7 @@
           <span class="nav__email" id="adminEmail"></span>
           <a href="/portal/investor.html" class="nav__portal-link">Investor view</a>
           <a href="/portal/log.html" class="nav__portal-link">Activity Log</a>
+          <button class="sign-out-btn" id="blastBtn" style="border-color:rgba(255,255,255,0.5);color:rgba(255,255,255,0.85);">✉ Send Update</button>
           <button class="sign-out-btn" id="signOutBtn">Sign out</button>
         </div>
       </div>
@@ -427,6 +428,39 @@
       </div>
 
     </main>
+  </div>
+
+  <!-- ══ Send Update (General Blast) Modal ══ -->
+  <div class="modal-overlay" id="blastModal">
+    <div class="modal" style="max-width:520px;">
+      <h2>Send Update to Investors</h2>
+      <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:20px;">
+        Send a general email to all investors — not tied to a specific document.
+      </p>
+
+      <div class="modal-section">
+        <div class="modal-section-label">Recipients</div>
+        <div id="blastRecipientList"></div>
+        <p id="blastSendCount" class="hint" style="margin-top:10px;"></p>
+      </div>
+
+      <div class="form-group" style="margin-top:20px;">
+        <label>Subject line</label>
+        <input type="text" id="blastSubject" placeholder="Investor Update — Douro Partners">
+      </div>
+
+      <div class="form-group">
+        <label>Message</label>
+        <textarea id="blastMessage" rows="7"
+          placeholder="Write your update to investors…"></textarea>
+        <p class="hint">A "View in Investor Portal →" button is included automatically at the bottom of the email.</p>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelBlastBtn">Cancel</button>
+        <button class="btn btn--primary" id="sendBlastBtn">Send Update</button>
+      </div>
+    </div>
   </div>
 
   <!-- ══ Add / Edit Message Modal ══ -->
@@ -1644,6 +1678,120 @@
       document.getElementById('notifyModal').classList.remove('open')
     );
     document.getElementById('sendNotifyBtn').addEventListener('click', sendNotification);
+
+    // ── Send Update (General Blast) ────────────────────────────
+    function openBlastModal() {
+      document.getElementById('blastSubject').value  = '';
+      document.getElementById('blastMessage').value  = '';
+      document.getElementById('blastSendCount').textContent = '';
+
+      const list = document.getElementById('blastRecipientList');
+      if (!allInvestors.length) {
+        list.innerHTML = '<p style="color:var(--text-light);font-size:0.85rem;padding:8px 0;">No investors yet.</p>';
+      } else {
+        list.innerHTML = allInvestors.map(inv => {
+          const count = (inv.emails || []).length;
+          return `<label class="notify-recipient-item">
+            <input type="checkbox" class="blast-check" data-inv="${escAttr(inv.id)}" checked>
+            <span class="notify-recipient-info">
+              <strong>${escHtml(inv.name)}</strong>
+              <span class="notify-recipient-count">${count} ${count === 1 ? 'member' : 'members'}</span>
+            </span>
+          </label>`;
+        }).join('');
+        list.querySelectorAll('.blast-check').forEach(cb =>
+          cb.addEventListener('change', updateBlastCount)
+        );
+      }
+
+      updateBlastCount();
+      document.getElementById('blastModal').classList.add('open');
+      setTimeout(() => document.getElementById('blastMessage').focus(), 120);
+    }
+
+    function updateBlastCount() {
+      const checked = [...document.querySelectorAll('.blast-check:checked')];
+      const total   = checked.reduce((sum, cb) => {
+        const inv = allInvestors.find(i => i.id === cb.dataset.inv);
+        return sum + (inv ? (inv.emails || []).length : 0);
+      }, 0);
+      const countEl = document.getElementById('blastSendCount');
+      if (!checked.length) {
+        countEl.textContent = 'No investors selected.';
+      } else {
+        const invWord = checked.length === 1 ? 'investor' : 'investors';
+        const emlWord = total === 1 ? 'email' : 'emails';
+        countEl.textContent = `Will send to ${checked.length} ${invWord} — ${total} ${emlWord} total.`;
+      }
+    }
+
+    async function sendBlast() {
+      const subject = document.getElementById('blastSubject').value.trim();
+      const message = document.getElementById('blastMessage').value.trim();
+      if (!subject) { alert('Please enter a subject line.'); return; }
+      if (!message) { alert('Please write a message.'); return; }
+
+      if (!notifySecret) {
+        alert('Notification not configured.\n\nPlease ensure NOTIFY_SECRET is set in Netlify and in Firestore config/portal.');
+        return;
+      }
+
+      const checked = [...document.querySelectorAll('.blast-check:checked')];
+      if (!checked.length) { alert('Please select at least one investor.'); return; }
+
+      const recipients = [];
+      for (const cb of checked) {
+        const inv = allInvestors.find(i => i.id === cb.dataset.inv);
+        if (!inv) continue;
+        for (const email of (inv.emails || [])) {
+          recipients.push({ email, name: inv.name });
+        }
+      }
+      if (!recipients.length) { alert('No email addresses found for the selected investors.'); return; }
+
+      const btn = document.getElementById('sendBlastBtn');
+      btn.disabled  = true;
+      btn.innerHTML = '<span class="spinner-sm"></span> Sending…';
+
+      try {
+        const res = await fetch('/.netlify/functions/notify', {
+          method:  'POST',
+          headers: {
+            'Content-Type':    'application/json',
+            'x-notify-secret': notifySecret,
+          },
+          body: JSON.stringify({ recipients, subject, message }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        const { sent } = await res.json();
+        const invNames = checked.map(cb => allInvestors.find(i => i.id === cb.dataset.inv)?.name).filter(Boolean).join(', ');
+
+        await logEvent('notification_sent', {
+          docId: null, docName: '(general update)',
+          subject, recipientCount: sent, investorNames: invNames,
+        });
+
+        document.getElementById('blastModal').classList.remove('open');
+        alert(`Done! ${sent} email${sent !== 1 ? 's' : ''} sent successfully.`);
+
+      } catch (err) {
+        alert('Failed to send update:\n' + err.message);
+      } finally {
+        btn.disabled    = false;
+        btn.textContent = 'Send Update';
+      }
+    }
+
+    document.getElementById('blastBtn').addEventListener('click', openBlastModal);
+    document.getElementById('cancelBlastBtn').addEventListener('click', () =>
+      document.getElementById('blastModal').classList.remove('open')
+    );
+    document.getElementById('sendBlastBtn').addEventListener('click', sendBlast);
 
     // ── Sign out ───────────────────────────────────────────────
     document.getElementById('signOutBtn').addEventListener('click', async () => {
