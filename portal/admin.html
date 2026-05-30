@@ -415,7 +415,7 @@
                   <th class="sortable sort-asc" data-sort-inv="name">Investor</th>
                   <th>Members</th>
                   <th class="sortable" data-sort-inv="docs">Documents</th>
-                  <th class="sortable" data-sort-inv="lastSeen">Last seen</th>
+                  <th class="sortable" data-sort-inv="lastSeen">Last visit</th>
                   <th></th>
                 </tr>
               </thead>
@@ -769,11 +769,12 @@
           getDocs(query(collection(db, 'activityLog'), orderBy('timestamp', 'desc'), limit(500)))
         ]);
 
-        // Build last-seen map: email → most recent event timestamp (seconds)
+        // Build last-visit map: email → most recent login/visit/download timestamp
+        const VISIT_EVENTS = new Set(['login', 'portal_visit', 'doc_downloaded']);
         lastSeenMap = {};
         logsSnap.forEach(d => {
           const l = d.data();
-          if (l.email && l.timestamp?.seconds) {
+          if (l.email && l.timestamp?.seconds && VISIT_EVENTS.has(l.type)) {
             if (!lastSeenMap[l.email] || l.timestamp.seconds > lastSeenMap[l.email]) {
               lastSeenMap[l.email] = l.timestamp.seconds;
             }
@@ -977,7 +978,7 @@
         const lastSeenTs = Math.max(0, ...(inv.emails || []).map(e => lastSeenMap[e] || 0));
         const lastSeenHtml = lastSeenTs
           ? `<span style="color:var(--text);font-size:0.82rem;">${relativeTime(lastSeenTs)}</span>`
-          : `<span style="color:var(--text-light);font-size:0.82rem;font-style:italic;">Never</span>`;
+          : `<span style="color:var(--text-light);font-size:0.82rem;font-style:italic;">Not yet</span>`;
 
         return `<tr>
           <td><strong>${escHtml(inv.name)}</strong></td>
