@@ -286,7 +286,7 @@
     async function sendLink(email) {
       const registered = await isRegistered(email);
       if (!registered) {
-        throw new Error('This email isn\'t registered in our investor portal. Please contact us at andre.rocha@douropartners.pt.');
+        throw new Error('This email isn\'t registered in our investor portal. Please contact us at andre.rocha@douropartners.pt or antonio.carvalho@douropartners.pt.');
       }
       await sendSignInLinkToEmail(auth, email, actionCodeSettings);
       window.localStorage.setItem('emailForSignIn', email);
