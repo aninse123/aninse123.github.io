@@ -708,10 +708,13 @@
       const expiry = d?.welcomeExpiry || '';
       const today  = new Date().toISOString().slice(0, 10);
       let badge;
+      const expiryFmt = expiry
+        ? new Date(expiry + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+        : '';
       if (expiry && today > expiry) {
-        badge = `<span class="badge badge--grey">Expired · ${expiry}</span>`;
+        badge = `<span class="badge badge--grey">Expired · ${expiryFmt}</span>`;
       } else if (expiry) {
-        badge = `<span class="badge badge--green">Active · expires ${expiry}</span>`;
+        badge = `<span class="badge badge--green">Active · expires ${expiryFmt}</span>`;
       } else {
         badge = `<span class="badge badge--green">Active · no expiry</span>`;
       }
