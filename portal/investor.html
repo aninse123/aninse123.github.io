@@ -245,8 +245,17 @@
       onAuthStateChanged, signOut
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
-      collection, query, where, getDocs, doc, getDoc
+      collection, query, where, getDocs, doc, getDoc, addDoc, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+    // ── Activity logging ───────────────────────────────────────
+    async function logEvent(type, data = {}) {
+      try {
+        await addDoc(collection(db, 'activityLog'), {
+          type, timestamp: serverTimestamp(), ...data
+        });
+      } catch (e) { /* fail silently */ }
+    }
 
     const STAGES = [
       { id: 1, label: 'Raise' },
@@ -286,6 +295,15 @@
       document.getElementById('userEmail').textContent = email;
       document.getElementById('loadingScreen').style.display = 'none';
       document.getElementById('app').style.display = 'block';
+
+      // Detect fresh magic-link login vs. returning session
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('login') === '1') {
+        window.history.replaceState({}, '', window.location.pathname);
+        logEvent('login', { email });
+      } else {
+        logEvent('portal_visit', { email });
+      }
 
       if (ADMIN_EMAILS.includes(email)) {
         document.getElementById('adminBar').style.display = 'block';
@@ -359,6 +377,9 @@
                 ↓ &nbsp;Download PDF
               </a>
             `;
+            card.querySelector('.doc-download').addEventListener('click', () => {
+              logEvent('doc_downloaded', { email, docId: d.id, docName: d.name, category: d.category });
+            });
             grid.appendChild(card);
           });
         }
@@ -385,6 +406,8 @@
     });
 
     document.getElementById('signOutBtn').addEventListener('click', async () => {
+      const email = auth.currentUser?.email;
+      if (email) await logEvent('logout', { email });
       await signOut(auth);
       window.location.href = '/portal/login.html';
     });
