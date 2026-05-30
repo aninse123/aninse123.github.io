@@ -297,17 +297,6 @@
         <div class="section-header">
           <h2 class="section-title">Fund Stage</h2>
         </div>
-        <div class="card stage-widget">
-          <div class="stage-widget__track" id="stageWidgetTrack"></div>
-          <p class="stage-widget__hint" id="stageWidgetHint">Loading…</p>
-        </div>
-      </div>
-
-      <!-- ── Fund Stage ── -->
-      <div class="section">
-        <div class="section-header">
-          <h2 class="section-title">Fund Stage</h2>
-        </div>
         <div class="card" style="padding: 24px 24px 20px;">
           <p style="font-size:0.82rem;color:var(--text-light);margin-bottom:16px;">
             Visible to all investors in their portal. Click a stage to update.
@@ -563,56 +552,6 @@
     import {
       ref, uploadBytesResumable, getDownloadURL, deleteObject
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
-
-    // ── Stages ────────────────────────────────────────────────
-    const STAGES = [
-      { id: 1, label: 'Raise',             full: 'Raise Search Fund' },
-      { id: 2, label: 'Source & Evaluate', full: 'Source & Evaluate Opportunities' },
-      { id: 3, label: 'Finance & Close',   full: 'Finance & Close a Transaction' },
-      { id: 4, label: 'Operate',           full: 'Operate the Business' },
-      { id: 5, label: 'Exit',              full: 'Exit the Business' },
-    ];
-    let currentStage = 1;
-
-    async function loadStage() {
-      const snap = await getDoc(doc(db, 'config', 'portal'));
-      currentStage = snap.exists() ? (snap.data().currentStage || 1) : 1;
-      renderStageWidget();
-    }
-
-    function renderStageWidget() {
-      const track = document.getElementById('stageWidgetTrack');
-      const hint  = document.getElementById('stageWidgetHint');
-
-      track.innerHTML = STAGES.map(s => {
-        let barClass = '', nameClass = '';
-        if (s.id < currentStage)       { barClass = 'stage-widget__bar--done'; }
-        else if (s.id === currentStage) { barClass = 'stage-widget__bar--current'; nameClass = 'stage-widget__name--current'; }
-        else                            { barClass = 'stage-widget__bar--upcoming'; }
-        return `<button class="stage-widget__pill" data-stage="${s.id}" title="Set to Stage ${s.id}: ${s.full}">
-          <div class="stage-widget__bar ${barClass}"></div>
-          <span class="stage-widget__name ${nameClass}">${s.label}</span>
-        </button>`;
-      }).join('');
-
-      hint.textContent = `Current: Stage ${currentStage} — ${STAGES[currentStage - 1].full}. Click a stage to change it.`;
-
-      track.querySelectorAll('.stage-widget__pill').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const stage = parseInt(btn.dataset.stage);
-          if (stage === currentStage) return;
-          const stageFull = STAGES[stage - 1].full;
-          if (!confirm(`Move to Stage ${stage} — ${stageFull}?\n\nThis will update immediately for all investors.`)) return;
-          setStage(stage);
-        });
-      });
-    }
-
-    async function setStage(stage) {
-      await setDoc(doc(db, 'config', 'portal'), { currentStage: stage }, { merge: true });
-      currentStage = stage;
-      renderStageWidget();
-    }
 
     // ── State ──────────────────────────────────────────────────
     let allDocs      = [];
