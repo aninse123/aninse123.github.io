@@ -1331,15 +1331,21 @@
       if (!message) { alert('Please write a message before saving.'); return; }
       const btn = document.getElementById('saveWelcomeBtn');
       btn.disabled = true; btn.textContent = 'Saving…';
-      await setDoc(doc(db, 'config', 'portal'), {
-        welcomeTitle:     title,
-        welcomeMessage:   message,
-        welcomeExpiry:    expiry || '',
-        welcomeUpdatedAt: serverTimestamp(),
-      }, { merge: true });
-      logEvent('welcome_message_updated', { title, expiry: expiry || 'none' });
-      await loadStage();
-      btn.disabled = false; btn.textContent = 'Save & Publish';
+      try {
+        await setDoc(doc(db, 'config', 'portal'), {
+          welcomeTitle:     title,
+          welcomeMessage:   message,
+          welcomeExpiry:    expiry || '',
+          welcomeUpdatedAt: serverTimestamp(),
+        }, { merge: true });
+        logEvent('welcome_message_updated', { title, expiry: expiry || 'none' });
+        await loadStage();
+      } catch (err) {
+        alert('Failed to save: ' + err.message);
+        console.error('saveWelcome error:', err);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Save & Publish';
+      }
     });
 
     document.getElementById('clearWelcomeBtn').addEventListener('click', async () => {
