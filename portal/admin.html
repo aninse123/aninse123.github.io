@@ -414,6 +414,7 @@
                   <th class="sortable sort-asc" data-sort-inv="name">Investor</th>
                   <th>Members</th>
                   <th class="sortable" data-sort-inv="docs">Documents</th>
+                  <th class="sortable" data-sort-inv="lastSeen">Last seen</th>
                   <th></th>
                 </tr>
               </thead>
@@ -611,7 +612,8 @@
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
       collection, getDocs, addDoc, updateDoc, deleteDoc,
-      doc, getDoc, setDoc, serverTimestamp, arrayUnion, arrayRemove
+      doc, getDoc, setDoc, serverTimestamp, arrayUnion, arrayRemove,
+      query, orderBy, limit
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import {
       ref, uploadBytesResumable, getDownloadURL, deleteObject
@@ -632,6 +634,10 @@
     // Grant modal state
     let grantAccessDocId      = null;
     let grantDocInvestorId    = null;
+
+    // Activity-derived maps (built from recent logs)
+    let lastSeenMap        = {};  // email → unix seconds of most recent event
+    let docViewedEmailsMap = {};  // docId → Set of emails that downloaded
 
     // Notify modal state
     let notifyDocId    = null;
@@ -723,10 +729,32 @@
     // ── Load everything ────────────────────────────────────────
     async function loadAll() {
       try {
-        const [docsSnap, investorsSnap] = await Promise.all([
+        const [docsSnap, investorsSnap, logsSnap] = await Promise.all([
           getDocs(collection(db, 'documents')),
-          getDocs(collection(db, 'investors'))
+          getDocs(collection(db, 'investors')),
+          getDocs(query(collection(db, 'activityLog'), orderBy('timestamp', 'desc'), limit(500)))
         ]);
+
+        // Build last-seen map: email → most recent event timestamp (seconds)
+        lastSeenMap = {};
+        logsSnap.forEach(d => {
+          const l = d.data();
+          if (l.email && l.timestamp?.seconds) {
+            if (!lastSeenMap[l.email] || l.timestamp.seconds > lastSeenMap[l.email]) {
+              lastSeenMap[l.email] = l.timestamp.seconds;
+            }
+          }
+        });
+
+        // Build doc-viewed map: docId → Set of emails that downloaded
+        docViewedEmailsMap = {};
+        logsSnap.forEach(d => {
+          const l = d.data();
+          if (l.type === 'doc_downloaded' && l.docId && l.email) {
+            if (!docViewedEmailsMap[l.docId]) docViewedEmailsMap[l.docId] = new Set();
+            docViewedEmailsMap[l.docId].add(l.email);
+          }
+        });
 
         allDocs = [];
         docsSnap.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
@@ -820,6 +848,19 @@
           </span>`;
         }).join('');
 
+        // Engagement indicator: how many investors have downloaded this doc
+        let engagementHtml = '';
+        if (invIds.length > 0) {
+          const viewedSet  = docViewedEmailsMap[d.id] || new Set();
+          const viewedCount = invIds.filter(invId => {
+            const inv = allInvestors.find(i => i.id === invId);
+            return inv && (inv.emails || []).some(e => viewedSet.has(e));
+          }).length;
+          const allViewed = viewedCount === invIds.length;
+          const colour = viewedCount === 0 ? 'var(--text-light)' : allViewed ? 'var(--secondary)' : 'var(--primary)';
+          engagementHtml = `<span style="font-size:0.75rem;color:${colour};margin-left:6px;white-space:nowrap;">👁 ${viewedCount}/${invIds.length}</span>`;
+        }
+
         return `<tr>
           <td><strong>${escHtml(d.name)}</strong></td>
           <td><span class="badge badge--green">${d.category || '—'}</span></td>
@@ -829,6 +870,7 @@
               ${invBadges}
               <button class="add-access-btn" data-doc="${d.id}" data-docname="${escHtml(d.name)}">+ Grant</button>
             </div>
+            ${engagementHtml}
           </td>
           <td style="white-space:nowrap;color:var(--text-light)">${date}</td>
           <td style="white-space:nowrap;">
@@ -869,6 +911,9 @@
         if (invSort.field === 'docs') {
           va = allDocs.filter(d => (d.allowedInvestors || []).includes(a.id)).length;
           vb = allDocs.filter(d => (d.allowedInvestors || []).includes(b.id)).length;
+        } else if (invSort.field === 'lastSeen') {
+          va = Math.max(0, ...(a.emails || []).map(e => lastSeenMap[e] || 0));
+          vb = Math.max(0, ...(b.emails || []).map(e => lastSeenMap[e] || 0));
         } else {
           va = (a.name || '').toLowerCase();
           vb = (b.name || '').toLowerCase();
@@ -885,7 +930,7 @@
       });
 
       if (!investors.length) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No investors yet — create one above.</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No investors yet — create one above.</td></tr>';
         return;
       }
 
@@ -893,6 +938,13 @@
         const docCount   = allDocs.filter(d => (d.allowedInvestors || []).includes(inv.id)).length;
         const emailCount = (inv.emails || []).length;
         const emailsStr  = emailCount === 1 ? '1 member' : `${emailCount} members`;
+
+        // Last seen: most recent timestamp across all member emails
+        const lastSeenTs = Math.max(0, ...(inv.emails || []).map(e => lastSeenMap[e] || 0));
+        const lastSeenHtml = lastSeenTs
+          ? `<span style="color:var(--text);font-size:0.82rem;">${relativeTime(lastSeenTs)}</span>`
+          : `<span style="color:var(--text-light);font-size:0.82rem;font-style:italic;">Never</span>`;
+
         return `<tr>
           <td><strong>${escHtml(inv.name)}</strong></td>
           <td>
@@ -904,6 +956,7 @@
               ? `<button class="add-access-btn inv-grant-doc" data-inv="${inv.id}" style="margin-left:8px;">+ Grant Doc</button>`
               : ''}
           </td>
+          <td>${lastSeenHtml}</td>
           <td style="white-space:nowrap;">
             <button class="btn btn--ghost btn--sm edit-inv-btn" data-inv="${inv.id}" style="margin-right:6px;">Edit</button>
             <button class="btn btn--ghost btn--sm btn--ghost-danger delete-inv-btn" data-inv="${inv.id}">Delete</button>
@@ -1606,6 +1659,15 @@
     );
 
     // ── Helpers ────────────────────────────────────────────────
+    function relativeTime(seconds) {
+      const diff = Math.floor(Date.now() / 1000) - seconds;
+      if (diff < 60)         return 'just now';
+      if (diff < 3600)       return `${Math.floor(diff / 60)}m ago`;
+      if (diff < 86400)      return `${Math.floor(diff / 3600)}h ago`;
+      if (diff < 86400 * 7)  return `${Math.floor(diff / 86400)}d ago`;
+      return new Date(seconds * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
     function escHtml(str) {
       return String(str)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;')
