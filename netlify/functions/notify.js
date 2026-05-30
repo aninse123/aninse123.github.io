@@ -18,16 +18,7 @@ exports.handler = async (event) => {
   // Validate secret
   const secret = event.headers['x-notify-secret'];
   if (!NOTIFY_SECRET || !secret || secret !== NOTIFY_SECRET) {
-    return { statusCode: 401, body: JSON.stringify({
-      error: 'Unauthorized',
-      debug: {
-        envSet:    !!NOTIFY_SECRET,
-        envLen:    NOTIFY_SECRET ? NOTIFY_SECRET.length : 0,
-        headerSet: !!secret,
-        headerLen: secret ? secret.length : 0,
-        match:     secret === NOTIFY_SECRET
-      }
-    })};
+    return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized' }) };
   }
 
   // Parse body
