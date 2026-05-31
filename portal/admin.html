@@ -698,6 +698,15 @@
     // ── Admin identity ─────────────────────────────────────────
     let adminEmail = '';
 
+    // ── Sync allowed emails (public whitelist for login page) ──
+    async function syncAllowedEmails() {
+      try {
+        const allEmails = new Set(ADMIN_EMAILS);
+        allInvestors.forEach(inv => (inv.emails || []).forEach(e => allEmails.add(e)));
+        await setDoc(doc(db, 'config', 'allowedEmails'), { emails: [...allEmails] });
+      } catch (e) { console.error('syncAllowedEmails error:', e); }
+    }
+
     // ── Activity logging ───────────────────────────────────────
     async function logEvent(type, data = {}) {
       try {
@@ -1246,6 +1255,7 @@
           createdAt: serverTimestamp()
         });
         logEvent('investor_created', { investorId: newInv.id, investorName: name, memberCount: editInvestorEmails.length });
+        await loadAll(); syncAllowedEmails();
       } else {
         // ── UPDATE ──────────────────────────────
         const added   = editInvestorEmails.filter(e => !editInvestorOriginalEmails.includes(e));
@@ -1253,6 +1263,7 @@
 
         await updateDoc(doc(db, 'investors', editInvestorId), { name, emails: editInvestorEmails });
         logEvent('investor_edited', { investorId: editInvestorId, investorName: name, membersAdded: added.length, membersRemoved: removed.length });
+        syncAllowedEmails();
 
         const docsWithAccess = allDocs.filter(d => (d.allowedInvestors || []).includes(editInvestorId));
 
@@ -1307,6 +1318,7 @@
 
       await deleteDoc(doc(db, 'investors', investorId));
       logEvent('investor_deleted', { investorId, investorName: inv.name });
+      syncAllowedEmails();
       await loadAll();
     }
 

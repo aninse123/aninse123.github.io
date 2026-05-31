@@ -229,7 +229,7 @@
       onAuthStateChanged
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
-      collection, query, where, getDocs
+      doc, getDoc
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
     const INVESTOR_URL = window.location.origin + '/portal/investor.html';
@@ -274,12 +274,12 @@
       }
     }
 
-    // Check if email is registered (investor member or admin)
+    // Check if email is registered (reads public config/allowedEmails document)
     async function isRegistered(email) {
       if (ADMIN_EMAILS.includes(email)) return true;
-      const q    = query(collection(db, 'investors'), where('emails', 'array-contains', email));
-      const snap = await getDocs(q);
-      return !snap.empty;
+      const snap = await getDoc(doc(db, 'config', 'allowedEmails'));
+      if (!snap.exists()) return true; // doc not yet created — allow through
+      return (snap.data().emails || []).includes(email);
     }
 
     // Send magic link
