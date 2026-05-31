@@ -349,6 +349,24 @@
         </div>
       </div>
 
+      <!-- ── Portal Settings ── -->
+      <div class="section">
+        <div class="section-header">
+          <h2 class="section-title">Portal Settings</h2>
+        </div>
+        <div class="card" style="padding:24px;">
+          <div class="form-group" style="max-width:480px;margin-bottom:0;">
+            <label>Meeting link <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+            <input type="url" id="meetingLink" placeholder="https://cal.eu/andre-rocha">
+            <p class="hint">When set, investors see a "📅 Book a meeting" button in their portal. Leave empty to hide it.</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:16px;">
+            <button class="btn btn--primary btn--sm" id="saveMeetingLinkBtn">Save</button>
+            <span id="meetingLinkSaved" style="display:none;font-size:0.82rem;color:var(--secondary);">✓ Saved</span>
+          </div>
+        </div>
+      </div>
+
       <!-- ── Investor Messages ── -->
       <div class="section">
         <div class="section-header">
@@ -706,6 +724,7 @@
           const d = snap.data();
           currentStage = d.currentStage || 1;
           notifySecret = d.notifySecret  || '';
+          document.getElementById('meetingLink').value = d.meetingLink || '';
         }
       } catch (e) {
         currentStage = 1;
@@ -746,6 +765,23 @@
       currentStage = n;
       renderAdminStageBar();
     }
+
+    // ── Portal Settings — Meeting link ────────────────────────
+    document.getElementById('saveMeetingLinkBtn').addEventListener('click', async () => {
+      const url  = document.getElementById('meetingLink').value.trim();
+      const btn  = document.getElementById('saveMeetingLinkBtn');
+      const saved = document.getElementById('meetingLinkSaved');
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        await setDoc(doc(db, 'config', 'portal'), { meetingLink: url }, { merge: true });
+        saved.style.display = 'inline';
+        setTimeout(() => { saved.style.display = 'none'; }, 3000);
+      } catch (err) {
+        alert('Failed to save: ' + err.message);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Save';
+      }
+    });
 
     // ── Auth guard ─────────────────────────────────────────────
     onAuthStateChanged(auth, async (user) => {

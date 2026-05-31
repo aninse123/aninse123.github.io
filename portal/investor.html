@@ -242,6 +242,15 @@
         <div class="nav__right">
           <a href="/" class="nav__main-link">← Main site</a>
           <span class="nav__email" id="userEmail"></span>
+          <a id="bookMeetingBtn" href="#" target="_blank" rel="noopener"
+             style="display:none;font-size:0.82rem;font-weight:600;
+                    color:var(--primary);text-decoration:none;
+                    border:1px solid var(--primary);border-radius:var(--radius);
+                    padding:6px 14px;transition:0.2s;"
+             onmouseover="this.style.background='var(--primary)';this.style.color='white';"
+             onmouseout="this.style.background='none';this.style.color='var(--primary)';">
+            📅 Book a meeting
+          </a>
           <button class="sign-out-btn" id="signOutBtn">Sign out</button>
         </div>
       </div>
@@ -382,6 +391,14 @@
         const messages = [];
         messagesSnap.forEach(d => messages.push({ id: d.id, ...d.data() }));
         renderMessages(messages);
+
+        // Book a meeting button
+        const meetingLink = cfg.meetingLink || '';
+        if (meetingLink) {
+          const btn = document.getElementById('bookMeetingBtn');
+          btn.href = meetingLink;
+          btn.style.display = 'inline-block';
+        }
 
         const grid     = document.getElementById('docsGrid');
         const subtitle = document.getElementById('pageSubtitle');
