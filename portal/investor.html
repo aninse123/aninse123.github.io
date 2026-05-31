@@ -242,24 +242,26 @@
         <div class="nav__right">
           <a href="/" class="nav__main-link">← Main site</a>
           <span class="nav__email" id="userEmail"></span>
-          <a id="bookMeetingBtn" href="#" target="_blank" rel="noopener"
-             style="display:none;font-size:0.82rem;font-weight:600;
-                    color:var(--primary);text-decoration:none;
-                    border:1px solid var(--primary);border-radius:var(--radius);
-                    padding:6px 14px;transition:0.2s;"
-             onmouseover="this.style.background='var(--primary)';this.style.color='white';"
-             onmouseout="this.style.background='none';this.style.color='var(--primary)';">
-            📅 Book a meeting
-          </a>
           <button class="sign-out-btn" id="signOutBtn">Sign out</button>
         </div>
       </div>
     </nav>
 
     <main class="main">
-      <div class="page-header">
-        <h1 class="page-title">Investor Portal</h1>
-        <p class="page-subtitle" id="pageSubtitle">Loading your documents…</p>
+      <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+        <div>
+          <h1 class="page-title">Investor Portal</h1>
+          <p class="page-subtitle" id="pageSubtitle">Loading your documents…</p>
+        </div>
+        <a id="bookMeetingBtn" href="#" target="_blank" rel="noopener" style="display:none;
+           flex-shrink:0;font-size:0.82rem;font-weight:600;
+           color:var(--primary);text-decoration:none;
+           background:var(--white);border:1px solid var(--border);
+           border-radius:var(--radius);padding:6px 14px;transition:0.2s;"
+           onmouseover="this.style.borderColor='var(--primary)';"
+           onmouseout="this.style.borderColor='var(--border)';">
+          📅 Book a meeting
+        </a>
       </div>
       <div id="stageBar" class="stage-bar" style="display:none;">
         <div class="stage-bar__label">Fund Stage</div>
