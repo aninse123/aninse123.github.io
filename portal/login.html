@@ -74,7 +74,7 @@
       border: 1.5px solid var(--border);
       border-radius: var(--radius);
       font-family: var(--font-sans);
-      font-size: 0.95rem;
+      font-size: 16px; /* 16px prevents iOS auto-zoom on focus */
       color: var(--text);
       background: var(--white);
       transition: 0.3s ease;
@@ -144,6 +144,8 @@
       background: #FBE9E9;
       color: #B33A3A;
       border: 1px solid #F0C0C0;
+      word-break: break-word;
+      overflow-wrap: break-word;
     }
 
     /* Processing */
@@ -308,7 +310,10 @@
         showSent(email);
         document.getElementById('loginForm').reset();
       } catch (err) {
-        errMsg.textContent   = err.message || 'Something went wrong. Please try again.';
+        const raw = err.message || 'Something went wrong. Please try again.';
+        errMsg.innerHTML     = raw
+          .replace(/andre\.rocha@douropartners\.pt/g,    '<a href="mailto:andre.rocha@douropartners.pt" style="color:#B33A3A;">andre.rocha@douropartners.pt</a>')
+          .replace(/antonio\.carvalho@douropartners\.pt/g,'<a href="mailto:antonio.carvalho@douropartners.pt" style="color:#B33A3A;">antonio.carvalho@douropartners.pt</a>');
         errMsg.style.display = 'block';
       } finally {
         btn.disabled  = false;
