@@ -803,10 +803,15 @@ async function loadAll() {
 async function loadActivities(investorId) {
   const snap = await getDocs(query(
     collection(db, 'crmActivities'),
-    where('investorId', '==', investorId),
-    orderBy('date', 'desc')
+    where('investorId', '==', investorId)
   ));
   activities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  // Sort client-side — avoids requiring a Firestore composite index
+  activities.sort((a, b) => {
+    const da = tsToDate(a.date)?.getTime() || 0;
+    const db_ = tsToDate(b.date)?.getTime() || 0;
+    return db_ - da;
+  });
 }
 
 // ── Render: Summary ──────────────────────────────────────────────────────────
@@ -928,7 +933,7 @@ async function openDetail(id) {
   currentInvId = id;
   showEl('listView', false);
   showEl('detailView', true);
-  await loadActivities(id);
+  try { await loadActivities(id); } catch(e) { console.error('loadActivities error:', e); activities = []; }
   renderDetail();
 }
 
