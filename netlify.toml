@@ -1,0 +1,11 @@
+# Netlify configuration — Douro Partners
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[build.environment]
+  # Firebase Web API keys are intentionally public — security is enforced
+  # via Firestore Security Rules, not by hiding the key. This disables
+  # Netlify's smart secret detection which incorrectly flags Firebase keys.
+  SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"
