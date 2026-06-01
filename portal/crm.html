@@ -1092,15 +1092,22 @@ function renderActivityLog() {
 
   logEl.innerHTML = activities.map(a => {
     const info = ACT[a.type] || { label: a.type, icon: '📌' };
+    const isMeetingType = ['meeting_scheduled','meeting_done'].includes(a.type);
     let statusBadge = '';
     if (a.type === 'meeting_scheduled') {
       if (a.status === 'open') statusBadge = `<span class="badge badge-warn">Scheduled</span>`;
       else if (a.status === 'happened') statusBadge = `<span class="badge badge-green">Happened</span>`;
       else if (a.status === 'cancelled') statusBadge = `<span class="badge badge-grey">Cancelled</span>`;
     }
-    const via = a.via ? `<span class="badge badge-grey">via ${esc(a.via)}</span>` : '';
+    const via = a.via ? `<span class="badge badge-grey">${esc(a.via.replace(/_/g,' '))}</span>` : '';
     const closedNotes = a.status && a.status !== 'open' && a.closedNotes
       ? `<div class="act-content" style="margin-top:6px;padding-top:6px;border-top:1px solid #F0EDE6;"><em>Closing notes:</em> ${esc(a.closedNotes)}</div>` : '';
+    const meetingMeta = isMeetingType && (a.time || a.duration || a.guests) ? `
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:5px;font-size:0.8rem;color:var(--text-light);">
+        ${a.time ? `<span>🕐 ${esc(a.time)}${a.timezone ? ' ' + esc(a.timezone) : ''}</span>` : ''}
+        ${a.duration ? `<span>⏱ ${a.duration} min</span>` : ''}
+        ${a.guests ? `<span>👥 ${esc(a.guests)}</span>` : ''}
+      </div>` : '';
 
     return `<div class="activity-item">
       <div class="act-icon">${info.icon}</div>
@@ -1112,6 +1119,7 @@ function renderActivityLog() {
           <span class="act-date">${fmtDate(a.date)}</span>
           <span class="act-by">by ${esc(a.createdBy||'')}</span>
         </div>
+        ${meetingMeta}
         ${a.content ? `<div class="act-content">${esc(a.content)}</div>` : ''}
         ${closedNotes}
       </div>
@@ -1300,8 +1308,8 @@ function renderActFields() {
   // meeting_scheduled = future only; call/email = any date (past or future); others = past/today only
   const isFutureOnly = activityType === 'meeting_scheduled';
   const isAnyDate    = ['call','email'].includes(activityType);
-  const isFuture     = isFutureOnly; // kept for backward compat with template below
-  const needVia = ['call','email','meeting_done'].includes(activityType);
+  const isMeeting    = ['meeting_scheduled','meeting_done'].includes(activityType);
+  const needVia = ['call','email','meeting_scheduled','meeting_done'].includes(activityType);
   const needTitle = ['meeting_scheduled','meeting_done','other'].includes(activityType);
 
   const viaOptions = activityType === 'call'
@@ -1310,6 +1318,15 @@ function renderActFields() {
     ? ['Email','LinkedIn','Other']
     : ['Video Call','In-Person','Phone','Other'];
 
+  const tzOptions = [
+    ['CET','CET — Lisbon / Paris'],
+    ['GMT','GMT — London'],
+    ['EST','EST — New York'],
+    ['PST','PST — Los Angeles'],
+    ['GST','GST — Dubai'],
+    ['SGT','SGT — Singapore'],
+  ];
+
   el.innerHTML = `
     ${needTitle ? `<div class="form-group"><label>Title *</label><input type="text" class="field" id="actTitle" placeholder="${activityType==='meeting_scheduled'?'e.g. Intro call':''}"></div>` : ''}
     <div class="form-row">
@@ -1317,8 +1334,37 @@ function renderActFields() {
         <label>Date *</label>
         <input type="date" class="field" id="actDate" value="${today}" ${isFutureOnly ? `min="${today}"` : isAnyDate ? '' : `max="${today}"`}>
       </div>
-      ${needVia ? `<div class="form-group"><label>Via</label><select class="field" id="actVia">${viaOptions.map(v=>`<option value="${v.toLowerCase().replace(' ','_')}">${v}</option>`).join('')}</select></div>` : '<div></div>'}
+      ${needVia ? `<div class="form-group"><label>${isMeeting ? 'Format' : 'Via'}</label><select class="field" id="actVia">${viaOptions.map(v=>`<option value="${v.toLowerCase().replace(' ','_')}">${v}</option>`).join('')}</select></div>` : '<div></div>'}
     </div>
+    ${isMeeting ? `
+    <div class="form-row">
+      <div class="form-group">
+        <label>Time <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+        <input type="time" class="field" id="actTime" value="09:00">
+      </div>
+      <div class="form-group">
+        <label>Timezone</label>
+        <select class="field" id="actTimezone">
+          ${tzOptions.map(([v,l])=>`<option value="${v}"${v==='CET'?' selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Duration</label>
+        <select class="field" id="actDuration">
+          <option value="15">15 min</option>
+          <option value="30">30 min</option>
+          <option value="60" selected>60 min</option>
+          <option value="90">90 min</option>
+          <option value="120">120 min</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Guests <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+        <input type="text" class="field" id="actGuests" placeholder="Names or emails, comma-separated">
+      </div>
+    </div>` : ''}
     <div class="form-group">
       <label>Notes <span style="font-weight:400;text-transform:none;">(optional)</span></label>
       <textarea class="field" id="actContent" placeholder="${activityType==='note'?'What happened? What were the key points?':activityType==='meeting_scheduled'?'Agenda or objectives…':''}"></textarea>
@@ -1332,17 +1378,30 @@ async function saveActivity() {
   const title = document.getElementById('actTitle')?.value.trim() || '';
   if (needTitle && !title) { document.getElementById('actErr').textContent='Title is required.'; document.getElementById('actErr').style.display='block'; return; }
 
+  const isMeeting = ['meeting_scheduled','meeting_done'].includes(activityType);
+  const timeStr   = isMeeting ? (document.getElementById('actTime')?.value || null) : null;
+  const timezone  = isMeeting ? (document.getElementById('actTimezone')?.value || 'CET') : null;
+  const duration  = isMeeting ? (Number(document.getElementById('actDuration')?.value) || null) : null;
+  const guests    = isMeeting ? (document.getElementById('actGuests')?.value.trim() || null) : null;
+
+  // Combine date + time for accurate Timestamp (treat as local time)
+  const actDateObj = timeStr ? new Date(`${dateStr}T${timeStr}`) : new Date(dateStr);
+
   const btn = document.getElementById('actSaveBtn');
   btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
 
   const actData = {
     investorId: currentInvId,
     type: activityType,
-    date: Timestamp.fromDate(new Date(dateStr)),
+    date: Timestamp.fromDate(actDateObj),
     title: title || null,
     content: document.getElementById('actContent')?.value.trim() || null,
     via: document.getElementById('actVia')?.value || null,
-    status: new Date(dateStr) > new Date() ? 'open' : null,
+    time: timeStr,
+    timezone,
+    duration,
+    guests,
+    status: actDateObj > new Date() ? 'open' : null,
     createdAt: serverTimestamp(),
     createdBy: currentUser,
   };
@@ -1351,8 +1410,7 @@ async function saveActivity() {
     const ref = await addDoc(collection(db,'crmActivities'), actData);
     activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
     // Update investor lastTouchAt and nextContactAt
-    const actDate = new Date(dateStr);
-    const isActFuture = actDate > new Date();
+    const isActFuture = actDateObj > new Date();
     // lastTouchAt = only update if this activity is today or past
     const updates = { updatedAt: serverTimestamp() };
     if (!isActFuture) updates.lastTouchAt = serverTimestamp();
