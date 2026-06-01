@@ -740,6 +740,19 @@ function fmtEur(n) { return n ? '€' + Number(n).toLocaleString('de-DE') : '—
 function fmtPct(units, total) { return total ? (units / total * 100).toFixed(1) + '%' : '—'; }
 function todayStr() { return new Date().toISOString().slice(0,10); }
 function tsToDate(ts) { return ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null); }
+// Returns the effective last-touch timestamp for an investor.
+// Falls back to legacy lastActivityAt, but ignores it if it equals createdAt
+// (meaning it was set automatically on creation, not from a real interaction).
+function effectiveLastTouch(inv) {
+  if (inv.lastTouchAt) return inv.lastTouchAt;
+  if (inv.lastActivityAt) {
+    const la = tsToDate(inv.lastActivityAt)?.getTime();
+    const ca = tsToDate(inv.createdAt)?.getTime();
+    if (la && ca && Math.abs(la - ca) < 5000) return null; // same write → creation artifact
+    return inv.lastActivityAt;
+  }
+  return null;
+}
 
 function relTime(ts) {
   const d = tsToDate(ts); if (!d) return '—';
@@ -885,8 +898,8 @@ function renderList() {
     let va = a[sortCol], vb = b[sortCol];
     if (sortCol === 'name') { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
     else if (['lastTouchAt','nextContactAt'].includes(sortCol)) {
-      // Fall back to legacy lastActivityAt for investors not yet updated
-      if (sortCol === 'lastTouchAt') { va = a.lastTouchAt ?? a.lastActivityAt; vb = b.lastTouchAt ?? b.lastActivityAt; }
+      // Fall back to legacy lastActivityAt (ignoring creation artifacts)
+      if (sortCol === 'lastTouchAt') { va = effectiveLastTouch(a); vb = effectiveLastTouch(b); }
       va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
     } else if (['soft','hard'].includes(sortCol)) {
       va = Number(a[sortCol+'Commitment']?.value) || 0;
@@ -917,7 +930,7 @@ function renderList() {
       <td><span class="type-tag">${esc(TYPE_LABELS[inv.type]||inv.type||'—')}</span></td>
       <td>${stagePill(inv.stage||'identified')}</td>
       <td><span class="interest-dot">${interest}</span></td>
-      <td style="color:var(--text-light);">${relTime(inv.lastTouchAt ?? inv.lastActivityAt)}</td>
+      <td style="color:var(--text-light);">${relTime(effectiveLastTouch(inv))}</td>
       <td>${nextContact}</td>
       <td>${soft}</td>
       <td>${hard}</td>
