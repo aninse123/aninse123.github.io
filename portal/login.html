@@ -310,10 +310,10 @@
         showSent(email);
         document.getElementById('loginForm').reset();
       } catch (err) {
-        const raw = err.message || 'Something went wrong. Please try again.';
-        errMsg.innerHTML     = raw
-          .replace(/andre\.rocha@douropartners\.pt/g,    '<a href="mailto:andre.rocha@douropartners.pt" style="color:#B33A3A;">andre.rocha@douropartners.pt</a>')
-          .replace(/antonio\.carvalho@douropartners\.pt/g,'<a href="mailto:antonio.carvalho@douropartners.pt" style="color:#B33A3A;">antonio.carvalho@douropartners.pt</a>');
+        const isNotRegistered = err.message && err.message.includes('isn\'t registered');
+        errMsg.innerHTML = isNotRegistered
+          ? 'This email isn\'t registered in our investor portal. Please contact <a href="mailto:andre.rocha@douropartners.pt" style="color:#B33A3A;font-weight:600;">André</a> or <a href="mailto:antonio.carvalho@douropartners.pt" style="color:#B33A3A;font-weight:600;">António</a>.'
+          : (err.message || 'Something went wrong. Please try again.');
         errMsg.style.display = 'block';
       } finally {
         btn.disabled  = false;
