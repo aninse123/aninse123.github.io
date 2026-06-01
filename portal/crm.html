@@ -1,0 +1,1525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Investor CRM — Douro Partners</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary:      #4A6B8A;
+      --primary-dark: #3A5570;
+      --secondary:    #3D6430;
+      --bg:           #F7F3EC;
+      --bg-dark:      #1E2A38;
+      --text:         #2C2C2C;
+      --text-light:   #6B7280;
+      --border:       #D8D3C8;
+      --white:        #FFFFFF;
+      --font-serif:   'Playfair Display', Georgia, serif;
+      --font-sans:    'Inter', sans-serif;
+      --radius:       8px;
+      --shadow:       0 4px 24px rgba(30,42,56,0.08);
+      --shadow-sm:    0 1px 6px rgba(30,42,56,0.06);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Loading */
+    #loadingScreen {
+      position: fixed; inset: 0; background: var(--bg);
+      display: flex; align-items: center; justify-content: center; z-index: 100;
+    }
+    .spinner-ring {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Nav */
+    .nav { background: var(--bg-dark); padding: 16px 0; }
+    .nav__inner { max-width: 1200px; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; }
+    .nav__left { display: flex; align-items: center; gap: 14px; }
+    .nav__logo { height: 65px; filter: brightness(0) invert(1); opacity: 0.85; }
+    .nav__label { font-family: var(--font-serif); color: rgba(255,255,255,0.8); font-size: 0.95rem; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.2); }
+    .nav__right { display: flex; align-items: center; gap: 14px; }
+    .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.45); }
+    .nav__link { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.7); text-decoration: none; transition: color 0.2s; }
+    .nav__link:hover { color: white; }
+    .nav__link.active { color: white; }
+    .sign-out-btn { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.65); background: none; border: 1px solid rgba(255,255,255,0.3); border-radius: var(--radius); padding: 6px 14px; cursor: pointer; transition: 0.2s; }
+    .sign-out-btn:hover { color: white; border-color: white; }
+
+    /* Layout */
+    .main { max-width: 1200px; margin: 0 auto; padding: 36px 24px; }
+
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: 0.2s; border: none; text-decoration: none; }
+    .btn--primary { background: var(--primary); color: var(--white); }
+    .btn--primary:hover { background: var(--primary-dark); }
+    .btn--ghost { background: none; border: 1px solid var(--border); color: var(--text-light); }
+    .btn--ghost:hover { border-color: var(--primary); color: var(--primary); background: transparent; }
+    .btn--danger { background: #FEE2E2; color: #B91C1C; border: 1px solid #FECACA; }
+    .btn--danger:hover { background: #FECACA; }
+    .btn--action { background: var(--white); border: 1px solid var(--border); color: var(--text); font-size: 0.82rem; padding: 7px 13px; }
+    .btn--action:hover { border-color: var(--primary); color: var(--primary); }
+    .btn--sm { padding: 5px 10px; font-size: 0.75rem; }
+    .btn--icon { padding: 5px 8px; font-size: 0.8rem; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Cards */
+    .card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); padding: 20px 24px; margin-bottom: 20px; }
+
+    /* Summary card */
+    .summary-card { border-left: 4px solid var(--primary); }
+    .summary-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
+    .summary-header-left h2 { font-family: var(--font-serif); font-size: 1.1rem; color: var(--primary); margin-bottom: 6px; }
+    .fund-params { display: flex; gap: 20px; flex-wrap: wrap; }
+    .fund-param { font-size: 0.8rem; color: var(--text-light); }
+    .fund-param strong { color: var(--text); }
+    .commit-rows { display: flex; flex-direction: column; gap: 12px; }
+    .commit-row { display: grid; grid-template-columns: 100px 1fr 220px; gap: 12px; align-items: center; }
+    .commit-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); }
+    .bar-wrap { height: 8px; background: #EEE8DC; border-radius: 4px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 4px; transition: width 0.6s ease; min-width: 0; }
+    .bar-soft { background: #F59E0B; }
+    .bar-hard { background: #10B981; }
+    .bar-remaining { background: var(--border); }
+    .commit-meta { font-size: 0.78rem; color: var(--text-light); text-align: right; white-space: nowrap; }
+    .commit-meta strong { color: var(--text); }
+
+    /* Filters */
+    .filters-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+    .search-input { padding: 8px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.875rem; color: var(--text); background: var(--white); min-width: 220px; }
+    .search-input:focus { outline: none; border-color: var(--primary); }
+    .filter-sel { padding: 7px 10px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.875rem; color: var(--text); background: var(--white); cursor: pointer; }
+    .filter-sel:focus { outline: none; border-color: var(--primary); }
+    .results-count { font-size: 0.8rem; color: var(--text-light); margin-left: auto; }
+
+    /* Table */
+    .table-card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); padding: 10px 14px; text-align: left; border-bottom: 1.5px solid var(--border); background: #FAFAF8; white-space: nowrap; cursor: pointer; user-select: none; }
+    th:hover { color: var(--primary); }
+    td { padding: 13px 14px; font-size: 0.875rem; border-bottom: 1px solid #F0EDE6; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .row-clickable { cursor: pointer; }
+    .row-clickable:hover td { background: #FAFAF8; }
+
+    /* Stage pills */
+    .stage-pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; letter-spacing: 0.02em; }
+    .stage-pill::before { content: '●'; font-size: 0.55rem; }
+    .s-identified  { background: #F3F4F6; color: #6B7280; }
+    .s-reached_out { background: #DBEAFE; color: #1D4ED8; }
+    .s-engaged     { background: #EDE9FE; color: #7C3AED; }
+    .s-soft_commit { background: #FEF3C7; color: #D97706; }
+    .s-hard_commit { background: #D1FAE5; color: #065F46; }
+    .s-closed      { background: #064E3B; color: #ECFDF5; }
+    .s-pass        { background: #FEE2E2; color: #B91C1C; }
+    .s-on_hold     { background: #FEF9C3; color: #B45309; }
+
+    /* Type + interest */
+    .type-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; background: #F3F4F6; color: #374151; font-weight: 500; }
+    .interest-dot { font-size: 0.95rem; }
+
+    /* Badges */
+    .badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+    .badge-blue  { background: #DBEAFE; color: #1D4ED8; }
+    .badge-green { background: #D1FAE5; color: #065F46; }
+    .badge-grey  { background: #F3F4F6; color: #6B7280; }
+    .badge-warn  { background: #FEF3C7; color: #D97706; }
+    .badge-red   { background: #FEE2E2; color: #B91C1C; }
+
+    /* Empty */
+    .empty { text-align: center; padding: 52px 24px; color: var(--text-light); }
+    .empty__icon { font-size: 2rem; margin-bottom: 10px; }
+    .empty__title { font-size: 0.95rem; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+
+    /* ── Detail view ── */
+    .detail-back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-light); font-size: 0.85rem; cursor: pointer; margin-bottom: 20px; transition: color 0.2s; background: none; border: none; font-family: var(--font-sans); padding: 0; }
+    .detail-back:hover { color: var(--primary); }
+    .detail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+    .detail-name { font-family: var(--font-serif); font-size: 1.7rem; color: var(--text); }
+    .detail-meta { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    .detail-header-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .action-bar { display: flex; gap: 8px; flex-wrap: wrap; padding: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 16px 0; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+    @media (max-width: 760px) { .detail-grid { grid-template-columns: 1fr; } }
+    .sec-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin-bottom: 14px; }
+
+    /* Contact items */
+    .contact-item { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
+    .contact-name { font-weight: 600; font-size: 0.875rem; }
+    .contact-role { font-size: 0.75rem; color: var(--primary); font-weight: 500; }
+    .contact-detail { font-size: 0.78rem; color: var(--text-light); margin-top: 3px; }
+    .contact-foot { display: flex; gap: 6px; margin-top: 8px; }
+
+    /* Commitments */
+    .commit-edit-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .commit-block { margin-bottom: 14px; }
+    .commit-block-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); margin-bottom: 4px; }
+    .commit-block-value { font-size: 1rem; font-weight: 600; color: var(--text); }
+    .commit-block-sub { font-size: 0.78rem; color: var(--text-light); }
+
+    /* Portal section */
+    .portal-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #F0EDE6; font-size: 0.85rem; }
+    .portal-row:last-child { border-bottom: none; }
+    .portal-doc-item { font-size: 0.8rem; color: var(--text-light); padding: 3px 0; }
+    .portal-doc-item span { color: var(--text); font-weight: 500; }
+
+    /* Activity log */
+    .overdue-banner { background: #FEF3C7; border: 1px solid #FDE68A; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px; }
+    .overdue-banner p { font-size: 0.85rem; color: #92400E; margin-bottom: 8px; font-weight: 600; }
+    .overdue-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.82rem; color: #92400E; padding: 4px 0; flex-wrap: wrap; }
+    .activity-item { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid #F0EDE6; }
+    .activity-item:last-child { border-bottom: none; }
+    .act-icon { font-size: 1rem; width: 22px; flex-shrink: 0; text-align: center; margin-top: 2px; }
+    .act-body { flex: 1; min-width: 0; }
+    .act-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+    .act-type { font-weight: 600; font-size: 0.85rem; }
+    .act-date { font-size: 0.75rem; color: var(--text-light); }
+    .act-by   { font-size: 0.72rem; color: var(--text-light); }
+    .act-content { font-size: 0.82rem; color: var(--text-light); line-height: 1.55; margin-top: 3px; white-space: pre-wrap; }
+    .act-status { font-size: 0.7rem; }
+
+    /* Stage dropdown */
+    .stage-wrap { position: relative; display: inline-block; }
+    .stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 200; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 160px; padding: 4px 0; display: none; }
+    .stage-menu.open { display: block; }
+    .stage-opt { padding: 8px 14px; cursor: pointer; font-size: 0.82rem; display: flex; align-items: center; gap: 8px; }
+    .stage-opt:hover { background: var(--bg); }
+    .stage-opt .stage-pill { pointer-events: none; }
+
+    /* Modals */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 500; padding: 16px; }
+    .modal { background: var(--white); border-radius: var(--radius); box-shadow: 0 20px 60px rgba(0,0,0,0.22); width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 28px 32px; }
+    .modal-title { font-family: var(--font-serif); font-size: 1.3rem; color: var(--primary); margin-bottom: 20px; }
+    .form-group { margin-bottom: 16px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 500px) { .form-row { grid-template-columns: 1fr; } .modal { padding: 22px 18px; } }
+    label { display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text); margin-bottom: 5px; }
+    .field { width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.9rem; color: var(--text); background: var(--white); transition: 0.2s; }
+    .field:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(74,107,138,0.1); }
+    .field[readonly] { background: #FAFAF8; color: var(--text-light); }
+    textarea.field { resize: vertical; min-height: 90px; }
+    .hint { font-size: 0.72rem; color: var(--text-light); margin-top: 4px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .modal-err { font-size: 0.82rem; color: #B91C1C; margin-top: 8px; display: none; }
+
+    /* Activity type tabs */
+    .type-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+    .type-tab { padding: 5px 12px; border-radius: 20px; font-size: 0.78rem; font-weight: 600; cursor: pointer; border: 1.5px solid var(--border); background: var(--white); color: var(--text-light); transition: 0.2s; }
+    .type-tab:hover { border-color: var(--primary); color: var(--primary); }
+    .type-tab.active { background: var(--primary); color: var(--white); border-color: var(--primary); }
+
+    /* Inline spinner */
+    .spin-sm { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.35); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 5px; }
+
+    /* Misc */
+    .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; gap: 16px; flex-wrap: wrap; }
+    .page-title { font-family: var(--font-serif); font-size: 1.75rem; color: var(--primary); }
+    .page-sub   { font-size: 0.85rem; color: var(--text-light); margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<div id="loadingScreen"><div class="spinner-ring"></div></div>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="nav__inner">
+    <div class="nav__left">
+      <img src="../assets/logo.png" alt="Douro Partners" class="nav__logo">
+      <span class="nav__label">Admin</span>
+    </div>
+    <div class="nav__right">
+      <span class="nav__email" id="navEmail"></span>
+      <a href="/portal/investor.html" class="nav__link">Investor view</a>
+      <a href="/portal/admin.html"    class="nav__link">Portal Admin</a>
+      <a href="/portal/crm.html"      class="nav__link active">CRM</a>
+      <a href="/portal/log.html"      class="nav__link">Activity Log</a>
+      <button class="sign-out-btn" id="signOutBtn">Sign out</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ══════════════════ LIST VIEW ══════════════════ -->
+<div class="main" id="listView">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Investor CRM</h1>
+      <p class="page-sub" id="listSub">Loading…</p>
+    </div>
+    <button class="btn btn--primary" id="newInvestorBtn">＋ New Investor</button>
+  </div>
+
+  <!-- Summary card -->
+  <div class="card summary-card" id="summaryCard">
+    <div class="summary-header">
+      <div class="summary-header-left">
+        <h2>Fundraising Overview</h2>
+        <div class="fund-params" id="fundParams">—</div>
+      </div>
+      <button class="btn btn--ghost btn--sm" id="fundSettingsBtn">⚙ Settings</button>
+    </div>
+    <div class="commit-rows" id="commitRows">
+      <div style="color:var(--text-light);font-size:0.85rem;">Configure fund target to see progress.</div>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="filters-row">
+    <input type="text" class="search-input" id="searchInput" placeholder="Search investors…">
+    <select class="filter-sel" id="stageFilter">
+      <option value="">All Stages</option>
+      <option value="identified">Identified</option>
+      <option value="reached_out">Reached Out</option>
+      <option value="engaged">Engaged</option>
+      <option value="soft_commit">Soft Commit</option>
+      <option value="hard_commit">Hard Commit</option>
+      <option value="closed">Closed</option>
+      <option value="on_hold">On Hold</option>
+      <option value="pass">Pass</option>
+    </select>
+    <select class="filter-sel" id="typeFilter">
+      <option value="">All Types</option>
+      <option value="fund">Fund</option>
+      <option value="institutional">Institutional</option>
+      <option value="family_office">Family Office</option>
+      <option value="private">Private</option>
+      <option value="corporate">Corporate</option>
+      <option value="other">Other</option>
+    </select>
+    <select class="filter-sel" id="interestFilter">
+      <option value="">All Interest</option>
+      <option value="high">🟢 High</option>
+      <option value="medium">🟡 Medium</option>
+      <option value="low">🔴 Low</option>
+    </select>
+    <span class="results-count" id="resultsCount"></span>
+  </div>
+
+  <!-- Table -->
+  <div class="table-card">
+    <div class="table-wrap">
+      <table id="investorTable">
+        <thead>
+          <tr>
+            <th data-col="name">Investor ↕</th>
+            <th data-col="type">Type</th>
+            <th data-col="stage">Stage</th>
+            <th data-col="interest">⚡</th>
+            <th data-col="lastActivityAt">Last Activity ↕</th>
+            <th data-col="nextMeetingAt">Next Meeting</th>
+            <th data-col="soft">Soft Commit</th>
+            <th data-col="hard">Hard Commit</th>
+          </tr>
+        </thead>
+        <tbody id="investorBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ DETAIL VIEW ══════════════════ -->
+<div class="main" id="detailView" style="display:none;">
+
+  <button class="detail-back" id="backBtn">← Back to CRM</button>
+
+  <div class="detail-header">
+    <div>
+      <div class="detail-name" id="dName"></div>
+      <div class="detail-meta" id="dMeta"></div>
+    </div>
+    <div class="detail-header-actions">
+      <button class="btn btn--ghost btn--sm" id="editInvestorBtn">✏ Edit</button>
+      <button class="btn btn--danger btn--sm" id="deleteInvestorBtn">🗑 Delete</button>
+    </div>
+  </div>
+
+  <!-- Action bar -->
+  <div class="action-bar">
+    <button class="btn btn--action" data-atype="note">📝 Note</button>
+    <button class="btn btn--action" data-atype="call">📞 Log Call</button>
+    <button class="btn btn--action" data-atype="email">📧 Log Email</button>
+    <button class="btn btn--action" data-atype="meeting_scheduled">📅 Schedule Meeting</button>
+    <button class="btn btn--action" data-atype="meeting_done">✅ Meeting Done</button>
+    <button class="btn btn--action" data-atype="observation">💡 Observation</button>
+  </div>
+
+  <!-- Detail body -->
+  <div class="detail-grid">
+
+    <!-- Left: Contacts -->
+    <div class="card" style="margin-bottom:0;">
+      <div class="sec-title">Contacts</div>
+      <div id="contactsList"></div>
+      <button class="btn btn--ghost btn--sm" id="addContactBtn" style="margin-top:8px;">＋ Add Contact</button>
+    </div>
+
+    <!-- Right: Commitments + Portal -->
+    <div>
+      <div class="card" style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <div class="sec-title" style="margin-bottom:0;">Commitments</div>
+          <button class="btn btn--ghost btn--sm" id="editCommitBtn">✏ Edit</button>
+        </div>
+        <div id="commitDisplay"></div>
+      </div>
+      <div class="card" style="margin-bottom:0;">
+        <div class="sec-title">Portal Access</div>
+        <div id="portalSection"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Activity log -->
+  <div class="card" style="margin-top:20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div class="sec-title" style="margin-bottom:0;">Activity Log</div>
+      <span id="actCount" style="font-size:0.78rem;color:var(--text-light);"></span>
+    </div>
+    <div id="overdueBanners"></div>
+    <div id="activityLog"></div>
+  </div>
+</div>
+
+<!-- ══════════════════ MODALS ══════════════════ -->
+
+<!-- Investor modal -->
+<div class="overlay" id="investorModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title" id="invModalTitle">New Investor</div>
+    <div class="form-group">
+      <label>Investor Name *</label>
+      <input type="text" class="field" id="invName" placeholder="e.g. Acme Capital">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Type *</label>
+        <select class="field" id="invType">
+          <option value="">Select…</option>
+          <option value="fund">Fund</option>
+          <option value="institutional">Institutional</option>
+          <option value="family_office">Family Office</option>
+          <option value="private">Private</option>
+          <option value="corporate">Corporate</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Stage *</label>
+        <select class="field" id="invStage">
+          <option value="identified">Identified</option>
+          <option value="reached_out">Reached Out</option>
+          <option value="engaged">Engaged</option>
+          <option value="soft_commit">Soft Commit</option>
+          <option value="hard_commit">Hard Commit</option>
+          <option value="closed">Closed</option>
+          <option value="on_hold">On Hold</option>
+          <option value="pass">Pass</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Interest Level</label>
+        <select class="field" id="invInterest">
+          <option value="">—</option>
+          <option value="high">🟢 High</option>
+          <option value="medium">🟡 Medium</option>
+          <option value="low">🔴 Low</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Source</label>
+        <select class="field" id="invSource">
+          <option value="">—</option>
+          <option value="referral">Referral</option>
+          <option value="conference">Conference</option>
+          <option value="cold">Cold Outreach</option>
+          <option value="inbound">Inbound</option>
+          <option value="network">Network</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Source Detail <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <input type="text" class="field" id="invSourceDetail" placeholder="e.g. Met at ETA Conference 2026">
+    </div>
+    <div class="modal-err" id="invErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="invCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="invSaveBtn">Save Investor</button>
+    </div>
+  </div>
+</div>
+
+<!-- Contact modal -->
+<div class="overlay" id="contactModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title" id="ctModalTitle">Add Contact</div>
+    <div class="form-group">
+      <label>Full Name *</label>
+      <input type="text" class="field" id="ctName" placeholder="e.g. João Silva">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" class="field" id="ctEmail" placeholder="joao@fund.com">
+      </div>
+      <div class="form-group">
+        <label>Mobile</label>
+        <input type="tel" class="field" id="ctPhone" placeholder="+351 91 000 0000">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Role / Title</label>
+      <input type="text" class="field" id="ctRole" placeholder="e.g. Managing Partner">
+    </div>
+    <div class="form-group">
+      <label>Notes <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <textarea class="field" id="ctNotes" placeholder="Any relevant notes about this contact…"></textarea>
+    </div>
+    <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="ctPrimary" style="width:auto;padding:0;">
+      <label for="ctPrimary" style="text-transform:none;font-size:0.875rem;font-weight:500;margin-bottom:0;">Primary contact</label>
+    </div>
+    <div class="modal-err" id="ctErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="ctCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="ctSaveBtn">Save Contact</button>
+    </div>
+  </div>
+</div>
+
+<!-- Activity modal -->
+<div class="overlay" id="activityModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title" id="actModalTitle">Log Activity</div>
+    <div class="type-tabs" id="actTypeTabs">
+      <button class="type-tab" data-type="note">📝 Note</button>
+      <button class="type-tab" data-type="call">📞 Call</button>
+      <button class="type-tab" data-type="email">📧 Email</button>
+      <button class="type-tab" data-type="meeting_scheduled">📅 Schedule</button>
+      <button class="type-tab" data-type="meeting_done">✅ Meeting Done</button>
+      <button class="type-tab" data-type="observation">💡 Observation</button>
+      <button class="type-tab" data-type="other">💬 Other</button>
+    </div>
+    <div id="actFields"></div>
+    <div class="modal-err" id="actErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="actCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="actSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Close meeting modal -->
+<div class="overlay" id="closeMtgModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Close Meeting</div>
+    <p style="font-size:0.9rem;color:var(--text-light);margin-bottom:16px;" id="closeMtgDesc"></p>
+    <div class="form-group">
+      <label>Outcome</label>
+      <select class="field" id="closeMtgOutcome">
+        <option value="happened">✅ Meeting happened</option>
+        <option value="cancelled">❌ Meeting was cancelled / rescheduled</option>
+      </select>
+    </div>
+    <div class="form-group" id="closeMtgNotesGroup">
+      <label>Notes <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <textarea class="field" id="closeMtgNotes" placeholder="How did it go? Key takeaways…"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="closeMtgCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="closeMtgSaveBtn">Close Meeting</button>
+    </div>
+  </div>
+</div>
+
+<!-- Commitments modal -->
+<div class="overlay" id="commitModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Edit Commitments</div>
+    <p class="hint" style="margin-bottom:16px;" id="commitHint"></p>
+    <div style="margin-bottom:20px;">
+      <div class="sec-title" style="margin-bottom:10px;">Soft Commitment</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label># Units</label>
+          <input type="number" class="field" id="softUnits" min="0" step="1" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Value (€)</label>
+          <input type="number" class="field" id="softValue" min="0" step="1000" placeholder="0">
+        </div>
+      </div>
+      <div class="hint" id="softPct"></div>
+    </div>
+    <div>
+      <div class="sec-title" style="margin-bottom:10px;">Hard Commitment</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label># Units</label>
+          <input type="number" class="field" id="hardUnits" min="0" step="1" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Value (€)</label>
+          <input type="number" class="field" id="hardValue" min="0" step="1000" placeholder="0">
+        </div>
+      </div>
+      <div class="hint" id="hardPct"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="commitCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="commitSaveBtn">Save Commitments</button>
+    </div>
+  </div>
+</div>
+
+<!-- Fund settings modal -->
+<div class="overlay" id="fundModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Fund Settings</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Fund Target (€) *</label>
+        <input type="number" class="field" id="fTarget" min="0" step="10000" placeholder="e.g. 2000000">
+      </div>
+      <div class="form-group">
+        <label>Total Units *</label>
+        <input type="number" class="field" id="fUnits" min="1" step="1" placeholder="e.g. 100">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Unit Price (€)</label>
+      <input type="text" class="field" id="fUnitPrice" readonly placeholder="Auto-calculated">
+      <p class="hint">Calculated as Fund Target ÷ Total Units</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="fundCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="fundSaveBtn">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="overlay" id="deleteModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Delete Investor</div>
+    <p style="font-size:0.9rem;color:var(--text-light);margin-bottom:20px;" id="deleteDesc"></p>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="deleteCancelBtn">Cancel</button>
+      <button class="btn btn--danger" id="deleteConfirmBtn">Yes, delete permanently</button>
+    </div>
+  </div>
+</div>
+
+<!-- Portal link modal -->
+<div class="overlay" id="portalLinkModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Link to Investor Portal</div>
+    <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px;">Select which portal investor this CRM record corresponds to. This allows the CRM to show portal access and document data.</p>
+    <div class="form-group">
+      <label>Portal Investor</label>
+      <select class="field" id="portalLinkSelect"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="portalLinkCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="portalLinkSaveBtn">Link</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
+import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+import {
+  collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
+  getDocs, getDoc, query, where, orderBy, serverTimestamp, Timestamp
+} from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const STAGES = {
+  identified:  { label: 'Identified',  cls: 's-identified'  },
+  reached_out: { label: 'Reached Out', cls: 's-reached_out' },
+  engaged:     { label: 'Engaged',     cls: 's-engaged'     },
+  soft_commit: { label: 'Soft Commit', cls: 's-soft_commit' },
+  hard_commit: { label: 'Hard Commit', cls: 's-hard_commit' },
+  closed:      { label: 'Closed',      cls: 's-closed'      },
+  pass:        { label: 'Pass',        cls: 's-pass'        },
+  on_hold:     { label: 'On Hold',     cls: 's-on_hold'     },
+};
+
+const TYPE_LABELS = { fund:'Fund', institutional:'Institutional', family_office:'Family Office', private:'Private', corporate:'Corporate', other:'Other' };
+const SOURCE_LABELS = { referral:'Referral', conference:'Conference', cold:'Cold Outreach', inbound:'Inbound', network:'Network', other:'Other' };
+const INTEREST_ICONS = { high:'🟢', medium:'🟡', low:'🔴' };
+
+const ACT = {
+  note:              { label:'Note',               icon:'📝' },
+  call:              { label:'Call',               icon:'📞' },
+  email:             { label:'Email',              icon:'📧' },
+  meeting_scheduled: { label:'Meeting Scheduled',  icon:'📅' },
+  meeting_done:      { label:'Meeting Done',        icon:'✅' },
+  observation:       { label:'Observation',        icon:'💡' },
+  other:             { label:'Other',              icon:'💬' },
+  stage_change:      { label:'Stage Changed',      icon:'🔄' },
+  investor_created:  { label:'Added to CRM',       icon:'➕' },
+  investor_edited:   { label:'Profile Updated',    icon:'✏️' },
+  contact_added:     { label:'Contact Added',      icon:'👤' },
+  contact_removed:   { label:'Contact Removed',    icon:'👤' },
+  commit_updated:    { label:'Commitment Updated', icon:'💰' },
+  portal_linked:     { label:'Portal Connected',   icon:'🔗' },
+};
+
+// ── State ────────────────────────────────────────────────────────────────────
+
+let currentUser   = null;
+let crmInvestors  = [];
+let activities    = [];       // for current detail investor
+let portalInvList = [];
+let portalDocList = [];
+let fundSettings  = { target: 0, units: 0 };
+let currentInvId  = null;
+let editInvId     = null;
+let editCtIdx     = null;     // contact index being edited
+let closeMtgId    = null;
+let sortCol       = 'lastActivityAt';
+let sortDir       = 'desc';
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtEur(n) { return n ? '€' + Number(n).toLocaleString('de-DE') : '—'; }
+function fmtPct(units, total) { return total ? (units / total * 100).toFixed(1) + '%' : '—'; }
+function todayStr() { return new Date().toISOString().slice(0,10); }
+function tsToDate(ts) { return ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null); }
+
+function relTime(ts) {
+  const d = tsToDate(ts); if (!d) return '—';
+  const diff = Math.floor((Date.now() - d) / 1000);
+  if (diff < 60)          return 'just now';
+  if (diff < 3600)        return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400)       return Math.floor(diff/3600) + 'h ago';
+  if (diff < 86400*7)     return Math.floor(diff/86400) + 'd ago';
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+}
+
+function fmtDate(ts) {
+  const d = tsToDate(ts); if (!d) return '—';
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+}
+
+function fmtDateShort(ts) {
+  const d = tsToDate(ts); if (!d) return '—';
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+}
+
+function stagePill(stage) {
+  const s = STAGES[stage] || { label: stage, cls: 's-identified' };
+  return `<span class="stage-pill ${s.cls}">${s.label}</span>`;
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function showEl(id, show) { document.getElementById(id).style.display = show ? '' : 'none'; }
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+onAuthStateChanged(auth, async user => {
+  if (!user || !ADMIN_EMAILS.includes(user.email)) {
+    window.location.href = '/portal/login.html'; return;
+  }
+  currentUser = user.email;
+  document.getElementById('navEmail').textContent = user.email;
+  document.getElementById('signOutBtn').onclick = () => signOut(auth).then(() => window.location.href='/portal/login.html');
+  await loadAll();
+  document.getElementById('loadingScreen').style.display = 'none';
+});
+
+// ── Load ─────────────────────────────────────────────────────────────────────
+
+async function loadAll() {
+  const [invSnap, portalInvSnap, portalDocSnap, cfgSnap] = await Promise.all([
+    getDocs(collection(db, 'crmInvestors')),
+    getDocs(collection(db, 'investors')),
+    getDocs(collection(db, 'documents')),
+    getDoc(doc(db, 'crmConfig', 'settings')),
+  ]);
+  crmInvestors = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  portalInvList = portalInvSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  portalDocList = portalDocSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  fundSettings = cfgSnap.exists() ? cfgSnap.data() : { target: 0, units: 0 };
+  renderSummary();
+  renderList();
+}
+
+async function loadActivities(investorId) {
+  const snap = await getDocs(query(
+    collection(db, 'crmActivities'),
+    where('investorId', '==', investorId),
+    orderBy('date', 'desc')
+  ));
+  activities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+// ── Render: Summary ──────────────────────────────────────────────────────────
+
+function renderSummary() {
+  const { target = 0, units = 0 } = fundSettings;
+  const unitPrice = units > 0 ? target / units : 0;
+
+  let softUnits = 0, softVal = 0, softCount = 0;
+  let hardUnits = 0, hardVal = 0, hardCount = 0;
+
+  crmInvestors.forEach(inv => {
+    if (inv.softCommitment?.units) { softUnits += Number(inv.softCommitment.units)||0; softVal += Number(inv.softCommitment.value)||0; softCount++; }
+    if (inv.hardCommitment?.units) { hardUnits += Number(inv.hardCommitment.units)||0; hardVal += Number(inv.hardCommitment.value)||0; hardCount++; }
+  });
+
+  const remUnits = Math.max(0, units - hardUnits);
+  const remVal   = Math.max(0, target - hardVal);
+
+  document.getElementById('fundParams').innerHTML = target
+    ? `<span class="fund-param">Target <strong>${fmtEur(target)}</strong></span>
+       <span class="fund-param">Units <strong>${units}</strong></span>
+       <span class="fund-param">Unit Price <strong>${fmtEur(Math.round(unitPrice))}</strong></span>`
+    : '<span class="fund-param" style="color:var(--text-light);">No fund target set — click ⚙ Settings</span>';
+
+  if (!target) {
+    document.getElementById('commitRows').innerHTML = '<div style="color:var(--text-light);font-size:0.85rem;">Configure fund target to see progress.</div>';
+    return;
+  }
+
+  const softPct = units ? softUnits / units : 0;
+  const hardPct = units ? hardUnits / units : 0;
+  const remPct  = units ? remUnits  / units : 0;
+
+  document.getElementById('commitRows').innerHTML = `
+    <div class="commit-row">
+      <div class="commit-label">Soft</div>
+      <div class="bar-wrap"><div class="bar-fill bar-soft" style="width:${Math.min(100,softPct*100).toFixed(1)}%"></div></div>
+      <div class="commit-meta"><strong>${softUnits}</strong> units · <strong>${fmtEur(softVal)}</strong> · ${fmtPct(softUnits,units)} · ${softCount} inv</div>
+    </div>
+    <div class="commit-row">
+      <div class="commit-label">Hard</div>
+      <div class="bar-wrap"><div class="bar-fill bar-hard" style="width:${Math.min(100,hardPct*100).toFixed(1)}%"></div></div>
+      <div class="commit-meta"><strong>${hardUnits}</strong> units · <strong>${fmtEur(hardVal)}</strong> · ${fmtPct(hardUnits,units)} · ${hardCount} inv</div>
+    </div>
+    <div class="commit-row">
+      <div class="commit-label">Remaining</div>
+      <div class="bar-wrap"><div class="bar-fill bar-remaining" style="width:${Math.min(100,remPct*100).toFixed(1)}%"></div></div>
+      <div class="commit-meta"><strong>${remUnits}</strong> units · <strong>${fmtEur(remVal)}</strong> · ${fmtPct(remUnits,units)}</div>
+    </div>`;
+}
+
+// ── Render: List ─────────────────────────────────────────────────────────────
+
+function renderList() {
+  const search  = (document.getElementById('searchInput').value || '').toLowerCase();
+  const stageF  = document.getElementById('stageFilter').value;
+  const typeF   = document.getElementById('typeFilter').value;
+  const intF    = document.getElementById('interestFilter').value;
+
+  let list = crmInvestors.filter(inv => {
+    if (stageF  && inv.stage    !== stageF)    return false;
+    if (typeF   && inv.type     !== typeF)     return false;
+    if (intF    && inv.interest !== intF)      return false;
+    if (search  && !inv.name?.toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  // Sort
+  list.sort((a,b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (sortCol === 'name') { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
+    else if (['lastActivityAt','nextMeetingAt'].includes(sortCol)) {
+      va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
+    } else if (['soft','hard'].includes(sortCol)) {
+      va = Number(a[sortCol+'Commitment']?.value) || 0;
+      vb = Number(b[sortCol+'Commitment']?.value) || 0;
+    }
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  document.getElementById('resultsCount').textContent = `${list.length} investor${list.length!==1?'s':''}`;
+  document.getElementById('listSub').textContent = `${crmInvestors.length} investors total`;
+
+  const tbody = document.getElementById('investorBody');
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No investors found</div><div>Try adjusting your filters.</div></div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = list.map(inv => {
+    const interest = inv.interest ? (INTEREST_ICONS[inv.interest] || '') : '—';
+    const soft = inv.softCommitment?.value ? fmtEur(inv.softCommitment.value) : '—';
+    const hard = inv.hardCommitment?.value ? fmtEur(inv.hardCommitment.value) : '—';
+    const nextMtg = inv.nextMeetingAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(inv.nextMeetingAt)}</span>` : '—';
+    const overdue = inv.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
+    return `<tr class="row-clickable" data-id="${inv.id}">
+      <td><strong>${esc(inv.name)}</strong>${overdue}</td>
+      <td><span class="type-tag">${esc(TYPE_LABELS[inv.type]||inv.type||'—')}</span></td>
+      <td>${stagePill(inv.stage||'identified')}</td>
+      <td><span class="interest-dot">${interest}</span></td>
+      <td style="color:var(--text-light);">${relTime(inv.lastActivityAt)}</td>
+      <td>${nextMtg}</td>
+      <td>${soft}</td>
+      <td>${hard}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('.row-clickable').forEach(row => {
+    row.addEventListener('click', () => openDetail(row.dataset.id));
+  });
+}
+
+// ── Detail view ──────────────────────────────────────────────────────────────
+
+async function openDetail(id) {
+  currentInvId = id;
+  showEl('listView', false);
+  showEl('detailView', true);
+  await loadActivities(id);
+  renderDetail();
+}
+
+function getInvestor() { return crmInvestors.find(i => i.id === currentInvId); }
+
+function renderDetail() {
+  const inv = getInvestor();
+  if (!inv) return;
+
+  // Header
+  document.getElementById('dName').textContent = inv.name || '—';
+  const interestHtml = inv.interest ? `<span class="interest-dot">${INTEREST_ICONS[inv.interest]||''}</span>` : '';
+  const sourceHtml   = inv.source   ? `<span class="badge badge-grey">${esc(SOURCE_LABELS[inv.source]||inv.source)}</span>` : '';
+  const sourceDetail = inv.sourceDetail ? `<span style="font-size:0.8rem;color:var(--text-light);">${esc(inv.sourceDetail)}</span>` : '';
+
+  document.getElementById('dMeta').innerHTML = `
+    <div class="stage-wrap">
+      ${stagePill(inv.stage||'identified')}
+      <div class="stage-menu" id="stageMenu">
+        ${Object.entries(STAGES).map(([k,v]) => `<div class="stage-opt" data-stage="${k}"><span class="stage-pill ${v.cls}">${v.label}</span></div>`).join('')}
+      </div>
+    </div>
+    ${interestHtml} ${sourceHtml} ${sourceDetail}
+    <span class="badge badge-grey">${esc(TYPE_LABELS[inv.type]||inv.type||'—')}</span>`;
+
+  // Stage pill click
+  const pill = document.getElementById('dMeta').querySelector('.stage-pill');
+  const menu = document.getElementById('stageMenu');
+  pill.style.cursor = 'pointer';
+  pill.addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('open'); });
+  document.addEventListener('click', () => menu.classList.remove('open'), { once: true });
+  menu.querySelectorAll('.stage-opt').forEach(opt => {
+    opt.addEventListener('click', async () => {
+      menu.classList.remove('open');
+      await changeStage(opt.dataset.stage);
+    });
+  });
+
+  renderContacts();
+  renderCommitDisplay();
+  renderPortalSection();
+  renderActivityLog();
+}
+
+function renderContacts() {
+  const inv = getInvestor();
+  const contacts = inv.contacts || [];
+  const el = document.getElementById('contactsList');
+  if (!contacts.length) {
+    el.innerHTML = '<p style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">No contacts yet.</p>';
+    return;
+  }
+  el.innerHTML = contacts.map((c, i) => `
+    <div class="contact-item">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div>
+          <div class="contact-name">${esc(c.name)}${c.primary ? ' <span class="badge badge-blue" style="vertical-align:middle;">Primary</span>' : ''}</div>
+          ${c.role ? `<div class="contact-role">${esc(c.role)}</div>` : ''}
+        </div>
+      </div>
+      ${c.email ? `<div class="contact-detail">✉ <a href="mailto:${esc(c.email)}" style="color:var(--primary);">${esc(c.email)}</a></div>` : ''}
+      ${c.phone ? `<div class="contact-detail">📱 ${esc(c.phone)}</div>` : ''}
+      ${c.notes ? `<div class="contact-detail" style="margin-top:4px;font-style:italic;">${esc(c.notes)}</div>` : ''}
+      <div class="contact-foot">
+        <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="edit-ct">✏</button>
+        <button class="btn btn--danger btn--icon" data-ci="${i}" data-action="del-ct">🗑</button>
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('[data-action="edit-ct"]').forEach(btn => openEditContact(Number(btn.dataset.ci)));
+  el.querySelectorAll('[data-action="del-ct"]').forEach(btn => btn.addEventListener('click', () => deleteContact(Number(btn.dataset.ci))));
+}
+
+function renderCommitDisplay() {
+  const inv = getInvestor();
+  const { target=0, units=0 } = fundSettings;
+  const soft = inv.softCommitment || {};
+  const hard = inv.hardCommitment || {};
+  const el = document.getElementById('commitDisplay');
+  el.innerHTML = `
+    <div class="commit-block">
+      <div class="commit-block-label">Soft Commitment</div>
+      <div class="commit-block-value">${soft.units ? `${soft.units} units · ${fmtEur(soft.value)}` : '—'}</div>
+      ${soft.units && units ? `<div class="commit-block-sub">${fmtPct(soft.units, units)} of fund</div>` : ''}
+    </div>
+    <div class="commit-block">
+      <div class="commit-block-label">Hard Commitment</div>
+      <div class="commit-block-value">${hard.units ? `${hard.units} units · ${fmtEur(hard.value)}` : '—'}</div>
+      ${hard.units && units ? `<div class="commit-block-sub">${fmtPct(hard.units, units)} of fund</div>` : ''}
+    </div>`;
+}
+
+function renderPortalSection() {
+  const inv = getInvestor();
+  const el = document.getElementById('portalSection');
+  const linked = portalInvList.find(p => p.id === inv.portalInvestorId);
+
+  if (!linked) {
+    el.innerHTML = `<div class="portal-row"><span style="color:var(--text-light);">Not connected to portal</span><button class="btn btn--ghost btn--sm" id="linkPortalBtn">Link</button></div>`;
+    document.getElementById('linkPortalBtn').addEventListener('click', openPortalLinkModal);
+    return;
+  }
+
+  const docs = portalDocList.filter(d => (d.allowedInvestors||[]).includes(inv.portalInvestorId));
+  el.innerHTML = `
+    <div class="portal-row">
+      <span>🔗 <strong>${esc(linked.name)}</strong></span>
+      <button class="btn btn--ghost btn--sm" id="unlinkPortalBtn">Unlink</button>
+    </div>
+    <div class="portal-row">
+      <span style="color:var(--text-light);">Portal emails</span>
+      <span style="font-size:0.8rem;">${(linked.emails||[]).join(', ') || '—'}</span>
+    </div>
+    <div style="margin-top:10px;">
+      <div class="sec-title" style="margin-bottom:6px;">Documents shared (${docs.length})</div>
+      ${docs.length ? docs.map(d => `<div class="portal-doc-item">📄 <span>${esc(d.name)}</span> <span class="badge badge-grey" style="margin-left:4px;">${esc(d.category||'')}</span></div>`).join('') : '<div style="font-size:0.8rem;color:var(--text-light);">No documents shared yet.</div>'}
+    </div>`;
+  document.getElementById('unlinkPortalBtn').addEventListener('click', () => unlinkPortal());
+}
+
+function renderActivityLog() {
+  const overdueBanners = document.getElementById('overdueBanners');
+  const logEl = document.getElementById('activityLog');
+  document.getElementById('actCount').textContent = activities.length + ' entries';
+
+  // Overdue = meeting_scheduled with past date and status open
+  const today = new Date(); today.setHours(0,0,0,0);
+  const overdue = activities.filter(a => a.type === 'meeting_scheduled' && a.status === 'open' && tsToDate(a.date) < today);
+
+  if (overdue.length) {
+    overdueBanners.innerHTML = `<div class="overdue-banner">
+      <p>⚠️ ${overdue.length} meeting${overdue.length>1?'s':''} need${overdue.length===1?'s':''} closing</p>
+      ${overdue.map(a => `<div class="overdue-item">
+        <span>${esc(a.title||'Untitled meeting')} — ${fmtDate(a.date)}</span>
+        <button class="btn btn--sm btn--action" data-mid="${a.id}">Close meeting</button>
+      </div>`).join('')}
+    </div>`;
+    overdueBanners.querySelectorAll('[data-mid]').forEach(btn => {
+      btn.addEventListener('click', () => openCloseMeeting(btn.dataset.mid));
+    });
+  } else { overdueBanners.innerHTML = ''; }
+
+  if (!activities.length) {
+    logEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-light);font-size:0.85rem;">No activity yet. Use the buttons above to log your first interaction.</div>';
+    return;
+  }
+
+  logEl.innerHTML = activities.map(a => {
+    const info = ACT[a.type] || { label: a.type, icon: '📌' };
+    let statusBadge = '';
+    if (a.type === 'meeting_scheduled') {
+      if (a.status === 'open') statusBadge = `<span class="badge badge-warn">Scheduled</span>`;
+      else if (a.status === 'happened') statusBadge = `<span class="badge badge-green">Happened</span>`;
+      else if (a.status === 'cancelled') statusBadge = `<span class="badge badge-grey">Cancelled</span>`;
+    }
+    const via = a.via ? `<span class="badge badge-grey">via ${esc(a.via)}</span>` : '';
+    const closedNotes = a.status && a.status !== 'open' && a.closedNotes
+      ? `<div class="act-content" style="margin-top:6px;padding-top:6px;border-top:1px solid #F0EDE6;"><em>Closing notes:</em> ${esc(a.closedNotes)}</div>` : '';
+
+    return `<div class="activity-item">
+      <div class="act-icon">${info.icon}</div>
+      <div class="act-body">
+        <div class="act-head">
+          <span class="act-type">${info.label}</span>
+          ${a.title ? `<span style="font-size:0.82rem;color:var(--text);">— ${esc(a.title)}</span>` : ''}
+          ${statusBadge} ${via}
+          <span class="act-date">${fmtDate(a.date)}</span>
+          <span class="act-by">by ${esc(a.createdBy||'')}</span>
+        </div>
+        ${a.content ? `<div class="act-content">${esc(a.content)}</div>` : ''}
+        ${closedNotes}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Investor CRUD ────────────────────────────────────────────────────────────
+
+function openNewInvestor() {
+  editInvId = null;
+  document.getElementById('invModalTitle').textContent = 'New Investor';
+  ['invName','invSourceDetail'].forEach(id => document.getElementById(id).value = '');
+  ['invType','invStage','invInterest','invSource'].forEach(id => document.getElementById(id).value = id==='invStage'?'identified':'');
+  document.getElementById('invErr').style.display = 'none';
+  showEl('investorModal', true);
+}
+
+function openEditInvestor() {
+  const inv = getInvestor();
+  editInvId = inv.id;
+  document.getElementById('invModalTitle').textContent = 'Edit Investor';
+  document.getElementById('invName').value         = inv.name        || '';
+  document.getElementById('invType').value         = inv.type        || '';
+  document.getElementById('invStage').value        = inv.stage       || 'identified';
+  document.getElementById('invInterest').value     = inv.interest    || '';
+  document.getElementById('invSource').value       = inv.source      || '';
+  document.getElementById('invSourceDetail').value = inv.sourceDetail|| '';
+  document.getElementById('invErr').style.display  = 'none';
+  showEl('investorModal', true);
+}
+
+async function saveInvestor() {
+  const name  = document.getElementById('invName').value.trim();
+  const type  = document.getElementById('invType').value;
+  const stage = document.getElementById('invStage').value;
+  if (!name || !type) {
+    document.getElementById('invErr').textContent = 'Name and type are required.';
+    document.getElementById('invErr').style.display = 'block'; return;
+  }
+  const btn = document.getElementById('invSaveBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Saving…';
+
+  const data = {
+    name, type, stage,
+    interest:    document.getElementById('invInterest').value    || null,
+    source:      document.getElementById('invSource').value      || null,
+    sourceDetail:document.getElementById('invSourceDetail').value.trim() || null,
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    if (editInvId) {
+      await updateDoc(doc(db,'crmInvestors',editInvId), data);
+      await logActivity(editInvId, 'investor_edited', { date: new Date(), content: `Profile updated.` });
+      crmInvestors = crmInvestors.map(i => i.id === editInvId ? { ...i, ...data, updatedAt: Timestamp.now() } : i);
+    } else {
+      const ref = await addDoc(collection(db,'crmInvestors'), {
+        ...data, contacts:[], softCommitment:{}, hardCommitment:{},
+        portalInvestorId: null, createdAt: serverTimestamp(), lastActivityAt: serverTimestamp(),
+      });
+      const newInv = { id: ref.id, ...data, contacts:[], softCommitment:{}, hardCommitment:{}, portalInvestorId: null, createdAt: Timestamp.now(), lastActivityAt: Timestamp.now() };
+      crmInvestors.push(newInv);
+      await logActivity(ref.id, 'investor_created', { date: new Date(), content: `Added to CRM.` });
+    }
+    showEl('investorModal', false);
+    if (editInvId === currentInvId) { renderDetail(); }
+    renderList(); renderSummary();
+  } catch(e) {
+    document.getElementById('invErr').textContent = e.message; document.getElementById('invErr').style.display='block';
+  } finally { btn.disabled=false; btn.innerHTML='Save Investor'; }
+}
+
+async function deleteInvestor() {
+  const inv = getInvestor(); if (!inv) return;
+  document.getElementById('deleteDesc').textContent = `Delete "${inv.name}"? All activities and contacts will be permanently removed. This cannot be undone.`;
+  showEl('deleteModal', true);
+}
+
+async function confirmDelete() {
+  const btn = document.getElementById('deleteConfirmBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Deleting…';
+  try {
+    // Delete activities
+    const snap = await getDocs(query(collection(db,'crmActivities'), where('investorId','==',currentInvId)));
+    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    await deleteDoc(doc(db,'crmInvestors',currentInvId));
+    crmInvestors = crmInvestors.filter(i => i.id !== currentInvId);
+    showEl('deleteModal',false);
+    showDetail(false);
+    renderList(); renderSummary();
+  } catch(e) { alert('Delete failed: ' + e.message); }
+  finally { btn.disabled=false; btn.innerHTML='Yes, delete permanently'; }
+}
+
+// ── Stage change ─────────────────────────────────────────────────────────────
+
+async function changeStage(newStage) {
+  const inv = getInvestor(); if (!inv || inv.stage === newStage) return;
+  const oldLabel = STAGES[inv.stage]?.label || inv.stage;
+  const newLabel = STAGES[newStage]?.label  || newStage;
+  await updateDoc(doc(db,'crmInvestors',inv.id), { stage: newStage, updatedAt: serverTimestamp() });
+  await logActivity(inv.id, 'stage_change', { date: new Date(), content: `${oldLabel} → ${newLabel}` });
+  crmInvestors = crmInvestors.map(i => i.id === inv.id ? { ...i, stage: newStage } : i);
+  renderDetail(); renderList();
+}
+
+// ── Contacts ──────────────────────────────────────────────────────────────────
+
+function openAddContact() {
+  editCtIdx = null;
+  document.getElementById('ctModalTitle').textContent = 'Add Contact';
+  ['ctName','ctEmail','ctPhone','ctRole','ctNotes'].forEach(id => document.getElementById(id).value='');
+  document.getElementById('ctPrimary').checked = false;
+  document.getElementById('ctErr').style.display='none';
+  showEl('contactModal', true);
+}
+
+function openEditContact(idx) {
+  const inv = getInvestor();
+  const c = (inv.contacts||[])[idx]; if (!c) return;
+  editCtIdx = idx;
+  document.getElementById('ctModalTitle').textContent = 'Edit Contact';
+  document.getElementById('ctName').value    = c.name  || '';
+  document.getElementById('ctEmail').value   = c.email || '';
+  document.getElementById('ctPhone').value   = c.phone || '';
+  document.getElementById('ctRole').value    = c.role  || '';
+  document.getElementById('ctNotes').value   = c.notes || '';
+  document.getElementById('ctPrimary').checked = !!c.primary;
+  document.getElementById('ctErr').style.display='none';
+  showEl('contactModal', true);
+}
+
+async function saveContact() {
+  const name = document.getElementById('ctName').value.trim();
+  if (!name) { document.getElementById('ctErr').textContent='Name is required.'; document.getElementById('ctErr').style.display='block'; return; }
+  const btn = document.getElementById('ctSaveBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
+
+  const inv = getInvestor();
+  const contacts = [...(inv.contacts||[])];
+  const newContact = {
+    name, email: document.getElementById('ctEmail').value.trim(),
+    phone: document.getElementById('ctPhone').value.trim(),
+    role:  document.getElementById('ctRole').value.trim(),
+    notes: document.getElementById('ctNotes').value.trim(),
+    primary: document.getElementById('ctPrimary').checked,
+  };
+  const isEdit = editCtIdx !== null;
+  if (isEdit) { contacts[editCtIdx] = newContact; } else { contacts.push(newContact); }
+  try {
+    await updateDoc(doc(db,'crmInvestors',inv.id), { contacts, updatedAt: serverTimestamp() });
+    await logActivity(inv.id, isEdit ? 'investor_edited' : 'contact_added', { date: new Date(), content: `${isEdit?'Updated':'Added'} contact: ${name}` });
+    crmInvestors = crmInvestors.map(i => i.id === inv.id ? { ...i, contacts } : i);
+    showEl('contactModal',false); renderContacts();
+  } catch(e) { document.getElementById('ctErr').textContent=e.message; document.getElementById('ctErr').style.display='block'; }
+  finally { btn.disabled=false; btn.innerHTML='Save Contact'; }
+}
+
+async function deleteContact(idx) {
+  if (!confirm('Remove this contact?')) return;
+  const inv = getInvestor();
+  const contacts = (inv.contacts||[]).filter((_,i) => i !== idx);
+  await updateDoc(doc(db,'crmInvestors',inv.id), { contacts, updatedAt: serverTimestamp() });
+  await logActivity(inv.id, 'contact_added', { date: new Date(), content: `Removed contact.` });
+  crmInvestors = crmInvestors.map(i => i.id === inv.id ? { ...i, contacts } : i);
+  renderContacts();
+}
+
+// ── Activity logging ──────────────────────────────────────────────────────────
+
+let activityType = 'note';
+
+function openActivityModal(type) {
+  activityType = type || 'note';
+  document.getElementById('actErr').style.display='none';
+  // Activate correct tab
+  document.querySelectorAll('.type-tab').forEach(t => t.classList.toggle('active', t.dataset.type === activityType));
+  renderActFields();
+  showEl('activityModal', true);
+}
+
+function renderActFields() {
+  const el = document.getElementById('actFields');
+  const today = todayStr();
+  const isFuture = activityType === 'meeting_scheduled';
+  const needVia = ['call','email','meeting_done'].includes(activityType);
+  const needTitle = ['meeting_scheduled','meeting_done','other'].includes(activityType);
+
+  const viaOptions = activityType === 'call'
+    ? ['Phone','WhatsApp','LinkedIn','Video Call','Other']
+    : activityType === 'email'
+    ? ['Email','LinkedIn','Other']
+    : ['Video Call','In-Person','Phone','Other'];
+
+  el.innerHTML = `
+    ${needTitle ? `<div class="form-group"><label>Title *</label><input type="text" class="field" id="actTitle" placeholder="${activityType==='meeting_scheduled'?'e.g. Intro call':''}"></div>` : ''}
+    <div class="form-row">
+      <div class="form-group">
+        <label>Date *</label>
+        <input type="date" class="field" id="actDate" value="${today}" ${isFuture ? `min="${today}"` : `max="${today}"`}>
+      </div>
+      ${needVia ? `<div class="form-group"><label>Via</label><select class="field" id="actVia">${viaOptions.map(v=>`<option value="${v.toLowerCase().replace(' ','_')}">${v}</option>`).join('')}</select></div>` : '<div></div>'}
+    </div>
+    <div class="form-group">
+      <label>Notes <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <textarea class="field" id="actContent" placeholder="${activityType==='note'?'What happened? What were the key points?':activityType==='meeting_scheduled'?'Agenda or objectives…':''}"></textarea>
+    </div>`;
+}
+
+async function saveActivity() {
+  const dateStr = document.getElementById('actDate')?.value;
+  if (!dateStr) { document.getElementById('actErr').textContent='Date is required.'; document.getElementById('actErr').style.display='block'; return; }
+  const needTitle = ['meeting_scheduled','meeting_done','other'].includes(activityType);
+  const title = document.getElementById('actTitle')?.value.trim() || '';
+  if (needTitle && !title) { document.getElementById('actErr').textContent='Title is required.'; document.getElementById('actErr').style.display='block'; return; }
+
+  const btn = document.getElementById('actSaveBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
+
+  const actData = {
+    investorId: currentInvId,
+    type: activityType,
+    date: Timestamp.fromDate(new Date(dateStr)),
+    title: title || null,
+    content: document.getElementById('actContent')?.value.trim() || null,
+    via: document.getElementById('actVia')?.value || null,
+    status: activityType === 'meeting_scheduled' ? 'open' : null,
+    createdAt: serverTimestamp(),
+    createdBy: currentUser,
+  };
+
+  try {
+    const ref = await addDoc(collection(db,'crmActivities'), actData);
+    activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
+    // Update investor lastActivityAt and nextMeetingAt
+    const updates = { lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() };
+    if (activityType === 'meeting_scheduled') {
+      const inv = getInvestor();
+      const curNext = tsToDate(inv.nextMeetingAt);
+      const newDate = new Date(dateStr);
+      if (!curNext || newDate < curNext) updates.nextMeetingAt = Timestamp.fromDate(newDate);
+    }
+    await updateDoc(doc(db,'crmInvestors',currentInvId), updates);
+    crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, ...updates, lastActivityAt: Timestamp.now()} : i);
+    showEl('activityModal',false);
+    renderActivityLog(); renderList();
+  } catch(e) { document.getElementById('actErr').textContent=e.message; document.getElementById('actErr').style.display='block'; }
+  finally { btn.disabled=false; btn.innerHTML='Save'; }
+}
+
+// ── Close meeting ─────────────────────────────────────────────────────────────
+
+function openCloseMeeting(actId) {
+  closeMtgId = actId;
+  const act = activities.find(a => a.id === actId);
+  document.getElementById('closeMtgDesc').textContent = `"${act?.title||'Untitled'}" — scheduled for ${fmtDate(act?.date)}`;
+  document.getElementById('closeMtgNotes').value = '';
+  document.getElementById('closeMtgOutcome').value = 'happened';
+  showEl('closeMtgModal', true);
+}
+
+async function closeMeeting() {
+  const outcome = document.getElementById('closeMtgOutcome').value;
+  const notes   = document.getElementById('closeMtgNotes').value.trim();
+  const btn = document.getElementById('closeMtgSaveBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Closing…';
+  try {
+    await updateDoc(doc(db,'crmActivities',closeMtgId), {
+      status: outcome, closedAt: serverTimestamp(), closedBy: currentUser, closedNotes: notes || null,
+    });
+    activities = activities.map(a => a.id===closeMtgId ? {...a, status:outcome, closedNotes:notes||null} : a);
+    // Recompute nextMeetingAt for investor
+    await recomputeNextMeeting();
+    showEl('closeMtgModal',false);
+    renderActivityLog(); renderList();
+  } catch(e) { alert('Error: ' + e.message); }
+  finally { btn.disabled=false; btn.innerHTML='Close Meeting'; }
+}
+
+async function recomputeNextMeeting() {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const upcoming = activities
+    .filter(a => a.type==='meeting_scheduled' && a.status==='open' && tsToDate(a.date) >= today)
+    .map(a => tsToDate(a.date)).filter(Boolean).sort((a,b) => a-b);
+  const nextMeetingAt = upcoming[0] ? Timestamp.fromDate(upcoming[0]) : null;
+  const hasOverdue = activities.some(a => a.type==='meeting_scheduled' && a.status==='open' && tsToDate(a.date) < today);
+  await updateDoc(doc(db,'crmInvestors',currentInvId), { nextMeetingAt, hasOverdue });
+  crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, nextMeetingAt, hasOverdue} : i);
+}
+
+// ── Commitments ───────────────────────────────────────────────────────────────
+
+function openCommitModal() {
+  const inv = getInvestor();
+  const { units=0 } = fundSettings;
+  document.getElementById('softUnits').value = inv.softCommitment?.units || '';
+  document.getElementById('softValue').value = inv.softCommitment?.value || '';
+  document.getElementById('hardUnits').value = inv.hardCommitment?.units || '';
+  document.getElementById('hardValue').value = inv.hardCommitment?.value || '';
+  document.getElementById('commitHint').textContent = units ? `Fund total: ${units} units. % is calculated automatically.` : 'Set fund total units in ⚙ Settings to see % automatically.';
+  updateCommitPct();
+  showEl('commitModal', true);
+}
+
+function updateCommitPct() {
+  const { units=0 } = fundSettings;
+  ['soft','hard'].forEach(t => {
+    const u = Number(document.getElementById(t+'Units').value)||0;
+    document.getElementById(t+'Pct').textContent = units && u ? `= ${fmtPct(u, units)} of fund (${units} total units)` : '';
+  });
+}
+
+async function saveCommitments() {
+  const btn = document.getElementById('commitSaveBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
+  const softCommitment = { units: Number(document.getElementById('softUnits').value)||0, value: Number(document.getElementById('softValue').value)||0 };
+  const hardCommitment = { units: Number(document.getElementById('hardUnits').value)||0, value: Number(document.getElementById('hardValue').value)||0 };
+  try {
+    await updateDoc(doc(db,'crmInvestors',currentInvId), { softCommitment, hardCommitment, updatedAt: serverTimestamp() });
+    await logActivity(currentInvId, 'commit_updated', { date: new Date(), content: `Soft: ${softCommitment.units} units / ${fmtEur(softCommitment.value)}. Hard: ${hardCommitment.units} units / ${fmtEur(hardCommitment.value)}.` });
+    crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, softCommitment, hardCommitment} : i);
+    showEl('commitModal',false);
+    renderCommitDisplay(); renderSummary();
+  } catch(e) { alert('Error: ' + e.message); }
+  finally { btn.disabled=false; btn.innerHTML='Save Commitments'; }
+}
+
+// ── Fund settings ─────────────────────────────────────────────────────────────
+
+function openFundSettings() {
+  document.getElementById('fTarget').value = fundSettings.target || '';
+  document.getElementById('fUnits').value  = fundSettings.units  || '';
+  updateUnitPrice();
+  showEl('fundModal', true);
+}
+
+function updateUnitPrice() {
+  const t = Number(document.getElementById('fTarget').value)||0;
+  const u = Number(document.getElementById('fUnits').value)||0;
+  document.getElementById('fUnitPrice').value = t && u ? '€' + Math.round(t/u).toLocaleString('de-DE') : '';
+}
+
+async function saveFundSettings() {
+  const target = Number(document.getElementById('fTarget').value)||0;
+  const units  = Number(document.getElementById('fUnits').value)||0;
+  if (!target || !units) { alert('Please enter both fund target and total units.'); return; }
+  const btn = document.getElementById('fundSaveBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
+  try {
+    await setDoc(doc(db,'crmConfig','settings'), { target, units });
+    fundSettings = { target, units };
+    showEl('fundModal',false);
+    renderSummary(); renderCommitDisplay();
+  } catch(e) { alert('Error: ' + e.message); }
+  finally { btn.disabled=false; btn.innerHTML='Save Settings'; }
+}
+
+// ── Portal link ───────────────────────────────────────────────────────────────
+
+function openPortalLinkModal() {
+  const sel = document.getElementById('portalLinkSelect');
+  sel.innerHTML = '<option value="">— select —</option>' + portalInvList.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  showEl('portalLinkModal', true);
+}
+
+async function savePortalLink() {
+  const portalInvestorId = document.getElementById('portalLinkSelect').value;
+  if (!portalInvestorId) { alert('Please select a portal investor.'); return; }
+  await updateDoc(doc(db,'crmInvestors',currentInvId), { portalInvestorId, updatedAt: serverTimestamp() });
+  await logActivity(currentInvId, 'portal_linked', { date: new Date(), content: `Linked to portal investor: ${portalInvList.find(p=>p.id===portalInvestorId)?.name||''}` });
+  crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, portalInvestorId} : i);
+  showEl('portalLinkModal',false);
+  renderPortalSection();
+}
+
+async function unlinkPortal() {
+  if (!confirm('Unlink from portal? This only removes the connection — no data is deleted.')) return;
+  await updateDoc(doc(db,'crmInvestors',currentInvId), { portalInvestorId: null, updatedAt: serverTimestamp() });
+  crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, portalInvestorId: null} : i);
+  renderPortalSection();
+}
+
+// ── Auto-logger ───────────────────────────────────────────────────────────────
+
+async function logActivity(investorId, type, { date, content, title=null }) {
+  await addDoc(collection(db,'crmActivities'), {
+    investorId, type,
+    date: Timestamp.fromDate(date instanceof Date ? date : new Date(date)),
+    title, content: content || null, via: null, status: null,
+    createdAt: serverTimestamp(), createdBy: currentUser,
+  });
+}
+
+// ── View helpers ──────────────────────────────────────────────────────────────
+
+function showDetail(show) {
+  showEl('listView', !show);
+  showEl('detailView', show);
+  if (!show) { currentInvId = null; activities = []; }
+}
+
+// ── Event listeners ───────────────────────────────────────────────────────────
+
+document.getElementById('newInvestorBtn').addEventListener('click', openNewInvestor);
+document.getElementById('invCancelBtn').addEventListener('click', () => showEl('investorModal',false));
+document.getElementById('invSaveBtn').addEventListener('click', saveInvestor);
+
+document.getElementById('backBtn').addEventListener('click', () => showDetail(false));
+document.getElementById('editInvestorBtn').addEventListener('click', openEditInvestor);
+document.getElementById('deleteInvestorBtn').addEventListener('click', deleteInvestor);
+document.getElementById('deleteCancelBtn').addEventListener('click', () => showEl('deleteModal',false));
+document.getElementById('deleteConfirmBtn').addEventListener('click', confirmDelete);
+
+document.getElementById('addContactBtn').addEventListener('click', openAddContact);
+document.getElementById('ctCancelBtn').addEventListener('click', () => showEl('contactModal',false));
+document.getElementById('ctSaveBtn').addEventListener('click', saveContact);
+
+document.querySelectorAll('[data-atype]').forEach(btn => {
+  btn.addEventListener('click', () => openActivityModal(btn.dataset.atype));
+});
+document.querySelectorAll('.type-tab').forEach(tab => {
+  tab.addEventListener('click', () => { activityType = tab.dataset.type; document.querySelectorAll('.type-tab').forEach(t=>t.classList.toggle('active',t===tab)); renderActFields(); });
+});
+document.getElementById('actCancelBtn').addEventListener('click', () => showEl('activityModal',false));
+document.getElementById('actSaveBtn').addEventListener('click', saveActivity);
+
+document.getElementById('closeMtgCancelBtn').addEventListener('click', () => showEl('closeMtgModal',false));
+document.getElementById('closeMtgSaveBtn').addEventListener('click', closeMeeting);
+
+document.getElementById('editCommitBtn').addEventListener('click', openCommitModal);
+document.getElementById('commitCancelBtn').addEventListener('click', () => showEl('commitModal',false));
+document.getElementById('commitSaveBtn').addEventListener('click', saveCommitments);
+['softUnits','softValue','hardUnits','hardValue'].forEach(id => document.getElementById(id).addEventListener('input', updateCommitPct));
+
+document.getElementById('fundSettingsBtn').addEventListener('click', openFundSettings);
+document.getElementById('fundCancelBtn').addEventListener('click', () => showEl('fundModal',false));
+document.getElementById('fundSaveBtn').addEventListener('click', saveFundSettings);
+['fTarget','fUnits'].forEach(id => document.getElementById(id).addEventListener('input', updateUnitPrice));
+
+document.getElementById('portalLinkCancelBtn').addEventListener('click', () => showEl('portalLinkModal',false));
+document.getElementById('portalLinkSaveBtn').addEventListener('click', savePortalLink);
+
+['searchInput','stageFilter','typeFilter','interestFilter'].forEach(id => {
+  document.getElementById(id).addEventListener('input', renderList);
+  document.getElementById(id).addEventListener('change', renderList);
+});
+
+document.querySelectorAll('th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortCol === col) { sortDir = sortDir==='asc'?'desc':'asc'; } else { sortCol=col; sortDir='desc'; }
+    renderList();
+  });
+});
+
+// Close modals on overlay click
+['investorModal','contactModal','activityModal','closeMtgModal','commitModal','fundModal','deleteModal','portalLinkModal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id,false); });
+});
+</script>
+</body>
+</html>
