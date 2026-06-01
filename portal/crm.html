@@ -319,8 +319,8 @@
             <th data-col="type">Type</th>
             <th data-col="stage">Stage</th>
             <th data-col="interest">⚡</th>
-            <th data-col="lastActivityAt">Last Activity ↕</th>
-            <th data-col="nextMeetingAt">Next Meeting</th>
+            <th data-col="lastTouchAt">Last Touch ↕</th>
+            <th data-col="nextContactAt">Next Contact</th>
             <th data-col="soft">Soft Commit</th>
             <th data-col="hard">Hard Commit</th>
           </tr>
@@ -731,7 +731,7 @@ let currentInvId  = null;
 let editInvId     = null;
 let editCtIdx     = null;     // contact index being edited
 let closeMtgId    = null;
-let sortCol       = 'lastActivityAt';
+let sortCol       = 'lastTouchAt';
 let sortDir       = 'desc';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -884,7 +884,7 @@ function renderList() {
   list.sort((a,b) => {
     let va = a[sortCol], vb = b[sortCol];
     if (sortCol === 'name') { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
-    else if (['lastActivityAt','nextMeetingAt'].includes(sortCol)) {
+    else if (['lastTouchAt','nextContactAt'].includes(sortCol)) {
       va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
     } else if (['soft','hard'].includes(sortCol)) {
       va = Number(a[sortCol+'Commitment']?.value) || 0;
@@ -908,15 +908,15 @@ function renderList() {
     const interest = inv.interest ? (INTEREST_ICONS[inv.interest] || '') : '—';
     const soft = inv.softCommitment?.value ? fmtEur(inv.softCommitment.value) : '—';
     const hard = inv.hardCommitment?.value ? fmtEur(inv.hardCommitment.value) : '—';
-    const nextMtg = inv.nextMeetingAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(inv.nextMeetingAt)}</span>` : '—';
+    const nextContact = inv.nextContactAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(inv.nextContactAt)}</span>` : '—';
     const overdue = inv.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
     return `<tr class="row-clickable" data-id="${inv.id}">
       <td><strong>${esc(inv.name)}</strong>${overdue}</td>
       <td><span class="type-tag">${esc(TYPE_LABELS[inv.type]||inv.type||'—')}</span></td>
       <td>${stagePill(inv.stage||'identified')}</td>
       <td><span class="interest-dot">${interest}</span></td>
-      <td style="color:var(--text-light);">${relTime(inv.lastActivityAt)}</td>
-      <td>${nextMtg}</td>
+      <td style="color:var(--text-light);">${relTime(inv.lastTouchAt)}</td>
+      <td>${nextContact}</td>
       <td>${soft}</td>
       <td>${hard}</td>
     </tr>`;
@@ -1066,16 +1066,16 @@ function renderActivityLog() {
   const logEl = document.getElementById('activityLog');
   document.getElementById('actCount').textContent = activities.length + ' entries';
 
-  // Overdue = meeting_scheduled with past date and status open
+  // Overdue = any open activity with past date
   const today = new Date(); today.setHours(0,0,0,0);
-  const overdue = activities.filter(a => a.type === 'meeting_scheduled' && a.status === 'open' && tsToDate(a.date) < today);
+  const overdue = activities.filter(a => a.status === 'open' && tsToDate(a.date) < today);
 
   if (overdue.length) {
     overdueBanners.innerHTML = `<div class="overdue-banner">
-      <p>⚠️ ${overdue.length} meeting${overdue.length>1?'s':''} need${overdue.length===1?'s':''} closing</p>
+      <p>⚠️ ${overdue.length} overdue action${overdue.length>1?'s':''} need${overdue.length===1?'s':''} closing</p>
       ${overdue.map(a => `<div class="overdue-item">
-        <span>${esc(a.title||'Untitled meeting')} — ${fmtDate(a.date)}</span>
-        <button class="btn btn--sm btn--action" data-mid="${a.id}">Close meeting</button>
+        <span>${esc(a.title || (TYPE_LABELS[a.type]||a.type) || 'Untitled')} — ${fmtDate(a.date)}</span>
+        <button class="btn btn--sm btn--action" data-mid="${a.id}">Close</button>
       </div>`).join('')}
     </div>`;
     overdueBanners.querySelectorAll('[data-mid]').forEach(btn => {
@@ -1169,9 +1169,9 @@ async function saveInvestor() {
     } else {
       const ref = await addDoc(collection(db,'crmInvestors'), {
         ...data, contacts:[], softCommitment:{}, hardCommitment:{},
-        portalInvestorId: null, createdAt: serverTimestamp(), lastActivityAt: serverTimestamp(),
+        portalInvestorId: null, createdAt: serverTimestamp(),
       });
-      const newInv = { id: ref.id, ...data, contacts:[], softCommitment:{}, hardCommitment:{}, portalInvestorId: null, createdAt: Timestamp.now(), lastActivityAt: Timestamp.now() };
+      const newInv = { id: ref.id, ...data, contacts:[], softCommitment:{}, hardCommitment:{}, portalInvestorId: null, createdAt: Timestamp.now(), lastTouchAt: null, nextContactAt: null };
       crmInvestors.push(newInv);
       await logActivity(ref.id, 'investor_created', { date: new Date(), content: `Added to CRM.` });
     }
@@ -1295,7 +1295,10 @@ function openActivityModal(type) {
 function renderActFields() {
   const el = document.getElementById('actFields');
   const today = todayStr();
-  const isFuture = activityType === 'meeting_scheduled';
+  // meeting_scheduled = future only; call/email = any date (past or future); others = past/today only
+  const isFutureOnly = activityType === 'meeting_scheduled';
+  const isAnyDate    = ['call','email'].includes(activityType);
+  const isFuture     = isFutureOnly; // kept for backward compat with template below
   const needVia = ['call','email','meeting_done'].includes(activityType);
   const needTitle = ['meeting_scheduled','meeting_done','other'].includes(activityType);
 
@@ -1310,7 +1313,7 @@ function renderActFields() {
     <div class="form-row">
       <div class="form-group">
         <label>Date *</label>
-        <input type="date" class="field" id="actDate" value="${today}" ${isFuture ? `min="${today}"` : `max="${today}"`}>
+        <input type="date" class="field" id="actDate" value="${today}" ${isFutureOnly ? `min="${today}"` : isAnyDate ? '' : `max="${today}"`}>
       </div>
       ${needVia ? `<div class="form-group"><label>Via</label><select class="field" id="actVia">${viaOptions.map(v=>`<option value="${v.toLowerCase().replace(' ','_')}">${v}</option>`).join('')}</select></div>` : '<div></div>'}
     </div>
@@ -1337,7 +1340,7 @@ async function saveActivity() {
     title: title || null,
     content: document.getElementById('actContent')?.value.trim() || null,
     via: document.getElementById('actVia')?.value || null,
-    status: activityType === 'meeting_scheduled' ? 'open' : null,
+    status: new Date(dateStr) > new Date() ? 'open' : null,
     createdAt: serverTimestamp(),
     createdBy: currentUser,
   };
@@ -1345,16 +1348,22 @@ async function saveActivity() {
   try {
     const ref = await addDoc(collection(db,'crmActivities'), actData);
     activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
-    // Update investor lastActivityAt and nextMeetingAt
-    const updates = { lastActivityAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    if (activityType === 'meeting_scheduled') {
-      const inv = getInvestor();
-      const curNext = tsToDate(inv.nextMeetingAt);
-      const newDate = new Date(dateStr);
-      if (!curNext || newDate < curNext) updates.nextMeetingAt = Timestamp.fromDate(newDate);
-    }
+    // Update investor lastTouchAt and nextContactAt
+    const actDate = new Date(dateStr);
+    const isActFuture = actDate > new Date();
+    // lastTouchAt = only update if this activity is today or past
+    const updates = { updatedAt: serverTimestamp() };
+    if (!isActFuture) updates.lastTouchAt = serverTimestamp();
+    // Recompute nextContactAt from all open future activities (including the new one)
+    const today = new Date(); today.setHours(0,0,0,0);
+    const allActs = [...activities]; // already includes the newly unshifted one
+    const upcoming = allActs
+      .filter(a => a.status === 'open' && tsToDate(a.date) >= today)
+      .map(a => tsToDate(a.date)).filter(Boolean).sort((a,b) => a-b);
+    updates.nextContactAt = upcoming[0] ? Timestamp.fromDate(upcoming[0]) : null;
+    updates.hasOverdue = allActs.some(a => a.status === 'open' && tsToDate(a.date) < today);
     await updateDoc(doc(db,'crmInvestors',currentInvId), updates);
-    crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, ...updates, lastActivityAt: Timestamp.now()} : i);
+    crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, ...updates, ...(isActFuture ? {} : {lastTouchAt: Timestamp.now()})} : i);
     showEl('activityModal',false);
     renderActivityLog(); renderList();
   } catch(e) { document.getElementById('actErr').textContent=e.message; document.getElementById('actErr').style.display='block'; }
@@ -1382,23 +1391,24 @@ async function closeMeeting() {
       status: outcome, closedAt: serverTimestamp(), closedBy: currentUser, closedNotes: notes || null,
     });
     activities = activities.map(a => a.id===closeMtgId ? {...a, status:outcome, closedNotes:notes||null} : a);
-    // Recompute nextMeetingAt for investor
-    await recomputeNextMeeting();
+    // Recompute nextContactAt for investor
+    await recomputeNextContact();
     showEl('closeMtgModal',false);
     renderActivityLog(); renderList();
   } catch(e) { alert('Error: ' + e.message); }
   finally { btn.disabled=false; btn.innerHTML='Close Meeting'; }
 }
 
-async function recomputeNextMeeting() {
+async function recomputeNextContact() {
   const today = new Date(); today.setHours(0,0,0,0);
+  // All open future activities across all types
   const upcoming = activities
-    .filter(a => a.type==='meeting_scheduled' && a.status==='open' && tsToDate(a.date) >= today)
+    .filter(a => a.status === 'open' && tsToDate(a.date) >= today)
     .map(a => tsToDate(a.date)).filter(Boolean).sort((a,b) => a-b);
-  const nextMeetingAt = upcoming[0] ? Timestamp.fromDate(upcoming[0]) : null;
-  const hasOverdue = activities.some(a => a.type==='meeting_scheduled' && a.status==='open' && tsToDate(a.date) < today);
-  await updateDoc(doc(db,'crmInvestors',currentInvId), { nextMeetingAt, hasOverdue });
-  crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, nextMeetingAt, hasOverdue} : i);
+  const nextContactAt = upcoming[0] ? Timestamp.fromDate(upcoming[0]) : null;
+  const hasOverdue = activities.some(a => a.status === 'open' && tsToDate(a.date) < today);
+  await updateDoc(doc(db,'crmInvestors',currentInvId), { nextContactAt, hasOverdue });
+  crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, nextContactAt, hasOverdue} : i);
 }
 
 // ── Commitments ───────────────────────────────────────────────────────────────
@@ -1591,10 +1601,9 @@ async function confirmImport() {
         contacts: [], softCommitment: {}, hardCommitment: {},
         portalInvestorId: portalId,
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-        lastActivityAt: serverTimestamp(),
       });
       await logActivity(ref.id, 'investor_created', { date: new Date(), content: `Imported from portal.` });
-      crmInvestors.push({ id: ref.id, name: portal.name, type: '', stage: 'engaged', portalInvestorId: portalId, contacts: [], softCommitment: {}, hardCommitment: {}, lastActivityAt: null });
+      crmInvestors.push({ id: ref.id, name: portal.name, type: '', stage: 'engaged', portalInvestorId: portalId, contacts: [], softCommitment: {}, hardCommitment: {}, lastTouchAt: null, nextContactAt: null });
     }
     showEl('importModal', false);
     renderList(); renderSummary();
