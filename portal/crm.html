@@ -1413,7 +1413,8 @@ async function saveFundSettings() {
     await setDoc(doc(db,'crmConfig','settings'), { target, units });
     fundSettings = { target, units };
     showEl('fundModal',false);
-    renderSummary(); renderCommitDisplay();
+    renderSummary();
+    if (currentInvId) renderCommitDisplay();
   } catch(e) { alert('Error: ' + e.message); }
   finally { btn.disabled=false; btn.innerHTML='Save Settings'; }
 }
