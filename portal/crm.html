@@ -257,7 +257,10 @@
       <h1 class="page-title">Investor CRM</h1>
       <p class="page-sub" id="listSub">Loading…</p>
     </div>
-    <button class="btn btn--primary" id="newInvestorBtn">＋ New Investor</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn--ghost" id="importPortalBtn">⬇ Import from Portal</button>
+      <button class="btn btn--primary" id="newInvestorBtn">＋ New Investor</button>
+    </div>
   </div>
 
   <!-- Summary card -->
@@ -620,6 +623,40 @@
     <div class="modal-actions">
       <button class="btn btn--ghost" id="deleteCancelBtn">Cancel</button>
       <button class="btn btn--danger" id="deleteConfirmBtn">Yes, delete permanently</button>
+    </div>
+  </div>
+</div>
+
+<!-- Grant portal access modal -->
+<div class="overlay" id="grantPortalModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title" id="grantPortalTitle">Grant Portal Access</div>
+    <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px;">
+      This will create a portal login for <strong id="grantPortalName"></strong> and allow access to shared documents.
+    </p>
+    <div class="form-group">
+      <label>Emails with access</label>
+      <textarea class="field" id="grantPortalEmails" rows="4" placeholder="One email per line&#10;e.g. joao@fund.com&#10;maria@fund.com"></textarea>
+      <p class="hint">Pre-filled from CRM contacts. Edit as needed — one email per line.</p>
+    </div>
+    <div class="modal-err" id="grantPortalErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="grantPortalCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="grantPortalSaveBtn">Grant Access</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import from portal modal -->
+<div class="overlay" id="importModal" style="display:none;">
+  <div class="modal" style="max-width:600px;">
+    <div class="modal-title">Import from Portal</div>
+    <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px;" id="importDesc"></p>
+    <div id="importList" style="max-height:340px;overflow-y:auto;margin-bottom:4px;"></div>
+    <div class="modal-err" id="importErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="importCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="importConfirmBtn">Import Selected</button>
     </div>
   </div>
 </div>
@@ -989,7 +1026,15 @@ function renderPortalSection() {
   const linked = portalInvList.find(p => p.id === inv.portalInvestorId);
 
   if (!linked) {
-    el.innerHTML = `<div class="portal-row"><span style="color:var(--text-light);">Not connected to portal</span><button class="btn btn--ghost btn--sm" id="linkPortalBtn">Link</button></div>`;
+    el.innerHTML = `
+      <div class="portal-row">
+        <span style="color:var(--text-light);font-size:0.85rem;">No portal access yet</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <button class="btn btn--primary btn--sm" id="grantPortalBtn">🔓 Grant Portal Access</button>
+        <button class="btn btn--ghost btn--sm" id="linkPortalBtn">Link existing…</button>
+      </div>`;
+    document.getElementById('grantPortalBtn').addEventListener('click', openGrantPortalModal);
     document.getElementById('linkPortalBtn').addEventListener('click', openPortalLinkModal);
     return;
   }
@@ -997,7 +1042,7 @@ function renderPortalSection() {
   const docs = portalDocList.filter(d => (d.allowedInvestors||[]).includes(inv.portalInvestorId));
   el.innerHTML = `
     <div class="portal-row">
-      <span>🔗 <strong>${esc(linked.name)}</strong></span>
+      <span>🔗 <strong>${esc(linked.name)}</strong> <span class="badge badge-green" style="margin-left:4px;">Active</span></span>
       <button class="btn btn--ghost btn--sm" id="unlinkPortalBtn">Unlink</button>
     </div>
     <div class="portal-row">
@@ -1444,6 +1489,116 @@ async function unlinkPortal() {
   renderPortalSection();
 }
 
+// ── Sync allowedEmails ────────────────────────────────────────────────────────
+
+async function syncAllowedEmails() {
+  const snap = await getDocs(collection(db, 'investors'));
+  const allEmails = new Set(ADMIN_EMAILS);
+  snap.docs.forEach(d => (d.data().emails || []).forEach(e => allEmails.add(e)));
+  await setDoc(doc(db, 'config', 'allowedEmails'), { emails: [...allEmails] });
+}
+
+// ── Grant portal access ───────────────────────────────────────────────────────
+
+function openGrantPortalModal() {
+  const inv = getInvestor();
+  document.getElementById('grantPortalName').textContent = inv.name;
+  // Pre-fill from CRM contacts
+  const emails = (inv.contacts || []).map(c => c.email).filter(Boolean);
+  document.getElementById('grantPortalEmails').value = emails.join('\n');
+  document.getElementById('grantPortalErr').style.display = 'none';
+  showEl('grantPortalModal', true);
+}
+
+async function saveGrantPortal() {
+  const inv = getInvestor();
+  const rawEmails = document.getElementById('grantPortalEmails').value;
+  const emails = rawEmails.split('\n').map(e => e.trim().toLowerCase()).filter(e => e.includes('@'));
+  if (!emails.length) {
+    document.getElementById('grantPortalErr').textContent = 'Please add at least one valid email address.';
+    document.getElementById('grantPortalErr').style.display = 'block'; return;
+  }
+  const btn = document.getElementById('grantPortalSaveBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Granting…';
+  try {
+    // Create portal investor
+    const ref = await addDoc(collection(db, 'investors'), { name: inv.name, emails });
+    // Link to CRM
+    await updateDoc(doc(db, 'crmInvestors', currentInvId), { portalInvestorId: ref.id, updatedAt: serverTimestamp() });
+    // Sync login whitelist
+    await syncAllowedEmails();
+    // Log
+    await logActivity(currentInvId, 'portal_linked', { date: new Date(), content: `Portal access granted. Emails: ${emails.join(', ')}` });
+    // Update local state
+    portalInvList.push({ id: ref.id, name: inv.name, emails });
+    crmInvestors = crmInvestors.map(i => i.id === currentInvId ? { ...i, portalInvestorId: ref.id } : i);
+    showEl('grantPortalModal', false);
+    renderPortalSection();
+    await loadActivities(currentInvId);
+    renderActivityLog();
+  } catch(e) {
+    document.getElementById('grantPortalErr').textContent = e.message;
+    document.getElementById('grantPortalErr').style.display = 'block';
+  } finally { btn.disabled = false; btn.innerHTML = 'Grant Access'; }
+}
+
+// ── Import from portal ────────────────────────────────────────────────────────
+
+function openImportModal() {
+  const linkedIds = new Set(crmInvestors.map(i => i.portalInvestorId).filter(Boolean));
+  const unmatched = portalInvList.filter(p => !linkedIds.has(p.id));
+
+  if (!unmatched.length) {
+    document.getElementById('importDesc').textContent = 'All portal investors are already in the CRM. Nothing to import.';
+    document.getElementById('importList').innerHTML = '';
+    document.getElementById('importConfirmBtn').style.display = 'none';
+  } else {
+    document.getElementById('importDesc').textContent = `${unmatched.length} portal investor${unmatched.length !== 1 ? 's' : ''} not yet in CRM. Select which to import:`;
+    document.getElementById('importConfirmBtn').style.display = '';
+    document.getElementById('importList').innerHTML = unmatched.map(p => `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F0EDE6;">
+        <input type="checkbox" id="imp_${p.id}" value="${p.id}" checked style="width:auto;cursor:pointer;flex-shrink:0;">
+        <label for="imp_${p.id}" style="text-transform:none;font-size:0.875rem;font-weight:500;cursor:pointer;margin-bottom:0;">
+          <strong>${esc(p.name)}</strong>
+          <span style="font-weight:400;color:var(--text-light);font-size:0.78rem;margin-left:6px;">${(p.emails||[]).join(', ')}</span>
+        </label>
+      </div>`).join('');
+  }
+  document.getElementById('importErr').style.display = 'none';
+  showEl('importModal', true);
+}
+
+async function confirmImport() {
+  const checked = [...document.querySelectorAll('#importList input[type=checkbox]:checked')].map(cb => cb.value);
+  if (!checked.length) {
+    document.getElementById('importErr').textContent = 'Select at least one investor to import.';
+    document.getElementById('importErr').style.display = 'block'; return;
+  }
+  const btn = document.getElementById('importConfirmBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
+  try {
+    for (const portalId of checked) {
+      const portal = portalInvList.find(p => p.id === portalId);
+      if (!portal) continue;
+      const ref = await addDoc(collection(db, 'crmInvestors'), {
+        name: portal.name, type: '', stage: 'engaged',
+        interest: null, source: null, sourceDetail: null,
+        contacts: [], softCommitment: {}, hardCommitment: {},
+        portalInvestorId: portalId,
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        lastActivityAt: serverTimestamp(),
+      });
+      await logActivity(ref.id, 'investor_created', { date: new Date(), content: `Imported from portal.` });
+      crmInvestors.push({ id: ref.id, name: portal.name, type: '', stage: 'engaged', portalInvestorId: portalId, contacts: [], softCommitment: {}, hardCommitment: {}, lastActivityAt: null });
+    }
+    showEl('importModal', false);
+    renderList(); renderSummary();
+  } catch(e) {
+    document.getElementById('importErr').textContent = 'Import failed: ' + e.message;
+    document.getElementById('importErr').style.display = 'block';
+  } finally { btn.disabled = false; btn.innerHTML = 'Import Selected'; }
+}
+
 // ── Auto-logger ───────────────────────────────────────────────────────────────
 
 async function logActivity(investorId, type, { date, content, title=null }) {
@@ -1504,6 +1659,13 @@ document.getElementById('fundSaveBtn').addEventListener('click', saveFundSetting
 document.getElementById('portalLinkCancelBtn').addEventListener('click', () => showEl('portalLinkModal',false));
 document.getElementById('portalLinkSaveBtn').addEventListener('click', savePortalLink);
 
+document.getElementById('grantPortalCancelBtn').addEventListener('click', () => showEl('grantPortalModal',false));
+document.getElementById('grantPortalSaveBtn').addEventListener('click', saveGrantPortal);
+
+document.getElementById('importPortalBtn').addEventListener('click', openImportModal);
+document.getElementById('importCancelBtn').addEventListener('click', () => showEl('importModal',false));
+document.getElementById('importConfirmBtn').addEventListener('click', confirmImport);
+
 ['searchInput','stageFilter','typeFilter','interestFilter'].forEach(id => {
   document.getElementById(id).addEventListener('input', renderList);
   document.getElementById(id).addEventListener('change', renderList);
@@ -1518,7 +1680,7 @@ document.querySelectorAll('th[data-col]').forEach(th => {
 });
 
 // Close modals on overlay click
-['investorModal','contactModal','activityModal','closeMtgModal','commitModal','fundModal','deleteModal','portalLinkModal'].forEach(id => {
+['investorModal','contactModal','activityModal','closeMtgModal','commitModal','fundModal','deleteModal','portalLinkModal','grantPortalModal','importModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id,false); });
 });
 </script>
