@@ -1002,7 +1002,7 @@ function renderContacts() {
         <button class="btn btn--danger btn--icon" data-ci="${i}" data-action="del-ct">🗑</button>
       </div>
     </div>`).join('');
-  el.querySelectorAll('[data-action="edit-ct"]').forEach(btn => openEditContact(Number(btn.dataset.ci)));
+  el.querySelectorAll('[data-action="edit-ct"]').forEach(btn => btn.addEventListener('click', () => openEditContact(Number(btn.dataset.ci))));
   el.querySelectorAll('[data-action="del-ct"]').forEach(btn => btn.addEventListener('click', () => deleteContact(Number(btn.dataset.ci))));
 }
 
