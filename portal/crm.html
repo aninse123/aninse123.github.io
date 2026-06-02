@@ -259,6 +259,7 @@
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn--ghost" id="importPortalBtn">⬇ Import from Portal</button>
+      <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
       <button class="btn btn--primary" id="newInvestorBtn">＋ New Investor</button>
     </div>
   </div>
@@ -675,6 +676,53 @@
     <div class="modal-actions">
       <button class="btn btn--ghost" id="importCancelBtn">Cancel</button>
       <button class="btn btn--primary" id="importConfirmBtn">Import Selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk import modal -->
+<div class="overlay" id="bulkImportModal" style="display:none;">
+  <div class="modal" style="max-width:740px;">
+    <div class="modal-title">Bulk Import Investors</div>
+    <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:6px;">
+      Download the CSV template, fill it in, then upload it here. One row = one investor.
+      <strong>Name</strong> is the only required field. Delete the example rows before uploading.
+    </p>
+    <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:18px;">
+      Valid values — Type: <code>fund · institutional · family_office · private · corporate · other</code> &nbsp;|&nbsp;
+      Stage: <code>identified · reached_out · engaged · soft_commit · hard_commit · closed · on_hold · pass</code> &nbsp;|&nbsp;
+      Owner: <code>andre · antonio</code> &nbsp;|&nbsp; Interest: <code>high · medium · low</code>
+    </p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px;">
+      <button class="btn btn--ghost btn--sm" id="bulkTemplateBtn">⬇ Download Template</button>
+      <label class="btn btn--ghost btn--sm" style="cursor:pointer;margin:0;">
+        📂 Choose CSV file
+        <input type="file" id="bulkFileInput" accept=".csv,text/csv" style="display:none;">
+      </label>
+      <span id="bulkFileName" style="font-size:0.82rem;color:var(--text-light);"></span>
+    </div>
+    <div id="bulkPreview" style="display:none;">
+      <div style="font-size:0.83rem;font-weight:600;margin-bottom:10px;" id="bulkPreviewSummary"></div>
+      <div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);">
+        <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+          <thead>
+            <tr style="background:var(--bg);">
+              <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;">Name</th>
+              <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);">Type</th>
+              <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);">Stage</th>
+              <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);">Owner</th>
+              <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);">Contact</th>
+              <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);">Status</th>
+            </tr>
+          </thead>
+          <tbody id="bulkPreviewBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-err" id="bulkErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="bulkCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="bulkConfirmBtn" disabled>Import</button>
     </div>
   </div>
 </div>
@@ -1795,6 +1843,184 @@ document.getElementById('portalLinkSaveBtn').addEventListener('click', savePorta
 document.getElementById('grantPortalCancelBtn').addEventListener('click', () => showEl('grantPortalModal',false));
 document.getElementById('grantPortalSaveBtn').addEventListener('click', saveGrantPortal);
 
+// ── Bulk Import ───────────────────────────────────────────────────────────────
+
+let bulkParsedRows = [];
+
+function openBulkImportModal() {
+  bulkParsedRows = [];
+  document.getElementById('bulkFileName').textContent = '';
+  document.getElementById('bulkFileInput').value = '';
+  document.getElementById('bulkPreview').style.display = 'none';
+  document.getElementById('bulkErr').style.display = 'none';
+  document.getElementById('bulkConfirmBtn').disabled = true;
+  document.getElementById('bulkConfirmBtn').textContent = 'Import';
+  showEl('bulkImportModal', true);
+}
+
+function downloadBulkTemplate() {
+  const headers = ['Name','Type','Stage','Owner','Interest','Source','Source Detail','Contact Name','Contact Email','Contact Phone','Contact Role'];
+  const ex1     = ['Acme Capital','fund','engaged','andre','high','referral','Met at ETA Conference 2026','John Smith','john@acme.com','+351 912 345 678','Partner'];
+  const ex2     = ['Jane Doe','private','identified','antonio','medium','network','Introduced by António','Jane Doe','jane@example.com','',''];
+  const csvEsc  = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv     = [headers, ex1, ex2].map(r => r.map(csvEsc).join(',')).join('\r\n');
+  const blob    = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url     = URL.createObjectURL(blob);
+  const a       = Object.assign(document.createElement('a'), { href: url, download: 'douro-crm-import-template.csv' });
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function parseCSVText(text) {
+  text = text.replace(/^﻿/, ''); // strip BOM
+  const lines = text.split(/\r?\n/);
+  function parseLine(line) {
+    const fields = []; let cur = ''; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { if (inQ && line[i+1]==='"') { cur+='"'; i++; } else inQ=!inQ; }
+      else if (c === ',' && !inQ) { fields.push(cur.trim()); cur = ''; }
+      else cur += c;
+    }
+    fields.push(cur.trim());
+    return fields;
+  }
+  const nonEmpty = lines.filter(l => l.trim());
+  if (nonEmpty.length < 2) return [];
+  const headers = parseLine(nonEmpty[0]).map(h => h.toLowerCase().trim().replace(/\s+/g,'_').replace(/[^a-z_0-9]/g,''));
+  return nonEmpty.slice(1).map(line => {
+    const vals = parseLine(line);
+    const row = {};
+    headers.forEach((h, i) => row[h] = (vals[i] || '').trim());
+    return row;
+  });
+}
+
+function processBulkRow(row) {
+  const validTypes     = ['fund','institutional','family_office','private','corporate','other'];
+  const validStages    = ['identified','reached_out','engaged','soft_commit','hard_commit','closed','on_hold','pass'];
+  const validOwners    = ['andre','antonio'];
+  const validInterests = ['high','medium','low'];
+  const validSources   = ['referral','conference','cold','inbound','network','other'];
+  const norm = s => (s||'').toLowerCase().trim().replace(/[\s-]+/g,'_');
+
+  const errors = [];
+  const name = row.name?.trim() || '';
+  if (!name) return { investor: null, errors: ['Name is required'], name: '(empty)' };
+
+  const typeN = norm(row.type);
+  const type  = validTypes.includes(typeN) ? typeN : '';
+  if (row.type?.trim() && !validTypes.includes(typeN)) errors.push(`Unknown type "${row.type}" — left blank`);
+
+  const stageN = norm(row.stage);
+  const stage  = validStages.includes(stageN) ? stageN : 'identified';
+  if (row.stage?.trim() && !validStages.includes(stageN)) errors.push(`Unknown stage "${row.stage}" — defaulted to Identified`);
+
+  const ownerN = norm(row.owner);
+  const owner  = validOwners.includes(ownerN) ? ownerN : null;
+  if (row.owner?.trim() && !validOwners.includes(ownerN)) errors.push(`Unknown owner "${row.owner}" — left blank`);
+
+  const interestN = norm(row.interest);
+  const interest  = validInterests.includes(interestN) ? interestN : null;
+  if (row.interest?.trim() && !validInterests.includes(interestN)) errors.push(`Unknown interest "${row.interest}" — left blank`);
+
+  const sourceN = norm(row.source);
+  const source  = validSources.includes(sourceN) ? sourceN : (row.source?.trim() || null);
+
+  const contacts = [];
+  const cName = (row.contact_name || '').trim();
+  const cEmail = (row.contact_email || '').trim();
+  if (cName || cEmail) contacts.push({ name: cName, email: cEmail, phone: (row.contact_phone||'').trim(), role: (row.contact_role||'').trim() });
+
+  return {
+    investor: { name, type, stage, owner, interest, source, sourceDetail: (row.source_detail||'').trim()||null, contacts },
+    errors,
+    name,
+  };
+}
+
+function parseBulkFile(text) {
+  const rows = parseCSVText(text).filter(r => r.name?.trim()); // skip blank rows
+  if (!rows.length) {
+    document.getElementById('bulkErr').textContent = 'No data rows found. Check the file has investor rows below the header.';
+    document.getElementById('bulkErr').style.display = 'block';
+    document.getElementById('bulkPreview').style.display = 'none';
+    return;
+  }
+  bulkParsedRows = rows.map(processBulkRow);
+  const valid    = bulkParsedRows.filter(r => r.investor && !r.errors.length);
+  const warned   = bulkParsedRows.filter(r => r.investor && r.errors.length);
+  const fatal    = bulkParsedRows.filter(r => !r.investor);
+  const importable = valid.length + warned.length;
+
+  document.getElementById('bulkErr').style.display = 'none';
+  document.getElementById('bulkPreviewSummary').innerHTML =
+    `<span style="color:var(--secondary);">✓ ${valid.length} ready</span>` +
+    (warned.length ? `&nbsp;&nbsp;<span style="color:#C07A00;">⚠ ${warned.length} with warnings (will still import)</span>` : '') +
+    (fatal.length  ? `&nbsp;&nbsp;<span style="color:#B33A3A;">✗ ${fatal.length} invalid — skipped</span>` : '');
+
+  document.getElementById('bulkPreviewBody').innerHTML = bulkParsedRows.map(r => {
+    const inv = r.investor;
+    const isFatal = !inv;
+    const hasWarn = inv && r.errors.length > 0;
+    const bg = isFatal ? '#FBE9E9' : (hasWarn ? '#FFFBEC' : '');
+    const statusCell = isFatal
+      ? `<td style="padding:6px 10px;color:#B33A3A;font-size:0.78rem;">✗ ${esc(r.errors[0])}</td>`
+      : hasWarn
+      ? `<td style="padding:6px 10px;color:#C07A00;font-size:0.78rem;">⚠ ${r.errors.map(esc).join(' · ')}</td>`
+      : `<td style="padding:6px 10px;color:var(--secondary);">✓</td>`;
+    const contact = inv?.contacts[0] ? `${esc(inv.contacts[0].name)}${inv.contacts[0].email ? ' &lt;'+esc(inv.contacts[0].email)+'&gt;' : ''}` : '—';
+    return `<tr style="border-bottom:1px solid var(--border);background:${bg};">
+      <td style="padding:6px 10px;font-weight:600;">${esc(r.name)}</td>
+      <td style="padding:6px 10px;">${esc(TYPE_LABELS[inv?.type]||inv?.type||'—')}</td>
+      <td style="padding:6px 10px;">${inv ? (STAGES[inv.stage]?.label||inv.stage) : '—'}</td>
+      <td style="padding:6px 10px;">${esc(OWNER_LABELS[inv?.owner]||'—')}</td>
+      <td style="padding:6px 10px;font-size:0.78rem;">${contact}</td>
+      ${statusCell}
+    </tr>`;
+  }).join('');
+
+  document.getElementById('bulkConfirmBtn').disabled = importable === 0;
+  document.getElementById('bulkConfirmBtn').textContent = `Import ${importable} investor${importable!==1?'s':''}`;
+  document.getElementById('bulkPreview').style.display = 'block';
+}
+
+async function confirmBulkImport() {
+  const toImport = bulkParsedRows.filter(r => r.investor);
+  if (!toImport.length) return;
+  const btn = document.getElementById('bulkConfirmBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
+  document.getElementById('bulkErr').style.display = 'none';
+  try {
+    for (const { investor } of toImport) {
+      const ref = await addDoc(collection(db, 'crmInvestors'), {
+        ...investor, softCommitment: {}, hardCommitment: {},
+        portalInvestorId: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+      await logActivity(ref.id, 'investor_created', { date: new Date(), content: 'Added via bulk import.' });
+      crmInvestors.push({ id: ref.id, ...investor, softCommitment: {}, hardCommitment: {}, portalInvestorId: null, lastTouchAt: null, nextContactAt: null });
+    }
+    showEl('bulkImportModal', false);
+    renderList(); renderSummary();
+  } catch(e) {
+    document.getElementById('bulkErr').textContent = 'Import failed: ' + e.message;
+    document.getElementById('bulkErr').style.display = 'block';
+    btn.disabled = false; btn.textContent = `Import ${toImport.length} investors`;
+  }
+}
+
+document.getElementById('bulkImportBtn').addEventListener('click', openBulkImportModal);
+document.getElementById('bulkTemplateBtn').addEventListener('click', downloadBulkTemplate);
+document.getElementById('bulkCancelBtn').addEventListener('click', () => showEl('bulkImportModal', false));
+document.getElementById('bulkConfirmBtn').addEventListener('click', confirmBulkImport);
+document.getElementById('bulkFileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  document.getElementById('bulkFileName').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = ev => parseBulkFile(ev.target.result);
+  reader.readAsText(file, 'UTF-8');
+});
+
 document.getElementById('importPortalBtn').addEventListener('click', openImportModal);
 document.getElementById('importCancelBtn').addEventListener('click', () => showEl('importModal',false));
 document.getElementById('importConfirmBtn').addEventListener('click', confirmImport);
@@ -1884,7 +2110,7 @@ document.querySelectorAll('th[data-col]').forEach(th => {
 });
 
 // Close modals on overlay click
-['investorModal','contactModal','activityModal','closeMtgModal','commitModal','fundModal','deleteModal','portalLinkModal','grantPortalModal','importModal'].forEach(id => {
+['investorModal','contactModal','activityModal','closeMtgModal','commitModal','fundModal','deleteModal','portalLinkModal','grantPortalModal','importModal','bulkImportModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id,false); });
 });
 </script>
