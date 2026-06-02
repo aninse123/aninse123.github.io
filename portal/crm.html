@@ -275,6 +275,7 @@
     <div class="commit-rows" id="commitRows">
       <div style="color:var(--text-light);font-size:0.85rem;">Configure fund target to see progress.</div>
     </div>
+    <div id="pipelineBreakdown"></div>
   </div>
 
   <!-- Filters -->
@@ -867,6 +868,26 @@ function renderSummary() {
        <span class="fund-param">Units <strong>${units}</strong></span>
        <span class="fund-param">Unit Price <strong>${fmtEur(Math.round(unitPrice))}</strong></span>`
     : '<span class="fund-param" style="color:var(--text-light);">No fund target set — click ⚙ Settings</span>';
+
+  // Pipeline breakdown — always rendered
+  const stageCounts = {};
+  crmInvestors.forEach(inv => { const s = inv.stage || 'identified'; stageCounts[s] = (stageCounts[s] || 0) + 1; });
+  const total = crmInvestors.length;
+  const stageOrder = ['identified','reached_out','engaged','soft_commit','hard_commit','closed','on_hold','pass'];
+  const stagePills = stageOrder
+    .filter(s => stageCounts[s])
+    .map(s => `<span class="stage-pill ${STAGES[s].cls}" style="font-size:0.75rem;padding:3px 10px;cursor:default;">
+        ${STAGES[s].label} <strong style="margin-left:4px;">${stageCounts[s]}</strong>
+      </span>`)
+    .join('');
+  document.getElementById('pipelineBreakdown').innerHTML = `
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
+        <span style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin-right:4px;">Pipeline</span>
+        <span style="font-size:0.85rem;font-weight:600;color:var(--text);margin-right:8px;">${total} investor${total!==1?'s':''}</span>
+        ${stagePills}
+      </div>
+    </div>`;
 
   if (!target) {
     document.getElementById('commitRows').innerHTML = '<div style="color:var(--text-light);font-size:0.85rem;">Configure fund target to see progress.</div>';
