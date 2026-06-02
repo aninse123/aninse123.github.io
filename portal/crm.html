@@ -319,6 +319,7 @@
             <th data-col="type">Type</th>
             <th data-col="stage">Stage</th>
             <th data-col="interest">⚡</th>
+            <th data-col="owner">Owner</th>
             <th data-col="lastTouchAt">Last Touch ↕</th>
             <th data-col="nextContactAt">Next Contact</th>
             <th data-col="soft">Soft Commit</th>
@@ -442,6 +443,16 @@
         </select>
       </div>
       <div class="form-group">
+        <label>Owner</label>
+        <select class="field" id="invOwner">
+          <option value="">—</option>
+          <option value="andre">André</option>
+          <option value="antonio">António</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
         <label>Source</label>
         <select class="field" id="invSource">
           <option value="">—</option>
@@ -453,10 +464,10 @@
           <option value="other">Other</option>
         </select>
       </div>
-    </div>
-    <div class="form-group">
-      <label>Source Detail <span style="font-weight:400;text-transform:none;">(optional)</span></label>
-      <input type="text" class="field" id="invSourceDetail" placeholder="e.g. Met at ETA Conference 2026">
+      <div class="form-group">
+        <label>Source Detail <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+        <input type="text" class="field" id="invSourceDetail" placeholder="e.g. Met at ETA Conference 2026">
+      </div>
     </div>
     <div class="modal-err" id="invErr"></div>
     <div class="modal-actions">
@@ -698,9 +709,10 @@ const STAGES = {
   on_hold:     { label: 'On Hold',     cls: 's-on_hold'     },
 };
 
-const TYPE_LABELS = { fund:'Fund', institutional:'Institutional', family_office:'Family Office', private:'Private', corporate:'Corporate', other:'Other' };
-const SOURCE_LABELS = { referral:'Referral', conference:'Conference', cold:'Cold Outreach', inbound:'Inbound', network:'Network', other:'Other' };
+const TYPE_LABELS    = { fund:'Fund', institutional:'Institutional', family_office:'Family Office', private:'Private', corporate:'Corporate', other:'Other' };
+const SOURCE_LABELS  = { referral:'Referral', conference:'Conference', cold:'Cold Outreach', inbound:'Inbound', network:'Network', other:'Other' };
 const INTEREST_ICONS = { high:'🟢', medium:'🟡', low:'🔴' };
+const OWNER_LABELS   = { andre:'André', antonio:'António' };
 
 const ACT = {
   note:              { label:'Note',               icon:'📝' },
@@ -915,7 +927,7 @@ function renderList() {
 
   const tbody = document.getElementById('investorBody');
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No investors found</div><div>Try adjusting your filters.</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No investors found</div><div>Try adjusting your filters.</div></div></td></tr>`;
     return;
   }
 
@@ -925,11 +937,13 @@ function renderList() {
     const hard = inv.hardCommitment?.value ? fmtEur(inv.hardCommitment.value) : '—';
     const nextContact = inv.nextContactAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(inv.nextContactAt)}</span>` : '—';
     const overdue = inv.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
+    const ownerLabel = inv.owner ? `<span style="font-size:0.82rem;font-weight:500;">${esc(OWNER_LABELS[inv.owner]||inv.owner)}</span>` : '<span style="color:var(--text-light);">—</span>';
     return `<tr class="row-clickable" data-id="${inv.id}">
       <td><strong>${esc(inv.name)}</strong>${overdue}</td>
       <td><span class="type-tag">${esc(TYPE_LABELS[inv.type]||inv.type||'—')}</span></td>
       <td>${stagePill(inv.stage||'identified')}</td>
       <td><span class="interest-dot">${interest}</span></td>
+      <td>${ownerLabel}</td>
       <td style="color:var(--text-light);">${relTime(effectiveLastTouch(inv))}</td>
       <td>${nextContact}</td>
       <td>${soft}</td>
@@ -963,6 +977,7 @@ function renderDetail() {
   const interestHtml = inv.interest ? `<span class="interest-dot">${INTEREST_ICONS[inv.interest]||''}</span>` : '';
   const sourceHtml   = inv.source   ? `<span class="badge badge-grey">${esc(SOURCE_LABELS[inv.source]||inv.source)}</span>` : '';
   const sourceDetail = inv.sourceDetail ? `<span style="font-size:0.8rem;color:var(--text-light);">${esc(inv.sourceDetail)}</span>` : '';
+  const ownerHtml    = inv.owner    ? `<span class="badge badge-grey">👤 ${esc(OWNER_LABELS[inv.owner]||inv.owner)}</span>` : '';
 
   document.getElementById('dMeta').innerHTML = `
     <div class="stage-wrap">
@@ -971,7 +986,7 @@ function renderDetail() {
         ${Object.entries(STAGES).map(([k,v]) => `<div class="stage-opt" data-stage="${k}"><span class="stage-pill ${v.cls}">${v.label}</span></div>`).join('')}
       </div>
     </div>
-    ${interestHtml} ${sourceHtml} ${sourceDetail}
+    ${interestHtml} ${ownerHtml} ${sourceHtml} ${sourceDetail}
     <span class="badge badge-grey">${esc(TYPE_LABELS[inv.type]||inv.type||'—')}</span>`;
 
   // Stage pill click
@@ -1146,7 +1161,7 @@ function openNewInvestor() {
   editInvId = null;
   document.getElementById('invModalTitle').textContent = 'New Investor';
   ['invName','invSourceDetail'].forEach(id => document.getElementById(id).value = '');
-  ['invType','invStage','invInterest','invSource'].forEach(id => document.getElementById(id).value = id==='invStage'?'identified':'');
+  ['invType','invStage','invInterest','invOwner','invSource'].forEach(id => document.getElementById(id).value = id==='invStage'?'identified':'');
   document.getElementById('invErr').style.display = 'none';
   showEl('investorModal', true);
 }
@@ -1159,6 +1174,7 @@ function openEditInvestor() {
   document.getElementById('invType').value         = inv.type        || '';
   document.getElementById('invStage').value        = inv.stage       || 'identified';
   document.getElementById('invInterest').value     = inv.interest    || '';
+  document.getElementById('invOwner').value        = inv.owner       || '';
   document.getElementById('invSource').value       = inv.source      || '';
   document.getElementById('invSourceDetail').value = inv.sourceDetail|| '';
   document.getElementById('invErr').style.display  = 'none';
@@ -1179,6 +1195,7 @@ async function saveInvestor() {
   const data = {
     name, type, stage,
     interest:    document.getElementById('invInterest').value    || null,
+    owner:       document.getElementById('invOwner').value       || null,
     source:      document.getElementById('invSource').value      || null,
     sourceDetail:document.getElementById('invSourceDetail').value.trim() || null,
     updatedAt: serverTimestamp(),
