@@ -306,7 +306,13 @@
       <option value="medium">🟡 Medium</option>
       <option value="low">🔴 Low</option>
     </select>
+    <select class="filter-sel" id="ownerFilter">
+      <option value="">All Owners</option>
+      <option value="andre">André</option>
+      <option value="antonio">António</option>
+    </select>
     <span class="results-count" id="resultsCount"></span>
+    <button class="btn btn--ghost btn--sm" id="exportBtn" style="margin-left:auto;">⬇ Export CSV</button>
   </div>
 
   <!-- Table -->
@@ -896,11 +902,13 @@ function renderList() {
   const stageF  = document.getElementById('stageFilter').value;
   const typeF   = document.getElementById('typeFilter').value;
   const intF    = document.getElementById('interestFilter').value;
+  const ownerF  = document.getElementById('ownerFilter').value;
 
   let list = crmInvestors.filter(inv => {
     if (stageF  && inv.stage    !== stageF)    return false;
     if (typeF   && inv.type     !== typeF)     return false;
     if (intF    && inv.interest !== intF)      return false;
+    if (ownerF  && inv.owner    !== ownerF)    return false;
     if (search  && !inv.name?.toLowerCase().includes(search)) return false;
     return true;
   });
@@ -908,7 +916,7 @@ function renderList() {
   // Sort
   list.sort((a,b) => {
     let va = a[sortCol], vb = b[sortCol];
-    if (sortCol === 'name') { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
+    if (['name','owner'].includes(sortCol)) { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
     else if (['lastTouchAt','nextContactAt'].includes(sortCol)) {
       // Fall back to legacy lastActivityAt (ignoring creation artifacts)
       if (sortCol === 'lastTouchAt') { va = effectiveLastTouch(a); vb = effectiveLastTouch(b); }
@@ -1770,9 +1778,80 @@ document.getElementById('importPortalBtn').addEventListener('click', openImportM
 document.getElementById('importCancelBtn').addEventListener('click', () => showEl('importModal',false));
 document.getElementById('importConfirmBtn').addEventListener('click', confirmImport);
 
-['searchInput','stageFilter','typeFilter','interestFilter'].forEach(id => {
+['searchInput','stageFilter','typeFilter','interestFilter','ownerFilter'].forEach(id => {
   document.getElementById(id).addEventListener('input', renderList);
   document.getElementById(id).addEventListener('change', renderList);
+});
+
+// ── Export CSV ────────────────────────────────────────────────────────────────
+document.getElementById('exportBtn').addEventListener('click', () => {
+  // Build the same filtered+sorted list that renderList() shows
+  const search  = (document.getElementById('searchInput').value || '').toLowerCase();
+  const stageF  = document.getElementById('stageFilter').value;
+  const typeF   = document.getElementById('typeFilter').value;
+  const intF    = document.getElementById('interestFilter').value;
+  const ownerF  = document.getElementById('ownerFilter').value;
+
+  let list = crmInvestors.filter(inv => {
+    if (stageF && inv.stage    !== stageF)  return false;
+    if (typeF  && inv.type     !== typeF)   return false;
+    if (intF   && inv.interest !== intF)    return false;
+    if (ownerF && inv.owner    !== ownerF)  return false;
+    if (search && !inv.name?.toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  // Sort same as table
+  list.sort((a,b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (['name','owner'].includes(sortCol)) { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
+    else if (['lastTouchAt','nextContactAt'].includes(sortCol)) {
+      if (sortCol === 'lastTouchAt') { va = effectiveLastTouch(a); vb = effectiveLastTouch(b); }
+      va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
+    } else if (['soft','hard'].includes(sortCol)) {
+      va = Number(a[sortCol+'Commitment']?.value) || 0;
+      vb = Number(b[sortCol+'Commitment']?.value) || 0;
+    }
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const csvEsc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const fmtTs  = ts => { const d = tsToDate(ts); return d ? d.toLocaleDateString('en-GB') : ''; };
+
+  const headers = ['Name','Type','Stage','Owner','Interest','Source','Source Detail',
+                   'Soft Commit (€)','Soft Units','Hard Commit (€)','Hard Units',
+                   'Last Touch','Next Contact','Contacts'];
+
+  const rows = list.map(inv => {
+    const contacts = (inv.contacts || []).map(c => `${c.name||''}${c.email?' <'+c.email+'>':''}`).join(' | ');
+    return [
+      inv.name,
+      TYPE_LABELS[inv.type]   || inv.type   || '',
+      STAGES[inv.stage]?.label || inv.stage || '',
+      OWNER_LABELS[inv.owner] || inv.owner  || '',
+      inv.interest || '',
+      SOURCE_LABELS[inv.source] || inv.source || '',
+      inv.sourceDetail || '',
+      inv.softCommitment?.value || '',
+      inv.softCommitment?.units || '',
+      inv.hardCommitment?.value || '',
+      inv.hardCommitment?.units || '',
+      fmtTs(effectiveLastTouch(inv)),
+      fmtTs(inv.nextContactAt),
+      contacts,
+    ].map(csvEsc).join(',');
+  });
+
+  const csv = [headers.map(csvEsc).join(','), ...rows].join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM for Excel
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `douro-crm-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 });
 
 document.querySelectorAll('th[data-col]').forEach(th => {
