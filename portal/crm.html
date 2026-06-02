@@ -1871,7 +1871,7 @@ function downloadBulkTemplate() {
 }
 
 function parseCSVText(text) {
-  text = text.replace(/^﻿/, ''); // strip BOM
+  text = text.replace(/^﻿/, ''); // strip BOM (handles UTF-8 and UTF-16 LE)
   const lines = text.split(/\r?\n/);
   function parseLine(line) {
     const fields = []; let cur = ''; let inQ = false;
@@ -1882,6 +1882,9 @@ function parseCSVText(text) {
       else cur += c;
     }
     fields.push(cur.trim());
+    // Excel sometimes wraps the entire row in one outer quote pair.
+    // When that happens we get 1 field whose value is the real CSV row — re-parse it.
+    if (fields.length === 1 && fields[0].includes(',')) return parseLine(fields[0]);
     return fields;
   }
   const nonEmpty = lines.filter(l => l.trim());
