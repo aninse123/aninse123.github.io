@@ -321,7 +321,6 @@
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn--ghost" id="settingsBtn">⚙ Settings</button>
-        <button class="btn btn--ghost" id="refreshBtn">↻ Refresh</button>
         <button class="btn btn--ghost" id="exportBtn">⬇ Export CSV</button>
         <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
         <button class="btn btn--primary" id="newCompanyBtn">＋ New Company</button>
@@ -664,7 +663,8 @@ import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
 import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
   collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
-  getDocs, getDoc, query, where, serverTimestamp, Timestamp
+  getDocs, getDoc, query, where, serverTimestamp, Timestamp,
+  onSnapshot, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -752,8 +752,7 @@ let sortDir = 'desc';
 let viewMode = 'list';
 let visibleCount = 100;
 const PAGE = 100;
-const CACHE_KEY = 'dp_search_cache';
-const CACHE_TTL = 10 * 60 * 1000;
+let companiesUnsub = null;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -863,22 +862,12 @@ onAuthStateChanged(auth, async user => {
   currentUser = user.email;
   document.getElementById('navEmail').textContent = user.email;
   document.getElementById('signOutBtn').onclick = () => signOut(auth).then(() => window.location.href='/portal/login.html');
-  await loadAll(false);
+  await loadAll();
   document.getElementById('loadingScreen').style.display = 'none';
 });
 
 // ── Load ─────────────────────────────────────────────────────────────────────
-async function loadAll(force){
-  // Try cache for companies
-  if (!force) {
-    try {
-      const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY) || 'null');
-      if (cached && (Date.now() - cached.t) < CACHE_TTL) {
-        companies = cached.companies;
-      }
-    } catch(e){}
-  }
-
+async function loadAll(){
   const [cfgSnap, brokerSnap] = await Promise.all([
     getDoc(doc(db, 'searchConfig', 'fitCriteria')),
     getDocs(collection(db, 'searchBrokers')),
@@ -886,19 +875,33 @@ async function loadAll(force){
   fitCriteria = cfgSnap.exists() ? { ...DEFAULT_FIT, ...cfgSnap.data() } : { ...DEFAULT_FIT };
   brokers = brokerSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   if (!brokers.length) await seedBrokers();
-
-  if (force || !companies.length) {
-    const snap = await getDocs(collection(db, 'searchCompanies'));
-    companies = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    companies.forEach(computeFields);
-    cacheCompanies();
-  }
-
-  buildFilterOptions();
-  renderSummary();
-  renderList();
+  buildStaticOptions();
+  await startCompaniesListener();
 }
-function cacheCompanies(){ try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), companies })); } catch(e){} }
+// No-op retained for call sites — data is kept live via onSnapshot below.
+function cacheCompanies(){}
+// Live listener: keeps `companies` current across both partners in real time.
+// With Firestore persistence (firebase-config.js), re-attaches are served from
+// the local cache + a server delta, so this stays cheap as the list grows.
+function startCompaniesListener(){
+  return new Promise(resolve => {
+    let done = false;
+    if (companiesUnsub) companiesUnsub();
+    companiesUnsub = onSnapshot(collection(db, 'searchCompanies'),
+      snap => {
+        companies = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        companies.forEach(computeFields);
+        refreshSectorOptions();
+        renderSummary();
+        // Only re-render the list when it's visible — never disturb an open
+        // detail view (preserves any in-progress inline edits like financials).
+        if (document.getElementById('listView').style.display !== 'none') renderList();
+        if (!done) { done = true; resolve(); }
+      },
+      err => { console.error('companies listener error:', err); if (!done) { done = true; resolve(); } }
+    );
+  });
+}
 
 async function seedBrokers(){
   const names = ['Deloitte','EY','PWC','Clearwater','BOD','Fingeste','PI Advisory','Glasscore','DFK','SONAE','Crowe'];
@@ -910,30 +913,30 @@ async function seedBrokers(){
 }
 
 // ── Filter option builders ─────────────────────────────────────────────────
-function buildFilterOptions(){
-  // Stage filter + company-modal stage select + reason select
-  const stageF = document.getElementById('stageFilter');
-  const cStage = document.getElementById('cStage');
-  stageF.innerHTML = '<option value="">All Stages</option>' + STAGE_ORDER.map(k=>`<option value="${k}">${STAGES[k].label}</option>`).join('');
-  cStage.innerHTML = STAGE_ORDER.map(k=>`<option value="${k}">${STAGES[k].label}</option>`).join('');
-
-  // Sectors from data
+// Static options — built once at load (never on snapshot, so modal fields and
+// fixed filter dropdowns are never reset while the user is interacting).
+function buildStaticOptions(){
+  document.getElementById('stageFilter').innerHTML = '<option value="">All Stages</option>' + STAGE_ORDER.map(k=>`<option value="${k}">${STAGES[k].label}</option>`).join('');
+  document.getElementById('cStage').innerHTML = STAGE_ORDER.map(k=>`<option value="${k}">${STAGES[k].label}</option>`).join('');
+  document.getElementById('sourceFilter').innerHTML = '<option value="">All Sources</option>' + Object.entries(SOURCE_LABELS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  document.getElementById('cRegions').innerHTML = REGIONS.map(([k,v])=>`<label class="check-item"><input type="checkbox" class="cRegion" value="${k}"> ${v}</label>`).join('');
+}
+// Data-derived options — refreshed on each live snapshot, preserving the user's
+// current selection so a background update never clears an active filter.
+function refreshSectorOptions(){
+  const keepSec = document.getElementById('sectorFilter').value;
+  const keepSub = document.getElementById('subSectorFilter').value;
   const sectors = [...new Set(companies.map(c=>c.sector).filter(Boolean))].sort();
   const subSectors = [...new Set(companies.map(c=>c.subSector).filter(Boolean))].sort();
   document.getElementById('sectorFilter').innerHTML = '<option value="">All Sectors</option>' + sectors.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   document.getElementById('subSectorFilter').innerHTML = '<option value="">All Sub-sectors</option>' + subSectors.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   document.getElementById('sectorList').innerHTML = sectors.map(s=>`<option value="${esc(s)}">`).join('');
   document.getElementById('subSectorList').innerHTML = subSectors.map(s=>`<option value="${esc(s)}">`).join('');
-
-  // Source filter
-  document.getElementById('sourceFilter').innerHTML = '<option value="">All Sources</option>' + Object.entries(SOURCE_LABELS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
-
-  // Regions checkboxes (company modal)
-  document.getElementById('cRegions').innerHTML = REGIONS.map(([k,v])=>`<label class="check-item"><input type="checkbox" class="cRegion" value="${k}"> ${v}</label>`).join('');
-
-  // Add-on platform select
-  // (populated when opening modal)
+  if ([...document.getElementById('sectorFilter').options].some(o=>o.value===keepSec)) document.getElementById('sectorFilter').value = keepSec;
+  if ([...document.getElementById('subSectorFilter').options].some(o=>o.value===keepSub)) document.getElementById('subSectorFilter').value = keepSub;
 }
+// Wrapper kept for call sites (saveCompany / confirmBulk) that run after a modal closes.
+function buildFilterOptions(){ buildStaticOptions(); refreshSectorOptions(); }
 
 // ── Summary ──────────────────────────────────────────────────────────────────
 function renderSummary(){
@@ -1671,7 +1674,8 @@ async function saveAddon(){
     c.addOnTo = addOnTo;
     if (platformId) {
       const plat = companies.find(x=>x.id===platformId);
-      if (plat) { const addOns=[...(plat.addOns||[])]; if(!addOns.includes(c.id)){ addOns.push(c.id); await updateDoc(doc(db,'searchCompanies',platformId),{addOns}); plat.addOns=addOns; } }
+      await updateDoc(doc(db,'searchCompanies',platformId), { addOns: arrayUnion(c.id) });
+      if (plat) plat.addOns = [...new Set([...(plat.addOns||[]), c.id])];
     }
     cacheCompanies(); showEl('addonModal', false); renderDetail();
   } catch(e){ alert('Error: '+e.message); }
@@ -1685,7 +1689,8 @@ async function removeAddon(idx){
   c.addOnTo = addOnTo;
   if (item?.companyId) {
     const plat = companies.find(x=>x.id===item.companyId);
-    if (plat) { const addOns=(plat.addOns||[]).filter(x=>x!==c.id); await updateDoc(doc(db,'searchCompanies',item.companyId),{addOns}); plat.addOns=addOns; }
+    await updateDoc(doc(db,'searchCompanies',item.companyId), { addOns: arrayRemove(c.id) });
+    if (plat) plat.addOns = (plat.addOns||[]).filter(x=>x!==c.id);
   }
   cacheCompanies(); renderDetail();
 }
@@ -1978,7 +1983,6 @@ document.getElementById('settingsSaveBtn').addEventListener('click', saveSetting
 document.getElementById('recalcBtn').addEventListener('click', recalcAll);
 document.getElementById('addBrokerBtn').addEventListener('click', addBroker);
 document.getElementById('exportBtn').addEventListener('click', exportCsv);
-document.getElementById('refreshBtn').addEventListener('click', async () => { document.getElementById('loadingScreen').style.display='flex'; await loadAll(true); document.getElementById('loadingScreen').style.display='none'; });
 document.getElementById('bulkImportBtn').addEventListener('click', openBulk);
 document.getElementById('bulkCancelBtn').addEventListener('click', () => showEl('bulkModal', false));
 document.getElementById('bulkConfirmBtn').addEventListener('click', confirmBulk);

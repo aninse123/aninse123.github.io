@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
 import { getAuth }        from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-import { getFirestore }   from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import { getStorage }     from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
 
 const firebaseConfig = {
@@ -15,7 +15,13 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const auth        = getAuth(app);
-export const db          = getFirestore(app);
+// Firestore with offline persistence (IndexedDB) + multi-tab support.
+// Serves repeat page loads from local cache and only fetches changed docs from
+// the server — keeps reads low at scale and makes navigation fast. Falls back
+// to memory cache automatically if IndexedDB is unavailable.
+export const db          = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});
 export const storage     = getStorage(app);
 export const ADMIN_EMAILS = [
   'andre.rocha@douropartners.pt',
