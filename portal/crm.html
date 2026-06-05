@@ -749,7 +749,7 @@ import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
 import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
   collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
-  getDocs, getDoc, query, where, orderBy, serverTimestamp, Timestamp
+  getDocs, getDoc, query, where, orderBy, serverTimestamp, Timestamp, onSnapshot
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -867,18 +867,36 @@ onAuthStateChanged(auth, async user => {
 // ── Load ─────────────────────────────────────────────────────────────────────
 
 async function loadAll() {
-  const [invSnap, portalInvSnap, portalDocSnap, cfgSnap] = await Promise.all([
-    getDocs(collection(db, 'crmInvestors')),
+  const [portalInvSnap, portalDocSnap, cfgSnap] = await Promise.all([
     getDocs(collection(db, 'investors')),
     getDocs(collection(db, 'documents')),
     getDoc(doc(db, 'crmConfig', 'settings')),
   ]);
-  crmInvestors = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   portalInvList = portalInvSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   portalDocList = portalDocSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   fundSettings = cfgSnap.exists() ? cfgSnap.data() : { target: 0, units: 0 };
-  renderSummary();
-  renderList();
+  await startInvestorsListener();
+}
+
+// Live listener on crmInvestors — André and António see each other's changes in
+// real time (no refresh). With Firestore offline persistence, re-attaches are
+// served from the local cache + a server delta, so it stays cheap.
+let investorsUnsub = null;
+function startInvestorsListener() {
+  return new Promise(resolve => {
+    let done = false;
+    if (investorsUnsub) investorsUnsub();
+    investorsUnsub = onSnapshot(collection(db, 'crmInvestors'),
+      snap => {
+        crmInvestors = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderSummary();
+        // Only re-render the list when it's visible — never disturb an open detail view.
+        if (document.getElementById('listView').style.display !== 'none') renderList();
+        if (!done) { done = true; resolve(); }
+      },
+      err => { console.error('crmInvestors listener error:', err); if (!done) { done = true; resolve(); } }
+    );
+  });
 }
 
 async function loadActivities(investorId) {
