@@ -669,7 +669,7 @@ import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/
 import {
   collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
   getDocs, getDoc, query, where, serverTimestamp, Timestamp,
-  onSnapshot, arrayUnion, arrayRemove
+  onSnapshot, arrayUnion, arrayRemove, writeBatch
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -2044,19 +2044,30 @@ async function confirmBulk(){
   const toImport = bulkRows.filter(r=>r.co && !r.dup);
   if (!toImport.length) return;
   const btn = document.getElementById('bulkConfirmBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Importing…';
+  const errEl = document.getElementById('bulkErr'); errEl.style.display='none';
+  const col = collection(db,'searchCompanies');
+  const CHUNK = 450; // Firestore batch limit is 500 — leave margin
   try {
-    for (const { co } of toImport) {
-      const full = { ...co, createdAt: serverTimestamp(), createdBy: currentUser, updatedAt: serverTimestamp() };
-      const local = computeFields({ ...co });
-      full.computedRevenue=local.computedRevenue; full.computedEBITDA=local.computedEBITDA; full.computedEBITDAMargin=local.computedEBITDAMargin;
-      full.computedCAGR3y=local.computedCAGR3y; full.computedEmployees=local.computedEmployees; full.fitScore=local.fitScore;
-      const ref = await addDoc(collection(db,'searchCompanies'), full);
-      companies.push(computeFields({ id: ref.id, ...full }));
+    let done = 0;
+    for (let i=0; i<toImport.length; i+=CHUNK) {
+      const batch = writeBatch(db);
+      for (const { co } of toImport.slice(i, i+CHUNK)) {
+        const local = computeFields({ ...co });
+        const full = { ...co,
+          computedRevenue:local.computedRevenue, computedEBITDA:local.computedEBITDA, computedEBITDAMargin:local.computedEBITDAMargin,
+          computedCAGR3y:local.computedCAGR3y, computedEmployees:local.computedEmployees, fitScore:local.fitScore,
+          lastTouchAt:null, outreachAttempts:0,
+          createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser };
+        batch.set(doc(col), full);
+      }
+      await batch.commit();
+      done += Math.min(CHUNK, toImport.length - i);
+      btn.innerHTML = `<span class="spin-sm"></span>Importing… ${done}/${toImport.length}`;
     }
-    cacheCompanies();
     showEl('bulkModal', false);
-    buildFilterOptions(); renderSummary(); renderList();
-  } catch(e){ const el=document.getElementById('bulkErr'); el.textContent='Import failed: '+e.message; el.style.display='block'; btn.disabled=false; btn.textContent=`Import ${toImport.length}`; }
+    btn.disabled=false; btn.textContent='Import';
+    // The live onSnapshot listener refreshes companies / list / summary automatically.
+  } catch(e){ errEl.textContent='Import failed: '+e.message; errEl.style.display='block'; btn.disabled=false; btn.textContent=`Import ${toImport.length}`; }
 }
 
 // ── Event wiring ─────────────────────────────────────────────────────────────
