@@ -642,6 +642,25 @@
   </div>
 </div>
 
+<!-- Re-import change report modal -->
+<div class="overlay" id="reportModal" style="display:none;">
+  <div class="modal modal--lg">
+    <div class="modal-title">Re-import Change Report</div>
+    <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:14px;" id="reportSummary"></p>
+    <div style="max-height:380px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+      <table class="preview-table">
+        <thead><tr><th style="width:34px;"><input type="checkbox" id="reportSelectAll" checked></th><th>Company</th><th>Field</th><th>Current</th><th>New (Orbis)</th></tr></thead>
+        <tbody id="reportBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost btn--sm" id="reportDownloadBtn" style="margin-right:auto;">⬇ Download CSV</button>
+      <button class="btn btn--ghost" id="reportCloseBtn">Close (skip all)</button>
+      <button class="btn btn--primary" id="reportApplyBtn">Apply selected</button>
+    </div>
+  </div>
+</div>
+
 <!-- Bulk import modal -->
 <div class="overlay" id="bulkModal" style="display:none;">
   <div class="modal modal--lg">
@@ -652,6 +671,11 @@
       <button class="btn btn--ghost btn--sm" id="bulkTemplateBtn">⬇ Download Template</button>
       <label class="btn btn--ghost btn--sm" style="cursor:pointer;margin:0;">📂 Choose CSV file<input type="file" id="bulkFileInput" accept=".csv,text/csv" style="display:none;"></label>
       <span id="bulkFileName" style="font-size:0.82rem;color:var(--text-light);"></span>
+    </div>
+    <div id="bulkModeRow" style="display:none;margin-bottom:14px;padding:12px;background:#FAFAF8;border:1px solid var(--border);border-radius:var(--radius);">
+      <label class="check-item" style="font-weight:600;"><input type="radio" name="bulkMode" value="new" checked> Add new only</label>
+      <label class="check-item" style="font-weight:600;margin-left:18px;"><input type="radio" name="bulkMode" value="update"> Add new + update existing</label>
+      <div id="bulkMatchedNote" style="font-size:0.76rem;color:var(--text-light);margin-top:8px;font-weight:400;text-transform:none;letter-spacing:0;"></div>
     </div>
     <div id="bulkPreview" style="display:none;">
       <div style="font-size:0.83rem;font-weight:600;margin-bottom:10px;" id="bulkPreviewSummary"></div>
@@ -1973,6 +1997,8 @@ function openBulk(){
   document.getElementById('bulkFileName').textContent='';
   document.getElementById('bulkFileInput').value='';
   showEl('bulkPreview', false);
+  document.getElementById('bulkModeRow').style.display='none';
+  const rNew = document.querySelector('input[name=bulkMode][value=new]'); if (rNew) rNew.checked = true;
   document.getElementById('bulkErr').style.display='none';
   document.getElementById('bulkConfirmBtn').disabled=true;
   document.getElementById('bulkConfirmBtn').textContent='Import';
@@ -2053,9 +2079,11 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, dedup){
   // Duplicate detection — NIF (canonical legal ID, works across Orbis/Erica/manual) then BvD ID.
   const nif = onlyDigits(g('nif'));
   const bvd = g('bvd id','bvd id number');
-  let dup = false, dupReason = '';
-  if (nif && (dedup.existingNif.has(nif) || dedup.seenNif.has(nif)))      { dup = true; dupReason = 'NIF'; }
-  else if (bvd && (dedup.existingBvd.has(bvd) || dedup.seenBvd.has(bvd))) { dup = true; dupReason = 'BvD ID'; }
+  let dup = false, dupReason = '', matchId = null;
+  const exMatch = (nif && dedup.existingByNif.get(nif)) || (bvd && dedup.existingByBvd.get(bvd)) || null;
+  if (exMatch) { dup = true; dupReason = (nif && dedup.existingByNif.has(nif)) ? 'NIF' : 'BvD ID'; matchId = exMatch.id; }
+  else if (nif && dedup.seenNif.has(nif)) { dup = true; dupReason = 'NIF'; }
+  else if (bvd && dedup.seenBvd.has(bvd)) { dup = true; dupReason = 'BvD ID'; }
   if (!dup) { if (nif) dedup.seenNif.add(nif); if (bvd) dedup.seenBvd.add(bvd); }
 
   const errors = [];
@@ -2116,7 +2144,7 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, dedup){
   }
   if (dup) errors.push(`duplicate — ${dupReason} already in CRM`);
   else if (dedup.existingName.has(normName(name))) errors.push('similar name exists');
-  return { co, errors, name, dup };
+  return { co, errors, name, dup, matchId };
 }
 function parseBulkFile(text){
   const rows = parseCSV(text);
@@ -2128,9 +2156,9 @@ function parseBulkFile(text){
   const lyIdx = headerMap['last avail year'];
   const lastYear = (lyIdx!=null) ? (num(rows[1]?.[lyIdx]) || null) : null;
   const dedup = {
-    existingNif:  new Set(companies.map(c=>onlyDigits(c.nif)).filter(Boolean)),
-    existingBvd:  new Set(companies.map(c=>c.bvdId).filter(Boolean)),
-    existingName: new Set(companies.map(c=>normName(c.name)).filter(Boolean)),
+    existingByNif: new Map(companies.filter(c=>onlyDigits(c.nif)).map(c=>[onlyDigits(c.nif), c])),
+    existingByBvd: new Map(companies.filter(c=>c.bvdId).map(c=>[c.bvdId, c])),
+    existingName:  new Set(companies.map(c=>normName(c.name)).filter(Boolean)),
     seenNif: new Set(), seenBvd: new Set(),
   };
   bulkRows = rows.slice(1).map(v => processBulkRow(headerMap, finColMap, lastYear, v, dedup));
@@ -2158,38 +2186,140 @@ function parseBulkFile(text){
       <td>${status}</td>
     </tr>`;
   }).join('');
-  document.getElementById('bulkConfirmBtn').disabled = valid.length===0;
-  document.getElementById('bulkConfirmBtn').textContent = `Import ${valid.length} compan${valid.length===1?'y':'ies'}`;
+  const matched = bulkRows.filter(r => r.dup && r.matchId).length;
+  document.getElementById('bulkModeRow').style.display = matched ? '' : 'none';
+  document.getElementById('bulkMatchedNote').textContent = matched
+    ? `${matched} of these already exist in the CRM. In “update” mode their financials are refreshed automatically and other changed fields are reported for your review.`
+    : '';
+  updateBulkConfirmLabel();
   showEl('bulkPreview', true);
 }
+function updateBulkConfirmLabel(){
+  const mode = document.querySelector('input[name=bulkMode]:checked')?.value || 'new';
+  const valid = bulkRows.filter(r => r.co && !r.dup).length;
+  const matched = bulkRows.filter(r => r.dup && r.matchId).length;
+  const btn = document.getElementById('bulkConfirmBtn');
+  if (mode === 'update' && matched) btn.textContent = `Import ${valid} new + update ${matched}`;
+  else btn.textContent = `Import ${valid} compan${valid===1?'y':'ies'}`;
+  btn.disabled = (valid === 0 && !(mode === 'update' && matched));
+}
+// Orbis-owned firmographic fields eligible for the change report (financials handled separately).
+const ORBIS_FIRMOGRAPHIC = [
+  ['legalForm','Legal Form'],['yearFounded','Year Founded'],
+  ['naceCode','NACE Code'],['naceDescription','NACE Description'],
+  ['hqAddress','Address'],['postcode','Postcode'],['concelho','Concelho'],
+  ['nuts2','NUTS II'],['nuts3','NUTS III'],
+  ['website','Website'],['companyEmail','Email'],['companyPhone','Phone'],
+  ['guoName','GUO Name'],['independenceIndicator','Independence'],
+];
+// Merge incoming Orbis financials into existing: incoming wins where present, else keep existing.
+function mergeFinancials(existing={}, incoming={}){
+  const yk=['Y1','Y2','Y3','Y4','Y5'], metrics=['year','revenue','ebitda','netDebt','employees'];
+  const merged={}; let changed=false;
+  yk.forEach(y=>{ const e=existing[y]||{}, i=incoming[y]||{}; const m={...e};
+    metrics.forEach(k=>{ if (i[k]!=null && i[k]!=='') { if (String(i[k])!==String(e[k]??'')) changed=true; m[k]=i[k]; } });
+    merged[y]=m;
+  });
+  return { merged, changed };
+}
+let reportChanges = [];
+
 async function confirmBulk(){
-  const toImport = bulkRows.filter(r=>r.co && !r.dup);
-  if (!toImport.length) return;
+  const mode = document.querySelector('input[name=bulkMode]:checked')?.value || 'new';
+  const newRows = bulkRows.filter(r=>r.co && !r.dup);
+  const updRows = (mode==='update') ? bulkRows.filter(r=>r.dup && r.matchId) : [];
+  if (!newRows.length && !updRows.length) return;
   const btn = document.getElementById('bulkConfirmBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Importing…';
   const errEl = document.getElementById('bulkErr'); errEl.style.display='none';
   const col = collection(db,'searchCompanies');
-  const CHUNK = 450; // Firestore batch limit is 500 — leave margin
+  const CHUNK = 450;
+  const changes = [];
   try {
+    // 1) Create new companies (batched)
     let done = 0;
-    for (let i=0; i<toImport.length; i+=CHUNK) {
+    for (let i=0; i<newRows.length; i+=CHUNK) {
       const batch = writeBatch(db);
-      for (const { co } of toImport.slice(i, i+CHUNK)) {
+      for (const { co } of newRows.slice(i, i+CHUNK)) {
         const local = computeFields({ ...co });
-        const full = { ...co,
+        batch.set(doc(col), { ...co,
           computedRevenue:local.computedRevenue, computedEBITDA:local.computedEBITDA, computedEBITDAMargin:local.computedEBITDAMargin,
           computedCAGR3y:local.computedCAGR3y, computedEmployees:local.computedEmployees, fitScore:local.fitScore,
           lastTouchAt:null, outreachAttempts:0,
-          createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser };
-        batch.set(doc(col), full);
+          createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
       }
       await batch.commit();
-      done += Math.min(CHUNK, toImport.length - i);
-      btn.innerHTML = `<span class="spin-sm"></span>Importing… ${done}/${toImport.length}`;
+      done += Math.min(CHUNK, newRows.length - i);
+      btn.innerHTML = `<span class="spin-sm"></span>Adding… ${done}/${newRows.length}`;
+    }
+    // 2) Update existing: auto-refresh financials, collect non-financial diffs for the report
+    let u = 0;
+    while (u < updRows.length) {
+      const batch = writeBatch(db); let n = 0;
+      for (; u < updRows.length && n < CHUNK; u++, n++) {
+        const r = updRows[u];
+        const ex = companies.find(c => c.id === r.matchId);
+        if (!ex) continue;
+        const { merged, changed } = mergeFinancials(ex.financials, r.co.financials);
+        if (changed) {
+          const t = computeFields({ ...ex, financials: merged });
+          batch.update(doc(col, r.matchId), { financials: merged, computedRevenue:t.computedRevenue, computedEBITDA:t.computedEBITDA, computedEBITDAMargin:t.computedEBITDAMargin, computedCAGR3y:t.computedCAGR3y, computedEmployees:t.computedEmployees, fitScore:t.fitScore, updatedAt: serverTimestamp() });
+          ex.financials = merged; computeFields(ex);
+        }
+        for (const [f,label] of ORBIS_FIRMOGRAPHIC) {
+          const inc = r.co[f];
+          if (inc==null || inc==='') continue;
+          if (String(inc) !== String(ex[f] ?? '')) changes.push({ companyId: r.matchId, name: ex.name, field: f, label, current: ex[f] ?? '', incoming: inc });
+        }
+      }
+      await batch.commit();
+      btn.innerHTML = `<span class="spin-sm"></span>Updating… ${u}/${updRows.length}`;
     }
     showEl('bulkModal', false);
     btn.disabled=false; btn.textContent='Import';
-    // The live onSnapshot listener refreshes companies / list / summary automatically.
-  } catch(e){ errEl.textContent='Import failed: '+e.message; errEl.style.display='block'; btn.disabled=false; btn.textContent=`Import ${toImport.length}`; }
+    if (changes.length) renderChangeReport(changes);
+    // Live listener refreshes the list/summary automatically.
+  } catch(e){ errEl.textContent='Import failed: '+e.message; errEl.style.display='block'; btn.disabled=false; updateBulkConfirmLabel(); }
+}
+
+// ── Change report (non-financial diffs from re-import) ───────────────────────
+function renderChangeReport(changes){
+  reportChanges = changes;
+  const nCo = new Set(changes.map(c=>c.companyId)).size;
+  document.getElementById('reportSummary').textContent =
+    `Financials were refreshed automatically. ${changes.length} other field change${changes.length>1?'s':''} across ${nCo} compan${nCo===1?'y':'ies'} need your decision — tick the ones to apply.`;
+  document.getElementById('reportBody').innerHTML = changes.map((ch,i)=>`<tr>
+    <td><input type="checkbox" class="chgChk" data-i="${i}" checked></td>
+    <td>${esc(ch.name)}</td><td>${esc(ch.label)}</td>
+    <td style="color:var(--text-light)">${esc(String(ch.current)||'—')}</td>
+    <td style="font-weight:600">${esc(String(ch.incoming))}</td>
+  </tr>`).join('');
+  document.getElementById('reportSelectAll').checked = true;
+  showEl('reportModal', true);
+}
+async function applyReportChanges(){
+  const sel = [...document.querySelectorAll('.chgChk:checked')].map(c=>reportChanges[+c.dataset.i]);
+  if (!sel.length) { showEl('reportModal', false); return; }
+  const btn = document.getElementById('reportApplyBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Applying…';
+  const byCo = {};
+  sel.forEach(ch => { (byCo[ch.companyId] = byCo[ch.companyId] || {})[ch.field] = ch.incoming; });
+  const ids = Object.keys(byCo);
+  try {
+    for (let i=0;i<ids.length;i+=450){
+      const batch = writeBatch(db);
+      ids.slice(i,i+450).forEach(id => { batch.update(doc(db,'searchCompanies',id), { ...byCo[id], updatedAt: serverTimestamp() }); const c=companies.find(x=>x.id===id); if(c) Object.assign(c, byCo[id]); });
+      await batch.commit();
+    }
+    showEl('reportModal', false); renderSummary(); renderList();
+  } catch(e){ alert('Error: '+e.message); }
+  finally { btn.disabled=false; btn.textContent='Apply selected'; }
+}
+function downloadReportCsv(){
+  const esc2 = v => `"${String(v==null?'':v).replace(/"/g,'""')}"`;
+  const rows = [['Company','Field','Current','New (Orbis)'].map(esc2).join(',')]
+    .concat(reportChanges.map(ch => [ch.name, ch.label, ch.current, ch.incoming].map(esc2).join(',')));
+  const blob = new Blob(['﻿'+rows.join('\r\n')], { type:'text/csv;charset=utf-8;' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download:`douro-search-changes-${todayStr()}.csv` });
+  a.click(); URL.revokeObjectURL(a.href);
 }
 
 // ── Event wiring ─────────────────────────────────────────────────────────────
@@ -2225,6 +2355,11 @@ document.getElementById('bulkFileInput').addEventListener('change', e => {
   document.getElementById('bulkFileName').textContent = f.name;
   const rd = new FileReader(); rd.onload = ev => parseBulkFile(ev.target.result); rd.readAsText(f, 'UTF-8');
 });
+document.querySelectorAll('input[name=bulkMode]').forEach(r => r.addEventListener('change', updateBulkConfirmLabel));
+document.getElementById('reportApplyBtn').addEventListener('click', applyReportChanges);
+document.getElementById('reportCloseBtn').addEventListener('click', () => showEl('reportModal', false));
+document.getElementById('reportDownloadBtn').addEventListener('click', downloadReportCsv);
+document.getElementById('reportSelectAll').addEventListener('change', e => document.querySelectorAll('.chgChk').forEach(c => c.checked = e.target.checked));
 
 // Add-on buttons (delegated since rendered dynamically)
 document.getElementById('panel-overview').addEventListener('click', e => {
@@ -2282,7 +2417,7 @@ document.getElementById('cNaceCode').addEventListener('blur', () => {
 });
 
 // Overlay click-to-close
-['companyModal','contactModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal'].forEach(id => {
+['companyModal','contactModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal','reportModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id, false); });
 });
 </script>
