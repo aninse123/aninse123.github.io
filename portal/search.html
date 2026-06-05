@@ -640,7 +640,7 @@
   <div class="modal modal--lg">
     <div class="modal-title">Bulk Import Companies</div>
     <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:6px;">Download the template, fill it in, then upload. One row = one company. <strong>Name</strong> is the only required field.</p>
-    <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:16px;">Y1 = most recent financial year. Orbis exports work directly too: <strong>Y0–Y4</strong> numbering, <strong>"(EUR M)"</strong> columns (auto-converted to euros), <strong>Cash/Loans/LT Debt</strong> (Net Debt derived automatically), and <strong>BvD ID</strong> (used to skip duplicates) are all recognised.</p>
+    <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:16px;">Y1 = most recent financial year. Orbis exports work directly too: <strong>Y0–Y4</strong> numbering, <strong>"(EUR M)"</strong> columns (auto-converted to euros), <strong>Cash/Loans/LT Debt</strong> (Net Debt derived automatically) are all recognised. Duplicates are detected by <strong>NIF</strong> then <strong>BvD ID</strong> and skipped; a soft warning flags matching company names (still imported).</p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px;">
       <button class="btn btn--ghost btn--sm" id="bulkTemplateBtn">⬇ Download Template</button>
       <label class="btn btn--ghost btn--sm" style="cursor:pointer;margin:0;">📂 Choose CSV file<input type="file" id="bulkFileInput" accept=".csv,text/csv" style="display:none;"></label>
@@ -1982,6 +1982,9 @@ function pnum(s){
 }
 function yearFrom(s){ const m = String(s||'').match(/(\d{4})/); return m ? +m[1] : null; }
 function deburr(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim(); }
+function onlyDigits(s){ return String(s||'').replace(/\D/g,''); }
+// Normalised company name for soft duplicate warnings (strips accents, punctuation, legal forms).
+function normName(s){ return deburr(String(s||'').replace(/[.,\-–—&/]/g,' ')).replace(/\b(lda|sa|unipessoal|limitada|sgps|eireli|ltda|s a)\b/g,' ').replace(/\s+/g,' ').trim(); }
 const NUTS2_MAP = { 'norte':'norte','centro':'centro','lisboa':'lisboa','área metropolitana de lisboa':'lisboa','area metropolitana de lisboa':'lisboa','grande lisboa':'lisboa','alentejo':'alentejo','algarve':'algarve','açores':'acores','acores':'acores','r. a. açores':'acores','região autónoma dos açores':'acores','madeira':'madeira','r. a. madeira':'madeira','região autónoma da madeira':'madeira' };
 function mapRegions(s){
   if(!s) return [];
@@ -2013,14 +2016,18 @@ function buildFinColMap(headers){
   return map;
 }
 
-function processBulkRow(headerMap, finColMap, lastYear, vals, existingBvd, seenBvd){
+function processBulkRow(headerMap, finColMap, lastYear, vals, dedup){
   const g = (...names) => { for (const nm of names){ const i = headerMap[nm.toLowerCase()]; if (i!=null){ const val=(vals[i]||'').trim(); if (val!=='') return val; } } return ''; };
   const name = g('name','company name');
   if (!name) return { co:null, errors:['Name required'], name:'(empty)', dup:false };
 
+  // Duplicate detection — NIF (canonical legal ID, works across Orbis/Erica/manual) then BvD ID.
+  const nif = onlyDigits(g('nif'));
   const bvd = g('bvd id','bvd id number');
-  let dup = false;
-  if (bvd) { if (existingBvd.has(bvd) || seenBvd.has(bvd)) dup = true; else seenBvd.add(bvd); }
+  let dup = false, dupReason = '';
+  if (nif && (dedup.existingNif.has(nif) || dedup.seenNif.has(nif)))      { dup = true; dupReason = 'NIF'; }
+  else if (bvd && (dedup.existingBvd.has(bvd) || dedup.seenBvd.has(bvd))) { dup = true; dupReason = 'BvD ID'; }
+  if (!dup) { if (nif) dedup.seenNif.add(nif); if (bvd) dedup.seenBvd.add(bvd); }
 
   const errors = [];
   const normStage = (g('stage')||'universe').toLowerCase().replace(/[\s-]+/g,'_');
@@ -2055,7 +2062,7 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, existingBvd, seenB
   if (cName) contacts.push({ name:cName, role:g('contact role')||'', email:g('contact email')||'', phone:g('contact phone')||'', linkedin:'', source:'', notes:'', isPrimary:true });
 
   const co = {
-    name, bvdId: bvd||null, nif:g('nif')||null, legalForm:g('legal form')||null,
+    name, bvdId: bvd||null, nif: nif||null, legalForm:g('legal form')||null,
     yearFounded: num(g('year founded')) || yearFrom(g('date of incorporation')) || null,
     sector:g('sector')||null, subSector:g('sub-sector')||null,
     naceCode:g('nace code','nace primary code')||null, naceDescription:g('nace description')||null,
@@ -2077,7 +2084,8 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, existingBvd, seenB
     if (d.sector) co.sector = d.sector;
     if (!co.subSector && d.subSector) co.subSector = d.subSector;
   }
-  if (dup) errors.push('Duplicate — BvD ID already in CRM');
+  if (dup) errors.push(`duplicate — ${dupReason} already in CRM`);
+  else if (dedup.existingName.has(normName(name))) errors.push('similar name exists');
   return { co, errors, name, dup };
 }
 function parseBulkFile(text){
@@ -2089,23 +2097,29 @@ function parseBulkFile(text){
   const finColMap = buildFinColMap(headers);
   const lyIdx = headerMap['last avail year'];
   const lastYear = (lyIdx!=null) ? (num(rows[1]?.[lyIdx]) || null) : null;
-  const existingBvd = new Set(companies.map(c=>c.bvdId).filter(Boolean));
-  const seenBvd = new Set();
-  bulkRows = rows.slice(1).map(v => processBulkRow(headerMap, finColMap, lastYear, v, existingBvd, seenBvd));
+  const dedup = {
+    existingNif:  new Set(companies.map(c=>onlyDigits(c.nif)).filter(Boolean)),
+    existingBvd:  new Set(companies.map(c=>c.bvdId).filter(Boolean)),
+    existingName: new Set(companies.map(c=>normName(c.name)).filter(Boolean)),
+    seenNif: new Set(), seenBvd: new Set(),
+  };
+  bulkRows = rows.slice(1).map(v => processBulkRow(headerMap, finColMap, lastYear, v, dedup));
 
   const valid = bulkRows.filter(r => r.co && !r.dup);
   const dups  = bulkRows.filter(r => r.dup);
+  const warns = valid.filter(r => r.errors.length);
   const fatal = bulkRows.filter(r => !r.co);
   document.getElementById('bulkErr').style.display='none';
   document.getElementById('bulkPreviewSummary').innerHTML =
     `<span style="color:var(--secondary)">✓ ${valid.length} ready</span>` +
     (dups.length?` &nbsp; <span style="color:var(--text-light)">⊘ ${dups.length} duplicate${dups.length>1?'s':''} (skipped)</span>`:'') +
+    (warns.length?` &nbsp; <span style="color:#B45309">⚠ ${warns.length} name match${warns.length>1?'es':''} (still imported)</span>`:'') +
     (fatal.length?` &nbsp; <span style="color:#B91C1C">✗ ${fatal.length} skipped (no name)</span>`:'');
   document.getElementById('bulkPreviewBody').innerHTML = bulkRows.slice(0,200).map(r => {
     const co=r.co;
     const cls = !co?'row-bad':(r.dup?'':r.errors.length?'row-warn':'');
     const status = !co ? `<span class="row-bad">✗ ${esc(r.errors[0])}</span>`
-      : r.dup ? `<span style="color:var(--text-light)">⊘ duplicate</span>`
+      : r.dup ? `<span style="color:var(--text-light)">⊘ ${esc(r.errors[0]||'duplicate')}</span>`
       : r.errors.length ? `<span style="color:#B45309">⚠ ${r.errors.map(esc).join(', ')}</span>`
       : '<span class="row-ok">✓</span>';
     return `<tr class="${cls}">
