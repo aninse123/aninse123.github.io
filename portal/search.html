@@ -1909,9 +1909,16 @@ function pnum(s){
   return isFinite(n) ? n : null;
 }
 function yearFrom(s){ const m = String(s||'').match(/(\d{4})/); return m ? +m[1] : null; }
+function deburr(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim(); }
 const NUTS2_MAP = { 'norte':'norte','centro':'centro','lisboa':'lisboa','área metropolitana de lisboa':'lisboa','area metropolitana de lisboa':'lisboa','grande lisboa':'lisboa','alentejo':'alentejo','algarve':'algarve','açores':'acores','acores':'acores','r. a. açores':'acores','região autónoma dos açores':'acores','madeira':'madeira','r. a. madeira':'madeira','região autónoma da madeira':'madeira' };
-function mapRegions(s){ if(!s) return []; return s.split(/[;,]/).map(x=>{ const k=x.trim().toLowerCase(); return NUTS2_MAP[k] || (REGION_LABELS[k]?k:null); }).filter(Boolean); }
-function mapSource(s){ s=(s||'').toLowerCase().trim(); if(SOURCE_LABELS[s]) return s; if(s==='orbis'||s==='erica'||s==='erica pro'||s==='erica pro') return 'database'; return null; }
+function mapRegions(s){
+  if(!s) return [];
+  return s.split(/[;,]/).map(x=>{
+    let k = x.trim().toLowerCase().replace(/^pt[0-9a-z]+\s*[-–—]\s*/i,'').trim(); // strip "PT11 - " NUTS code prefix
+    return NUTS2_MAP[k] || (REGION_LABELS[k]?k:null);
+  }).filter(Boolean);
+}
+function mapSource(s){ s=(s||'').toLowerCase().trim(); if(SOURCE_LABELS[s]) return s; if(s==='orbis'||s.startsWith('erica')) return 'database'; return null; }
 
 // Detect financial columns by metric + year number, tolerant of unit suffix ("(EUR M)" → ×1e6)
 // and of both Orbis (Y0 = most recent) and our-template (Y1 = most recent) numbering.
@@ -1947,7 +1954,8 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, existingBvd, seenB
   const normStage = (g('stage')||'universe').toLowerCase().replace(/[\s-]+/g,'_');
   const stage = STAGES[normStage] ? normStage : 'universe';
   if (g('stage') && !STAGES[normStage]) errors.push(`stage "${g('stage')}" → universe`);
-  const owner = ['andre','antonio'].includes(g('owner').toLowerCase()) ? g('owner').toLowerCase() : null;
+  const ownerN = deburr(g('owner'));   // handles accented "André" / "António"
+  const owner = ['andre','antonio'].includes(ownerN) ? ownerN : null;
   const prio = ['a','b','c'].includes(g('priority').toLowerCase()) ? g('priority').toLowerCase() : null;
 
   // Financials — map metric columns positionally to Y1..Y5 (smallest year number = most recent).
@@ -1957,9 +1965,12 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, existingBvd, seenB
   fill(finColMap.revenue, 'revenue');
   fill(finColMap.ebitda, 'ebitda');
   fill(finColMap.employees, 'employees', 1);
+  // Fallback: a single "Employees" column (no year suffix) = most recent → Y1.
+  if (fin.Y1.employees==null) { const e = g('employees','number of employees','no of employees'); if (e!=='') fin.Y1.employees = num(e); }
+  // Net Debt: explicit columns if present; else derive = Loans + LT Debt − Cash,
+  // but ONLY when Cash is available (deriving from debt alone would mislabel debt as net debt).
   if (finColMap.netdebt.length) fill(finColMap.netdebt, 'netDebt');
-  else if (finColMap.loans.length || finColMap.ltdebt.length || finColMap.cash.length) {
-    // Derive Net Debt = Loans + LT Debt − Cash, per year number.
+  else if (finColMap.cash.length && (finColMap.loans.length || finColMap.ltdebt.length)) {
     const byN = {};
     const addComp = (arr, sign) => arr.forEach(col => { const v = pnum(vals[col.i]); if (v!=null){ byN[col.n] = (byN[col.n]||0) + sign * v * col.unit; } });
     addComp(finColMap.loans, 1); addComp(finColMap.ltdebt, 1); addComp(finColMap.cash, -1);
