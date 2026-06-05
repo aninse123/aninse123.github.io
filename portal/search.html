@@ -357,6 +357,8 @@
     <!-- Advanced filters -->
     <div class="adv-filters" id="advFilters">
       <select class="filter-sel" id="subSectorFilter"><option value="">All Sub-sectors</option></select>
+      <select class="filter-sel" id="nuts2Filter"><option value="">All NUTS II</option></select>
+      <select class="filter-sel" id="nuts3Filter"><option value="">All NUTS III</option></select>
       <select class="filter-sel" id="sourceFilter"><option value="">All Sources</option></select>
       <div class="filter-group">NACE <input type="text" class="num-filter" id="naceFilter" placeholder="e.g. 62"> <span class="nace-label" id="naceLabel"></span></div>
       <div class="filter-group">CAE <input type="text" class="num-filter" id="caeFilter" placeholder="e.g. 620"> <span class="nace-label" id="caeLabel"></span></div>
@@ -486,6 +488,10 @@
       <div class="form-group"><label>Concelho</label><input type="text" class="field" id="cConcelho" placeholder="e.g. Lisboa"></div>
       <div class="form-group"><label>Postcode</label><input type="text" class="field" id="cPostcode" placeholder="e.g. 4605-307"></div>
       <div class="form-group"><label>HQ Address</label><input type="text" class="field" id="cHqAddress"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>NUTS II <span class="opt">(region)</span></label><input type="text" class="field" id="cNuts2" placeholder="e.g. PT11 - Norte"></div>
+      <div class="form-group"><label>NUTS III <span class="opt">(sub-region)</span></label><input type="text" class="field" id="cNuts3" placeholder="e.g. PT11C - Tâmega e Sousa"></div>
     </div>
     <div class="form-group"><label>Regions <span class="opt">(operating regions)</span></label>
       <div class="checks" id="cRegions"></div>
@@ -1018,6 +1024,15 @@ function refreshSectorOptions(){
   document.getElementById('subSectorList').innerHTML = subSectors.map(s=>`<option value="${esc(s)}">`).join('');
   if ([...document.getElementById('sectorFilter').options].some(o=>o.value===keepSec)) document.getElementById('sectorFilter').value = keepSec;
   if ([...document.getElementById('subSectorFilter').options].some(o=>o.value===keepSub)) document.getElementById('subSectorFilter').value = keepSub;
+  // NUTS II / III filters — auto-populated from data, selection preserved
+  const keepN2 = document.getElementById('nuts2Filter').value;
+  const keepN3 = document.getElementById('nuts3Filter').value;
+  const nuts2 = [...new Set(companies.map(c=>c.nuts2).filter(Boolean))].sort();
+  const nuts3 = [...new Set(companies.map(c=>c.nuts3).filter(Boolean))].sort();
+  document.getElementById('nuts2Filter').innerHTML = '<option value="">All NUTS II</option>' + nuts2.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  document.getElementById('nuts3Filter').innerHTML = '<option value="">All NUTS III</option>' + nuts3.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  if ([...document.getElementById('nuts2Filter').options].some(o=>o.value===keepN2)) document.getElementById('nuts2Filter').value = keepN2;
+  if ([...document.getElementById('nuts3Filter').options].some(o=>o.value===keepN3)) document.getElementById('nuts3Filter').value = keepN3;
 }
 // Wrapper kept for call sites (saveCompany / confirmBulk) that run after a modal closes.
 function buildFilterOptions(){ buildStaticOptions(); refreshSectorOptions(); }
@@ -1055,6 +1070,8 @@ function getFiltered(){
   const fitF   = Number(document.getElementById('fitFilter').value) || 0;
   const sectorF = document.getElementById('sectorFilter').value;
   const subF   = document.getElementById('subSectorFilter').value;
+  const nuts2F = document.getElementById('nuts2Filter').value;
+  const nuts3F = document.getElementById('nuts3Filter').value;
   const srcF   = document.getElementById('sourceFilter').value;
   const naceF  = (document.getElementById('naceFilter').value||'').trim();
   const caeF   = (document.getElementById('caeFilter').value||'').trim();
@@ -1076,6 +1093,8 @@ function getFiltered(){
     if (fitF && (Number(c.fitScore)||0) < fitF) return false;
     if (sectorF && c.sector !== sectorF) return false;
     if (subF && c.subSector !== subF) return false;
+    if (nuts2F && c.nuts2 !== nuts2F) return false;
+    if (nuts3F && c.nuts3 !== nuts3F) return false;
     if (srcF && c.sourceType !== srcF) return false;
     if (naceF && !String(c.naceCode||'').startsWith(naceF)) return false;
     if (caeF && !String(c.caeCode||'').startsWith(caeF)) return false;
@@ -1258,6 +1277,8 @@ function renderOverview(c){
         <div class="info-row"><span class="k">Concelho</span><span class="v">${esc(c.concelho||'—')}</span></div>
         <div class="info-row"><span class="k">Postcode</span><span class="v">${esc(c.postcode||'—')}</span></div>
         <div class="info-row"><span class="k">Address</span><span class="v">${esc(c.hqAddress||'—')}</span></div>
+        <div class="info-row"><span class="k">NUTS II</span><span class="v">${esc(c.nuts2||'—')}</span></div>
+        <div class="info-row"><span class="k">NUTS III</span><span class="v">${esc(c.nuts3||'—')}</span></div>
         <div class="info-row"><span class="k">Regions</span><span class="v">${esc(regions)}</span></div>
         <div class="info-row"><span class="k">Multinational</span><span class="v">${c.isMultinational?'Yes — '+esc((c.countries||[]).join(', ')):'No'}</span></div>
         <div class="info-row"><span class="k">Website</span><span class="v">${c.website?`<a href="${esc(c.website)}" target="_blank" rel="noopener" style="color:var(--primary)">${esc(c.website)}</a>`:'—'}</span></div>
@@ -1462,7 +1483,7 @@ async function changeStage(newStage){
 function openNewCompany(){
   editCoId = null;
   document.getElementById('companyModalTitle').textContent = 'New Company';
-  ['cName','cNif','cLegalForm','cYearFounded','cWebsite','cLinkedin','cCompanyEmail','cCompanyPhone','cDescription','cSector','cSubSector','cNaceCode','cNaceDesc','cCaeCode','cCaeDesc','cAuditingFirm','cBvdId','cIndependence','cGuo','cConcelho','cPostcode','cHqAddress','cCountries'].forEach(id=>document.getElementById(id).value='');
+  ['cName','cNif','cLegalForm','cYearFounded','cWebsite','cLinkedin','cCompanyEmail','cCompanyPhone','cDescription','cSector','cSubSector','cNaceCode','cNaceDesc','cCaeCode','cCaeDesc','cAuditingFirm','cBvdId','cIndependence','cGuo','cConcelho','cPostcode','cHqAddress','cNuts2','cNuts3','cCountries'].forEach(id=>document.getElementById(id).value='');
   ['cOwnershipType','cSuccession','cStage','cPriority','cOwner','cSourceType','cReasonExcluded'].forEach(id=>{ const el=document.getElementById(id); el.value = id==='cStage'?'universe':''; });
   document.getElementById('cMultinational').checked = false;
   document.querySelectorAll('.cRegion').forEach(cb=>cb.checked=false);
@@ -1481,6 +1502,7 @@ function openEditCompany(){
   set('cNaceCode',c.naceCode); set('cNaceDesc',c.naceDescription); set('cCaeCode',c.caeCode); set('cCaeDesc',c.caeDescription);
   set('cAuditingFirm',c.auditingFirm); set('cBvdId',c.bvdId); set('cIndependence',c.independenceIndicator); set('cGuo',c.guoName);
   set('cConcelho',c.concelho); set('cPostcode',c.postcode); set('cHqAddress',c.hqAddress);
+  set('cNuts2',c.nuts2); set('cNuts3',c.nuts3);
   set('cOwnershipType',c.ownershipType); set('cSuccession',c.successionSit); set('cStage',c.stage||'universe');
   set('cPriority',c.priority); set('cOwner',c.owner); set('cSourceType',c.sourceType);
   set('cCountries',(c.countries||[]).join(', '));
@@ -1517,6 +1539,7 @@ async function saveCompany(){
     naceCode:v('cNaceCode')||null, naceDescription:v('cNaceDesc')||null, caeCode:v('cCaeCode')||null, caeDescription:v('cCaeDesc')||null,
     auditingFirm:v('cAuditingFirm')||null, bvdId:v('cBvdId')||null, independenceIndicator:v('cIndependence')||null, guoName:v('cGuo')||null,
     concelho:v('cConcelho')||null, postcode:v('cPostcode')||null, hqAddress:v('cHqAddress')||null,
+    nuts2:v('cNuts2')||null, nuts3:v('cNuts3')||null,
     ownershipType:v('cOwnershipType')||null, successionSit:v('cSuccession')||null,
     stage:v('cStage')||'universe', priority:v('cPriority')||null, owner:v('cOwner')||null, sourceType:v('cSourceType')||null,
     isMultinational: document.getElementById('cMultinational').checked,
@@ -1924,13 +1947,13 @@ async function recalcAll(){
 function exportCsv(){
   const list = sortList(getFiltered());
   const esc2 = v => `"${String(v==null?'':v).replace(/"/g,'""')}"`;
-  const headers = ['Name','Sector','Sub-sector','NACE','CAE','Stage','Priority','Fit','Owner','Source','Concelho','Postcode','Address','Primary Contact','Revenue Y1','EBITDA Y1','EBITDA%','CAGR 3y','Employees','Last Touch','Attempts','Reason'];
+  const headers = ['Name','Sector','Sub-sector','NACE','CAE','Stage','Priority','Fit','Owner','Source','Concelho','Postcode','NUTS2','NUTS3','Address','Primary Contact','Revenue Y1','EBITDA Y1','EBITDA%','CAGR 3y','Employees','Last Touch','Attempts','Reason'];
   const rows = list.map(c => {
     const pc = (c.contacts||[]).find(x=>x.isPrimary) || (c.contacts||[])[0];
     return [
     c.name, c.sector, c.subSector, c.naceCode, c.caeCode, STAGES[c.stage]?.label||c.stage,
     PRIO_LABELS[c.priority]||'', (Number(c.fitScore)||0).toFixed(1), OWNER_LABELS[c.owner]||'', SOURCE_LABELS[c.sourceType]||'',
-    c.concelho, c.postcode, c.hqAddress, pc?.name||'',
+    c.concelho, c.postcode, c.nuts2, c.nuts3, c.hqAddress, pc?.name||'',
     c.computedRevenue??'', c.computedEBITDA??'', c.computedEBITDAMargin!=null?(c.computedEBITDAMargin*100).toFixed(1):'', c.computedCAGR3y!=null?(c.computedCAGR3y*100).toFixed(1):'',
     c.computedEmployees??'', c.lastTouchAt?tsToDate(c.lastTouchAt).toLocaleDateString('en-GB'):'', c.outreachAttempts||0,
     c.reasonExcluded?((c.stage==='pass'?PASS_REASONS:HOLD_REASONS)[c.reasonExcluded]||''):'',
@@ -1944,7 +1967,7 @@ function exportCsv(){
 
 // ── Bulk import ──────────────────────────────────────────────────────────────
 let bulkRows = [];
-const BULK_COLS = ['Name','BvD ID','NIF','Legal Form','Year Founded','Sector','Sub-Sector','NACE Code','NACE Description','CAE Code','CAE Description','GUO Name','Independence Indicator','Concelho','Postcode','Region','Multinational','Countries','Ownership Type','Succession','Source Type','Owner','Priority','Stage','Website','Email','Phone','Revenue Y1','Revenue Y2','Revenue Y3','Revenue Y4','Revenue Y5','EBITDA Y1','EBITDA Y2','EBITDA Y3','EBITDA Y4','EBITDA Y5','Net Debt Y1','Net Debt Y2','Net Debt Y3','Net Debt Y4','Net Debt Y5','Employees Y1','Contact Name','Contact Role','Contact Email','Contact Phone'];
+const BULK_COLS = ['Name','BvD ID','NIF','Legal Form','Year Founded','Sector','Sub-Sector','NACE Code','NACE Description','CAE Code','CAE Description','GUO Name','Independence Indicator','Concelho','Postcode','NUTS2 Region','NUTS3 Sub-Region','Region','Multinational','Countries','Ownership Type','Succession','Source Type','Owner','Priority','Stage','Website','Email','Phone','Revenue Y1','Revenue Y2','Revenue Y3','Revenue Y4','Revenue Y5','EBITDA Y1','EBITDA Y2','EBITDA Y3','EBITDA Y4','EBITDA Y5','Net Debt Y1','Net Debt Y2','Net Debt Y3','Net Debt Y4','Net Debt Y5','Employees Y1','Contact Name','Contact Role','Contact Email','Contact Phone'];
 function openBulk(){
   bulkRows = [];
   document.getElementById('bulkFileName').textContent='';
@@ -1956,7 +1979,7 @@ function openBulk(){
   showEl('bulkModal', true);
 }
 function downloadTemplate(){
-  const ex1 = ['Acme Lda','PT500123456','500123456','Lda','1998','Serviços técnicos','Análises e ensaios','7120','Technical testing and analysis','71200','Actividades de ensaios e análises técnicas','','A','Porto','4000-001','norte','no','','founder','retirement','database','andre','b','universe','https://acme.pt','geral@acme.pt','+351 220 000 000','5200000','4800000','4500000','4200000','4000000','950000','880000','800000','760000','720000','1200000','1350000','1500000','1600000','1700000','42','João Silva','Founder','joao@acme.pt','+351 912 000 000'];
+  const ex1 = ['Acme Lda','PT500123456','500123456','Lda','1998','Serviços técnicos','Análises e ensaios','7120','Technical testing and analysis','71200','Actividades de ensaios e análises técnicas','','A','Porto','4000-001','PT11 - Norte','PT11A - Área Metropolitana do Porto','norte','no','','founder','retirement','database','andre','b','universe','https://acme.pt','geral@acme.pt','+351 220 000 000','5200000','4800000','4500000','4200000','4000000','950000','880000','800000','760000','720000','1200000','1350000','1500000','1600000','1700000','42','João Silva','Founder','joao@acme.pt','+351 912 000 000'];
   const esc2 = v => `"${String(v==null?'':v).replace(/"/g,'""')}"`;
   const csv = [BULK_COLS, ex1].map(r=>r.map(esc2).join(',')).join('\r\n');
   const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' });
@@ -2075,6 +2098,7 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, dedup){
     caeCode:g('cae code')||null, caeDescription:g('cae description')||null,
     guoName:g('guo name')||null, independenceIndicator:g('independence indicator')||null,
     concelho:g('concelho')||null, postcode:g('postcode','post code','zip')||null, hqAddress:g('address')||null,
+    nuts2:g('nuts2 region','nuts2','nuts ii')||null, nuts3:g('nuts3 sub-region','nuts3','nuts iii')||null,
     website:g('website')||null, companyEmail:g('email')||null, companyPhone:g('telephone','phone')||null,
     regions: mapRegions(g('region','nuts2 region')),
     isMultinational: /^(yes|sim|true|1)$/i.test(g('multinational')),
@@ -2214,14 +2238,14 @@ document.getElementById('viewListBtn').addEventListener('click', () => { viewMod
 document.getElementById('viewGroupedBtn').addEventListener('click', () => { viewMode='grouped'; document.getElementById('viewGroupedBtn').classList.add('active'); document.getElementById('viewListBtn').classList.remove('active'); renderGrouped(); });
 
 // Filters
-['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id => {
+['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id => {
   const el = document.getElementById(id);
   el.addEventListener('input', () => { visibleCount = PAGE; renderList(); });
   el.addEventListener('change', () => { visibleCount = PAGE; renderList(); });
 });
 document.getElementById('advFilterBtn').addEventListener('click', () => document.getElementById('advFilters').classList.toggle('open'));
 document.getElementById('clearFiltersBtn').addEventListener('click', () => {
-  ['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id=>document.getElementById(id).value='');
+  ['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('naceLabel').textContent=''; document.getElementById('caeLabel').textContent='';
   visibleCount = PAGE; renderList();
 });
