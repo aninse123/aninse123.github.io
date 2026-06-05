@@ -741,6 +741,61 @@ const RESPONSE_CATS = {
 
 const DEFAULT_FIT = { revMin:2000000, revMax:50000000, revSweetMin:5000000, revSweetMax:30000000, marginTarget:0.15, cagrTarget:0.10, ebitdaMin:1000000, sectorPriorities:{} };
 
+// NACE Rev. 2 (≈ CAE Rev. 3) — Division (2-digit) titles, used to derive Sector/Sub-sector from a code.
+const NACE_DIVISIONS = {
+  '01':'Crop and animal production','02':'Forestry and logging','03':'Fishing and aquaculture',
+  '05':'Mining of coal and lignite','06':'Extraction of petroleum and natural gas','07':'Mining of metal ores','08':'Other mining and quarrying','09':'Mining support services',
+  '10':'Manufacture of food products','11':'Manufacture of beverages','12':'Manufacture of tobacco products','13':'Manufacture of textiles','14':'Manufacture of wearing apparel','15':'Manufacture of leather and related products','16':'Manufacture of wood and cork products','17':'Manufacture of paper and paper products','18':'Printing and reproduction of recorded media','19':'Coke and refined petroleum products','20':'Manufacture of chemicals','21':'Manufacture of pharmaceuticals','22':'Manufacture of rubber and plastic products','23':'Other non-metallic mineral products','24':'Manufacture of basic metals','25':'Fabricated metal products','26':'Computer, electronic and optical products','27':'Manufacture of electrical equipment','28':'Manufacture of machinery and equipment n.e.c.','29':'Manufacture of motor vehicles and trailers','30':'Other transport equipment','31':'Manufacture of furniture','32':'Other manufacturing','33':'Repair and installation of machinery',
+  '35':'Electricity, gas, steam and air conditioning',
+  '36':'Water collection, treatment and supply','37':'Sewerage','38':'Waste collection and treatment','39':'Remediation and waste management',
+  '41':'Construction of buildings','42':'Civil engineering','43':'Specialised construction activities',
+  '45':'Wholesale and retail of motor vehicles','46':'Wholesale trade (excl. motor vehicles)','47':'Retail trade (excl. motor vehicles)',
+  '49':'Land transport and transport via pipelines','50':'Water transport','51':'Air transport','52':'Warehousing and support for transportation','53':'Postal and courier activities',
+  '55':'Accommodation','56':'Food and beverage service activities',
+  '58':'Publishing activities','59':'Motion picture, video and TV production','60':'Programming and broadcasting','61':'Telecommunications','62':'Computer programming and consultancy','63':'Information service activities',
+  '64':'Financial services (excl. insurance)','65':'Insurance and pension funding','66':'Activities auxiliary to financial services',
+  '68':'Real estate activities',
+  '69':'Legal and accounting activities','70':'Head offices and management consultancy','71':'Architectural and engineering; testing','72':'Scientific research and development','73':'Advertising and market research','74':'Other professional, scientific and technical','75':'Veterinary activities',
+  '77':'Rental and leasing activities','78':'Employment activities','79':'Travel agency and tour operators','80':'Security and investigation activities','81':'Services to buildings and landscape','82':'Office administrative and business support',
+  '84':'Public administration and defence',
+  '85':'Education',
+  '86':'Human health activities','87':'Residential care activities','88':'Social work without accommodation',
+  '90':'Creative, arts and entertainment','91':'Libraries, archives and museums','92':'Gambling and betting','93':'Sports, amusement and recreation',
+  '94':'Activities of membership organisations','95':'Repair of computers and household goods','96':'Other personal service activities',
+  '97':'Households as employers of domestic personnel','98':'Undifferentiated household goods/services','99':'Extraterritorial organisations and bodies',
+};
+function naceSection(d){
+  if (d>=1&&d<=3) return 'Agriculture, forestry and fishing';
+  if (d>=5&&d<=9) return 'Mining and quarrying';
+  if (d>=10&&d<=33) return 'Manufacturing';
+  if (d===35) return 'Electricity & gas supply';
+  if (d>=36&&d<=39) return 'Water, sewerage & waste';
+  if (d>=41&&d<=43) return 'Construction';
+  if (d>=45&&d<=47) return 'Wholesale & retail trade';
+  if (d>=49&&d<=53) return 'Transportation & storage';
+  if (d>=55&&d<=56) return 'Accommodation & food service';
+  if (d>=58&&d<=63) return 'Information & communication';
+  if (d>=64&&d<=66) return 'Financial & insurance';
+  if (d===68) return 'Real estate';
+  if (d>=69&&d<=75) return 'Professional, scientific & technical';
+  if (d>=77&&d<=82) return 'Administrative & support services';
+  if (d===84) return 'Public administration';
+  if (d===85) return 'Education';
+  if (d>=86&&d<=88) return 'Health & social work';
+  if (d>=90&&d<=93) return 'Arts, entertainment & recreation';
+  if (d>=94&&d<=96) return 'Other service activities';
+  if (d>=97&&d<=98) return 'Household activities';
+  if (d===99) return 'Extraterritorial organisations';
+  return null;
+}
+// Derive { sector, subSector } from a NACE/CAE code (uses the leading 2-digit division).
+function naceDerive(code){
+  const digits = String(code||'').replace(/\D/g,'');
+  if (digits.length < 2) return { sector:null, subSector:null };
+  const div2 = digits.slice(0,2);
+  return { sector: naceSection(+div2), subSector: NACE_DIVISIONS[div2] || null };
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 let currentUser = null;
 let companies = [];
@@ -888,6 +943,23 @@ async function loadAll(){
   if (!brokers.length) await seedBrokers();
   buildStaticOptions();
   await startCompaniesListener();
+  backfillSectors(); // fill Sector/Sub-sector from NACE on any companies missing it (one pass)
+}
+// Backfill Sector/Sub-sector from NACE/CAE for companies imported before derivation existed.
+async function backfillSectors(){
+  const need = companies.filter(c => !c.sector && (c.naceCode || c.caeCode) && naceDerive(c.naceCode || c.caeCode).sector);
+  if (!need.length) return;
+  for (let i=0; i<need.length; i+=450) {
+    const batch = writeBatch(db);
+    for (const c of need.slice(i, i+450)) {
+      const d = naceDerive(c.naceCode || c.caeCode);
+      const upd = { sector: d.sector };
+      if (!c.subSector && d.subSector) upd.subSector = d.subSector;
+      batch.update(doc(db,'searchCompanies',c.id), upd);
+      c.sector = d.sector; if (upd.subSector) c.subSector = upd.subSector;
+    }
+    await batch.commit();
+  }
 }
 // No-op retained for call sites — data is kept live via onSnapshot below.
 function cacheCompanies(){}
@@ -1999,6 +2071,12 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, existingBvd, seenB
     sourceType: mapSource(g('source type','source')), owner, priority:prio, stage,
     financials:fin, contacts, addOnTo:[], addOns:[],
   };
+  // Derive Sector / Sub-sector from NACE (or CAE) when not supplied in the file.
+  if (!co.sector && (co.naceCode || co.caeCode)) {
+    const d = naceDerive(co.naceCode || co.caeCode);
+    if (d.sector) co.sector = d.sector;
+    if (!co.subSector && d.subSector) co.subSector = d.subSector;
+  }
   if (dup) errors.push('Duplicate — BvD ID already in CRM');
   return { co, errors, name, dup };
 }
@@ -2147,6 +2225,17 @@ document.querySelectorAll('#companyTable th[data-col]').forEach(th => th.addEven
   else { sortCol = col; sortDir = (col==='name'||col==='sector')?'asc':'desc'; }
   renderList();
 }));
+
+// Auto-fill Sector / Sub-sector / NACE description from a typed NACE code (only if blank)
+document.getElementById('cNaceCode').addEventListener('blur', () => {
+  const code = document.getElementById('cNaceCode').value.trim();
+  if (!code) return;
+  const d = naceDerive(code);
+  const setIfBlank = (id, val) => { const el=document.getElementById(id); if (val && !el.value.trim()) el.value = val; };
+  setIfBlank('cSector', d.sector);
+  setIfBlank('cSubSector', d.subSector);
+  setIfBlank('cNaceDesc', d.subSector);
+});
 
 // Overlay click-to-close
 ['companyModal','contactModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal'].forEach(id => {
