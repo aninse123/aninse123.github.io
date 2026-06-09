@@ -314,6 +314,7 @@
       <option value="andre">André</option>
       <option value="antonio">António</option>
     </select>
+    <select class="filter-sel" id="countryFilter"><option value="">All Countries</option></select>
     <span class="results-count" id="resultsCount"></span>
     <button class="btn btn--ghost btn--sm" id="exportBtn" style="margin-left:auto;">⬇ Export CSV</button>
   </div>
@@ -329,6 +330,7 @@
             <th data-col="stage">Stage</th>
             <th data-col="interest">⚡</th>
             <th data-col="owner">Owner</th>
+            <th data-col="country">Country</th>
             <th data-col="lastTouchAt">Last Touch ↕</th>
             <th data-col="nextContactAt">Next Contact</th>
             <th data-col="soft">Soft Commit</th>
@@ -477,6 +479,13 @@
         <label>Source Detail <span style="font-weight:400;text-transform:none;">(optional)</span></label>
         <input type="text" class="field" id="invSourceDetail" placeholder="e.g. Met at ETA Conference 2026">
       </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Country</label>
+        <select class="field" id="invCountry"><option value="">—</option></select>
+      </div>
+      <div class="form-group"></div>
     </div>
     <div class="modal-err" id="invErr"></div>
     <div class="modal-actions">
@@ -770,6 +779,13 @@ const SOURCE_LABELS  = { referral:'Referral', conference:'Conference', cold:'Col
 const INTEREST_ICONS = { high:'🟢', medium:'🟡', low:'🔴' };
 const OWNER_LABELS   = { andre:'André', antonio:'António' };
 
+const COUNTRIES = ['Portugal','Spain','United Kingdom','Ireland','France','Germany','Switzerland','Netherlands','Belgium','Luxembourg','Italy','Austria','Denmark','Sweden','Norway','Finland','Poland','Czech Republic','Greece','Hungary','Romania','Bulgaria','Croatia','Slovenia','Slovakia','Estonia','Latvia','Lithuania','Iceland','Malta','Cyprus','Monaco','Liechtenstein','Andorra','United States','Canada','Mexico','Brazil','Argentina','Chile','Colombia','Peru','Uruguay','Panama','Angola','Mozambique','Cape Verde','South Africa','Nigeria','Morocco','Egypt','United Arab Emirates','Saudi Arabia','Qatar','Kuwait','Bahrain','Oman','Israel','Turkey','India','China','Hong Kong','Singapore','Japan','South Korea','Australia','New Zealand','Afghanistan','Albania','Algeria','Armenia','Azerbaijan','Bangladesh','Belarus','Bolivia','Bosnia and Herzegovina','Botswana','Brunei','Cambodia','Cameroon','Costa Rica','Cuba','Dominican Republic','Ecuador','El Salvador','Ethiopia','Fiji','Gabon','Georgia','Ghana','Guatemala','Honduras','Indonesia','Iran','Iraq','Ivory Coast','Jamaica','Jordan','Kazakhstan','Kenya','Kosovo','Laos','Lebanon','Libya','Liberia','Madagascar','Malaysia','Maldives','Mali','Mauritius','Moldova','Mongolia','Montenegro','Myanmar','Namibia','Nepal','Nicaragua','North Macedonia','Pakistan','Palestine','Paraguay','Philippines','Russia','Rwanda','San Marino','Senegal','Serbia','Seychelles','Sri Lanka','Sudan','Syria','Taiwan','Tanzania','Thailand','Tunisia','Turkmenistan','Uganda','Ukraine','Uzbekistan','Venezuela','Vietnam','Yemen','Zambia','Zimbabwe','Other'];
+function populateCountrySelects(){
+  const opts = COUNTRIES.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  document.getElementById('invCountry').innerHTML  = '<option value="">—</option>' + opts;
+  document.getElementById('countryFilter').innerHTML = '<option value="">All Countries</option>' + opts;
+}
+
 const ACT = {
   note:              { label:'Note',               icon:'📝' },
   call:              { label:'Call',               icon:'📞' },
@@ -860,6 +876,7 @@ onAuthStateChanged(auth, async user => {
   currentUser = user.email;
   document.getElementById('navEmail').textContent = user.email;
   document.getElementById('signOutBtn').onclick = () => signOut(auth).then(() => window.location.href='/portal/login.html');
+  populateCountrySelects();
   await loadAll();
   document.getElementById('loadingScreen').style.display = 'none';
 });
@@ -991,12 +1008,14 @@ function renderList() {
   const typeF   = document.getElementById('typeFilter').value;
   const intF    = document.getElementById('interestFilter').value;
   const ownerF  = document.getElementById('ownerFilter').value;
+  const countryF= document.getElementById('countryFilter').value;
 
   let list = crmInvestors.filter(inv => {
     if (stageF  && inv.stage    !== stageF)    return false;
     if (typeF   && inv.type     !== typeF)     return false;
     if (intF    && inv.interest !== intF)      return false;
     if (ownerF  && inv.owner    !== ownerF)    return false;
+    if (countryF&& inv.country  !== countryF)  return false;
     if (search  && !inv.name?.toLowerCase().includes(search)) return false;
     return true;
   });
@@ -1004,7 +1023,7 @@ function renderList() {
   // Sort
   list.sort((a,b) => {
     let va = a[sortCol], vb = b[sortCol];
-    if (['name','owner'].includes(sortCol)) { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
+    if (['name','owner','country'].includes(sortCol)) { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
     else if (['lastTouchAt','nextContactAt'].includes(sortCol)) {
       // Fall back to legacy lastActivityAt (ignoring creation artifacts)
       if (sortCol === 'lastTouchAt') { va = effectiveLastTouch(a); vb = effectiveLastTouch(b); }
@@ -1023,7 +1042,7 @@ function renderList() {
 
   const tbody = document.getElementById('investorBody');
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No investors found</div><div>Try adjusting your filters.</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No investors found</div><div>Try adjusting your filters.</div></div></td></tr>`;
     return;
   }
 
@@ -1040,6 +1059,7 @@ function renderList() {
       <td>${stagePill(inv.stage||'identified')}</td>
       <td><span class="interest-dot">${interest}</span></td>
       <td>${ownerLabel}</td>
+      <td style="font-size:0.82rem;">${inv.country ? esc(inv.country) : '<span style="color:var(--text-light);">—</span>'}</td>
       <td style="color:var(--text-light);">${relTime(effectiveLastTouch(inv))}</td>
       <td>${nextContact}</td>
       <td>${soft}</td>
@@ -1082,7 +1102,7 @@ function renderDetail() {
         ${Object.entries(STAGES).map(([k,v]) => `<div class="stage-opt" data-stage="${k}"><span class="stage-pill ${v.cls}">${v.label}</span></div>`).join('')}
       </div>
     </div>
-    ${interestHtml} ${ownerHtml} ${sourceHtml} ${sourceDetail}
+    ${interestHtml} ${ownerHtml} ${inv.country?`<span class="badge badge-grey">🌍 ${esc(inv.country)}</span>`:''} ${sourceHtml} ${sourceDetail}
     <span class="badge badge-grey">${esc(TYPE_LABELS[inv.type]||inv.type||'—')}</span>`;
 
   // Stage pill click
@@ -1257,7 +1277,7 @@ function openNewInvestor() {
   editInvId = null;
   document.getElementById('invModalTitle').textContent = 'New Investor';
   ['invName','invSourceDetail'].forEach(id => document.getElementById(id).value = '');
-  ['invType','invStage','invInterest','invOwner','invSource'].forEach(id => document.getElementById(id).value = id==='invStage'?'identified':'');
+  ['invType','invStage','invInterest','invOwner','invSource','invCountry'].forEach(id => document.getElementById(id).value = id==='invStage'?'identified':'');
   document.getElementById('invErr').style.display = 'none';
   showEl('investorModal', true);
 }
@@ -1273,6 +1293,7 @@ function openEditInvestor() {
   document.getElementById('invOwner').value        = inv.owner       || '';
   document.getElementById('invSource').value       = inv.source      || '';
   document.getElementById('invSourceDetail').value = inv.sourceDetail|| '';
+  document.getElementById('invCountry').value      = inv.country     || '';
   document.getElementById('invErr').style.display  = 'none';
   showEl('investorModal', true);
 }
@@ -1292,6 +1313,7 @@ async function saveInvestor() {
     name, type, stage,
     interest:    document.getElementById('invInterest').value    || null,
     owner:       document.getElementById('invOwner').value       || null,
+    country:     document.getElementById('invCountry').value     || null,
     source:      document.getElementById('invSource').value      || null,
     sourceDetail:document.getElementById('invSourceDetail').value.trim() || null,
     updatedAt: serverTimestamp(),
@@ -1878,9 +1900,9 @@ function openBulkImportModal() {
 }
 
 function downloadBulkTemplate() {
-  const headers = ['Name','Type','Stage','Owner','Interest','Source','Source Detail','Contact Name','Contact Email','Contact Phone','Contact Role'];
-  const ex1     = ['Acme Capital','fund','engaged','andre','high','referral','Met at ETA Conference 2026','John Smith','john@acme.com','+351 912 345 678','Partner'];
-  const ex2     = ['Jane Doe','private','identified','antonio','medium','network','Introduced by António','Jane Doe','jane@example.com','',''];
+  const headers = ['Name','Type','Stage','Owner','Country','Interest','Source','Source Detail','Contact Name','Contact Email','Contact Phone','Contact Role'];
+  const ex1     = ['Acme Capital','fund','engaged','andre','United Kingdom','high','referral','Met at ETA Conference 2026','John Smith','john@acme.com','+351 912 345 678','Partner'];
+  const ex2     = ['Jane Doe','private','identified','antonio','Portugal','medium','network','Introduced by António','Jane Doe','jane@example.com','',''];
   const csvEsc  = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const csv     = [headers, ex1, ex2].map(r => r.map(csvEsc).join(',')).join('\r\n');
   const blob    = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -1954,7 +1976,7 @@ function processBulkRow(row) {
   if (cName || cEmail) contacts.push({ name: cName, email: cEmail, phone: (row.contact_phone||'').trim(), role: (row.contact_role||'').trim() });
 
   return {
-    investor: { name, type, stage, owner, interest, source, sourceDetail: (row.source_detail||'').trim()||null, contacts },
+    investor: { name, type, stage, owner, country: (row.country||'').trim()||null, interest, source, sourceDetail: (row.source_detail||'').trim()||null, contacts },
     errors,
     name,
   };
@@ -2047,7 +2069,7 @@ document.getElementById('importPortalBtn').addEventListener('click', openImportM
 document.getElementById('importCancelBtn').addEventListener('click', () => showEl('importModal',false));
 document.getElementById('importConfirmBtn').addEventListener('click', confirmImport);
 
-['searchInput','stageFilter','typeFilter','interestFilter','ownerFilter'].forEach(id => {
+['searchInput','stageFilter','typeFilter','interestFilter','ownerFilter','countryFilter'].forEach(id => {
   document.getElementById(id).addEventListener('input', renderList);
   document.getElementById(id).addEventListener('change', renderList);
 });
@@ -2073,7 +2095,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   // Sort same as table
   list.sort((a,b) => {
     let va = a[sortCol], vb = b[sortCol];
-    if (['name','owner'].includes(sortCol)) { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
+    if (['name','owner','country'].includes(sortCol)) { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
     else if (['lastTouchAt','nextContactAt'].includes(sortCol)) {
       if (sortCol === 'lastTouchAt') { va = effectiveLastTouch(a); vb = effectiveLastTouch(b); }
       va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
@@ -2089,7 +2111,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   const csvEsc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const fmtTs  = ts => { const d = tsToDate(ts); return d ? d.toLocaleDateString('en-GB') : ''; };
 
-  const headers = ['Name','Type','Stage','Owner','Interest','Source','Source Detail',
+  const headers = ['Name','Type','Stage','Owner','Country','Interest','Source','Source Detail',
                    'Soft Commit (€)','Soft Units','Hard Commit (€)','Hard Units',
                    'Last Touch','Next Contact','Contacts'];
 
@@ -2100,6 +2122,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
       TYPE_LABELS[inv.type]   || inv.type   || '',
       STAGES[inv.stage]?.label || inv.stage || '',
       OWNER_LABELS[inv.owner] || inv.owner  || '',
+      inv.country || '',
       inv.interest || '',
       SOURCE_LABELS[inv.source] || inv.source || '',
       inv.sourceDetail || '',
