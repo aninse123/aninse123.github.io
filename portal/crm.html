@@ -315,6 +315,7 @@
       <option value="antonio">António</option>
     </select>
     <select class="filter-sel" id="countryFilter"><option value="">All Countries</option></select>
+    <select class="filter-sel" id="docsSentFilter"><option value="">Docs: All</option><option value="yes">Docs Sent</option><option value="no">Not Sent</option></select>
     <span class="results-count" id="resultsCount"></span>
     <button class="btn btn--ghost btn--sm" id="exportBtn" style="margin-left:auto;">⬇ Export CSV</button>
   </div>
@@ -331,6 +332,7 @@
             <th data-col="interest">⚡</th>
             <th data-col="owner">Owner</th>
             <th data-col="country">Country</th>
+            <th data-col="documentsSent">Docs Sent</th>
             <th data-col="lastTouchAt">Last Touch ↕</th>
             <th data-col="nextContactAt">Next Contact</th>
             <th data-col="soft">Soft Commit</th>
@@ -485,7 +487,12 @@
         <label>Country</label>
         <select class="field" id="invCountry"><option value="">—</option></select>
       </div>
-      <div class="form-group"></div>
+      <div class="form-group">
+        <label>Documents</label>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;font-size:0.9rem;cursor:pointer;padding-top:8px;">
+          <input type="checkbox" id="invDocsSent" style="width:auto;"> Documents sent
+        </label>
+      </div>
     </div>
     <div class="modal-err" id="invErr"></div>
     <div class="modal-actions">
@@ -1009,6 +1016,7 @@ function renderList() {
   const intF    = document.getElementById('interestFilter').value;
   const ownerF  = document.getElementById('ownerFilter').value;
   const countryF= document.getElementById('countryFilter').value;
+  const docsF   = document.getElementById('docsSentFilter').value;
 
   let list = crmInvestors.filter(inv => {
     if (stageF  && inv.stage    !== stageF)    return false;
@@ -1016,6 +1024,8 @@ function renderList() {
     if (intF    && inv.interest !== intF)      return false;
     if (ownerF  && inv.owner    !== ownerF)    return false;
     if (countryF&& inv.country  !== countryF)  return false;
+    if (docsF === 'yes' && !inv.documentsSent) return false;
+    if (docsF === 'no'  &&  inv.documentsSent) return false;
     if (search  && !inv.name?.toLowerCase().includes(search)) return false;
     return true;
   });
@@ -1028,6 +1038,8 @@ function renderList() {
       // Fall back to legacy lastActivityAt (ignoring creation artifacts)
       if (sortCol === 'lastTouchAt') { va = effectiveLastTouch(a); vb = effectiveLastTouch(b); }
       va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
+    } else if (sortCol === 'documentsSent') {
+      va = a.documentsSent ? 1 : 0; vb = b.documentsSent ? 1 : 0;
     } else if (['soft','hard'].includes(sortCol)) {
       va = Number(a[sortCol+'Commitment']?.value) || 0;
       vb = Number(b[sortCol+'Commitment']?.value) || 0;
@@ -1042,7 +1054,7 @@ function renderList() {
 
   const tbody = document.getElementById('investorBody');
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="10"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No investors found</div><div>Try adjusting your filters.</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No investors found</div><div>Try adjusting your filters.</div></div></td></tr>`;
     return;
   }
 
@@ -1060,6 +1072,7 @@ function renderList() {
       <td><span class="interest-dot">${interest}</span></td>
       <td>${ownerLabel}</td>
       <td style="font-size:0.82rem;">${inv.country ? esc(inv.country) : '<span style="color:var(--text-light);">—</span>'}</td>
+      <td style="text-align:center;">${inv.documentsSent ? '<span style="color:var(--secondary);font-weight:700;">✓</span>' : '<span style="color:var(--text-light);">—</span>'}</td>
       <td style="color:var(--text-light);">${relTime(effectiveLastTouch(inv))}</td>
       <td>${nextContact}</td>
       <td>${soft}</td>
@@ -1102,7 +1115,7 @@ function renderDetail() {
         ${Object.entries(STAGES).map(([k,v]) => `<div class="stage-opt" data-stage="${k}"><span class="stage-pill ${v.cls}">${v.label}</span></div>`).join('')}
       </div>
     </div>
-    ${interestHtml} ${ownerHtml} ${inv.country?`<span class="badge badge-grey">🌍 ${esc(inv.country)}</span>`:''} ${sourceHtml} ${sourceDetail}
+    ${interestHtml} ${ownerHtml} ${inv.country?`<span class="badge badge-grey">🌍 ${esc(inv.country)}</span>`:''} ${inv.documentsSent?'<span class="badge badge-green">📄 Docs sent</span>':''} ${sourceHtml} ${sourceDetail}
     <span class="badge badge-grey">${esc(TYPE_LABELS[inv.type]||inv.type||'—')}</span>`;
 
   // Stage pill click
@@ -1277,6 +1290,7 @@ function openNewInvestor() {
   editInvId = null;
   document.getElementById('invModalTitle').textContent = 'New Investor';
   ['invName','invSourceDetail'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('invDocsSent').checked = false;
   ['invType','invStage','invInterest','invOwner','invSource','invCountry'].forEach(id => document.getElementById(id).value = id==='invStage'?'identified':'');
   document.getElementById('invErr').style.display = 'none';
   showEl('investorModal', true);
@@ -1294,6 +1308,7 @@ function openEditInvestor() {
   document.getElementById('invSource').value       = inv.source      || '';
   document.getElementById('invSourceDetail').value = inv.sourceDetail|| '';
   document.getElementById('invCountry').value      = inv.country     || '';
+  document.getElementById('invDocsSent').checked    = !!inv.documentsSent;
   document.getElementById('invErr').style.display  = 'none';
   showEl('investorModal', true);
 }
@@ -1314,6 +1329,7 @@ async function saveInvestor() {
     interest:    document.getElementById('invInterest').value    || null,
     owner:       document.getElementById('invOwner').value       || null,
     country:     document.getElementById('invCountry').value     || null,
+    documentsSent: document.getElementById('invDocsSent').checked,
     source:      document.getElementById('invSource').value      || null,
     sourceDetail:document.getElementById('invSourceDetail').value.trim() || null,
     updatedAt: serverTimestamp(),
@@ -1900,9 +1916,9 @@ function openBulkImportModal() {
 }
 
 function downloadBulkTemplate() {
-  const headers = ['Name','Type','Stage','Owner','Country','Interest','Source','Source Detail','Contact Name','Contact Email','Contact Phone','Contact Role'];
-  const ex1     = ['Acme Capital','fund','engaged','andre','United Kingdom','high','referral','Met at ETA Conference 2026','John Smith','john@acme.com','+351 912 345 678','Partner'];
-  const ex2     = ['Jane Doe','private','identified','antonio','Portugal','medium','network','Introduced by António','Jane Doe','jane@example.com','',''];
+  const headers = ['Name','Type','Stage','Owner','Country','Documents Sent','Interest','Source','Source Detail','Contact Name','Contact Email','Contact Phone','Contact Role'];
+  const ex1     = ['Acme Capital','fund','engaged','andre','United Kingdom','yes','high','referral','Met at ETA Conference 2026','John Smith','john@acme.com','+351 912 345 678','Partner'];
+  const ex2     = ['Jane Doe','private','identified','antonio','Portugal','no','medium','network','Introduced by António','Jane Doe','jane@example.com','',''];
   const csvEsc  = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const csv     = [headers, ex1, ex2].map(r => r.map(csvEsc).join(',')).join('\r\n');
   const blob    = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -1976,7 +1992,7 @@ function processBulkRow(row) {
   if (cName || cEmail) contacts.push({ name: cName, email: cEmail, phone: (row.contact_phone||'').trim(), role: (row.contact_role||'').trim() });
 
   return {
-    investor: { name, type, stage, owner, country: (row.country||'').trim()||null, interest, source, sourceDetail: (row.source_detail||'').trim()||null, contacts },
+    investor: { name, type, stage, owner, country: (row.country||'').trim()||null, documentsSent: /^(yes|sim|true|1|y)$/i.test((row.documents_sent||'').trim()), interest, source, sourceDetail: (row.source_detail||'').trim()||null, contacts },
     errors,
     name,
   };
@@ -2069,7 +2085,7 @@ document.getElementById('importPortalBtn').addEventListener('click', openImportM
 document.getElementById('importCancelBtn').addEventListener('click', () => showEl('importModal',false));
 document.getElementById('importConfirmBtn').addEventListener('click', confirmImport);
 
-['searchInput','stageFilter','typeFilter','interestFilter','ownerFilter','countryFilter'].forEach(id => {
+['searchInput','stageFilter','typeFilter','interestFilter','ownerFilter','countryFilter','docsSentFilter'].forEach(id => {
   document.getElementById(id).addEventListener('input', renderList);
   document.getElementById(id).addEventListener('change', renderList);
 });
@@ -2099,6 +2115,8 @@ document.getElementById('exportBtn').addEventListener('click', () => {
     else if (['lastTouchAt','nextContactAt'].includes(sortCol)) {
       if (sortCol === 'lastTouchAt') { va = effectiveLastTouch(a); vb = effectiveLastTouch(b); }
       va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
+    } else if (sortCol === 'documentsSent') {
+      va = a.documentsSent ? 1 : 0; vb = b.documentsSent ? 1 : 0;
     } else if (['soft','hard'].includes(sortCol)) {
       va = Number(a[sortCol+'Commitment']?.value) || 0;
       vb = Number(b[sortCol+'Commitment']?.value) || 0;
@@ -2111,7 +2129,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   const csvEsc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const fmtTs  = ts => { const d = tsToDate(ts); return d ? d.toLocaleDateString('en-GB') : ''; };
 
-  const headers = ['Name','Type','Stage','Owner','Country','Interest','Source','Source Detail',
+  const headers = ['Name','Type','Stage','Owner','Country','Documents Sent','Interest','Source','Source Detail',
                    'Soft Commit (€)','Soft Units','Hard Commit (€)','Hard Units',
                    'Last Touch','Next Contact','Contacts'];
 
@@ -2123,6 +2141,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
       STAGES[inv.stage]?.label || inv.stage || '',
       OWNER_LABELS[inv.owner] || inv.owner  || '',
       inv.country || '',
+      inv.documentsSent ? 'Yes' : 'No',
       inv.interest || '',
       SOURCE_LABELS[inv.source] || inv.source || '',
       inv.sourceDetail || '',
