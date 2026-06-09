@@ -847,6 +847,9 @@ let companiesUnsub = null;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// Ensure an external URL is absolute (Orbis stores "www.x.pt" with no protocol →
+// without this the browser treats it as a relative path and 404s on our domain).
+function extUrl(u){ u = String(u==null?'':u).trim(); if(!u) return ''; return /^https?:\/\//i.test(u) ? u : 'https://' + u; }
 function showEl(id, show){ document.getElementById(id).style.display = show ? '' : 'none'; }
 function tsToDate(ts){ return ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
@@ -1214,7 +1217,7 @@ function renderGrouped(){
       return `<div class="subgroup-title">${esc(sub)} · ${subs[sub].length}</div>
         <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>`;
     }).join('');
-    return `<div class="group-block" data-sec="${esc(sec)}">
+    return `<div class="group-block collapsed" data-sec="${esc(sec)}">
       <div class="group-head">
         <span class="group-arrow">▼</span>
         <span class="group-title">${esc(sec)}</span>
@@ -1305,8 +1308,8 @@ function renderOverview(c){
         <div class="info-row"><span class="k">NUTS III</span><span class="v">${esc(c.nuts3||'—')}</span></div>
         <div class="info-row"><span class="k">Regions</span><span class="v">${esc(regions)}</span></div>
         <div class="info-row"><span class="k">Multinational</span><span class="v">${c.isMultinational?'Yes — '+esc((c.countries||[]).join(', ')):'No'}</span></div>
-        <div class="info-row"><span class="k">Website</span><span class="v">${c.website?`<a href="${esc(c.website)}" target="_blank" rel="noopener" style="color:var(--primary)">${esc(c.website)}</a>`:'—'}</span></div>
-        <div class="info-row"><span class="k">LinkedIn</span><span class="v">${c.linkedinUrl?`<a href="${esc(c.linkedinUrl)}" target="_blank" rel="noopener" style="color:var(--primary)">Profile</a>`:'—'}</span></div>
+        <div class="info-row"><span class="k">Website</span><span class="v">${c.website?`<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">${esc(c.website)}</a>`:'—'}</span></div>
+        <div class="info-row"><span class="k">LinkedIn</span><span class="v">${c.linkedinUrl?`<a href="${esc(extUrl(c.linkedinUrl))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Profile</a>`:'—'}</span></div>
         <div class="info-row"><span class="k">Email</span><span class="v">${esc(c.companyEmail||'—')}</span></div>
         <div class="info-row"><span class="k">Phone</span><span class="v">${esc(c.companyPhone||'—')}</span></div>
       </div>
@@ -1379,7 +1382,7 @@ function renderContacts(c){
           ${ct.role?`<div class="contact-role">${esc(ct.role)}</div>`:''}
           ${ct.email?`<div class="contact-detail">✉ ${esc(ct.email)}</div>`:''}
           ${ct.phone?`<div class="contact-detail">📞 ${esc(ct.phone)}</div>`:''}
-          ${ct.linkedin?`<div class="contact-detail">💼 <a href="${esc(ct.linkedin)}" target="_blank" rel="noopener" style="color:var(--primary)">LinkedIn</a></div>`:''}
+          ${ct.linkedin?`<div class="contact-detail">💼 <a href="${esc(extUrl(ct.linkedin))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">LinkedIn</a></div>`:''}
           ${ct.source?`<div class="contact-detail">Source: ${esc((ct.source||'').replace(/_/g,' '))}</div>`:''}
           ${ct.notes?`<div class="contact-detail">${esc(ct.notes)}</div>`:''}
         </div>
