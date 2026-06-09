@@ -1646,6 +1646,19 @@ async function closeMeeting() {
       status: outcome, closedAt: serverTimestamp(), closedBy: currentUser, closedNotes: notes || null,
     });
     activities = activities.map(a => a.id===closeMtgId ? {...a, status:outcome, closedNotes:notes||null} : a);
+    // A meeting that happened counts as a real contact → bump Last Touch to the
+    // meeting date (but never move it backwards if a later interaction exists).
+    if (outcome === 'happened') {
+      const act = activities.find(a => a.id === closeMtgId);
+      const inv = getInvestor();
+      const mtgDate = tsToDate(act?.date);
+      const curTouch = tsToDate(effectiveLastTouch(inv));
+      if (mtgDate && (!curTouch || mtgDate > curTouch)) {
+        const ts = Timestamp.fromDate(mtgDate);
+        await updateDoc(doc(db,'crmInvestors',currentInvId), { lastTouchAt: ts, updatedAt: serverTimestamp() });
+        crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, lastTouchAt: ts} : i);
+      }
+    }
     // Recompute nextContactAt for investor
     await recomputeNextContact();
     showEl('closeMtgModal',false);
