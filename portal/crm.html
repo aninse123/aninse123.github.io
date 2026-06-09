@@ -282,7 +282,7 @@
 
   <!-- Filters -->
   <div class="filters-row">
-    <input type="text" class="search-input" id="searchInput" placeholder="Search investors…">
+    <input type="text" class="search-input" id="searchInput" placeholder="Search name or contact…">
     <select class="filter-sel" id="stageFilter">
       <option value="">All Stages</option>
       <option value="identified">Identified</option>
@@ -859,6 +859,11 @@ function fmtDate(ts) {
   const d = tsToDate(ts); if (!d) return '—';
   return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
 }
+function fmtDateTime(ts) {
+  const d = tsToDate(ts); if (!d) return '—';
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) + ', ' +
+         d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+}
 
 function fmtDateShort(ts) {
   const d = tsToDate(ts); if (!d) return '—';
@@ -1026,7 +1031,12 @@ function renderList() {
     if (countryF&& inv.country  !== countryF)  return false;
     if (docsF === 'yes' && !inv.documentsSent) return false;
     if (docsF === 'no'  &&  inv.documentsSent) return false;
-    if (search  && !inv.name?.toLowerCase().includes(search)) return false;
+    if (search) {
+      const inName = inv.name?.toLowerCase().includes(search);
+      const inContact = (inv.contacts || []).some(c =>
+        (c.name||'').toLowerCase().includes(search) || (c.email||'').toLowerCase().includes(search));
+      if (!inName && !inContact) return false;
+    }
     return true;
   });
 
@@ -1251,7 +1261,7 @@ function renderActivityLog() {
     const info = ACT[a.type] || { label: a.type, icon: '📌' };
     const isMeetingType = ['meeting_scheduled','meeting_done'].includes(a.type);
     let statusBadge = '';
-    if (a.type === 'meeting_scheduled') {
+    if (isMeetingType) {
       if (a.status === 'open') statusBadge = `<span class="badge badge-warn">Scheduled</span>`;
       else if (a.status === 'happened') statusBadge = `<span class="badge badge-green">Happened</span>`;
       else if (a.status === 'cancelled') statusBadge = `<span class="badge badge-grey">Cancelled</span>`;
@@ -1265,6 +1275,11 @@ function renderActivityLog() {
         ${a.duration ? `<span>⏱ ${a.duration} min</span>` : ''}
         ${a.guests ? `<span>👥 ${esc(a.guests)}</span>` : ''}
       </div>` : '';
+    const cancelBtn = (isMeetingType && a.status !== 'cancelled')
+      ? `<button class="btn btn--sm btn--ghost" data-cancel="${a.id}" style="margin-left:auto;padding:3px 9px;font-size:0.72rem;">Cancel meeting</button>` : '';
+    const loggedLine = a.createdAt
+      ? `<div style="font-size:0.72rem;color:var(--text-light);margin-top:5px;">logged ${fmtDateTime(a.createdAt)} · by ${esc(a.createdBy||'')}</div>`
+      : `<div style="font-size:0.72rem;color:var(--text-light);margin-top:5px;">by ${esc(a.createdBy||'')}</div>`;
 
     return `<div class="activity-item">
       <div class="act-icon">${info.icon}</div>
@@ -1274,14 +1289,29 @@ function renderActivityLog() {
           ${a.title ? `<span style="font-size:0.82rem;color:var(--text);">— ${esc(a.title)}</span>` : ''}
           ${statusBadge} ${via}
           <span class="act-date">${fmtDate(a.date)}</span>
-          <span class="act-by">by ${esc(a.createdBy||'')}</span>
+          ${cancelBtn}
         </div>
         ${meetingMeta}
         ${a.content ? `<div class="act-content">${esc(a.content)}</div>` : ''}
         ${closedNotes}
+        ${loggedLine}
       </div>
     </div>`;
   }).join('');
+
+  logEl.querySelectorAll('[data-cancel]').forEach(btn => {
+    btn.addEventListener('click', () => cancelMeetingActivity(btn.dataset.cancel));
+  });
+}
+
+async function cancelMeetingActivity(actId) {
+  if (!confirm('Mark this meeting as cancelled? The log entry is kept for history.')) return;
+  try {
+    await updateDoc(doc(db,'crmActivities',actId), { status:'cancelled', closedAt: serverTimestamp(), closedBy: currentUser });
+    activities = activities.map(a => a.id===actId ? { ...a, status:'cancelled' } : a);
+    await recomputeNextContact();
+    renderActivityLog(); renderList();
+  } catch(e) { alert('Error: ' + e.message); }
 }
 
 // ── Investor CRUD ────────────────────────────────────────────────────────────
@@ -1483,12 +1513,13 @@ function renderActFields() {
     : ['Video Call','In-Person','Phone','Other'];
 
   const tzOptions = [
-    ['CET','CET — Lisbon / Paris'],
-    ['GMT','GMT — London'],
-    ['EST','EST — New York'],
-    ['PST','PST — Los Angeles'],
-    ['GST','GST — Dubai'],
-    ['SGT','SGT — Singapore'],
+    ['WET','Lisbon (WET, UTC+0)'],
+    ['GMT','London (GMT, UTC+0)'],
+    ['CET','Paris / Madrid / Berlin (CET, UTC+1)'],
+    ['EST','New York (EST)'],
+    ['PST','Los Angeles (PST)'],
+    ['GST','Dubai (GST)'],
+    ['SGT','Singapore (SGT)'],
   ];
 
   el.innerHTML = `
@@ -1509,7 +1540,7 @@ function renderActFields() {
       <div class="form-group">
         <label>Timezone</label>
         <select class="field" id="actTimezone">
-          ${tzOptions.map(([v,l])=>`<option value="${v}"${v==='CET'?' selected':''}>${l}</option>`).join('')}
+          ${tzOptions.map(([v,l])=>`<option value="${v}"${v==='WET'?' selected':''}>${l}</option>`).join('')}
         </select>
       </div>
     </div>
