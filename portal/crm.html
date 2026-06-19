@@ -259,6 +259,7 @@
       <p class="page-sub" id="listSub">Loading…</p>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn--ghost" id="followupsBtn">📋 Follow-ups</button>
       <button class="btn btn--ghost" id="importPortalBtn">⬇ Import from Portal</button>
       <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
       <button class="btn btn--primary" id="newInvestorBtn">＋ New Investor</button>
@@ -409,6 +410,23 @@
 </div>
 
 <!-- ══════════════════ MODALS ══════════════════ -->
+
+<!-- Follow-ups dashboard -->
+<div class="overlay" id="followupsModal" style="display:none;">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-title">📋 Follow-ups</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+      <span style="font-size:0.82rem;color:var(--text-light);">Across all investors</span>
+      <select class="filter-sel" id="fuOwnerFilter" style="margin-left:auto;">
+        <option value="">All owners</option>
+        <option value="andre">André</option>
+        <option value="antonio">António</option>
+      </select>
+    </div>
+    <div id="followupsBody" style="max-height:60vh;overflow-y:auto;"></div>
+  </div>
+</div>
+
 
 <!-- Investor modal -->
 <div class="overlay" id="investorModal" style="display:none;">
@@ -944,7 +962,60 @@ async function loadActivities(investorId) {
 
 // ── Render: Summary ──────────────────────────────────────────────────────────
 
+// ── Follow-ups dashboard ──────────────────────────────────────────────────────
+function updateFollowupsBadge() {
+  const btn = document.getElementById('followupsBtn'); if (!btn) return;
+  const n = crmInvestors.filter(i => i.hasOverdue).length;
+  btn.textContent = n ? `📋 Follow-ups (${n})` : '📋 Follow-ups';
+}
+function openFollowups() {
+  document.getElementById('fuOwnerFilter').value = '';
+  renderFollowups();
+  showEl('followupsModal', true);
+}
+function renderFollowups() {
+  const ownerF = document.getElementById('fuOwnerFilter').value;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const pool = crmInvestors.filter(i => !ownerF || i.owner === ownerF);
+  const overdue = pool.filter(i => i.hasOverdue);
+  const upcoming = pool
+    .filter(i => { const d = tsToDate(i.nextContactAt); return d && d >= today; })
+    .sort((a,b) => tsToDate(a.nextContactAt) - tsToDate(b.nextContactAt));
+
+  const row = (i, label, color) => `
+    <div class="fu-item" data-id="${i.id}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;cursor:pointer;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:0.88rem;">${esc(i.name)}</div>
+        <div style="font-size:0.75rem;color:var(--text-light);margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">${stagePill(i.stage||'identified')}${i.owner?'<span>· '+esc(OWNER_LABELS[i.owner]||i.owner)+'</span>':''}</div>
+      </div>
+      <div style="text-align:right;font-size:0.8rem;color:${color};font-weight:600;white-space:nowrap;">${label}</div>
+    </div>`;
+
+  let html = '';
+  if (overdue.length) {
+    html += `<div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#B91C1C;margin:4px 0 8px;">⚠ Overdue (${overdue.length})</div>`;
+    html += overdue.map(i => row(i, 'Needs follow-up', '#B91C1C')).join('');
+  }
+  if (upcoming.length) {
+    html += `<div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:${overdue.length?'18px':'4px'} 0 8px;">📅 Upcoming (${upcoming.length})</div>`;
+    html += upcoming.map(i => {
+      const d = tsToDate(i.nextContactAt);
+      const days = Math.round((d - today) / 86400000);
+      const rel = days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : days <= 7 ? `in ${days} days` : '';
+      const color = days <= 1 ? 'var(--primary)' : 'var(--text)';
+      return row(i, `${fmtDateShort(i.nextContactAt)}${rel?' · '+rel:''}`, color);
+    }).join('');
+  }
+  if (!overdue.length && !upcoming.length) {
+    html = `<div style="text-align:center;padding:32px;color:var(--text-light);font-size:0.9rem;">✅ No follow-ups${ownerF?' for '+esc(OWNER_LABELS[ownerF]):''}. All clear.</div>`;
+  }
+  document.getElementById('followupsBody').innerHTML = html;
+  document.querySelectorAll('#followupsBody .fu-item').forEach(el =>
+    el.addEventListener('click', () => { showEl('followupsModal', false); openDetail(el.dataset.id); }));
+}
+
 function renderSummary() {
+  updateFollowupsBadge();
   const { target = 0, units = 0 } = fundSettings;
   const unitPrice = units > 0 ? target / units : 0;
 
@@ -1903,6 +1974,8 @@ function showDetail(show) {
 // ── Event listeners ───────────────────────────────────────────────────────────
 
 document.getElementById('newInvestorBtn').addEventListener('click', openNewInvestor);
+document.getElementById('followupsBtn').addEventListener('click', openFollowups);
+document.getElementById('fuOwnerFilter').addEventListener('change', renderFollowups);
 document.getElementById('invCancelBtn').addEventListener('click', () => showEl('investorModal',false));
 document.getElementById('invSaveBtn').addEventListener('click', saveInvestor);
 
@@ -2218,7 +2291,7 @@ document.querySelectorAll('th[data-col]').forEach(th => {
 });
 
 // Close modals on overlay click
-['investorModal','contactModal','activityModal','closeMtgModal','commitModal','fundModal','deleteModal','portalLinkModal','grantPortalModal','importModal','bulkImportModal'].forEach(id => {
+['investorModal','contactModal','activityModal','closeMtgModal','commitModal','fundModal','deleteModal','portalLinkModal','grantPortalModal','importModal','bulkImportModal','followupsModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id,false); });
 });
 </script>
