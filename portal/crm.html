@@ -882,6 +882,26 @@ function fmtDateTime(ts) {
   return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) + ', ' +
          d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
 }
+// "HH:MM" from a timestamp, or '' if midnight (i.e. no real time component).
+function timeFromTs(ts) {
+  const d = tsToDate(ts); if (!d) return '';
+  if (d.getHours() === 0 && d.getMinutes() === 0) return '';
+  return d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+}
+// Derive { nextContactAt, nextContactTime, nextContactTz, hasOverdue } from an activities array.
+function computeNextContact(acts) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const openFuture = acts
+    .filter(a => a.status === 'open' && tsToDate(a.date) >= today)
+    .sort((a,b) => tsToDate(a.date) - tsToDate(b.date));
+  const next = openFuture[0] || null;
+  return {
+    nextContactAt:   next ? next.date : null,
+    nextContactTime: next?.time || null,
+    nextContactTz:   next?.timezone || null,
+    hasOverdue:      acts.some(a => a.status === 'open' && tsToDate(a.date) < today),
+  };
+}
 
 function fmtDateShort(ts) {
   const d = tsToDate(ts); if (!d) return '—';
@@ -1003,7 +1023,10 @@ function renderFollowups() {
       const days = Math.round((d - today) / 86400000);
       const rel = days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : days <= 7 ? `in ${days} days` : '';
       const color = days <= 1 ? 'var(--primary)' : 'var(--text)';
-      return row(i, `${fmtDateShort(i.nextContactAt)}${rel?' · '+rel:''}`, color);
+      const time = i.nextContactTime || timeFromTs(i.nextContactAt);
+      const tparts = [time, i.nextContactTz].filter(Boolean).join(' ');
+      const label = `${fmtDateShort(i.nextContactAt)}${rel?' · '+rel:''}${tparts?'<br><span style="font-weight:500;color:var(--text-light);">🕐 '+esc(tparts)+'</span>':''}`;
+      return row(i, label, color);
     }).join('');
   }
   if (!overdue.length && !upcoming.length) {
@@ -1681,13 +1704,7 @@ async function saveActivity() {
     const updates = { updatedAt: serverTimestamp() };
     if (!isActFuture) updates.lastTouchAt = serverTimestamp();
     // Recompute nextContactAt from all open future activities (including the new one)
-    const today = new Date(); today.setHours(0,0,0,0);
-    const allActs = [...activities]; // already includes the newly unshifted one
-    const upcoming = allActs
-      .filter(a => a.status === 'open' && tsToDate(a.date) >= today)
-      .map(a => tsToDate(a.date)).filter(Boolean).sort((a,b) => a-b);
-    updates.nextContactAt = upcoming[0] ? Timestamp.fromDate(upcoming[0]) : null;
-    updates.hasOverdue = allActs.some(a => a.status === 'open' && tsToDate(a.date) < today);
+    Object.assign(updates, computeNextContact(activities));
     await updateDoc(doc(db,'crmInvestors',currentInvId), updates);
     crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, ...updates, ...(isActFuture ? {} : {lastTouchAt: Timestamp.now()})} : i);
     showEl('activityModal',false);
@@ -1739,15 +1756,9 @@ async function closeMeeting() {
 }
 
 async function recomputeNextContact() {
-  const today = new Date(); today.setHours(0,0,0,0);
-  // All open future activities across all types
-  const upcoming = activities
-    .filter(a => a.status === 'open' && tsToDate(a.date) >= today)
-    .map(a => tsToDate(a.date)).filter(Boolean).sort((a,b) => a-b);
-  const nextContactAt = upcoming[0] ? Timestamp.fromDate(upcoming[0]) : null;
-  const hasOverdue = activities.some(a => a.status === 'open' && tsToDate(a.date) < today);
-  await updateDoc(doc(db,'crmInvestors',currentInvId), { nextContactAt, hasOverdue });
-  crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, nextContactAt, hasOverdue} : i);
+  const upd = computeNextContact(activities);
+  await updateDoc(doc(db,'crmInvestors',currentInvId), upd);
+  crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, ...upd} : i);
 }
 
 // ── Commitments ───────────────────────────────────────────────────────────────
