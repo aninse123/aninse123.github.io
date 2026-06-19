@@ -1020,7 +1020,8 @@ function renderFollowups() {
     html += `<div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:${overdue.length?'18px':'4px'} 0 8px;">📅 Upcoming (${upcoming.length})</div>`;
     html += upcoming.map(i => {
       const d = tsToDate(i.nextContactAt);
-      const days = Math.round((d - today) / 86400000);
+      const dDay = new Date(d); dDay.setHours(0,0,0,0);   // date-only, ignore meeting time
+      const days = Math.round((dDay - today) / 86400000);
       const rel = days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : days <= 7 ? `in ${days} days` : '';
       const color = days <= 1 ? 'var(--primary)' : 'var(--text)';
       const time = i.nextContactTime || timeFromTs(i.nextContactAt);
