@@ -835,6 +835,7 @@ let crmInvestors  = [];
 let activities    = [];       // for current detail investor
 let portalInvList = [];
 let portalDocList = [];
+let accessGroups  = [];
 let fundSettings  = { target: 0, units: 0 };
 let currentInvId  = null;
 let editInvId     = null;
@@ -941,13 +942,15 @@ onAuthStateChanged(auth, async user => {
 // ── Load ─────────────────────────────────────────────────────────────────────
 
 async function loadAll() {
-  const [portalInvSnap, portalDocSnap, cfgSnap] = await Promise.all([
+  const [portalInvSnap, portalDocSnap, groupsSnap, cfgSnap] = await Promise.all([
     getDocs(collection(db, 'investors')),
     getDocs(collection(db, 'documents')),
+    getDocs(collection(db, 'accessGroups')),
     getDoc(doc(db, 'crmConfig', 'settings')),
   ]);
   portalInvList = portalInvSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   portalDocList = portalDocSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  accessGroups  = groupsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   fundSettings = cfgSnap.exists() ? cfgSnap.data() : { target: 0, units: 0 };
   await startInvestorsListener();
 }
@@ -1315,7 +1318,23 @@ function renderPortalSection() {
     return;
   }
 
-  const docs = portalDocList.filter(d => (d.allowedInvestors||[]).includes(inv.portalInvestorId));
+  const pid = inv.portalInvestorId;
+  const myEmails = linked.emails || [];
+  const myGroups   = accessGroups.filter(g => (g.investorIds||[]).includes(pid));
+  const availGroups = accessGroups.filter(g => !(g.investorIds||[]).includes(pid));
+  // Effective document access = where any of the investor's emails is in the doc's allowedEmails.
+  const docs = portalDocList.filter(d => myEmails.some(e => (d.allowedEmails||[]).includes(e)));
+  const docSource = d => {
+    const tags = [];
+    if (d.shareAll) tags.push('🌐 All');
+    (d.allowedGroups||[]).filter(gid => myGroups.some(g=>g.id===gid)).forEach(gid => { const g = accessGroups.find(x=>x.id===gid); tags.push('👥 ' + (g?.name||'group')); });
+    if ((d.allowedInvestors||[]).includes(pid)) tags.push('👤 Individual');
+    return tags;
+  };
+  const groupChips = myGroups.length
+    ? myGroups.map(g => `<span class="badge" style="background:#EDE9FE;color:#6D28D9;">👥 ${esc(g.name)} <span style="cursor:pointer;font-weight:700;" data-rmgroup="${g.id}" title="Remove from group">×</span></span>`).join(' ')
+    : '<span style="font-size:0.8rem;color:var(--text-light);">Not in any group</span>';
+
   el.innerHTML = `
     <div class="portal-row">
       <span>🔗 <strong>${esc(linked.name)}</strong> <span class="badge badge-green" style="margin-left:4px;">Active</span></span>
@@ -1323,13 +1342,47 @@ function renderPortalSection() {
     </div>
     <div class="portal-row">
       <span style="color:var(--text-light);">Portal emails</span>
-      <span style="font-size:0.8rem;">${(linked.emails||[]).join(', ') || '—'}</span>
+      <span style="font-size:0.8rem;">${myEmails.join(', ') || '—'}</span>
     </div>
     <div style="margin-top:10px;">
+      <div class="sec-title" style="margin-bottom:6px;">Access groups</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+        ${groupChips}
+        ${availGroups.length ? `<select class="field" id="addGroupSelect" style="width:auto;padding:4px 8px;font-size:0.8rem;"><option value="">+ Add to group…</option>${availGroups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('')}</select>` : ''}
+      </div>
+    </div>
+    <div style="margin-top:12px;">
       <div class="sec-title" style="margin-bottom:6px;">Documents shared (${docs.length})</div>
-      ${docs.length ? docs.map(d => `<div class="portal-doc-item">📄 <span>${esc(d.name)}</span> <span class="badge badge-grey" style="margin-left:4px;">${esc(d.category||'')}</span></div>`).join('') : '<div style="font-size:0.8rem;color:var(--text-light);">No documents shared yet.</div>'}
+      ${docs.length ? docs.map(d => `<div class="portal-doc-item">📄 <span>${esc(d.name)}</span> ${docSource(d).map(t=>`<span class="badge badge-grey" style="margin-left:4px;font-size:0.66rem;">${esc(t)}</span>`).join('')}</div>`).join('') : '<div style="font-size:0.8rem;color:var(--text-light);">No documents shared yet.</div>'}
     </div>`;
   document.getElementById('unlinkPortalBtn').addEventListener('click', () => unlinkPortal());
+  const addSel = document.getElementById('addGroupSelect');
+  if (addSel) addSel.addEventListener('change', () => { if (addSel.value) toggleInvestorGroup(pid, addSel.value, true); });
+  el.querySelectorAll('[data-rmgroup]').forEach(x => x.addEventListener('click', () => toggleInvestorGroup(pid, x.dataset.rmgroup, false)));
+}
+
+// Add/remove a portal investor from a group, then propagate access to its shared docs.
+function effectiveEmailsForDoc(d) {
+  const ids = new Set(d.allowedInvestors || []);
+  (d.allowedGroups||[]).forEach(gid => { const g = accessGroups.find(x=>x.id===gid); (g?.investorIds||[]).forEach(id=>ids.add(id)); });
+  if (d.shareAll) portalInvList.forEach(i=>ids.add(i.id));
+  const emails = new Set();
+  ids.forEach(id => { const i = portalInvList.find(x=>x.id===id); (i?.emails||[]).forEach(e=>emails.add(e)); });
+  return [...emails];
+}
+async function toggleInvestorGroup(pid, gid, add) {
+  const g = accessGroups.find(x=>x.id===gid); if (!g) return;
+  g.investorIds = add
+    ? [...new Set([...(g.investorIds||[]), pid])]
+    : (g.investorIds||[]).filter(id => id !== pid);
+  await updateDoc(doc(db,'accessGroups',gid), { investorIds: g.investorIds });
+  // Recompute allowedEmails for every document shared with this group
+  await Promise.all(portalDocList.filter(d => (d.allowedGroups||[]).includes(gid)).map(async d => {
+    const emails = effectiveEmailsForDoc(d);
+    await updateDoc(doc(db,'documents',d.id), { allowedEmails: emails });
+    d.allowedEmails = emails;
+  }));
+  renderPortalSection();
 }
 
 function renderActivityLog() {
