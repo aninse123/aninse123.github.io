@@ -1046,7 +1046,7 @@
           </td>
           <td style="white-space:nowrap;color:var(--text-light)">${date}</td>
           <td style="white-space:nowrap;">
-            ${(d.allowedInvestors||[]).length > 0 ? `<button class="btn btn--ghost btn--sm notify-doc-btn" data-doc="${d.id}" style="margin-right:6px;" title="Send email notification to investors with access">Notify</button>` : ''}
+            ${effIds.length > 0 ? `<button class="btn btn--ghost btn--sm notify-doc-btn" data-doc="${d.id}" style="margin-right:6px;" title="Send email notification to investors with access">Notify</button>` : ''}
             <button class="btn btn--ghost btn--sm edit-doc-btn" data-doc="${d.id}" style="margin-right:6px;">Edit</button>
             <button class="btn btn--ghost btn--sm btn--ghost-danger delete-doc-btn" data-doc="${d.id}">Delete</button>
           </td>
@@ -1821,7 +1821,7 @@
       document.getElementById('notifyMessage').value  = '';
       document.getElementById('notifySendCount').textContent = '';
 
-      const invIds    = d.allowedInvestors || [];
+      const invIds    = [...effectiveInvestorIds(d)];   // individuals + group members + all
       const investors = invIds.map(id => allInvestors.find(i => i.id === id)).filter(Boolean);
       const list      = document.getElementById('notifyRecipientList');
 
