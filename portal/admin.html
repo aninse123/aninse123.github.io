@@ -384,7 +384,10 @@
       <div class="section">
         <div class="section-header">
           <h2 class="section-title">Documents</h2>
-          <button class="btn btn--primary" id="addDocBtn">+ Add Document</button>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn--ghost" id="manageGroupsBtn">👥 Groups</button>
+            <button class="btn btn--primary" id="addDocBtn">+ Add Document</button>
+          </div>
         </div>
         <div class="card">
           <div class="filter-bar">
@@ -609,6 +612,38 @@
     </div>
   </div>
 
+  <!-- ══ Access Groups Modal ══ -->
+  <div class="modal-overlay" id="groupsModal">
+    <div class="modal">
+      <h2>Access Groups</h2>
+      <p class="hint">Group investors to share documents with a cohort. Changing a group's members updates every document shared with it.</p>
+      <div id="groupsList" style="margin:14px 0;max-height:50vh;overflow-y:auto;"></div>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="newGroupName" placeholder="New group name (e.g. Engaged)" style="flex:1;">
+        <button class="btn btn--primary" id="createGroupBtn">Create</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="closeGroupsBtn">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Share Document with Group Modal ══ -->
+  <div class="modal-overlay" id="groupShareModal">
+    <div class="modal">
+      <h2>Share with a Group</h2>
+      <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:20px;" id="groupShareDocName"></p>
+      <div class="form-group">
+        <label>Select Group</label>
+        <select id="groupShareSelect"></select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelGroupShareBtn">Cancel</button>
+        <button class="btn btn--primary" id="saveGroupShareBtn">Share</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ Notify Investors Modal ══ -->
   <div class="modal-overlay" id="notifyModal">
     <div class="modal" style="max-width:520px;">
@@ -682,6 +717,7 @@
     // ── State ──────────────────────────────────────────────────
     let allDocs      = [];
     let allInvestors = [];
+    let allGroups    = [];
     let currentDocId = null;
     let docSort      = { field: 'addedAt', dir: 'desc' };
     let invSort      = { field: 'name',    dir: 'asc'  };
@@ -713,6 +749,36 @@
         allInvestors.forEach(inv => (inv.emails || []).forEach(e => allEmails.add(e)));
         await setDoc(doc(db, 'config', 'allowedEmails'), { emails: [...allEmails] });
       } catch (e) { console.error('syncAllowedEmails error:', e); }
+    }
+
+    // ── Unified document access ────────────────────────────────
+    // Effective access for a doc = individual grants ∪ members of shared groups ∪ (all, if shareAll).
+    // allowedEmails is the source of truth (portal query + Firestore rule); we recompute it
+    // whenever individuals, groups, group membership, shareAll, or investor emails change.
+    function effectiveInvestorIds(d) {
+      const ids = new Set(d.allowedInvestors || []);
+      (d.allowedGroups || []).forEach(gid => {
+        const g = allGroups.find(x => x.id === gid);
+        (g?.investorIds || []).forEach(id => ids.add(id));
+      });
+      if (d.shareAll) allInvestors.forEach(i => ids.add(i.id));
+      return ids;
+    }
+    function effectiveEmails(d) {
+      const emails = new Set();
+      effectiveInvestorIds(d).forEach(id => {
+        const inv = allInvestors.find(i => i.id === id);
+        (inv?.emails || []).forEach(e => emails.add(e));
+      });
+      return [...emails];
+    }
+    async function recomputeDocAccess(d) {
+      const emails = effectiveEmails(d);
+      await updateDoc(doc(db, 'documents', d.id), { allowedEmails: emails });
+      d.allowedEmails = emails;
+    }
+    async function recomputeAllDocAccess() {
+      await Promise.all(allDocs.map(d => recomputeDocAccess(d)));
     }
 
     // ── Activity logging ───────────────────────────────────────
@@ -816,11 +882,13 @@
     // ── Load everything ────────────────────────────────────────
     async function loadAll() {
       try {
-        const [docsSnap, investorsSnap, logsSnap] = await Promise.all([
+        const [docsSnap, investorsSnap, groupsSnap, logsSnap] = await Promise.all([
           getDocs(collection(db, 'documents')),
           getDocs(collection(db, 'investors')),
+          getDocs(collection(db, 'accessGroups')),
           getDocs(query(collection(db, 'activityLog'), orderBy('timestamp', 'desc'), limit(500)))
         ]);
+        allGroups = groupsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
         // Build last-visit map: email → most recent login/visit/download timestamp
         const VISIT_EVENTS = new Set(['login', 'portal_visit', 'doc_downloaded']);
@@ -926,7 +994,7 @@
           ? new Date(d.addedAt.seconds * 1000).toLocaleDateString('en-GB')
           : '—';
 
-        // Investor access badges (by investor entity)
+        // Individual grant chips (explicit investors)
         const invIds = d.allowedInvestors || [];
         const invBadges = invIds.map(invId => {
           const inv  = allInvestors.find(i => i.id === invId);
@@ -936,17 +1004,26 @@
           </span>`;
         }).join('');
 
-        // Engagement indicator: how many investors have downloaded this doc
+        // Group badges (shared with a cohort)
+        const groupIds = d.allowedGroups || [];
+        const groupBadges = groupIds.map(gid => {
+          const g = allGroups.find(x => x.id === gid);
+          return `<span class="badge" style="background:#EDE9FE;color:#6D28D9;">👥 ${escHtml(g ? g.name : '[deleted]')}
+            <span class="badge-remove" data-doc="${d.id}" data-group="${gid}" title="Remove group">×</span>
+          </span>`;
+        }).join('');
+
+        // Engagement: how many of the effective investor set have downloaded this doc
+        const effIds = [...effectiveInvestorIds(d)];
         let engagementHtml = '';
-        if (invIds.length > 0) {
+        if (effIds.length > 0) {
           const viewedSet  = docViewedEmailsMap[d.id] || new Set();
-          const viewedCount = invIds.filter(invId => {
+          const viewedCount = effIds.filter(invId => {
             const inv = allInvestors.find(i => i.id === invId);
             return inv && (inv.emails || []).some(e => viewedSet.has(e));
           }).length;
-          const allViewed = viewedCount === invIds.length;
-          const colour = viewedCount === 0 ? 'var(--text-light)' : allViewed ? 'var(--secondary)' : 'var(--primary)';
-          engagementHtml = `<span style="font-size:0.75rem;color:${colour};margin-left:6px;white-space:nowrap;">👁 ${viewedCount}/${invIds.length}</span>`;
+          const colour = viewedCount === 0 ? 'var(--text-light)' : viewedCount === effIds.length ? 'var(--secondary)' : 'var(--primary)';
+          engagementHtml = `<span style="font-size:0.75rem;color:${colour};margin-left:6px;white-space:nowrap;">👁 ${viewedCount}/${effIds.length}</span>`;
         }
 
         return `<tr>
@@ -960,8 +1037,9 @@
               <button class="btn btn--ghost btn--sm restrict-doc-btn" data-doc="${d.id}" style="padding:2px 9px;">Restrict</button>
             </div>` : `
             <div class="access-list">
-              ${invBadges}
-              <button class="add-access-btn" data-doc="${d.id}" data-docname="${escHtml(d.name)}">+ Grant</button>
+              ${invBadges}${groupBadges}
+              <button class="add-access-btn" data-doc="${d.id}" data-docname="${escHtml(d.name)}">+ Investor</button>
+              <button class="btn btn--ghost btn--sm group-share-btn" data-doc="${d.id}" data-docname="${escHtml(d.name)}" style="padding:2px 9px;">+ Group</button>
               <button class="btn btn--ghost btn--sm shareall-doc-btn" data-doc="${d.id}" style="padding:2px 9px;">Share with all</button>
             </div>`}
             ${engagementHtml}
@@ -996,36 +1074,124 @@
       tbody.querySelectorAll('.restrict-doc-btn').forEach(el =>
         el.addEventListener('click', () => setDocShareAll(el.dataset.doc, false))
       );
+      tbody.querySelectorAll('.group-share-btn').forEach(el =>
+        el.addEventListener('click', () => openGroupShareModal(el.dataset.doc, el.dataset.docname))
+      );
+      tbody.querySelectorAll('.badge-remove[data-group]').forEach(el =>
+        el.addEventListener('click', () => removeGroupFromDoc(el.dataset.doc, el.dataset.group))
+      );
     }
 
-    // ── "Visible to all" — auto-grant every investor, keep a shareAll flag ──────
+    // ── "Visible to all" — a shareAll flag; allowedEmails recomputed to include everyone ──
     async function setDocShareAll(docId, value) {
       const d = allDocs.find(x => x.id === docId); if (!d) return;
-      if (value) {
-        const allInvIds = allInvestors.map(i => i.id);
-        const allEmails = [...new Set(allInvestors.flatMap(i => i.emails || []))];
-        await updateDoc(doc(db, 'documents', docId), { shareAll: true, allowedInvestors: allInvIds, allowedEmails: allEmails });
-        Object.assign(d, { shareAll: true, allowedInvestors: allInvIds, allowedEmails: allEmails });
-        logEvent('access_granted', { docId, docName: d.name, scope: 'all_investors' });
-      } else {
-        if (!confirm(`Restrict "${d.name}"?\n\nThis removes access for all investors — you can then grant specific ones.`)) return;
-        await updateDoc(doc(db, 'documents', docId), { shareAll: false, allowedInvestors: [], allowedEmails: [] });
-        Object.assign(d, { shareAll: false, allowedInvestors: [], allowedEmails: [] });
-        logEvent('access_revoked', { docId, docName: d.name, scope: 'all_investors' });
-      }
+      if (!value && !confirm(`Restrict "${d.name}"?\n\nIt stays shared with any specific investors/groups you've granted.`)) return;
+      d.shareAll = value;
+      await updateDoc(doc(db, 'documents', docId), { shareAll: value });
+      await recomputeDocAccess(d);
+      logEvent(value ? 'access_granted' : 'access_revoked', { docId, docName: d.name, scope: 'all_investors' });
       renderDocs();
     }
 
-    // Keep every "Visible to all" document in sync with the full current investor set.
-    async function syncShareAllDocs() {
-      const shareDocs = allDocs.filter(d => d.shareAll);
-      if (!shareDocs.length) return;
-      const allInvIds = allInvestors.map(i => i.id);
-      const allEmails = [...new Set(allInvestors.flatMap(i => i.emails || []))];
-      await Promise.all(shareDocs.map(d =>
-        updateDoc(doc(db, 'documents', d.id), { allowedInvestors: allInvIds, allowedEmails: allEmails })
-      ));
-      shareDocs.forEach(d => { d.allowedInvestors = allInvIds; d.allowedEmails = allEmails; });
+    // ── Access Groups ──────────────────────────────────────────
+    function openGroupsModal() { renderGroupsModal(); document.getElementById('groupsModal').classList.add('open'); }
+    function renderGroupsModal() {
+      const el = document.getElementById('groupsList');
+      if (!allGroups.length) { el.innerHTML = '<p class="hint" style="margin:0;">No groups yet — create one below.</p>'; return; }
+      el.innerHTML = allGroups.map(g => `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <strong>${escHtml(g.name)}</strong>
+            <span class="hint" style="margin:0;">${(g.investorIds || []).length} investor${(g.investorIds || []).length !== 1 ? 's' : ''}</span>
+            <span style="margin-left:auto;display:flex;gap:6px;">
+              <button class="btn btn--ghost btn--sm grp-members" data-g="${g.id}">Members</button>
+              <button class="btn btn--ghost btn--sm grp-rename" data-g="${g.id}">Rename</button>
+              <button class="btn btn--ghost btn--sm btn--ghost-danger grp-delete" data-g="${g.id}">Delete</button>
+            </span>
+          </div>
+          <div id="grp-panel-${g.id}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+            <div style="display:flex;flex-wrap:wrap;gap:8px 14px;max-height:220px;overflow:auto;">
+              ${allInvestors.length ? allInvestors.map(i => `<label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;cursor:pointer;"><input type="checkbox" class="grp-inv-chk" data-g="${g.id}" value="${i.id}" ${(g.investorIds || []).includes(i.id) ? 'checked' : ''}> ${escHtml(i.name)}</label>`).join('') : '<span class="hint">No investors yet.</span>'}
+            </div>
+            <button class="btn btn--primary btn--sm grp-save-members" data-g="${g.id}" style="margin-top:10px;">Save members</button>
+          </div>
+        </div>`).join('');
+      el.querySelectorAll('.grp-members').forEach(b => b.addEventListener('click', () => { const p = document.getElementById('grp-panel-' + b.dataset.g); p.style.display = p.style.display === 'none' ? 'block' : 'none'; }));
+      el.querySelectorAll('.grp-rename').forEach(b => b.addEventListener('click', () => renameGroup(b.dataset.g)));
+      el.querySelectorAll('.grp-delete').forEach(b => b.addEventListener('click', () => deleteGroup(b.dataset.g)));
+      el.querySelectorAll('.grp-save-members').forEach(b => b.addEventListener('click', () => saveGroupMembers(b.dataset.g)));
+    }
+    async function createGroup() {
+      const inp = document.getElementById('newGroupName'); const name = inp.value.trim();
+      if (!name) return;
+      const ref = await addDoc(collection(db, 'accessGroups'), { name, investorIds: [], createdAt: serverTimestamp() });
+      allGroups.push({ id: ref.id, name, investorIds: [] });
+      inp.value = ''; logEvent('group_created', { groupName: name });
+      renderGroupsModal();
+    }
+    async function renameGroup(gid) {
+      const g = allGroups.find(x => x.id === gid); if (!g) return;
+      const name = prompt('Rename group:', g.name); if (!name || !name.trim()) return;
+      g.name = name.trim();
+      await updateDoc(doc(db, 'accessGroups', gid), { name: g.name });
+      renderGroupsModal(); renderDocs();
+    }
+    async function deleteGroup(gid) {
+      const g = allGroups.find(x => x.id === gid); if (!g) return;
+      if (!confirm(`Delete group "${g.name}"?\n\nDocuments shared with it will lose that grant (individual grants stay).`)) return;
+      const affected = allDocs.filter(d => (d.allowedGroups || []).includes(gid));
+      for (const d of affected) {
+        d.allowedGroups = (d.allowedGroups || []).filter(x => x !== gid);
+        await updateDoc(doc(db, 'documents', d.id), { allowedGroups: d.allowedGroups });
+        await recomputeDocAccess(d);
+      }
+      await deleteDoc(doc(db, 'accessGroups', gid));
+      allGroups = allGroups.filter(x => x.id !== gid);
+      logEvent('group_deleted', { groupName: g.name });
+      renderGroupsModal(); renderDocs();
+    }
+    async function saveGroupMembers(gid) {
+      const g = allGroups.find(x => x.id === gid); if (!g) return;
+      g.investorIds = [...document.querySelectorAll(`.grp-inv-chk[data-g="${gid}"]:checked`)].map(c => c.value);
+      await updateDoc(doc(db, 'accessGroups', gid), { investorIds: g.investorIds });
+      logEvent('group_updated', { groupName: g.name, memberCount: g.investorIds.length });
+      // Propagate to every document shared with this group
+      await Promise.all(allDocs.filter(d => (d.allowedGroups || []).includes(gid)).map(d => recomputeDocAccess(d)));
+      renderGroupsModal(); renderDocs();
+    }
+
+    // ── Share a document with a group ──────────────────────────
+    let groupShareDocId = null;
+    function openGroupShareModal(docId, docName) {
+      groupShareDocId = docId;
+      const d = allDocs.find(x => x.id === docId);
+      const already = d ? (d.allowedGroups || []) : [];
+      const available = allGroups.filter(g => !already.includes(g.id));
+      document.getElementById('groupShareDocName').textContent = `Document: ${docName}`;
+      const sel = document.getElementById('groupShareSelect');
+      if (!allGroups.length) sel.innerHTML = '<option disabled>No groups yet — create one in 👥 Groups</option>';
+      else if (!available.length) sel.innerHTML = '<option disabled>Already shared with every group</option>';
+      else sel.innerHTML = available.map(g => `<option value="${g.id}">${escHtml(g.name)} (${(g.investorIds || []).length})</option>`).join('');
+      document.getElementById('groupShareModal').classList.add('open');
+    }
+    async function saveGroupShare() {
+      const gid = document.getElementById('groupShareSelect').value;
+      const d = allDocs.find(x => x.id === groupShareDocId);
+      if (!gid || !d) { document.getElementById('groupShareModal').classList.remove('open'); return; }
+      d.allowedGroups = [...new Set([...(d.allowedGroups || []), gid])];
+      await updateDoc(doc(db, 'documents', d.id), { allowedGroups: d.allowedGroups });
+      await recomputeDocAccess(d);
+      const g = allGroups.find(x => x.id === gid);
+      logEvent('access_granted', { docId: d.id, docName: d.name, groupName: g?.name, scope: 'group' });
+      document.getElementById('groupShareModal').classList.remove('open');
+      renderDocs();
+    }
+    async function removeGroupFromDoc(docId, gid) {
+      const d = allDocs.find(x => x.id === docId); if (!d) return;
+      d.allowedGroups = (d.allowedGroups || []).filter(x => x !== gid);
+      await updateDoc(doc(db, 'documents', docId), { allowedGroups: d.allowedGroups });
+      await recomputeDocAccess(d);
+      renderDocs();
     }
 
     // ── Render Investors ───────────────────────────────────────
@@ -1153,15 +1319,13 @@
       const inv = allInvestors.find(i => i.id === investorId);
       if (!inv) return;
 
-      const updateData = { allowedInvestors: arrayUnion(investorId) };
-      if ((inv.emails || []).length > 0) {
-        updateData.allowedEmails = arrayUnion(...inv.emails);
-      }
       const grantDoc = allDocs.find(d => d.id === grantAccessDocId);
-      await updateDoc(doc(db, 'documents', grantAccessDocId), updateData);
+      grantDoc.allowedInvestors = [...new Set([...(grantDoc.allowedInvestors || []), investorId])];
+      await updateDoc(doc(db, 'documents', grantAccessDocId), { allowedInvestors: grantDoc.allowedInvestors });
+      await recomputeDocAccess(grantDoc);
       logEvent('access_granted', { investorId, investorName: inv.name, docId: grantAccessDocId, docName: grantDoc?.name });
       document.getElementById('grantAccessModal').classList.remove('open');
-      await loadAll();
+      renderDocs();
     });
 
     // ── Revoke investor from document ──────────────────────────
@@ -1172,22 +1336,11 @@
       if (!d) return;
       if (!confirm(`Revoke access for "${name}"?`)) return;
 
-      const newInvIds = (d.allowedInvestors || []).filter(id => id !== investorId);
-
-      // Recompute allowedEmails from remaining investors only
-      const remainingEmails = new Set(
-        newInvIds.flatMap(id => {
-          const ri = allInvestors.find(i => i.id === id);
-          return ri ? (ri.emails || []) : [];
-        })
-      );
-
-      await updateDoc(doc(db, 'documents', docId), {
-        allowedInvestors: newInvIds,
-        allowedEmails:    [...remainingEmails]
-      });
+      d.allowedInvestors = (d.allowedInvestors || []).filter(id => id !== investorId);
+      await updateDoc(doc(db, 'documents', docId), { allowedInvestors: d.allowedInvestors });
+      await recomputeDocAccess(d);   // rebuild allowedEmails (still covers group-granted access)
       logEvent('access_revoked', { investorId, investorName: name, docId, docName: d.name });
-      await loadAll();
+      renderDocs();
     }
 
     // ── Grant document to investor (from investors table) ──────
@@ -1342,7 +1495,7 @@
       document.getElementById('editInvestorModal').classList.remove('open');
       btn.disabled = false; btn.textContent = 'Save';
       await loadAll();
-      await syncShareAllDocs();   // ensure new/edited investor is reflected in "Visible to all" docs
+      await recomputeAllDocAccess();   // reflect new/edited investor in shareAll + group docs
       renderDocs();
     });
 
@@ -1352,24 +1505,21 @@
       if (!inv) return;
       if (!confirm(`Delete investor "${inv.name}"?\n\nAll document access for this investor will be revoked.`)) return;
 
-      await Promise.all(allDocs.map(async d => {
-        if (!(d.allowedInvestors || []).includes(investorId)) return;
-
-        const newInvIds = (d.allowedInvestors || []).filter(id => id !== investorId);
-        const remainingEmails = new Set(
-          newInvIds.flatMap(id => {
-            const ri = allInvestors.find(i => i.id === id);
-            return ri ? (ri.emails || []) : [];
-          })
-        );
-        await updateDoc(doc(db, 'documents', d.id), {
-          allowedInvestors: newInvIds,
-          allowedEmails:    [...remainingEmails]
-        });
+      // Drop the investor from any individual doc grants
+      await Promise.all(allDocs.filter(d => (d.allowedInvestors || []).includes(investorId)).map(d => {
+        d.allowedInvestors = (d.allowedInvestors || []).filter(id => id !== investorId);
+        return updateDoc(doc(db, 'documents', d.id), { allowedInvestors: d.allowedInvestors });
+      }));
+      // Drop the investor from any group memberships
+      await Promise.all(allGroups.filter(g => (g.investorIds || []).includes(investorId)).map(g => {
+        g.investorIds = (g.investorIds || []).filter(id => id !== investorId);
+        return updateDoc(doc(db, 'accessGroups', g.id), { investorIds: g.investorIds });
       }));
 
       await deleteDoc(doc(db, 'investors', investorId));
+      allInvestors = allInvestors.filter(i => i.id !== investorId);
       logEvent('investor_deleted', { investorId, investorName: inv.name });
+      await recomputeAllDocAccess();   // rebuild allowedEmails everywhere (individuals + groups + shareAll)
       syncAllowedEmails();
       await loadAll();
     }
@@ -1381,6 +1531,17 @@
     document.getElementById('cancelDocBtn').addEventListener('click', () =>
       document.getElementById('addDocModal').classList.remove('open')
     );
+    // Access groups
+    document.getElementById('manageGroupsBtn').addEventListener('click', openGroupsModal);
+    document.getElementById('closeGroupsBtn').addEventListener('click', () =>
+      document.getElementById('groupsModal').classList.remove('open')
+    );
+    document.getElementById('createGroupBtn').addEventListener('click', createGroup);
+    document.getElementById('newGroupName').addEventListener('keydown', e => { if (e.key === 'Enter') createGroup(); });
+    document.getElementById('cancelGroupShareBtn').addEventListener('click', () =>
+      document.getElementById('groupShareModal').classList.remove('open')
+    );
+    document.getElementById('saveGroupShareBtn').addEventListener('click', saveGroupShare);
     document.getElementById('saveDocBtn').addEventListener('click', async () => {
       const name        = document.getElementById('docName').value.trim();
       const category    = document.getElementById('docCategory').value;
