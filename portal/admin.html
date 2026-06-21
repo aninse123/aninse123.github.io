@@ -612,6 +612,34 @@
     </div>
   </div>
 
+  <!-- ══ Manage Access Modal ══ -->
+  <div class="modal-overlay" id="manageAccessModal">
+    <div class="modal">
+      <h2>Manage Access</h2>
+      <p style="color:var(--text-light);font-size:0.88rem;margin-bottom:16px;" id="manageAccessDocName"></p>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;margin-bottom:6px;">
+        <input type="checkbox" id="maShareAll" style="width:auto;"> Visible to all investors
+      </label>
+      <p class="hint" id="maShareAllNote" style="display:none;margin-top:0;">While on, every registered investor sees this — specific groups/investors below are ignored.</p>
+      <div id="maScopedWrap">
+        <div class="form-group" style="margin-top:14px;">
+          <label>Groups</label>
+          <div id="maGroupChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;"></div>
+          <select id="maAddGroup"></select>
+        </div>
+        <div class="form-group">
+          <label>Investors</label>
+          <input type="text" id="maInvSearch" placeholder="Search investors…">
+          <div id="maInvList" style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-top:6px;"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelManageAccessBtn">Cancel</button>
+        <button class="btn btn--primary" id="saveManageAccessBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ Access Groups Modal ══ -->
   <div class="modal-overlay" id="groupsModal">
     <div class="modal">
@@ -994,24 +1022,14 @@
           ? new Date(d.addedAt.seconds * 1000).toLocaleDateString('en-GB')
           : '—';
 
-        // Individual grant chips (explicit investors)
-        const invIds = d.allowedInvestors || [];
-        const invBadges = invIds.map(invId => {
-          const inv  = allInvestors.find(i => i.id === invId);
-          const name = inv ? inv.name : '[deleted]';
-          return `<span class="badge badge--blue">${escHtml(name)}
-            <span class="badge-remove" data-doc="${d.id}" data-inv="${invId}" title="Revoke access">×</span>
-          </span>`;
-        }).join('');
-
-        // Group badges (shared with a cohort)
+        // Compact access summary (full management lives in the Manage Access modal)
+        const invIds   = d.allowedInvestors || [];
         const groupIds = d.allowedGroups || [];
-        const groupBadges = groupIds.map(gid => {
+        const groupSummary = groupIds.map(gid => {
           const g = allGroups.find(x => x.id === gid);
-          return `<span class="badge" style="background:#EDE9FE;color:#6D28D9;">👥 ${escHtml(g ? g.name : '[deleted]')}
-            <span class="badge-remove" data-doc="${d.id}" data-group="${gid}" title="Remove group">×</span>
-          </span>`;
+          return `<span class="badge" style="background:#EDE9FE;color:#6D28D9;">👥 ${escHtml(g ? g.name : '[deleted]')}</span>`;
         }).join('');
+        const indivSummary = invIds.length ? `<span class="badge badge--blue">👤 ${invIds.length} investor${invIds.length !== 1 ? 's' : ''}</span>` : '';
 
         // Engagement: how many of the effective investor set have downloaded this doc
         const effIds = [...effectiveInvestorIds(d)];
@@ -1031,18 +1049,13 @@
           <td><span class="badge badge--green">${d.category || '—'}</span></td>
           <td><code>${escHtml(d.filename || '')}</code></td>
           <td>
-            ${d.shareAll ? `
-            <div class="access-list">
-              <span class="badge badge--green">🌐 All investors</span>
-              <button class="btn btn--ghost btn--sm restrict-doc-btn" data-doc="${d.id}" style="padding:2px 9px;">Restrict</button>
-            </div>` : `
-            <div class="access-list">
-              ${invBadges}${groupBadges}
-              <button class="add-access-btn" data-doc="${d.id}" data-docname="${escHtml(d.name)}">+ Investor</button>
-              <button class="btn btn--ghost btn--sm group-share-btn" data-doc="${d.id}" data-docname="${escHtml(d.name)}" style="padding:2px 9px;">+ Group</button>
-              <button class="btn btn--ghost btn--sm shareall-doc-btn" data-doc="${d.id}" style="padding:2px 9px;">Share with all</button>
-            </div>`}
-            ${engagementHtml}
+            <div class="access-list" style="align-items:center;">
+              ${d.shareAll
+                ? '<span class="badge badge--green">🌐 All investors</span>'
+                : (groupSummary + indivSummary + ((!groupIds.length && !invIds.length) ? '<span style="color:var(--text-light);font-size:0.82rem;">No access yet</span>' : ''))}
+              <button class="btn btn--ghost btn--sm manage-access-btn" data-doc="${d.id}" data-docname="${escHtml(d.name)}" style="padding:2px 9px;">Manage</button>
+              ${engagementHtml}
+            </div>
           </td>
           <td style="white-space:nowrap;color:var(--text-light)">${date}</td>
           <td style="white-space:nowrap;">
@@ -1053,11 +1066,8 @@
         </tr>`;
       }).join('');
 
-      tbody.querySelectorAll('.badge-remove[data-inv]').forEach(el =>
-        el.addEventListener('click', () => revokeInvestorFromDoc(el.dataset.doc, el.dataset.inv))
-      );
-      tbody.querySelectorAll('.add-access-btn').forEach(el =>
-        el.addEventListener('click', () => openGrantAccessModal(el.dataset.doc, el.dataset.docname))
+      tbody.querySelectorAll('.manage-access-btn').forEach(el =>
+        el.addEventListener('click', () => openManageAccess(el.dataset.doc, el.dataset.docname))
       );
       tbody.querySelectorAll('.edit-doc-btn').forEach(el =>
         el.addEventListener('click', () => openEditModal(el.dataset.doc))
@@ -1068,18 +1078,64 @@
       tbody.querySelectorAll('.notify-doc-btn').forEach(el =>
         el.addEventListener('click', () => openNotifyModal(el.dataset.doc))
       );
-      tbody.querySelectorAll('.shareall-doc-btn').forEach(el =>
-        el.addEventListener('click', () => setDocShareAll(el.dataset.doc, true))
-      );
-      tbody.querySelectorAll('.restrict-doc-btn').forEach(el =>
-        el.addEventListener('click', () => setDocShareAll(el.dataset.doc, false))
-      );
-      tbody.querySelectorAll('.group-share-btn').forEach(el =>
-        el.addEventListener('click', () => openGroupShareModal(el.dataset.doc, el.dataset.docname))
-      );
-      tbody.querySelectorAll('.badge-remove[data-group]').forEach(el =>
-        el.addEventListener('click', () => removeGroupFromDoc(el.dataset.doc, el.dataset.group))
-      );
+    }
+
+    // ── Manage Access modal (single place for groups + individuals + visible-to-all) ──
+    let maDocId = null, maShareAll = false;
+    let maGroups = new Set(), maInvestors = new Set();
+    function openManageAccess(docId, docName) {
+      const d = allDocs.find(x => x.id === docId); if (!d) return;
+      maDocId = docId;
+      maShareAll = !!d.shareAll;
+      maGroups = new Set(d.allowedGroups || []);
+      maInvestors = new Set(d.allowedInvestors || []);
+      document.getElementById('manageAccessDocName').textContent = `Document: ${docName}`;
+      document.getElementById('maShareAll').checked = maShareAll;
+      document.getElementById('maInvSearch').value = '';
+      renderMaScope();
+      document.getElementById('manageAccessModal').classList.add('open');
+    }
+    function renderMaScope() {
+      document.getElementById('maScopedWrap').style.opacity = maShareAll ? '0.4' : '1';
+      document.getElementById('maScopedWrap').style.pointerEvents = maShareAll ? 'none' : 'auto';
+      document.getElementById('maShareAllNote').style.display = maShareAll ? 'block' : 'none';
+      // Groups: chips of selected + dropdown of the rest
+      const chips = [...maGroups].map(gid => {
+        const g = allGroups.find(x => x.id === gid);
+        return `<span class="badge" style="background:#EDE9FE;color:#6D28D9;">👥 ${escHtml(g ? g.name : '[deleted]')} <span class="badge-remove" data-magroup="${gid}" title="Remove">×</span></span>`;
+      }).join(' ');
+      document.getElementById('maGroupChips').innerHTML = chips || '<span class="hint" style="margin:0;">No groups added.</span>';
+      const avail = allGroups.filter(g => !maGroups.has(g.id));
+      document.getElementById('maAddGroup').innerHTML = '<option value="">+ Add group…</option>' + avail.map(g => `<option value="${g.id}">${escHtml(g.name)} (${(g.investorIds || []).length})</option>`).join('');
+      document.getElementById('maGroupChips').querySelectorAll('[data-magroup]').forEach(x =>
+        x.addEventListener('click', () => { maGroups.delete(x.dataset.magroup); renderMaScope(); }));
+      // Investors: searchable checklist
+      renderMaInvestors();
+    }
+    function renderMaInvestors() {
+      const q = (document.getElementById('maInvSearch').value || '').toLowerCase();
+      const list = allInvestors.filter(i => !q || (i.name || '').toLowerCase().includes(q));
+      const el = document.getElementById('maInvList');
+      el.innerHTML = list.length ? list.map(i => `
+        <label style="display:flex;align-items:center;gap:6px;padding:4px 2px;font-size:0.86rem;cursor:pointer;">
+          <input type="checkbox" class="ma-inv-chk" value="${i.id}" ${maInvestors.has(i.id) ? 'checked' : ''}>
+          ${escHtml(i.name)} <span class="hint" style="margin:0;">(${(i.emails || []).length})</span>
+        </label>`).join('') : '<p class="hint" style="margin:6px 0;">No investors match.</p>';
+      el.querySelectorAll('.ma-inv-chk').forEach(cb =>
+        cb.addEventListener('change', () => { cb.checked ? maInvestors.add(cb.value) : maInvestors.delete(cb.value); }));
+    }
+    async function saveManageAccess() {
+      const d = allDocs.find(x => x.id === maDocId); if (!d) return;
+      const btn = document.getElementById('saveManageAccessBtn'); btn.disabled = true; btn.textContent = 'Saving…';
+      d.shareAll = maShareAll;
+      d.allowedGroups = [...maGroups];
+      d.allowedInvestors = [...maInvestors];
+      await updateDoc(doc(db, 'documents', d.id), { shareAll: d.shareAll, allowedGroups: d.allowedGroups, allowedInvestors: d.allowedInvestors });
+      await recomputeDocAccess(d);
+      logEvent('access_updated', { docId: d.id, docName: d.name, shareAll: d.shareAll, groups: d.allowedGroups.length, individuals: d.allowedInvestors.length });
+      document.getElementById('manageAccessModal').classList.remove('open');
+      btn.disabled = false; btn.textContent = 'Save';
+      renderDocs();
     }
 
     // ── "Visible to all" — a shareAll flag; allowedEmails recomputed to include everyone ──
@@ -1531,6 +1587,14 @@
     document.getElementById('cancelDocBtn').addEventListener('click', () =>
       document.getElementById('addDocModal').classList.remove('open')
     );
+    // Manage access modal
+    document.getElementById('cancelManageAccessBtn').addEventListener('click', () =>
+      document.getElementById('manageAccessModal').classList.remove('open')
+    );
+    document.getElementById('saveManageAccessBtn').addEventListener('click', saveManageAccess);
+    document.getElementById('maShareAll').addEventListener('change', e => { maShareAll = e.target.checked; renderMaScope(); });
+    document.getElementById('maAddGroup').addEventListener('change', e => { if (e.target.value) { maGroups.add(e.target.value); renderMaScope(); } });
+    document.getElementById('maInvSearch').addEventListener('input', renderMaInvestors);
     // Access groups
     document.getElementById('manageGroupsBtn').addEventListener('click', openGroupsModal);
     document.getElementById('closeGroupsBtn').addEventListener('click', () =>
