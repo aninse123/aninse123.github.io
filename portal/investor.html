@@ -161,6 +161,36 @@
     }
     .doc-download:hover { background: var(--primary-dark); }
 
+    /* Document actions (View + Download) — additive, non-breaking */
+    .doc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    .doc-actions .doc-download { margin-top: 0; }
+    .doc-view {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--white); color: var(--primary);
+      border: 1.5px solid var(--primary);
+      padding: 9px 18px; border-radius: var(--radius);
+      font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: 0.2s;
+      font-family: inherit;
+    }
+    .doc-view:hover { background: rgba(74,107,138,0.08); }
+
+    /* PDF preview overlay */
+    .pdf-overlay { position: fixed; inset: 0; background: rgba(20,28,38,0.72); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .pdf-modal { background: var(--white); border-radius: var(--radius); width: 100%; max-width: 960px; height: 92vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 70px rgba(0,0,0,0.4); }
+    .pdf-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .pdf-title { font-weight: 600; font-size: 0.95rem; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pdf-head-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .pdf-btn { display: inline-flex; align-items: center; gap: 5px; padding: 7px 13px; border-radius: var(--radius); font-size: 0.8rem; font-weight: 600; text-decoration: none; cursor: pointer; border: 1px solid var(--border); background: var(--white); color: var(--text-light); font-family: inherit; }
+    .pdf-btn:hover { border-color: var(--primary); color: var(--primary); }
+    .pdf-btn--primary { background: var(--primary); color: var(--white); border-color: var(--primary); }
+    .pdf-btn--primary:hover { background: var(--primary-dark); color: var(--white); }
+    .pdf-frame { flex: 1; width: 100%; border: none; }
+    @media (max-width: 640px) {
+      .pdf-modal { height: 94vh; max-width: 100%; }
+      .pdf-title { display: none; }
+      .pdf-head-actions { width: 100%; justify-content: space-between; }
+    }
+
     /* Empty state */
     .empty-state {
       grid-column: 1 / -1;
@@ -450,12 +480,17 @@
               <div class="doc-name">${d.name}</div>
               ${d.description ? `<div class="doc-description">${d.description}</div>` : ''}
               ${date ? `<div class="doc-date">Added ${date}</div>` : ''}
-              <a href="${d.downloadURL}" class="doc-download" target="_blank">
-                ↓ &nbsp;Download PDF
-              </a>
+              <div class="doc-actions">
+                <button type="button" class="doc-view">👁 &nbsp;View</button>
+                <a href="${d.downloadURL}" class="doc-download" target="_blank" rel="noopener">↓ &nbsp;Download PDF</a>
+              </div>
             `;
             card.querySelector('.doc-download').addEventListener('click', () => {
               logEvent('doc_downloaded', { email, docId: d.id, docName: d.name, category: d.category });
+            });
+            card.querySelector('.doc-view').addEventListener('click', () => {
+              logEvent('doc_downloaded', { email, docId: d.id, docName: d.name, category: d.category });
+              openPdfPreview(d);
             });
             grid.appendChild(card);
           });
@@ -488,6 +523,39 @@
       await signOut(auth);
       window.location.href = '/portal/login.html';
     });
+
+    // ── Inline PDF preview (additive: Download is unchanged) ──
+    function openPdfPreview(d) {
+      document.getElementById('pdfTitle').textContent = d.name || 'Document';
+      document.getElementById('pdfFrame').src = d.downloadURL;
+      document.getElementById('pdfOpenTab').href = d.downloadURL;
+      document.getElementById('pdfDownload').href = d.downloadURL;
+      document.getElementById('pdfPreview').style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+    }
+    function closePdfPreview() {
+      document.getElementById('pdfPreview').style.display = 'none';
+      document.getElementById('pdfFrame').src = 'about:blank';
+      document.body.style.overflow = '';
+    }
+    document.getElementById('pdfClose').addEventListener('click', closePdfPreview);
+    document.getElementById('pdfPreview').addEventListener('click', e => { if (e.target.id === 'pdfPreview') closePdfPreview(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.getElementById('pdfPreview').style.display === 'flex') closePdfPreview(); });
   </script>
+
+  <!-- PDF preview overlay -->
+  <div id="pdfPreview" class="pdf-overlay" style="display:none;">
+    <div class="pdf-modal">
+      <div class="pdf-head">
+        <span class="pdf-title" id="pdfTitle"></span>
+        <div class="pdf-head-actions">
+          <a id="pdfOpenTab" class="pdf-btn" href="#" target="_blank" rel="noopener">↗ Open in tab</a>
+          <a id="pdfDownload" class="pdf-btn pdf-btn--primary" href="#" target="_blank" rel="noopener">↓ Download</a>
+          <button id="pdfClose" class="pdf-btn" type="button">✕ Close</button>
+        </div>
+      </div>
+      <iframe id="pdfFrame" class="pdf-frame" title="Document preview"></iframe>
+    </div>
+  </div>
 </body>
 </html>
