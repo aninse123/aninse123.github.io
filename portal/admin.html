@@ -1117,9 +1117,10 @@
       const list = allInvestors.filter(i => !q || (i.name || '').toLowerCase().includes(q));
       const el = document.getElementById('maInvList');
       el.innerHTML = list.length ? list.map(i => `
-        <label style="display:flex;align-items:center;gap:6px;padding:4px 2px;font-size:0.86rem;cursor:pointer;">
-          <input type="checkbox" class="ma-inv-chk" value="${i.id}" ${maInvestors.has(i.id) ? 'checked' : ''}>
-          ${escHtml(i.name)} <span class="hint" style="margin:0;">(${(i.emails || []).length})</span>
+        <label style="display:flex;align-items:center;justify-content:flex-start;gap:10px;padding:6px 4px;font-size:0.86rem;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;border-bottom:1px solid #F0EDE6;">
+          <input type="checkbox" class="ma-inv-chk" value="${i.id}" ${maInvestors.has(i.id) ? 'checked' : ''} style="width:auto;flex:0 0 auto;margin:0;">
+          <span style="flex:1;min-width:0;">${escHtml(i.name)}</span>
+          <span style="color:var(--text-light);font-size:0.76rem;flex:0 0 auto;" title="members">${(i.emails || []).length}</span>
         </label>`).join('') : '<p class="hint" style="margin:6px 0;">No investors match.</p>';
       el.querySelectorAll('.ma-inv-chk').forEach(cb =>
         cb.addEventListener('change', () => { cb.checked ? maInvestors.add(cb.value) : maInvestors.delete(cb.value); }));
