@@ -640,15 +640,20 @@
     </div>
   </div>
 
-  <!-- ══ Access Groups Modal ══ -->
+  <!-- ══ Access Groups Modal (master–detail) ══ -->
   <div class="modal-overlay" id="groupsModal">
-    <div class="modal">
+    <div class="modal" style="max-width:800px;">
       <h2>Access Groups</h2>
       <p class="hint">Group investors to share documents with a cohort. Changing a group's members updates every document shared with it.</p>
-      <div id="groupsList" style="margin:14px 0;max-height:50vh;overflow-y:auto;"></div>
-      <div style="display:flex;gap:8px;">
-        <input type="text" id="newGroupName" placeholder="New group name (e.g. Engaged)" style="flex:1;">
-        <button class="btn btn--primary" id="createGroupBtn">Create</button>
+      <div style="display:flex;gap:16px;margin-top:14px;align-items:stretch;">
+        <div style="flex:0 0 230px;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+          <div id="gmGroupList" style="flex:1;overflow-y:auto;max-height:46vh;"></div>
+          <div style="border-top:1px solid var(--border);padding:8px;display:flex;gap:6px;">
+            <input type="text" id="newGroupName" placeholder="New group…" style="flex:1;min-width:0;">
+            <button class="btn btn--primary btn--sm" id="createGroupBtn">Create</button>
+          </div>
+        </div>
+        <div id="gmDetail" style="flex:1;min-width:0;"></div>
       </div>
       <div class="modal-actions">
         <button class="btn btn--ghost" id="closeGroupsBtn">Done</button>
@@ -1150,33 +1155,66 @@
       renderDocs();
     }
 
-    // ── Access Groups ──────────────────────────────────────────
-    function openGroupsModal() { renderGroupsModal(); document.getElementById('groupsModal').classList.add('open'); }
+    // ── Access Groups (master–detail) ──────────────────────────
+    let gmSelectedId = null, gmMembers = new Set(), gmMemberSearch = '';
+    function openGroupsModal() {
+      gmSelectedId = allGroups.length ? allGroups[0].id : null;
+      gmMembers = new Set(gmSelectedId ? (allGroups[0].investorIds || []) : []);
+      gmMemberSearch = '';
+      renderGroupsModal();
+      document.getElementById('groupsModal').classList.add('open');
+    }
+    function selectGroup(gid) {
+      gmSelectedId = gid;
+      const g = allGroups.find(x => x.id === gid);
+      gmMembers = new Set(g ? (g.investorIds || []) : []);
+      gmMemberSearch = '';
+      renderGroupsModal();
+    }
     function renderGroupsModal() {
-      const el = document.getElementById('groupsList');
-      if (!allGroups.length) { el.innerHTML = '<p class="hint" style="margin:0;">No groups yet — create one below.</p>'; return; }
-      el.innerHTML = allGroups.map(g => `
-        <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <strong>${escHtml(g.name)}</strong>
-            <span class="hint" style="margin:0;">${(g.investorIds || []).length} investor${(g.investorIds || []).length !== 1 ? 's' : ''}</span>
-            <span style="margin-left:auto;display:flex;gap:6px;">
-              <button class="btn btn--ghost btn--sm grp-members" data-g="${g.id}">Members</button>
-              <button class="btn btn--ghost btn--sm grp-rename" data-g="${g.id}">Rename</button>
-              <button class="btn btn--ghost btn--sm btn--ghost-danger grp-delete" data-g="${g.id}">Delete</button>
-            </span>
-          </div>
-          <div id="grp-panel-${g.id}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
-            <div style="display:flex;flex-wrap:wrap;gap:8px 14px;max-height:220px;overflow:auto;">
-              ${allInvestors.length ? allInvestors.map(i => `<label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;cursor:pointer;"><input type="checkbox" class="grp-inv-chk" data-g="${g.id}" value="${i.id}" ${(g.investorIds || []).includes(i.id) ? 'checked' : ''}> ${escHtml(i.name)}</label>`).join('') : '<span class="hint">No investors yet.</span>'}
-            </div>
-            <button class="btn btn--primary btn--sm grp-save-members" data-g="${g.id}" style="margin-top:10px;">Save members</button>
-          </div>
-        </div>`).join('');
-      el.querySelectorAll('.grp-members').forEach(b => b.addEventListener('click', () => { const p = document.getElementById('grp-panel-' + b.dataset.g); p.style.display = p.style.display === 'none' ? 'block' : 'none'; }));
-      el.querySelectorAll('.grp-rename').forEach(b => b.addEventListener('click', () => renameGroup(b.dataset.g)));
-      el.querySelectorAll('.grp-delete').forEach(b => b.addEventListener('click', () => deleteGroup(b.dataset.g)));
-      el.querySelectorAll('.grp-save-members').forEach(b => b.addEventListener('click', () => saveGroupMembers(b.dataset.g)));
+      const listEl = document.getElementById('gmGroupList');
+      listEl.innerHTML = allGroups.length ? allGroups.map(g => `
+        <div class="gm-group-row" data-g="${g.id}" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #F0EDE6;${g.id === gmSelectedId ? 'background:#EDE9FE;' : ''}">
+          <div style="font-weight:600;font-size:0.86rem;">${escHtml(g.name)}</div>
+          <div class="hint" style="margin:0;">${(g.investorIds || []).length} investor${(g.investorIds || []).length !== 1 ? 's' : ''}</div>
+        </div>`).join('') : '<p class="hint" style="padding:12px;">No groups yet. Create one below.</p>';
+      listEl.querySelectorAll('.gm-group-row').forEach(r => r.addEventListener('click', () => selectGroup(r.dataset.g)));
+      renderGroupDetail();
+    }
+    function renderGroupDetail() {
+      const el = document.getElementById('gmDetail');
+      const g = allGroups.find(x => x.id === gmSelectedId);
+      if (!g) { el.innerHTML = '<div class="hint" style="padding:32px 12px;text-align:center;">Select a group on the left to manage its members — or create a new one.</div>'; return; }
+      const docCount = allDocs.filter(d => (d.allowedGroups || []).includes(g.id)).length;
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <input type="text" id="gmName" value="${escAttr(g.name)}" style="flex:1;min-width:0;font-weight:600;">
+          <button class="btn btn--ghost btn--sm btn--ghost-danger" id="gmDelete">Delete</button>
+        </div>
+        <p class="hint" style="margin:0 0 10px;">Shared with ${docCount} document${docCount !== 1 ? 's' : ''} · <span id="gmMemberCount">${gmMembers.size}</span> member${gmMembers.size !== 1 ? 's' : ''}</p>
+        <input type="text" id="gmMemberSearch" placeholder="Search investors…" value="${escAttr(gmMemberSearch)}" style="margin-bottom:6px;">
+        <div id="gmMemberList" style="max-height:38vh;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;"></div>
+        <button class="btn btn--primary btn--sm" id="gmSaveMembers" style="margin-top:10px;">Save members</button>`;
+      document.getElementById('gmName').addEventListener('change', e => renameSelectedGroup(e.target.value));
+      document.getElementById('gmDelete').addEventListener('click', () => deleteGroup(g.id));
+      document.getElementById('gmMemberSearch').addEventListener('input', e => { gmMemberSearch = e.target.value; renderGmMembers(); });
+      document.getElementById('gmSaveMembers').addEventListener('click', () => saveGroupMembers(g.id));
+      renderGmMembers();
+    }
+    function renderGmMembers() {
+      const el = document.getElementById('gmMemberList'); if (!el) return;
+      const q = (gmMemberSearch || '').toLowerCase();
+      const list = allInvestors.filter(i => !q || (i.name || '').toLowerCase().includes(q));
+      el.innerHTML = list.length ? list.map(i => `
+        <label style="display:flex;align-items:center;justify-content:flex-start;gap:10px;padding:6px 4px;font-size:0.86rem;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;border-bottom:1px solid #F0EDE6;">
+          <input type="checkbox" class="gm-mem-chk" value="${i.id}" ${gmMembers.has(i.id) ? 'checked' : ''} style="width:auto;flex:0 0 auto;margin:0;">
+          <span style="flex:1;min-width:0;">${escHtml(i.name)}</span>
+          <span style="color:var(--text-light);font-size:0.76rem;flex:0 0 auto;">${(i.emails || []).length}</span>
+        </label>`).join('') : '<p class="hint" style="margin:6px 0;">No investors match.</p>';
+      el.querySelectorAll('.gm-mem-chk').forEach(cb => cb.addEventListener('change', () => {
+        cb.checked ? gmMembers.add(cb.value) : gmMembers.delete(cb.value);
+        const c = document.getElementById('gmMemberCount'); if (c) c.textContent = gmMembers.size;
+      }));
     }
     async function createGroup() {
       const inp = document.getElementById('newGroupName'); const name = inp.value.trim();
@@ -1184,13 +1222,14 @@
       const ref = await addDoc(collection(db, 'accessGroups'), { name, investorIds: [], createdAt: serverTimestamp() });
       allGroups.push({ id: ref.id, name, investorIds: [] });
       inp.value = ''; logEvent('group_created', { groupName: name });
-      renderGroupsModal();
+      selectGroup(ref.id);
     }
-    async function renameGroup(gid) {
-      const g = allGroups.find(x => x.id === gid); if (!g) return;
-      const name = prompt('Rename group:', g.name); if (!name || !name.trim()) return;
-      g.name = name.trim();
-      await updateDoc(doc(db, 'accessGroups', gid), { name: g.name });
+    async function renameSelectedGroup(name) {
+      const g = allGroups.find(x => x.id === gmSelectedId); if (!g) return;
+      name = (name || '').trim();
+      if (!name || name === g.name) { renderGroupsModal(); return; }
+      g.name = name;
+      await updateDoc(doc(db, 'accessGroups', g.id), { name });
       renderGroupsModal(); renderDocs();
     }
     async function deleteGroup(gid) {
@@ -1204,12 +1243,15 @@
       }
       await deleteDoc(doc(db, 'accessGroups', gid));
       allGroups = allGroups.filter(x => x.id !== gid);
+      if (gmSelectedId === gid) gmSelectedId = allGroups.length ? allGroups[0].id : null;
+      if (gmSelectedId) gmMembers = new Set(allGroups.find(x => x.id === gmSelectedId).investorIds || []);
       logEvent('group_deleted', { groupName: g.name });
       renderGroupsModal(); renderDocs();
     }
     async function saveGroupMembers(gid) {
       const g = allGroups.find(x => x.id === gid); if (!g) return;
-      g.investorIds = [...document.querySelectorAll(`.grp-inv-chk[data-g="${gid}"]:checked`)].map(c => c.value);
+      const btn = document.getElementById('gmSaveMembers'); btn.disabled = true; btn.textContent = 'Saving…';
+      g.investorIds = [...gmMembers];
       await updateDoc(doc(db, 'accessGroups', gid), { investorIds: g.investorIds });
       logEvent('group_updated', { groupName: g.name, memberCount: g.investorIds.length });
       // Propagate to every document shared with this group
