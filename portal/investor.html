@@ -124,8 +124,15 @@
       flex-direction: column;
       gap: 10px;
       transition: 0.2s;
+      position: relative;
     }
     .doc-card:hover { box-shadow: var(--shadow); transform: translateY(-2px); }
+    .doc-new {
+      position: absolute; top: 14px; right: 14px;
+      background: var(--secondary); color: var(--white);
+      font-size: 0.62rem; font-weight: 700; letter-spacing: 0.07em;
+      padding: 3px 9px; border-radius: 100px; text-transform: uppercase;
+    }
     .doc-icon { font-size: 2rem; line-height: 1; }
     .doc-category {
       font-size: 0.72rem; font-weight: 700;
@@ -292,6 +299,11 @@
       } catch (e) { /* fail silently */ }
     }
 
+    // ── "New" (unread) tracking — local to this browser ─────────
+    const VIEWED_KEY = 'dp_inv_viewed';
+    function getViewed() { try { return new Set(JSON.parse(localStorage.getItem(VIEWED_KEY) || '[]')); } catch (e) { return new Set(); } }
+    function markViewed(id) { const s = getViewed(); s.add(id); try { localStorage.setItem(VIEWED_KEY, JSON.stringify([...s])); } catch (e) {} }
+
     const STAGES = [
       { id: 1, label: 'Raise' },
       { id: 2, label: 'Source & Evaluate' },
@@ -434,9 +446,11 @@
             p.classList.toggle('active', p.dataset.cat === filter)
           );
           const filtered = filter === 'All' ? docs : docs.filter(d => d.category === filter);
+          const viewed = getViewed();
           grid.innerHTML = '';
           filtered.forEach(d => {
             const icon = CATEGORY_ICONS[d.category] || '📄';
+            const isNew = !viewed.has(d.id);
             const date = d.addedAt
               ? new Date(d.addedAt.seconds * 1000).toLocaleDateString('en-GB', {
                   day: 'numeric', month: 'long', year: 'numeric'
@@ -445,6 +459,7 @@
             const card = document.createElement('div');
             card.className = 'doc-card';
             card.innerHTML = `
+              ${isNew ? '<span class="doc-new">New</span>' : ''}
               <div class="doc-icon">${icon}</div>
               <div class="doc-category">${d.category || 'Document'}</div>
               <div class="doc-name">${d.name}</div>
@@ -456,6 +471,8 @@
             `;
             card.querySelector('.doc-download').addEventListener('click', () => {
               logEvent('doc_downloaded', { email, docId: d.id, docName: d.name, category: d.category });
+              markViewed(d.id); viewed.add(d.id);
+              const badge = card.querySelector('.doc-new'); if (badge) badge.remove();
             });
             grid.appendChild(card);
           });
