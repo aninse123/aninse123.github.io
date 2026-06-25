@@ -640,6 +640,18 @@
     </div>
   </div>
 
+  <!-- ══ View as Investor Modal ══ -->
+  <div class="modal-overlay" id="viewAsModal">
+    <div class="modal" style="max-width:640px;">
+      <h2>Viewing as <span id="viewAsName"></span></h2>
+      <p class="hint" id="viewAsSummary" style="margin-top:0;"></p>
+      <div id="viewAsBody" style="max-height:52vh;overflow-y:auto;margin-top:6px;"></div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="closeViewAsBtn">Done</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ Access Groups Modal (master–detail) ══ -->
   <div class="modal-overlay" id="groupsModal">
     <div class="modal" style="max-width:800px;">
@@ -1330,7 +1342,7 @@
       }
 
       tbody.innerHTML = investors.map(inv => {
-        const docCount   = allDocs.filter(d => (d.allowedInvestors || []).includes(inv.id)).length;
+        const docCount   = allDocs.filter(d => effectiveInvestorIds(d).has(inv.id)).length;
         const emailCount = (inv.emails || []).length;
         const emailsStr  = emailCount === 1 ? '1 member' : `${emailCount} members`;
 
@@ -1353,12 +1365,16 @@
           </td>
           <td>${lastSeenHtml}</td>
           <td style="white-space:nowrap;">
+            <button class="btn btn--ghost btn--sm view-as-btn" data-inv="${inv.id}" style="margin-right:6px;" title="See the documents this investor can access">👁 View as</button>
             <button class="btn btn--ghost btn--sm edit-inv-btn" data-inv="${inv.id}" style="margin-right:6px;">Edit</button>
             <button class="btn btn--ghost btn--sm btn--ghost-danger delete-inv-btn" data-inv="${inv.id}">Delete</button>
           </td>
         </tr>`;
       }).join('');
 
+      tbody.querySelectorAll('.view-as-btn').forEach(el =>
+        el.addEventListener('click', () => openViewAs(el.dataset.inv))
+      );
       tbody.querySelectorAll('.edit-inv-btn').forEach(el =>
         el.addEventListener('click', () => openEditInvestorModal(el.dataset.inv))
       );
@@ -1368,6 +1384,45 @@
       tbody.querySelectorAll('.inv-grant-doc').forEach(el =>
         el.addEventListener('click', () => openGrantDocToInvestorModal(el.dataset.inv))
       );
+    }
+
+    // ── View as investor: show what this investor can see ──
+    function docSourceTags(d, invId) {
+      const tags = [];
+      if (d.shareAll) tags.push('🌐 All');
+      (d.allowedGroups || []).forEach(gid => {
+        const g = allGroups.find(x => x.id === gid);
+        if (g && (g.investorIds || []).includes(invId)) tags.push('👥 ' + (g.name || 'Group'));
+      });
+      if ((d.allowedInvestors || []).includes(invId)) tags.push('👤 Individual');
+      return tags;
+    }
+
+    function openViewAs(invId) {
+      const inv = allInvestors.find(i => i.id === invId);
+      if (!inv) return;
+
+      const docs = allDocs.filter(d => effectiveInvestorIds(d).has(invId));
+      const lastSeenTs = Math.max(0, ...(inv.emails || []).map(e => lastSeenMap[e] || 0));
+
+      document.getElementById('viewAsName').textContent = inv.name;
+      document.getElementById('viewAsSummary').textContent =
+        `Sees ${docs.length} of ${allDocs.length} document${allDocs.length !== 1 ? 's' : ''} · ` +
+        (lastSeenTs ? `last seen ${relativeTime(lastSeenTs)}` : 'never signed in');
+
+      document.getElementById('viewAsBody').innerHTML = docs.length
+        ? docs.map(d => {
+            const tags = docSourceTags(d, invId)
+              .map(t => `<span class="badge badge--grey" style="font-size:0.66rem;">${escHtml(t)}</span>`)
+              .join(' ');
+            return `<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--border);">
+              <span style="flex:1;min-width:0;">📄 ${escHtml(d.name)}${d.category ? ` <span class="hint" style="margin:0;">· ${escHtml(d.category)}</span>` : ''}</span>
+              <span style="white-space:nowrap;">${tags}</span>
+            </div>`;
+          }).join('')
+        : '<p class="hint" style="padding:8px 0;">This investor can’t see any documents yet.</p>';
+
+      document.getElementById('viewAsModal').classList.add('open');
     }
 
     // ── Grant investor access to a document (from docs table) ──
@@ -1635,6 +1690,9 @@
       document.getElementById('manageAccessModal').classList.remove('open')
     );
     document.getElementById('saveManageAccessBtn').addEventListener('click', saveManageAccess);
+    document.getElementById('closeViewAsBtn').addEventListener('click', () =>
+      document.getElementById('viewAsModal').classList.remove('open')
+    );
     document.getElementById('maShareAll').addEventListener('change', e => { maShareAll = e.target.checked; renderMaScope(); });
     document.getElementById('maAddGroup').addEventListener('change', e => { if (e.target.value) { maGroups.add(e.target.value); renderMaScope(); } });
     document.getElementById('maInvSearch').addEventListener('input', renderMaInvestors);
