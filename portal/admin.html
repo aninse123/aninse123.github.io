@@ -425,7 +425,10 @@
       <div class="section">
         <div class="section-header">
           <h2 class="section-title">Investors</h2>
-          <button class="btn btn--primary" id="addInvestorBtn">+ New Investor</button>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn--ghost" id="engagementBtn">📊 Engagement</button>
+            <button class="btn btn--primary" id="addInvestorBtn">+ New Investor</button>
+          </div>
         </div>
         <div class="card">
           <div class="filter-bar">
@@ -648,6 +651,18 @@
       <div id="viewAsBody" style="max-height:52vh;overflow-y:auto;margin-top:6px;"></div>
       <div class="modal-actions">
         <button class="btn btn--ghost" id="closeViewAsBtn">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Engagement Modal ══ -->
+  <div class="modal-overlay" id="engagementModal">
+    <div class="modal" style="max-width:760px;">
+      <h2>Investor Engagement</h2>
+      <p class="hint" style="margin-top:0;">Who's active and what they've opened. Based on the last 500 activity events.</p>
+      <div id="engagementBody" style="max-height:58vh;overflow-y:auto;margin-top:6px;"></div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="closeEngagementBtn">Done</button>
       </div>
     </div>
   </div>
@@ -1425,6 +1440,60 @@
       document.getElementById('viewAsModal').classList.add('open');
     }
 
+    // ── Engagement overview: per-investor activity + doc opens ──
+    function openEngagement() {
+      // Identify a "key" document to flag if unopened (PPM / memorandum).
+      const keyDoc = allDocs.find(d => /\b(ppm|memorandum|deck)\b/i.test(`${d.name} ${d.category || ''}`));
+
+      const rows = allInvestors.map(inv => {
+        const emails     = inv.emails || [];
+        const lastSeenTs = Math.max(0, ...emails.map(e => lastSeenMap[e] || 0));
+        const accessible = allDocs.filter(d => effectiveInvestorIds(d).has(inv.id));
+        const opened     = accessible.filter(d => {
+          const set = docViewedEmailsMap[d.id];
+          return set && emails.some(e => set.has(e));
+        });
+        const keyOpened  = keyDoc
+          ? (docViewedEmailsMap[keyDoc.id] && emails.some(e => docViewedEmailsMap[keyDoc.id].has(e)))
+          : null;
+        return { inv, lastSeenTs, accessibleN: accessible.length, openedN: opened.length, keyOpened };
+      }).sort((a, b) => a.lastSeenTs - b.lastSeenTs); // coldest first → needs chasing
+
+      const body = rows.map(r => {
+        const seen = r.lastSeenTs
+          ? `<span style="color:var(--text);">${relativeTime(r.lastSeenTs)}</span>`
+          : `<span style="color:var(--danger,#C0392B);font-style:italic;">Never</span>`;
+        const ratio = r.accessibleN
+          ? `${r.openedN}/${r.accessibleN}`
+          : '—';
+        let keyTag = '';
+        if (keyDoc) {
+          keyTag = r.keyOpened
+            ? `<span class="badge badge--grey" style="font-size:0.62rem;">✓ ${escHtml(keyDoc.category || 'Key doc')}</span>`
+            : `<span class="badge" style="font-size:0.62rem;background:#FBE9E7;color:#C0392B;">⚠ ${escHtml(keyDoc.category || 'Key doc')} unopened</span>`;
+        }
+        return `<tr>
+          <td><strong>${escHtml(r.inv.name)}</strong></td>
+          <td style="white-space:nowrap;">${seen}</td>
+          <td style="text-align:center;">${ratio}</td>
+          <td>${keyTag}</td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('engagementBody').innerHTML = allInvestors.length
+        ? `<div class="table-wrap"><table>
+            <thead><tr>
+              <th>Investor</th><th>Last visit</th>
+              <th style="text-align:center;">Docs opened</th>
+              <th>${keyDoc ? escHtml(keyDoc.category || 'Key doc') : ''}</th>
+            </tr></thead>
+            <tbody>${body}</tbody>
+          </table></div>`
+        : '<p class="hint">No investors yet.</p>';
+
+      document.getElementById('engagementModal').classList.add('open');
+    }
+
     // ── Grant investor access to a document (from docs table) ──
     function openGrantAccessModal(docId, docName) {
       grantAccessDocId = docId;
@@ -1692,6 +1761,10 @@
     document.getElementById('saveManageAccessBtn').addEventListener('click', saveManageAccess);
     document.getElementById('closeViewAsBtn').addEventListener('click', () =>
       document.getElementById('viewAsModal').classList.remove('open')
+    );
+    document.getElementById('engagementBtn').addEventListener('click', openEngagement);
+    document.getElementById('closeEngagementBtn').addEventListener('click', () =>
+      document.getElementById('engagementModal').classList.remove('open')
     );
     document.getElementById('maShareAll').addEventListener('change', e => { maShareAll = e.target.checked; renderMaScope(); });
     document.getElementById('maAddGroup').addEventListener('change', e => { if (e.target.value) { maGroups.add(e.target.value); renderMaScope(); } });
