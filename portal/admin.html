@@ -1442,9 +1442,6 @@
 
     // ── Engagement overview: per-investor activity + doc opens ──
     function openEngagement() {
-      // Identify a "key" document to flag if unopened (PPM / memorandum).
-      const keyDoc = allDocs.find(d => /\b(ppm|memorandum|deck)\b/i.test(`${d.name} ${d.category || ''}`));
-
       const rows = allInvestors.map(inv => {
         const emails     = inv.emails || [];
         const lastSeenTs = Math.max(0, ...emails.map(e => lastSeenMap[e] || 0));
@@ -1454,10 +1451,7 @@
           return set && emails.some(e => set.has(e));
         });
         const openedIds  = new Set(opened.map(d => d.id));
-        const keyOpened  = keyDoc
-          ? (docViewedEmailsMap[keyDoc.id] && emails.some(e => docViewedEmailsMap[keyDoc.id].has(e)))
-          : null;
-        return { inv, lastSeenTs, accessible, openedIds, accessibleN: accessible.length, openedN: opened.length, keyOpened };
+        return { inv, lastSeenTs, accessible, openedIds, accessibleN: accessible.length, openedN: opened.length };
       }).sort((a, b) => a.lastSeenTs - b.lastSeenTs); // coldest first → needs chasing
 
       const body = rows.map(r => {
@@ -1467,12 +1461,6 @@
         const ratio = r.accessibleN
           ? `${r.openedN}/${r.accessibleN}`
           : '—';
-        let keyTag = '';
-        if (keyDoc) {
-          keyTag = r.keyOpened
-            ? `<span class="badge badge--grey" style="font-size:0.62rem;">✓ ${escHtml(keyDoc.category || 'Key doc')}</span>`
-            : `<span class="badge" style="font-size:0.62rem;background:#FBE9E7;color:#C0392B;">⚠ ${escHtml(keyDoc.category || 'Key doc')} unopened</span>`;
-        }
 
         // Per-doc detail (hidden until the row is expanded)
         const detail = r.accessibleN
@@ -1490,10 +1478,9 @@
           <td><span class="eng-caret" style="display:inline-block;width:14px;color:var(--text-light);transition:transform .15s;">▸</span> <strong>${escHtml(r.inv.name)}</strong></td>
           <td style="white-space:nowrap;">${seen}</td>
           <td style="text-align:center;">${ratio}</td>
-          <td>${keyTag}</td>
         </tr>
         <tr class="eng-detail" data-detail="${r.inv.id}" style="display:none;">
-          <td colspan="4" style="background:var(--bg,#FAFAF8);padding:8px 14px 12px 30px;">${detail}</td>
+          <td colspan="3" style="background:var(--bg,#FAFAF8);padding:8px 14px 12px 30px;">${detail}</td>
         </tr>`;
       }).join('');
 
@@ -1502,7 +1489,6 @@
             <thead><tr>
               <th>Investor</th><th>Last visit</th>
               <th style="text-align:center;">Docs opened</th>
-              <th>${keyDoc ? escHtml(keyDoc.category || 'Key doc') : ''}</th>
             </tr></thead>
             <tbody>${body}</tbody>
           </table></div>`
