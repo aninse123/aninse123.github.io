@@ -1453,10 +1453,11 @@
           const set = docViewedEmailsMap[d.id];
           return set && emails.some(e => set.has(e));
         });
+        const openedIds  = new Set(opened.map(d => d.id));
         const keyOpened  = keyDoc
           ? (docViewedEmailsMap[keyDoc.id] && emails.some(e => docViewedEmailsMap[keyDoc.id].has(e)))
           : null;
-        return { inv, lastSeenTs, accessibleN: accessible.length, openedN: opened.length, keyOpened };
+        return { inv, lastSeenTs, accessible, openedIds, accessibleN: accessible.length, openedN: opened.length, keyOpened };
       }).sort((a, b) => a.lastSeenTs - b.lastSeenTs); // coldest first → needs chasing
 
       const body = rows.map(r => {
@@ -1472,11 +1473,27 @@
             ? `<span class="badge badge--grey" style="font-size:0.62rem;">✓ ${escHtml(keyDoc.category || 'Key doc')}</span>`
             : `<span class="badge" style="font-size:0.62rem;background:#FBE9E7;color:#C0392B;">⚠ ${escHtml(keyDoc.category || 'Key doc')} unopened</span>`;
         }
-        return `<tr>
-          <td><strong>${escHtml(r.inv.name)}</strong></td>
+
+        // Per-doc detail (hidden until the row is expanded)
+        const detail = r.accessibleN
+          ? r.accessible.map(d => {
+              const open = r.openedIds.has(d.id);
+              return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;">
+                <span style="width:16px;text-align:center;">${open ? '✅' : '⚪'}</span>
+                <span style="flex:1;min-width:0;${open ? '' : 'color:var(--text-light);'}">${escHtml(d.name)}${d.category ? ` <span class="hint" style="margin:0;">· ${escHtml(d.category)}</span>` : ''}</span>
+                <span class="hint" style="margin:0;white-space:nowrap;">${open ? 'opened' : 'not opened'}</span>
+              </div>`;
+            }).join('')
+          : '<p class="hint" style="margin:0;">No documents shared with this investor yet.</p>';
+
+        return `<tr class="eng-row" data-inv="${r.inv.id}" style="cursor:pointer;">
+          <td><span class="eng-caret" style="display:inline-block;width:14px;color:var(--text-light);transition:transform .15s;">▸</span> <strong>${escHtml(r.inv.name)}</strong></td>
           <td style="white-space:nowrap;">${seen}</td>
           <td style="text-align:center;">${ratio}</td>
           <td>${keyTag}</td>
+        </tr>
+        <tr class="eng-detail" data-detail="${r.inv.id}" style="display:none;">
+          <td colspan="4" style="background:var(--bg,#FAFAF8);padding:8px 14px 12px 30px;">${detail}</td>
         </tr>`;
       }).join('');
 
@@ -1490,6 +1507,18 @@
             <tbody>${body}</tbody>
           </table></div>`
         : '<p class="hint">No investors yet.</p>';
+
+      // Wire row expand/collapse
+      document.querySelectorAll('#engagementBody .eng-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const id = row.dataset.inv;
+          const detailRow = document.querySelector(`#engagementBody .eng-detail[data-detail="${id}"]`);
+          const caret = row.querySelector('.eng-caret');
+          const isOpen = detailRow.style.display !== 'none';
+          detailRow.style.display = isOpen ? 'none' : '';
+          if (caret) caret.style.transform = isOpen ? '' : 'rotate(90deg)';
+        });
+      });
 
       document.getElementById('engagementModal').classList.add('open');
     }
