@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null &&
+             request.auth.token.email in [
+               'andre.rocha@douropartners.pt',
+               'antonio.carvalho@douropartners.pt'
+             ];
+    }
+
+    // Admins have full access to all collections
+    match /{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // Investors can read documents where their email is listed
+    match /documents/{docId} {
+      allow read: if request.auth != null &&
+                     request.auth.token.email in resource.data.allowedEmails;
+    }
+
+    // Anyone authenticated can read config (stage info)
+    match /config/{docId} {
+      allow read: if request.auth != null;
+    }
+
+    // Public — only contains email addresses, used for login whitelist
+    match /config/allowedEmails {
+      allow read: if true;
+    }
+
+    // Investors can write their own activity log entries — but only the real
+    // event types the portal emits. This stops arbitrary values (e.g. HTML
+    // payloads) being stored in `type`, which the admin log renders.
+    match /activityLog/{entryId} {
+      allow create: if request.auth != null
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.type in ['login', 'logout', 'portal_visit', 'doc_downloaded'];
+    }
+
+    // Anyone authenticated can read investor messages
+    match /portalMessages/{docId} {
+      allow read: if request.auth != null;
+    }
+
+  }
+}

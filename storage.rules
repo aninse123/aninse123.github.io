@@ -1,0 +1,22 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAdmin() {
+      return request.auth != null &&
+             request.auth.token.email in [
+               'andre.rocha@douropartners.pt',
+               'antonio.carvalho@douropartners.pt'
+             ];
+    }
+
+    // Investors download via the tokenized downloadURL stored in Firestore,
+    // which bypasses these rules by design — so scoping read to admins does
+    // NOT affect investor downloads. It only closes direct, path-based access
+    // to files an investor was never granted.
+    match /documents/{fileName} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+  }
+}
