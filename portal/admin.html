@@ -866,12 +866,19 @@
         if (snap.exists()) {
           const d = snap.data();
           currentStage = d.currentStage || 1;
-          notifySecret = d.notifySecret  || '';
+          notifySecret = d.notifySecret  || '';   // transitional fallback — safe to remove field from config/portal once adminConfig/notify is set
           document.getElementById('meetingLink').value = d.meetingLink || '';
         }
       } catch (e) {
         currentStage = 1;
       }
+      // Notify secret lives in an admin-only doc (config/portal is investor-readable, so it must not hold secrets).
+      try {
+        const secretSnap = await getDoc(doc(db, 'adminConfig', 'notify'));
+        if (secretSnap.exists() && secretSnap.data().notifySecret) {
+          notifySecret = secretSnap.data().notifySecret;
+        }
+      } catch (e) { /* keep transitional fallback above */ }
       renderAdminStageBar();
     }
 
