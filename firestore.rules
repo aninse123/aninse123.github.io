@@ -26,7 +26,14 @@ service cloud.firestore {
       allow read: if request.auth != null;
     }
 
-    // Public — only contains email addresses, used for login whitelist
+    // Public — only contains SHA-256 hashes of allowed emails (no plaintext),
+    // used by the login page to check registration without exposing the list.
+    match /config/allowedEmailHashes {
+      allow read: if true;
+    }
+
+    // Legacy plaintext whitelist — kept public transitionally during the switch
+    // to allowedEmailHashes; delete the doc + remove this rule once hashes are live.
     match /config/allowedEmails {
       allow read: if true;
     }

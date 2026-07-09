@@ -802,12 +802,19 @@
     // ── Admin identity ─────────────────────────────────────────
     let adminEmail = '';
 
-    // ── Sync allowed emails (public whitelist for login page) ──
+    // ── Sync allowed emails as a scrambled (SHA-256) public list for login ──
+    // The login page can check membership without the real emails ever being
+    // public. Plaintext emails still live in the admin-only investors collection.
+    async function sha256Hex(str) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+      return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+    }
     async function syncAllowedEmails() {
       try {
         const allEmails = new Set(ADMIN_EMAILS);
         allInvestors.forEach(inv => (inv.emails || []).forEach(e => allEmails.add(e)));
-        await setDoc(doc(db, 'config', 'allowedEmails'), { emails: [...allEmails] });
+        const hashes = await Promise.all([...allEmails].map(e => sha256Hex(String(e).trim().toLowerCase())));
+        await setDoc(doc(db, 'config', 'allowedEmailHashes'), { hashes });
       } catch (e) { console.error('syncAllowedEmails error:', e); }
     }
 
@@ -944,6 +951,11 @@
       document.getElementById('loadingScreen').style.display = 'none';
       document.getElementById('app').style.display           = 'block';
       await Promise.all([loadStage(), loadAll(), loadMessages()]);
+      // One-time backfill: create the scrambled login list if it doesn't exist yet.
+      try {
+        const hs = await getDoc(doc(db, 'config', 'allowedEmailHashes'));
+        if (!hs.exists()) await syncAllowedEmails();
+      } catch (e) { /* non-fatal */ }
     });
 
     // ── Load everything ────────────────────────────────────────

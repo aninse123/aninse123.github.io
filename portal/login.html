@@ -276,12 +276,26 @@
       }
     }
 
-    // Check if email is registered (reads public config/allowedEmails document)
+    // SHA-256 → hex (matches how the admin builds the scrambled list)
+    async function sha256Hex(str) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+      return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // Check if email is registered — against the scrambled (hashed) public list,
+    // so the real investor emails are never exposed publicly.
     async function isRegistered(email) {
-      if (ADMIN_EMAILS.includes(email)) return true;
+      const norm = email.trim().toLowerCase();
+      if (ADMIN_EMAILS.includes(norm)) return true;
+      // Preferred: scrambled list (no plaintext emails public)
+      const hashSnap = await getDoc(doc(db, 'config', 'allowedEmailHashes'));
+      if (hashSnap.exists()) {
+        return (hashSnap.data().hashes || []).includes(await sha256Hex(norm));
+      }
+      // Transitional fallback: legacy plaintext list (removed once hashes are live)
       const snap = await getDoc(doc(db, 'config', 'allowedEmails'));
       if (!snap.exists()) return false; // fail closed — admins are already allowed above
-      return (snap.data().emails || []).includes(email);
+      return (snap.data().emails || []).includes(norm);
     }
 
     // Send magic link

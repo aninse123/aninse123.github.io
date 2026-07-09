@@ -1930,11 +1930,16 @@ async function unlinkPortal() {
 
 // ── Sync allowedEmails ────────────────────────────────────────────────────────
 
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
 async function syncAllowedEmails() {
   const snap = await getDocs(collection(db, 'investors'));
   const allEmails = new Set(ADMIN_EMAILS);
   snap.docs.forEach(d => (d.data().emails || []).forEach(e => allEmails.add(e)));
-  await setDoc(doc(db, 'config', 'allowedEmails'), { emails: [...allEmails] });
+  const hashes = await Promise.all([...allEmails].map(e => sha256Hex(String(e).trim().toLowerCase())));
+  await setDoc(doc(db, 'config', 'allowedEmailHashes'), { hashes });
 }
 
 // ── Grant portal access ───────────────────────────────────────────────────────
