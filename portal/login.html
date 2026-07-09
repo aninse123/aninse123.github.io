@@ -280,7 +280,7 @@
     async function isRegistered(email) {
       if (ADMIN_EMAILS.includes(email)) return true;
       const snap = await getDoc(doc(db, 'config', 'allowedEmails'));
-      if (!snap.exists()) return true; // doc not yet created — allow through
+      if (!snap.exists()) return false; // fail closed — admins are already allowed above
       return (snap.data().emails || []).includes(email);
     }
 
