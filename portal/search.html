@@ -1973,7 +1973,7 @@ async function recalcAll(){
 // ── Export CSV ───────────────────────────────────────────────────────────────
 function exportCsv(){
   const list = sortList(getFiltered());
-  const esc2 = v => `"${String(v==null?'':v).replace(/"/g,'""')}"`;
+  const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
   const headers = ['Name','Sector','Sub-sector','NACE','CAE','Stage','Priority','Fit','Owner','Source','Concelho','Postcode','NUTS2','NUTS3','Address','Primary Contact','Revenue Y1','EBITDA Y1','EBITDA%','CAGR 3y','Employees','Last Touch','Attempts','Reason'];
   const rows = list.map(c => {
     const pc = (c.contacts||[]).find(x=>x.isPrimary) || (c.contacts||[])[0];
@@ -2009,7 +2009,7 @@ function openBulk(){
 }
 function downloadTemplate(){
   const ex1 = ['Acme Lda','PT500123456','500123456','Lda','1998','Serviços técnicos','Análises e ensaios','7120','Technical testing and analysis','71200','Actividades de ensaios e análises técnicas','','A','Porto','4000-001','PT11 - Norte','PT11A - Área Metropolitana do Porto','norte','no','','founder','retirement','database','andre','b','universe','https://acme.pt','geral@acme.pt','+351 220 000 000','5200000','4800000','4500000','4200000','4000000','950000','880000','800000','760000','720000','1200000','1350000','1500000','1600000','1700000','42','João Silva','Founder','joao@acme.pt','+351 912 000 000'];
-  const esc2 = v => `"${String(v==null?'':v).replace(/"/g,'""')}"`;
+  const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
   const csv = [BULK_COLS, ex1].map(r=>r.map(esc2).join(',')).join('\r\n');
   const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download:'douro-search-import-template.csv' });
@@ -2317,7 +2317,7 @@ async function applyReportChanges(){
   finally { btn.disabled=false; btn.textContent='Apply selected'; }
 }
 function downloadReportCsv(){
-  const esc2 = v => `"${String(v==null?'':v).replace(/"/g,'""')}"`;
+  const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
   const rows = [['Company','Field','Current','New (Orbis)'].map(esc2).join(',')]
     .concat(reportChanges.map(ch => [ch.name, ch.label, ch.current, ch.incoming].map(esc2).join(',')));
   const blob = new Blob(['﻿'+rows.join('\r\n')], { type:'text/csv;charset=utf-8;' });

@@ -2121,7 +2121,7 @@ function downloadBulkTemplate() {
   const headers = ['Name','Type','Stage','Owner','Country','Documents Sent','Interest','Source','Source Detail','Contact Name','Contact Email','Contact Phone','Contact Role'];
   const ex1     = ['Acme Capital','fund','engaged','andre','United Kingdom','yes','high','referral','Met at ETA Conference 2026','John Smith','john@acme.com','+351 912 345 678','Partner'];
   const ex2     = ['Jane Doe','private','identified','antonio','Portugal','no','medium','network','Introduced by António','Jane Doe','jane@example.com','',''];
-  const csvEsc  = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csvEsc  = v => { const s = String(v ?? ''); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g, '""')}"`; };
   const csv     = [headers, ex1, ex2].map(r => r.map(csvEsc).join(',')).join('\r\n');
   const blob    = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const url     = URL.createObjectURL(blob);
@@ -2328,7 +2328,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
     return 0;
   });
 
-  const csvEsc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csvEsc = v => { const s = String(v ?? ''); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g, '""')}"`; };
   const fmtTs  = ts => { const d = tsToDate(ts); return d ? d.toLocaleDateString('en-GB') : ''; };
 
   const headers = ['Name','Type','Stage','Owner','Country','Documents Sent','Interest','Source','Source Detail',

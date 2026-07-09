@@ -414,7 +414,7 @@
       const logs = getFilteredLogs();
       if (!logs.length) { alert('No entries to export.'); return; }
 
-      const csvCell = v => `"${String(v || '').replace(/"/g, '""')}"`;
+      const csvCell = v => { const s = String(v || ''); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g, '""')}"`; };
 
       const rows = [
         ['Time', 'Event', 'Who', 'Details'].map(csvCell).join(','),
