@@ -32,12 +32,6 @@ service cloud.firestore {
       allow read: if true;
     }
 
-    // Legacy plaintext whitelist — kept public transitionally during the switch
-    // to allowedEmailHashes; delete the doc + remove this rule once hashes are live.
-    match /config/allowedEmails {
-      allow read: if true;
-    }
-
     // Investors can write their own activity log entries — but only the real
     // event types the portal emits. This stops arbitrary values (e.g. HTML
     // payloads) being stored in `type`, which the admin log renders.
