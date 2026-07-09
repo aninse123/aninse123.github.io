@@ -9,3 +9,21 @@
   # via Firestore Security Rules, not by hiding the key. This disables
   # Netlify's smart secret detection which incorrectly flags Firebase keys.
   SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"
+
+# ── Security headers (applied to every response) ──────────────────────────────
+# Note: script-src/style-src allow 'unsafe-inline' because the portal pages use
+# inline <script type="module"> blocks and inline styles. The CSP therefore
+# provides origin-locking + clickjacking defence rather than full inline-XSS
+# blocking (that would need moving all inline JS to external files). External
+# origins are scoped to what the site actually uses: Google Fonts, the Firebase
+# SDK (gstatic) + back-ends (googleapis / firebaseapp / firebasestorage),
+# Web3Forms (contact form), Google Analytics/Tag Manager, and Microsoft Clarity.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.googletagmanager.com https://www.clarity.ms https://*.clarity.ms; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://*.firebasestorage.app https://api.web3forms.com https://www.google-analytics.com https://*.google-analytics.com https://*.clarity.ms; frame-src 'self' https://*.clarity.ms; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://api.web3forms.com; object-src 'none'"
