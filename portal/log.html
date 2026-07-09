@@ -382,7 +382,7 @@
         const details = buildLogDetail(l);
         return `<tr>
           <td style="white-space:nowrap;color:var(--text-light);font-size:0.8rem;">${ts}</td>
-          <td><span class="badge ${badge.cls}">${badge.label}</span></td>
+          <td><span class="badge ${badge.cls}">${escHtml(badge.label)}</span></td>
           <td style="font-size:0.82rem;">${escHtml(l.email || '—')}</td>
           <td style="font-size:0.82rem;color:var(--text-light);">${escHtml(details)}</td>
         </tr>`;

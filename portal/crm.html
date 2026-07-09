@@ -1443,7 +1443,7 @@ function renderActivityLog() {
       <div class="act-icon">${info.icon}</div>
       <div class="act-body">
         <div class="act-head">
-          <span class="act-type">${info.label}</span>
+          <span class="act-type">${esc(info.label)}</span>
           ${a.title ? `<span style="font-size:0.82rem;color:var(--text);">— ${esc(a.title)}</span>` : ''}
           ${statusBadge} ${via}
           <span class="act-date">${fmtDate(a.date)}</span>
