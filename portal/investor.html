@@ -299,6 +299,12 @@
       } catch (e) { /* fail silently */ }
     }
 
+    function escHtml(str) {
+      return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     // ── "New" (unread) tracking — local to this browser ─────────
     const VIEWED_KEY = 'dp_inv_viewed';
     function getViewed() { try { return new Set(JSON.parse(localStorage.getItem(VIEWED_KEY) || '[]')); } catch (e) { return new Set(); } }
@@ -326,13 +332,13 @@
           ? `— André & António  ·  ${new Date(ts.seconds * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`
           : '— André & António';
         const titleHtml = m.title
-          ? `<h3 class="welcome-card__title">${m.title}</h3>`
+          ? `<h3 class="welcome-card__title">${escHtml(m.title)}</h3>`
           : '';
         return `<div class="welcome-card" style="margin-bottom:16px;">
           <div class="welcome-card__icon">📢</div>
           <div class="welcome-card__body">
             ${titleHtml}
-            <p class="welcome-card__message">${m.message}</p>
+            <p class="welcome-card__message">${escHtml(m.message)}</p>
             <p class="welcome-card__date">${dateLabel}</p>
           </div>
         </div>`;
@@ -461,11 +467,11 @@
             card.innerHTML = `
               ${isNew ? '<span class="doc-new">New</span>' : ''}
               <div class="doc-icon">${icon}</div>
-              <div class="doc-category">${d.category || 'Document'}</div>
-              <div class="doc-name">${d.name}</div>
-              ${d.description ? `<div class="doc-description">${d.description}</div>` : ''}
+              <div class="doc-category">${escHtml(d.category || 'Document')}</div>
+              <div class="doc-name">${escHtml(d.name)}</div>
+              ${d.description ? `<div class="doc-description">${escHtml(d.description)}</div>` : ''}
               ${date ? `<div class="doc-date">Added ${date}</div>` : ''}
-              <a href="${d.downloadURL}" class="doc-download" target="_blank">
+              <a href="${escHtml(d.downloadURL)}" class="doc-download" target="_blank">
                 ↓ &nbsp;Download PDF
               </a>
             `;
