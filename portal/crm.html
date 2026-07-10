@@ -189,6 +189,9 @@
 
     /* Stage dropdown */
     .stage-wrap { position: relative; display: inline-block; }
+    .stage-trigger { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; padding: 2px 5px; border-radius: 20px; transition: background 0.15s; }
+    .stage-trigger:hover { background: rgba(0,0,0,0.06); }
+    .stage-caret { font-size: 0.65rem; color: var(--text-light); line-height: 1; }
     .stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 200; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 160px; padding: 4px 0; display: none; }
     .stage-menu.open { display: block; }
     .stage-opt { padding: 8px 14px; cursor: pointer; font-size: 0.82rem; display: flex; align-items: center; gap: 8px; }
@@ -1205,10 +1208,12 @@ function renderList() {
 
 async function openDetail(id) {
   currentInvId = id;
+  activities = [];                 // clear the previous investor's activities so the log never flashes stale data
   showEl('listView', false);
   showEl('detailView', true);
+  renderDetail();                  // core info (name/stage/contacts/commitments) is already in memory → render immediately
   try { await loadActivities(id); } catch(e) { console.error('loadActivities error:', e); activities = []; }
-  renderDetail();
+  if (currentInvId === id) renderActivityLog();   // fill in the log once loaded (guard against a fast switch to another investor)
 }
 
 function getInvestor() { return crmInvestors.find(i => i.id === currentInvId); }
@@ -1226,7 +1231,10 @@ function renderDetail() {
 
   document.getElementById('dMeta').innerHTML = `
     <div class="stage-wrap">
-      ${stagePill(inv.stage||'identified')}
+      <span class="stage-trigger" id="stageTrigger" title="Click to change stage">
+        ${stagePill(inv.stage||'identified')}
+        <span class="stage-caret">▾</span>
+      </span>
       <div class="stage-menu" id="stageMenu">
         ${Object.entries(STAGES).map(([k,v]) => `<div class="stage-opt" data-stage="${k}"><span class="stage-pill ${v.cls}">${v.label}</span></div>`).join('')}
       </div>
@@ -1234,11 +1242,10 @@ function renderDetail() {
     ${interestHtml} ${ownerHtml} ${inv.country?`<span class="badge badge-grey">🌍 ${esc(inv.country)}</span>`:''} ${inv.documentsSent?'<span class="badge badge-green">📄 Docs sent</span>':''} ${sourceHtml} ${sourceDetail}
     <span class="badge badge-grey">${esc(TYPE_LABELS[inv.type]||inv.type||'—')}</span>`;
 
-  // Stage pill click
-  const pill = document.getElementById('dMeta').querySelector('.stage-pill');
+  // Stage pill click → inline stage menu (no Edit needed)
+  const trigger = document.getElementById('stageTrigger');
   const menu = document.getElementById('stageMenu');
-  pill.style.cursor = 'pointer';
-  pill.addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('open'); });
+  trigger.addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('open'); });
   document.addEventListener('click', () => menu.classList.remove('open'), { once: true });
   menu.querySelectorAll('.stage-opt').forEach(opt => {
     opt.addEventListener('click', async () => {
@@ -1636,8 +1643,9 @@ async function saveContact() {
 }
 
 async function deleteContact(idx) {
-  if (!confirm('Remove this contact?')) return;
   const inv = getInvestor();
+  const ctName = (inv?.contacts||[])[idx]?.name || 'this contact';
+  if (!confirm(`Remove contact "${ctName}"?`)) return;
   const contacts = (inv.contacts||[]).filter((_,i) => i !== idx);
   await updateDoc(doc(db,'crmInvestors',inv.id), { contacts, updatedAt: serverTimestamp() });
   await logActivity(inv.id, 'contact_added', { date: new Date(), content: `Removed contact.` });
@@ -1845,7 +1853,10 @@ function openCommitModal() {
   document.getElementById('softValue').value = inv.softCommitment?.value || '';
   document.getElementById('hardUnits').value = inv.hardCommitment?.units || '';
   document.getElementById('hardValue').value = inv.hardCommitment?.value || '';
-  document.getElementById('commitHint').textContent = units ? `Fund total: ${units} units. % is calculated automatically.` : 'Set fund total units in ⚙ Settings to see % automatically.';
+  const up = fundSettings.units ? fundSettings.target / fundSettings.units : 0;
+  document.getElementById('commitHint').textContent = units
+    ? `Fund: ${units} units @ ${fmtEur(Math.round(up))}/unit. Units and value auto-fill each other; % is automatic.`
+    : 'Set fund total units in ⚙ Settings to enable units ↔ value auto-fill and %.';
   updateCommitPct();
   showEl('commitModal', true);
 }
@@ -2093,6 +2104,13 @@ document.getElementById('closeMtgCancelBtn').addEventListener('click', () => sho
 document.getElementById('closeMtgSaveBtn').addEventListener('click', closeMeeting);
 
 document.getElementById('editCommitBtn').addEventListener('click', openCommitModal);
+// Units ↔ value auto-fill in the commitments editor, via the fund's unit price (target ÷ units)
+function commitUnitPrice() { return fundSettings.units > 0 ? fundSettings.target / fundSettings.units : 0; }
+['soft','hard'].forEach(t => {
+  const u = document.getElementById(t+'Units'), v = document.getElementById(t+'Value');
+  u.addEventListener('input', () => { const p = commitUnitPrice(); if (p > 0 && u.value !== '') v.value = Math.round(Number(u.value) * p); updateCommitPct(); });
+  v.addEventListener('input', () => { const p = commitUnitPrice(); if (p > 0 && v.value !== '') u.value = Math.round(Number(v.value) / p); updateCommitPct(); });
+});
 document.getElementById('commitCancelBtn').addEventListener('click', () => showEl('commitModal',false));
 document.getElementById('commitSaveBtn').addEventListener('click', saveCommitments);
 ['softUnits','softValue','hardUnits','hardValue'].forEach(id => document.getElementById(id).addEventListener('input', updateCommitPct));
