@@ -1211,6 +1211,7 @@ async function openDetail(id) {
   activities = [];                 // clear the previous investor's activities so the log never flashes stale data
   showEl('listView', false);
   showEl('detailView', true);
+  window.scrollTo({ top: 0 });     // start the profile at the top, not wherever the table was scrolled
   renderDetail();                  // core info (name/stage/contacts/commitments) is already in memory → render immediately
   try { await loadActivities(id); } catch(e) { console.error('loadActivities error:', e); activities = []; }
   if (currentInvId === id) renderActivityLog();   // fill in the log once loaded (guard against a fast switch to another investor)
