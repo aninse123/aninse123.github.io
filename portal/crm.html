@@ -974,8 +974,9 @@ function startInvestorsListener() {
       snap => {
         crmInvestors = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         renderSummary();
-        // Only re-render the list when it's visible — never disturb an open detail view.
-        if (document.getElementById('listView').style.display !== 'none') renderList();
+        // Keep the list live even while a detail view is open — renderList only
+        // rewrites the (hidden) list table, so it never disturbs the open profile.
+        renderList();
         if (!done) { done = true; resolve(); }
       },
       err => { console.error('crmInvestors listener error:', err); if (!done) { done = true; resolve(); } }
