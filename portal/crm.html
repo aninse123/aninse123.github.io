@@ -189,9 +189,12 @@
 
     /* Stage dropdown */
     .stage-wrap { position: relative; display: inline-block; }
-    .stage-trigger { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; padding: 2px 5px; border-radius: 20px; transition: background 0.15s; }
-    .stage-trigger:hover { background: rgba(0,0,0,0.06); }
-    .stage-caret { font-size: 0.65rem; color: var(--text-light); line-height: 1; }
+    .stage-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-light); }
+    .stage-select { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; padding: 5px 10px; border: 1.5px solid var(--border); border-radius: var(--radius); background: var(--white); transition: border-color 0.15s, box-shadow 0.15s; }
+    .stage-select:hover { border-color: var(--primary); }
+    .stage-select.open { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(74,107,138,0.1); }
+    .stage-select__caret { font-size: 0.7rem; color: var(--text-light); line-height: 1; }
+    .stage-check { margin-left: auto; color: var(--primary); font-weight: 700; }
     .stage-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 200; background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 160px; padding: 4px 0; display: none; }
     .stage-menu.open { display: block; }
     .stage-opt { padding: 8px 14px; cursor: pointer; font-size: 0.82rem; display: flex; align-items: center; gap: 8px; }
@@ -1231,13 +1234,14 @@ function renderDetail() {
   const ownerHtml    = inv.owner    ? `<span class="badge badge-grey">👤 ${esc(OWNER_LABELS[inv.owner]||inv.owner)}</span>` : '';
 
   document.getElementById('dMeta').innerHTML = `
+    <span class="stage-label">Stage</span>
     <div class="stage-wrap">
-      <span class="stage-trigger" id="stageTrigger" title="Click to change stage">
+      <span class="stage-select" id="stageTrigger" title="Change stage">
         ${stagePill(inv.stage||'identified')}
-        <span class="stage-caret">▾</span>
+        <span class="stage-select__caret">▾</span>
       </span>
       <div class="stage-menu" id="stageMenu">
-        ${Object.entries(STAGES).map(([k,v]) => `<div class="stage-opt" data-stage="${k}"><span class="stage-pill ${v.cls}">${v.label}</span></div>`).join('')}
+        ${Object.entries(STAGES).map(([k,v]) => `<div class="stage-opt" data-stage="${k}"><span class="stage-pill ${v.cls}">${v.label}</span>${k===(inv.stage||'identified')?'<span class="stage-check">✓</span>':''}</div>`).join('')}
       </div>
     </div>
     ${interestHtml} ${ownerHtml} ${inv.country?`<span class="badge badge-grey">🌍 ${esc(inv.country)}</span>`:''} ${inv.documentsSent?'<span class="badge badge-green">📄 Docs sent</span>':''} ${sourceHtml} ${sourceDetail}
@@ -1246,8 +1250,8 @@ function renderDetail() {
   // Stage pill click → inline stage menu (no Edit needed)
   const trigger = document.getElementById('stageTrigger');
   const menu = document.getElementById('stageMenu');
-  trigger.addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('open'); });
-  document.addEventListener('click', () => menu.classList.remove('open'), { once: true });
+  trigger.addEventListener('click', e => { e.stopPropagation(); const open = menu.classList.toggle('open'); trigger.classList.toggle('open', open); });
+  document.addEventListener('click', () => { menu.classList.remove('open'); trigger.classList.remove('open'); }, { once: true });
   menu.querySelectorAll('.stage-opt').forEach(opt => {
     opt.addEventListener('click', async () => {
       menu.classList.remove('open');
