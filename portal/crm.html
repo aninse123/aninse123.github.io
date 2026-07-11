@@ -617,7 +617,7 @@
       <div class="form-row">
         <div class="form-group">
           <label># Units</label>
-          <input type="number" class="field" id="softUnits" min="0" step="1" placeholder="0">
+          <input type="number" class="field" id="softUnits" min="0" step="0.01" placeholder="0">
         </div>
         <div class="form-group">
           <label>Value (€)</label>
@@ -631,7 +631,7 @@
       <div class="form-row">
         <div class="form-group">
           <label># Units</label>
-          <input type="number" class="field" id="hardUnits" min="0" step="1" placeholder="0">
+          <input type="number" class="field" id="hardUnits" min="0" step="0.01" placeholder="0">
         </div>
         <div class="form-group">
           <label>Value (€)</label>
@@ -1873,8 +1873,9 @@ function updateCommitPct() {
 async function saveCommitments() {
   const btn = document.getElementById('commitSaveBtn');
   btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
-  const softCommitment = { units: Number(document.getElementById('softUnits').value)||0, value: Number(document.getElementById('softValue').value)||0 };
-  const hardCommitment = { units: Number(document.getElementById('hardUnits').value)||0, value: Number(document.getElementById('hardValue').value)||0 };
+  const round2 = x => Math.round((Number(x)||0) * 100) / 100;
+  const softCommitment = { units: round2(document.getElementById('softUnits').value), value: Number(document.getElementById('softValue').value)||0 };
+  const hardCommitment = { units: round2(document.getElementById('hardUnits').value), value: Number(document.getElementById('hardValue').value)||0 };
   try {
     await updateDoc(doc(db,'crmInvestors',currentInvId), { softCommitment, hardCommitment, updatedAt: serverTimestamp() });
     await logActivity(currentInvId, 'commit_updated', { date: new Date(), content: `Soft: ${softCommitment.units} units / ${fmtEur(softCommitment.value)}. Hard: ${hardCommitment.units} units / ${fmtEur(hardCommitment.value)}.` });
@@ -2110,7 +2111,7 @@ function commitUnitPrice() { return fundSettings.units > 0 ? fundSettings.target
 ['soft','hard'].forEach(t => {
   const u = document.getElementById(t+'Units'), v = document.getElementById(t+'Value');
   u.addEventListener('input', () => { const p = commitUnitPrice(); if (p > 0 && u.value !== '') v.value = Math.round(Number(u.value) * p); updateCommitPct(); });
-  v.addEventListener('input', () => { const p = commitUnitPrice(); if (p > 0 && v.value !== '') u.value = Math.round(Number(v.value) / p); updateCommitPct(); });
+  v.addEventListener('input', () => { const p = commitUnitPrice(); if (p > 0 && v.value !== '') u.value = Math.round((Number(v.value) / p) * 100) / 100; updateCommitPct(); });
 });
 document.getElementById('commitCancelBtn').addEventListener('click', () => showEl('commitModal',false));
 document.getElementById('commitSaveBtn').addEventListener('click', saveCommitments);
