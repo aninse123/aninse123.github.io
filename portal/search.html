@@ -762,6 +762,11 @@ const ACT = {
   company_created:  { label:'Company created',   icon:'✨', outreach:false },
   company_edited:   { label:'Profile updated',   icon:'✏️', outreach:false },
   stage_changed:    { label:'Stage changed',     icon:'🔀', outreach:false },
+  deal_updated:     { label:'Deal updated',      icon:'🤝', outreach:false },
+  financials_updated:{ label:'Financials updated', icon:'📊', outreach:false },
+  contact_added:    { label:'Contact added',     icon:'👤', outreach:false },
+  contact_edited:   { label:'Contact updated',   icon:'👤', outreach:false },
+  contact_removed:  { label:'Contact removed',   icon:'👤', outreach:false },
 };
 const MANUAL_ACT_TYPES = ['note','letter','call_attempted','call_connected','email','linkedin','warm_intro','leverage_network','meeting_scheduled','meeting_done','in_person','observation','other'];
 
@@ -1501,7 +1506,8 @@ async function changeStage(newStage){
   const old = c.stage;
   c.stage = newStage;
   await updateDoc(doc(db,'searchCompanies',c.id), { stage:newStage, updatedAt: serverTimestamp() });
-  await logAuto(c.id, 'stage_changed', `${STAGES[old]?.label||old} → ${STAGES[newStage]?.label||newStage}`);
+  const reason = (newStage==='pass'||newStage==='on_hold') && c.reasonExcluded ? ` · ${(newStage==='pass'?PASS_REASONS:HOLD_REASONS)[c.reasonExcluded]||c.reasonExcluded}` : '';
+  await logAuto(c.id, 'stage_changed', `${STAGES[old]?.label||old} → ${STAGES[newStage]?.label||newStage}${reason}`);
   cacheCompanies();
   await loadActivities(c.id);
   renderDetail();
@@ -1578,10 +1584,16 @@ async function saveCompany(){
   };
   try {
     if (editCoId) {
-      await updateDoc(doc(db,'searchCompanies',editCoId), data);
       const idx = companies.findIndex(c=>c.id===editCoId);
+      const oldStage = companies[idx]?.stage;
+      await updateDoc(doc(db,'searchCompanies',editCoId), data);
       companies[idx] = computeFields({ ...companies[idx], ...data });
-      await logAuto(editCoId, 'company_edited', 'Profile updated.');
+      if (oldStage !== data.stage) {
+        const reason = (data.stage==='pass'||data.stage==='on_hold') && data.reasonExcluded ? ` · ${(data.stage==='pass'?PASS_REASONS:HOLD_REASONS)[data.reasonExcluded]||data.reasonExcluded}` : '';
+        await logAuto(editCoId, 'stage_changed', `${STAGES[oldStage]?.label||oldStage} → ${STAGES[data.stage]?.label||data.stage}${reason}`);
+      } else {
+        await logAuto(editCoId, 'company_edited', 'Profile updated.');
+      }
     } else {
       const full = { ...data, financials:{}, contacts:[], addOnTo:[], addOns:[], createdAt: serverTimestamp(), createdBy: currentUser };
       const ref = await addDoc(collection(db,'searchCompanies'), full);
@@ -1616,6 +1628,7 @@ async function saveFinancials(){
   try {
     c.financials = fin; computeFields(c);
     await updateDoc(doc(db,'searchCompanies',c.id), { financials: fin, computedRevenue:c.computedRevenue, computedEBITDA:c.computedEBITDA, computedEBITDAMargin:c.computedEBITDAMargin, computedCAGR3y:c.computedCAGR3y, computedEmployees:c.computedEmployees, fitScore:c.fitScore, updatedAt: serverTimestamp() });
+    await logAuto(c.id, 'financials_updated', `Financials updated — Y1 rev ${c.computedRevenue?fmtEurShort(c.computedRevenue):'—'}, EBITDA ${c.computedEBITDA?fmtEurShort(c.computedEBITDA):'—'}, fit ${c.fitScore!=null?Number(c.fitScore).toFixed(1):'—'}`);
     cacheCompanies();
     renderFinancials(c); renderDetail();
   } catch(e){ alert('Error: '+e.message); }
@@ -1676,15 +1689,20 @@ async function saveContact(){
   try {
     await updateDoc(doc(db,'searchCompanies',c.id), { contacts, updatedAt: serverTimestamp() });
     c.contacts = contacts; cacheCompanies();
+    await logAuto(c.id, editCtIdx!=null ? 'contact_edited' : 'contact_added', `${editCtIdx!=null?'Updated':'Added'} contact: ${name}`);
     showEl('contactModal', false); renderContacts(c); renderDetail();
   } catch(e){ const el=document.getElementById('contactErr'); el.textContent=e.message; el.style.display='block'; }
   finally { btn.disabled=false; btn.innerHTML='Save Contact'; }
 }
 async function removeContact(idx){
   const c = getCompany();
+  const removed = (c.contacts||[])[idx];
+  if (!confirm(`Remove contact "${removed?.name||'this contact'}"?`)) return;
   const contacts = (c.contacts||[]).filter((_,i)=>i!==idx);
   await updateDoc(doc(db,'searchCompanies',c.id), { contacts, updatedAt: serverTimestamp() });
-  c.contacts = contacts; cacheCompanies(); renderContacts(c); renderDetail();
+  c.contacts = contacts; cacheCompanies();
+  await logAuto(c.id, 'contact_removed', `Removed contact: ${removed?.name||''}`);
+  renderContacts(c); renderDetail();
 }
 
 // ── Activities ───────────────────────────────────────────────────────────────
@@ -1758,7 +1776,8 @@ async function saveActivity(){
 }
 async function recomputeActivityFields(c){
   // lastTouchAt = most recent non-future, non-auto activity
-  const realActs = activities.filter(a => !['company_created','company_edited','stage_changed'].includes(a.type));
+  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed'];
+  const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));
   const lastTouchAt = past[0] ? past[0].date : null;
@@ -1902,9 +1921,20 @@ async function saveDeal(){
     updatedAt: serverTimestamp(),
   };
   const btn = document.getElementById('dSaveBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
+  // Diff milestone dates + key deal fields vs. current, for the activity trail
+  const DEAL_DATES = { introCallDate:'Intro call', teaserDate:'Teaser', ndaSentDate:'NDA sent', ndaSignedDate:'NDA signed', cimDate:'CIM', nboDate:'NBO', loiSubmittedDate:'LOI submitted', loiSignedDate:'LOI signed', exclusivityEnd:'Exclusivity end', ddStartDate:'DD start', financingDate:'Financing', closingDate:'Closing' };
+  const dealChanges = [];
+  Object.entries(DEAL_DATES).forEach(([f,label]) => {
+    const oldMs = c[f] ? (tsToDate(c[f])?.getTime()||0) : 0;
+    const newMs = data[f] ? (tsToDate(data[f])?.getTime()||0) : 0;
+    if (oldMs !== newMs) dealChanges.push(newMs ? `${label}: ${fmtDate(data[f])}` : `${label} cleared`);
+  });
+  if ((data.brokerId||null) !== (c.brokerId||null)) dealChanges.push('Broker changed');
+  if ((data.dealSizeBand||null) !== (c.dealSizeBand||null)) dealChanges.push('Deal size changed');
   try {
     await updateDoc(doc(db,'searchCompanies',c.id), data);
     Object.assign(c, data); cacheCompanies();
+    if (dealChanges.length) await logAuto(c.id, 'deal_updated', dealChanges.join(' · '));
     document.getElementById('dealModalDyn').remove();
     renderDeal(c);
   } catch(e){ alert('Error: '+e.message); btn.disabled=false; btn.innerHTML='Save Deal'; }
