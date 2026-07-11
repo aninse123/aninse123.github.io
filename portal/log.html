@@ -286,10 +286,14 @@
       message_published:       { label: 'Message published',   cls: 'badge--blue'  },
       message_updated:         { label: 'Message updated',     cls: 'badge--grey'  },
       message_deleted:         { label: 'Message deleted',     cls: 'badge--red'   },
+      access_updated:          { label: 'Access updated',      cls: 'badge--grey'  },
+      group_created:           { label: 'Group created',       cls: 'badge--blue'  },
+      group_updated:           { label: 'Group updated',       cls: 'badge--grey'  },
+      group_deleted:           { label: 'Group deleted',       cls: 'badge--red'   },
     };
 
     const INVESTOR_EVENTS = new Set(['login','logout','portal_visit','doc_downloaded']);
-    const ADMIN_EVENTS    = new Set(['doc_added','doc_edited','doc_deleted','access_granted','access_revoked','investor_created','investor_edited','investor_deleted','stage_changed']);
+    const ADMIN_EVENTS    = new Set(['doc_added','doc_edited','doc_deleted','access_granted','access_revoked','access_updated','investor_created','investor_edited','investor_deleted','stage_changed','group_created','group_updated','group_deleted','message_published','message_updated','message_deleted','notification_sent']);
 
     // ── Auth guard ─────────────────────────────────────────────
     onAuthStateChanged(auth, async (user) => {
@@ -405,6 +409,10 @@
         case 'message_published':
         case 'message_updated':
         case 'message_deleted': return [l.title ? `"${l.title}"` : '', l.expiry && l.expiry !== 'none' ? `expires ${l.expiry}` : ''].filter(Boolean).join(' · ');
+        case 'access_updated': return [l.docName, l.shareAll ? 'all investors' : [l.groups ? `${l.groups} group(s)` : '', l.individuals ? `${l.individuals} investor(s)` : ''].filter(Boolean).join(', ')].filter(Boolean).join(' — ');
+        case 'group_created':
+        case 'group_deleted':  return l.groupName || '';
+        case 'group_updated':  return [l.groupName, l.memberCount != null ? `(${l.memberCount} members)` : ''].filter(Boolean).join(' ');
         default:               return l.detail || '';
       }
     }

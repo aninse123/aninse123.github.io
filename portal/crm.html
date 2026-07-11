@@ -1654,7 +1654,7 @@ async function deleteContact(idx) {
   if (!confirm(`Remove contact "${ctName}"?`)) return;
   const contacts = (inv.contacts||[]).filter((_,i) => i !== idx);
   await updateDoc(doc(db,'crmInvestors',inv.id), { contacts, updatedAt: serverTimestamp() });
-  await logActivity(inv.id, 'contact_added', { date: new Date(), content: `Removed contact.` });
+  await logActivity(inv.id, 'contact_removed', { date: new Date(), content: `Removed contact: ${ctName}` });
   crmInvestors = crmInvestors.map(i => i.id === inv.id ? { ...i, contacts } : i);
   renderContacts();
 }
