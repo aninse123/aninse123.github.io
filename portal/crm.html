@@ -2076,7 +2076,10 @@ async function logActivity(investorId, type, { date, content, title=null }) {
 function showDetail(show) {
   showEl('listView', !show);
   showEl('detailView', show);
-  if (!show) { currentInvId = null; activities = []; }
+  // Returning to the list: re-render it. The real-time listener skips the list
+  // while it's hidden, so any edit made in the profile (commitments, stage,
+  // contacts…) must be reflected now.
+  if (!show) { currentInvId = null; activities = []; renderList(); }
 }
 
 // ── Event listeners ───────────────────────────────────────────────────────────
