@@ -41,8 +41,9 @@
     .nav__label { font-family: var(--font-serif); color: rgba(255,255,255,0.8); font-size: 0.95rem; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.2); }
     .nav__right { display: flex; align-items: center; gap: 14px; }
     .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.55); }
-    .nav__portal-link { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.75); text-decoration: none; }
-    .nav__portal-link:hover { color: white; }
+    .nav__link { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.65); text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent; transition: color 0.2s; }
+    .nav__link:hover { color: #fff; }
+    .nav__link.active { color: #fff; border-bottom-color: rgba(255,255,255,0.9); }
     .sign-out-btn { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.65); background: none; border: 1px solid rgba(255,255,255,0.3); border-radius: var(--radius); padding: 6px 14px; cursor: pointer; transition: 0.2s; }
     .sign-out-btn:hover { color: white; border-color: white; }
 
@@ -157,12 +158,13 @@
           <span class="nav__label">Budget</span>
         </div>
         <div class="nav__right">
-          <a href="/" class="nav__main-link">← Main site</a>
+          <a href="/portal/investor.html" class="nav__link">Investor view</a>
+          <a href="/portal/admin.html"    class="nav__link">Admin</a>
+          <a href="/portal/crm.html"      class="nav__link">CRM</a>
+          <a href="/portal/search.html"   class="nav__link">Search</a>
+          <a href="/portal/budget.html"   class="nav__link active">Budget</a>
+          <a href="/portal/log.html"      class="nav__link">Activity Log</a>
           <span class="nav__email" id="adminEmail"></span>
-          <a href="/portal/admin.html" class="nav__portal-link">Admin</a>
-          <a href="/portal/crm.html" class="nav__portal-link">CRM</a>
-          <a href="/portal/search.html" class="nav__portal-link">Search</a>
-          <a href="/portal/log.html" class="nav__portal-link">Activity Log</a>
           <button class="sign-out-btn" id="signOutBtn">Sign out</button>
         </div>
       </div>
