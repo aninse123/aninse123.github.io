@@ -552,8 +552,10 @@
         };
         if (editItemId) {
           await updateDoc(doc(db, 'budgetItems', editItemId), data);
+          logEvent('budget_edited', { itemName: name, amount });
         } else {
           await addDoc(collection(db, 'budgetItems'), { ...data, createdAt: serverTimestamp(), createdBy: adminEmail });
+          logEvent('budget_added', { itemName: name, amount });
         }
         document.getElementById('itemModal').classList.remove('open');
         await loadAll();
@@ -574,7 +576,13 @@
         catch (e) { if (e.code !== 'storage/object-not-found') console.error('attachment delete:', e); }
       }
       await deleteDoc(doc(db, 'budgetItems', id));
+      logEvent('budget_deleted', { itemName: it.name, amount: it.amount });
       await loadAll();
+    }
+
+    async function logEvent(type, data = {}) {
+      try { await addDoc(collection(db, 'activityLog'), { type, email: adminEmail, timestamp: serverTimestamp(), ...data }); }
+      catch (e) { /* non-fatal */ }
     }
 
     // ── CSV export (formula-injection safe, matches #11) ───────

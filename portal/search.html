@@ -1647,6 +1647,7 @@ async function confirmDelete(){
     const acts = await getDocs(query(collection(db,'searchActivities'), where('companyId','==',c.id)));
     await Promise.all(acts.docs.map(d => deleteDoc(doc(db,'searchActivities',d.id))));
     await deleteDoc(doc(db,'searchCompanies',c.id));
+    await logPortal('company_deleted', { companyName: c.name });
     companies = companies.filter(x=>x.id!==c.id);
     cacheCompanies();
     showEl('deleteModal', false);
@@ -1791,6 +1792,11 @@ async function logAuto(companyId, type, content){
   const data = { companyId, type, date: Timestamp.now(), title:null, content:content||null, status:null, createdAt: serverTimestamp(), createdBy: currentUser };
   await addDoc(collection(db,'searchActivities'), data);
   if (companyId === currentCoId) activities.unshift({ id:'tmp'+Date.now(), ...data });
+}
+// Cross-cutting search events (company deletion, bulk import) → portal activityLog,
+// which is durable (survives the company's own deletion) and shown in log.html.
+async function logPortal(type, data={}){
+  try { await addDoc(collection(db,'activityLog'), { type, email: currentUser, timestamp: serverTimestamp(), ...data }); } catch(e){}
 }
 
 function openCloseMtg(actId){
@@ -2308,6 +2314,7 @@ async function confirmBulk(){
       await batch.commit();
       btn.innerHTML = `<span class="spin-sm"></span>Updating… ${u}/${updRows.length}`;
     }
+    if (newRows.length || updRows.length) await logPortal('search_import', { newCount: newRows.length, updateCount: updRows.length });
     showEl('bulkModal', false);
     btn.disabled=false; btn.textContent='Import';
     if (changes.length) renderChangeReport(changes);

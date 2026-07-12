@@ -932,6 +932,7 @@
       btn.disabled = true; btn.textContent = 'Saving…';
       try {
         await setDoc(doc(db, 'config', 'portal'), { meetingLink: url }, { merge: true });
+        logEvent('settings_updated', { detail: url ? 'Meeting link updated' : 'Meeting link cleared' });
         saved.style.display = 'inline';
         setTimeout(() => { saved.style.display = 'none'; }, 3000);
       } catch (err) {
@@ -2335,6 +2336,7 @@
 
     // ── Sign out ───────────────────────────────────────────────
     document.getElementById('signOutBtn').addEventListener('click', async () => {
+      await logEvent('logout');
       await signOut(auth);
       window.location.href = '/portal/login.html';
     });

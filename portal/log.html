@@ -290,10 +290,16 @@
       group_created:           { label: 'Group created',       cls: 'badge--blue'  },
       group_updated:           { label: 'Group updated',       cls: 'badge--grey'  },
       group_deleted:           { label: 'Group deleted',       cls: 'badge--red'   },
+      settings_updated:        { label: 'Settings updated',    cls: 'badge--grey'  },
+      budget_added:            { label: 'Budget item added',   cls: 'badge--blue'  },
+      budget_edited:           { label: 'Budget item edited',  cls: 'badge--grey'  },
+      budget_deleted:          { label: 'Budget item deleted', cls: 'badge--red'   },
+      company_deleted:         { label: 'Company deleted',     cls: 'badge--red'   },
+      search_import:           { label: 'Companies imported',  cls: 'badge--blue'  },
     };
 
     const INVESTOR_EVENTS = new Set(['login','logout','portal_visit','doc_downloaded']);
-    const ADMIN_EVENTS    = new Set(['doc_added','doc_edited','doc_deleted','access_granted','access_revoked','access_updated','investor_created','investor_edited','investor_deleted','stage_changed','group_created','group_updated','group_deleted','message_published','message_updated','message_deleted','notification_sent']);
+    const ADMIN_EVENTS    = new Set(['doc_added','doc_edited','doc_deleted','access_granted','access_revoked','access_updated','investor_created','investor_edited','investor_deleted','stage_changed','group_created','group_updated','group_deleted','message_published','message_updated','message_deleted','notification_sent','settings_updated','budget_added','budget_edited','budget_deleted','company_deleted','search_import']);
 
     // ── Auth guard ─────────────────────────────────────────────
     onAuthStateChanged(auth, async (user) => {
@@ -413,6 +419,12 @@
         case 'group_created':
         case 'group_deleted':  return l.groupName || '';
         case 'group_updated':  return [l.groupName, l.memberCount != null ? `(${l.memberCount} members)` : ''].filter(Boolean).join(' ');
+        case 'settings_updated': return l.detail || '';
+        case 'budget_added':
+        case 'budget_edited':
+        case 'budget_deleted': return [l.itemName, l.amount != null ? `€${Number(l.amount).toLocaleString('en-IE')}` : ''].filter(Boolean).join(' · ');
+        case 'company_deleted': return l.companyName || '';
+        case 'search_import':  return [l.newCount ? `${l.newCount} new` : '', l.updateCount ? `${l.updateCount} updated` : ''].filter(Boolean).join(', ') || 'import';
         default:               return l.detail || '';
       }
     }
