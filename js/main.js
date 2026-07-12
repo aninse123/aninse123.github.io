@@ -126,5 +126,20 @@ function declineCookies() {
   if (banner) banner.style.display = 'none';
 }
 
+/* ===== SCROLL REVEAL ===== */
+function initReveals() {
+  const sel = '.about__text, .criteria__card, .team__card, .team__footnote, .contact__subtitle, .contact__wrapper, .section .section__title';
+  const els = [...document.querySelectorAll(sel)];
+  if (!els.length) return;
+  els.forEach(el => el.classList.add('reveal-target'));
+  if (!('IntersectionObserver' in window)) { els.forEach(el => el.classList.add('is-revealed')); return; }
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) { e.target.classList.add('is-revealed'); io.unobserve(e.target); }
+    });
+  }, { threshold: 0.1, rootMargin: '0px 0px -6% 0px' });
+  els.forEach(el => io.observe(el));
+}
+
 /* ===== INIT ===== */
-document.addEventListener('DOMContentLoaded', () => { setLang(currentLang); initConsent(); });
+document.addEventListener('DOMContentLoaded', () => { setLang(currentLang); initConsent(); initReveals(); });

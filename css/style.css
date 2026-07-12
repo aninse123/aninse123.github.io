@@ -126,6 +126,17 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
 }
 .lang-btn.active { color: var(--primary); }
 .lang-btn:hover { color: var(--primary); }
+
+/* Nav readable over the dark hero (top of page, before the solid scrolled state) */
+.nav:not(.scrolled) .nav__logo img { filter: brightness(0) invert(1); }
+.nav:not(.scrolled) .nav__hamburger span { background: #fff; }
+@media (min-width: 769px) {
+  .nav:not(.scrolled) .nav__links a { color: #fff; }
+  .nav:not(.scrolled) .nav__links a:hover { color: rgba(255,255,255,0.72); }
+  .nav:not(.scrolled) .lang-btn { color: rgba(255,255,255,0.72); }
+  .nav:not(.scrolled) .lang-btn.active { color: #fff; }
+  .nav:not(.scrolled) .nav__investor-login { color: #fff; border-color: rgba(255,255,255,0.45); }
+}
 .nav__hamburger {
   display: none;
   flex-direction: column;
@@ -152,41 +163,62 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   align-items: center;
   justify-content: center;
   text-align: center;
-  background: var(--bg);
+  background: #1E2A38;
   padding: 140px 24px 100px;
   position: relative;
   overflow: hidden;
 }
+.hero::before {
+  content: '';
+  position: absolute; inset: 0; z-index: 0;
+  background:
+    linear-gradient(180deg, rgba(22,32,48,0.56) 0%, rgba(22,32,48,0.40) 45%, rgba(22,32,48,0.66) 100%),
+    url('../assets/douro-hero.svg') center/cover no-repeat;
+  transform: scale(1.03);
+  animation: heroZoom 26s ease-in-out infinite alternate;
+}
+@keyframes heroZoom { from { transform: scale(1.03); } to { transform: scale(1.12); } }
 .hero::after {
   content: '';
   position: absolute;
   bottom: -1px; left: 0; right: 0;
-  height: 100px;
+  height: 100px; z-index: 1;
   background: var(--white);
   clip-path: ellipse(55% 100% at 50% 100%);
 }
-.hero__container { position: relative; z-index: 1; }
+.hero__container { position: relative; z-index: 2; }
 .hero__logo {
   height: 180px;
   margin: 0 auto 40px;
-  filter: drop-shadow(0 8px 24px rgba(74, 107, 138, 0.15));
+  filter: brightness(0) invert(1) drop-shadow(0 8px 24px rgba(0,0,0,0.35));
 }
 .hero__title {
   font-size: clamp(2rem, 5vw, 3.25rem);
-  color: var(--primary);
+  color: #fff;
   margin-bottom: 24px;
   max-width: 700px;
   margin-left: auto;
   margin-right: auto;
   letter-spacing: -0.01em;
+  text-shadow: 0 2px 24px rgba(0,0,0,0.35);
 }
 .hero__subtitle {
   font-size: 1.1rem;
-  color: var(--text-light);
+  color: rgba(255,255,255,0.9);
   max-width: 560px;
   margin: 0 auto 44px;
   line-height: 1.8;
+  text-shadow: 0 1px 14px rgba(0,0,0,0.3);
 }
+@media (prefers-reduced-motion: reduce) { .hero::before { animation: none; } }
+
+/* Scroll-reveal (added via JS; absent → content just shows) */
+.reveal-target { opacity: 0; transform: translateY(26px); transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2,0.7,0.2,1); }
+.reveal-target.is-revealed { opacity: 1; transform: none; }
+.criteria__card:nth-child(2).reveal-target { transition-delay: 0.1s; }
+.criteria__card:nth-child(3).reveal-target { transition-delay: 0.2s; }
+.team__card:nth-child(2).reveal-target { transition-delay: 0.12s; }
+@media (prefers-reduced-motion: reduce) { .reveal-target { opacity: 1 !important; transform: none !important; transition: none !important; } }
 
 /* ===== ABOUT ===== */
 .about { background: var(--white); }
