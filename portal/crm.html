@@ -830,6 +830,7 @@ const ACT = {
   investor_created:  { label:'Added to CRM',       icon:'➕' },
   investor_edited:   { label:'Profile Updated',    icon:'✏️' },
   contact_added:     { label:'Contact Added',      icon:'👤' },
+  contact_edited:    { label:'Contact Updated',    icon:'👤' },
   contact_removed:   { label:'Contact Removed',    icon:'👤' },
   commit_updated:    { label:'Commitment Updated', icon:'💰' },
   portal_linked:     { label:'Portal Connected',   icon:'🔗' },
@@ -1641,7 +1642,7 @@ async function saveContact() {
   if (isEdit) { contacts[editCtIdx] = newContact; } else { contacts.push(newContact); }
   try {
     await updateDoc(doc(db,'crmInvestors',inv.id), { contacts, updatedAt: serverTimestamp() });
-    await logActivity(inv.id, isEdit ? 'investor_edited' : 'contact_added', { date: new Date(), content: `${isEdit?'Updated':'Added'} contact: ${name}` });
+    await logActivity(inv.id, isEdit ? 'contact_edited' : 'contact_added', { date: new Date(), content: `${isEdit?'Updated':'Added'} contact: ${name}` });
     crmInvestors = crmInvestors.map(i => i.id === inv.id ? { ...i, contacts } : i);
     showEl('contactModal',false); renderContacts();
   } catch(e) { document.getElementById('ctErr').textContent=e.message; document.getElementById('ctErr').style.display='block'; }
