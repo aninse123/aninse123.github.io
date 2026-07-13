@@ -222,20 +222,17 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
 .hero-cta {
   background: var(--white);
   text-align: center;
-  padding: 28px 24px 32px;
+  padding: 20px 24px 32px;
 }
-/* Desktop only: nudge just the button (not the whole white strip, which would
-   cut a flat edge across the video near the page edges) up into the curve for
-   a smoother hero→section transition. The curve is tallest at the horizontal
-   center, exactly where this centered button sits, so it stays safely on
-   white. -90px keeps the button's bottom edge at/above hero's own bottom edge
-   (hero is min-height:100vh, so that edge sits at the initial-load fold on
-   short viewports) — verified it never crosses below it, so the button can't
-   render partly below the fold. Mobile keeps its own flow position — already
-   reads well there. */
-@media (min-width: 769px) {
-  .hero-cta .btn { transform: translateY(-90px); }
-}
+/* No transform here on purpose: pulling the button up toward hero's own bottom
+   edge (min-height:100vh, so that edge sits at the browser's initial-load
+   fold) looked good in isolated testing but a real browser's own chrome
+   (address bar, tabs, bookmarks) eats part of that "100vh" before the page
+   even starts, so the margin that looked safe in a clean test viewport wasn't
+   safe in practice — the button rendered below the real fold. Keeping the
+   button in plain normal flow, just below the curve, means it's always fully
+   visible regardless of browser chrome, zoom, or scroll state — reliability
+   over the extra visual flourish. */
 
 /* Scroll-reveal (added via JS; absent → content just shows) */
 .reveal-target { opacity: 0; transform: translateY(26px); transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2,0.7,0.2,1); }
