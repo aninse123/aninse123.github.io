@@ -158,13 +158,13 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
 
 /* ===== HERO ===== */
 .hero {
-  min-height: 100vh;
+  min-height: 85vh;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
   background: #1E2A38 url('../assets/douro-hero-poster.jpg') center/cover no-repeat;
-  padding: 140px 24px 170px;
+  padding: 110px 24px 130px;
   position: relative;
   overflow: hidden;
 }
@@ -194,14 +194,14 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
 @media (prefers-reduced-motion: reduce) { .hero__video { display: none; } }
 .hero.hero--no-video .hero__video { display: none; }
 .hero__logo {
-  height: 180px;
-  margin: 0 auto 40px;
+  height: 150px;
+  margin: 0 auto 28px;
   filter: brightness(0) invert(1) drop-shadow(0 8px 24px rgba(0,0,0,0.35));
 }
 .hero__title {
   font-size: clamp(2rem, 5vw, 3.25rem);
   color: #fff;
-  margin-bottom: 28px;
+  margin-bottom: 20px;
   max-width: 780px;
   margin-left: auto;
   margin-right: auto;
@@ -222,15 +222,14 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
 .hero-cta {
   background: var(--white);
   text-align: center;
-  padding: 20px 24px 32px;
+  padding: 16px 24px 24px;
 }
 /* No transform here on purpose: pulling the button up toward hero's own bottom
-   edge (min-height:100vh, so that edge sits at the browser's initial-load
-   fold) looked good in isolated testing but a real browser's own chrome
-   (address bar, tabs, bookmarks) eats part of that "100vh" before the page
-   even starts, so the margin that looked safe in a clean test viewport wasn't
-   safe in practice — the button rendered below the real fold. Keeping the
-   button in plain normal flow, just below the curve, means it's always fully
+   edge looked good in isolated testing but a real browser's own chrome
+   (address bar, tabs, bookmarks) eats into the visible viewport before the
+   page even starts, so a margin that looked safe in a clean test window
+   wasn't safe in practice — the button rendered below the real fold. Keeping
+   the button in plain normal flow, just below the curve, means it's always fully
    visible regardless of browser chrome, zoom, or scroll state — reliability
    over the extra visual flourish. */
 
