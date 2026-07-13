@@ -587,7 +587,14 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   .section__title { font-size: 1.75rem; margin-bottom: 36px; }
 
   .nav__hamburger { display: flex; }
-  .nav__lang { margin-left: 0; }
+  .nav__container { position: relative; }
+  .nav__lang {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    margin-left: 0;
+  }
   .nav__investor-login { display: none; }
   .nav__links--investor { display: block; }
   .nav__links {
