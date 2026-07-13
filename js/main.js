@@ -141,5 +141,15 @@ function initReveals() {
   els.forEach(el => io.observe(el));
 }
 
+/* ===== HERO VIDEO — respect Data Saver mode ===== */
+// navigator.connection is Chrome/Android/Edge only; on browsers without it
+// (Safari, Firefox) this simply does nothing and the video plays normally.
+function initHeroVideoDataSaver() {
+  const conn = navigator.connection || navigator.webkitConnection || navigator.mozConnection;
+  if (conn && conn.saveData) {
+    document.querySelector('.hero')?.classList.add('hero--no-video');
+  }
+}
+
 /* ===== INIT ===== */
-document.addEventListener('DOMContentLoaded', () => { setLang(currentLang); initConsent(); initReveals(); });
+document.addEventListener('DOMContentLoaded', () => { setLang(currentLang); initConsent(); initReveals(); initHeroVideoDataSaver(); });

@@ -187,9 +187,12 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   clip-path: ellipse(55% 100% at 50% 100%);
 }
 .hero__container { position: relative; z-index: 3; }
-/* Static poster instead of autoplaying video on mobile (data/battery) and reduced-motion */
-@media (max-width: 768px) { .hero__video { display: none; } }
+/* poster attribute shows the static image immediately on every device; the
+   browser swaps to the video automatically once it has buffered enough to
+   play smoothly. Hidden only for reduced-motion or explicit Data Saver mode
+   (added via JS below, since neither is reliably a pure-CSS check). */
 @media (prefers-reduced-motion: reduce) { .hero__video { display: none; } }
+.hero.hero--no-video .hero__video { display: none; }
 .hero__logo {
   height: 180px;
   margin: 0 auto 40px;
