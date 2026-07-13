@@ -279,13 +279,34 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   padding: 36px 28px;
   box-shadow: var(--shadow);
   border-top: 4px solid var(--primary);
+  transition: var(--transition);
 }
+.criteria__card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px rgba(30, 42, 56, 0.14);
+}
+.criteria__icon {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 18px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1.5px solid var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  transition: var(--transition);
+}
+.criteria__card:hover .criteria__icon { background: var(--primary); color: var(--white); }
+.criteria__icon svg { width: 24px; height: 24px; }
 .criteria__card h3 {
   font-size: 1.15rem;
   color: var(--primary);
   margin-bottom: 22px;
   font-family: var(--font-serif);
   letter-spacing: 0.01em;
+  text-align: center;
 }
 .criteria__card ul { display: flex; flex-direction: column; gap: 10px; }
 .criteria__card li {
