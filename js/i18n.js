@@ -49,6 +49,21 @@ const translations = {
         i6: "B2B Services"
       }
     },
+    approach: {
+      title: "Our Approach",
+      confidential: {
+        title: "Confidential, No Obligation",
+        text: "Every conversation is confidential and without obligation. We move at a pace that respects your business, your employees, and your customers."
+      },
+      backed: {
+        title: "Backed by Experienced Investors",
+        text: "We are backed by a group of Portuguese and international investors with deep operating and industry expertise across multiple sectors."
+      },
+      handson: {
+        title: "Hands-On Operators",
+        text: "We don't just provide capital — we run the business day to day, working alongside your team to protect what you've built and help it grow."
+      }
+    },
     team: {
       title: "The Searchers",
       andre: {
@@ -132,6 +147,21 @@ const translations = {
         i4: "Elevada alavancagem operacional",
         i5: "Baixa concentração de clientes e churn",
         i6: "Serviços B2B"
+      }
+    },
+    approach: {
+      title: "A Nossa Abordagem",
+      confidential: {
+        title: "Confidencial, Sem Compromisso",
+        text: "Cada conversa é confidencial e sem qualquer compromisso. Avançamos a um ritmo que respeita o seu negócio, os seus colaboradores e os seus clientes."
+      },
+      backed: {
+        title: "Apoiados por Investidores Experientes",
+        text: "Somos apoiados por um grupo de investidores portugueses e internacionais, com profunda experiência operacional e sectorial em múltiplas áreas."
+      },
+      handson: {
+        title: "Operadores Práticos",
+        text: "Não nos limitamos a fornecer capital — gerimos o negócio no dia a dia, trabalhando lado a lado com a sua equipa para proteger o que construiu e ajudar a crescer."
       }
     },
     team: {
