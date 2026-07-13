@@ -1,5 +1,13 @@
 /* ===== LANGUAGE ===== */
-let currentLang = localStorage.getItem('dp_lang') || 'en';
+// First-visit default: detect from the browser's own language setting
+// (navigator.language — client-side only, no IP/geolocation, nothing sent
+// anywhere). Only used when no saved preference exists yet; a manual choice
+// always wins afterward via localStorage, same as before.
+function detectLang() {
+  const nav = (navigator.language || navigator.userLanguage || '').toLowerCase();
+  return nav.startsWith('pt') ? 'pt' : 'en';
+}
+let currentLang = localStorage.getItem('dp_lang') || detectLang();
 
 function getNestedValue(obj, key) {
   return key.split('.').reduce((acc, k) => (acc && acc[k] !== undefined ? acc[k] : null), obj);
