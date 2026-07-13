@@ -201,19 +201,20 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
 .hero__title {
   font-size: clamp(2rem, 5vw, 3.25rem);
   color: #fff;
-  margin-bottom: 24px;
-  max-width: 700px;
+  margin-bottom: 28px;
+  max-width: 780px;
   margin-left: auto;
   margin-right: auto;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
   text-shadow: 0 2px 24px rgba(0,0,0,0.35);
 }
 .hero__subtitle {
   font-size: 1.1rem;
   color: rgba(255,255,255,0.9);
-  max-width: 560px;
+  max-width: 600px;
   margin: 0 auto;
-  line-height: 1.8;
+  line-height: 1.85;
   text-shadow: 0 1px 14px rgba(0,0,0,0.3);
 }
 @media (prefers-reduced-motion: reduce) { .hero::before { animation: none; } }
@@ -221,7 +222,15 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
 .hero-cta {
   background: var(--white);
   text-align: center;
-  padding: 52px 24px 4px;
+  padding: 28px 24px 32px;
+}
+/* Desktop only: nudge just the button (not the whole white strip, which would
+   cut a flat edge across the video near the page edges) up into the curve for
+   a smoother hero→section transition. The curve is tallest at the horizontal
+   center, exactly where this centered button sits, so it stays safely on
+   white. Mobile keeps its own flow position — already reads well there. */
+@media (min-width: 769px) {
+  .hero-cta .btn { transform: translateY(-70px); }
 }
 
 /* Scroll-reveal (added via JS; absent → content just shows) */
