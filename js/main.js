@@ -25,6 +25,8 @@ function setLang(lang) {
 
   document.getElementById('btn-en').classList.toggle('active', lang === 'en');
   document.getElementById('btn-pt').classList.toggle('active', lang === 'pt');
+  document.getElementById('btn-en').setAttribute('aria-pressed', lang === 'en');
+  document.getElementById('btn-pt').setAttribute('aria-pressed', lang === 'pt');
 }
 
 /* ===== NAV SCROLL ===== */

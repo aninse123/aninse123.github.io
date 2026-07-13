@@ -108,33 +108,47 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
 .nav__lang {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.82rem;
-  color: var(--border);
+  gap: 2px;
+  padding: 3px;
+  border-radius: 100px;
+  background: rgba(44,44,44,0.05);
   margin-left: 16px;
+  transition: var(--transition);
 }
 .lang-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: none;
   border: none;
   cursor: pointer;
+  border-radius: 100px;
   font-weight: 700;
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   color: var(--text-light);
-  padding: 4px 2px;
-  letter-spacing: 0.05em;
+  padding: 5px 11px 5px 7px;
+  letter-spacing: 0.04em;
   transition: var(--transition);
 }
-.lang-btn.active { color: var(--primary); }
-.lang-btn:hover { color: var(--primary); }
+.lang-btn.active { color: var(--primary); background: var(--white); box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+.lang-btn:hover:not(.active) { color: var(--primary); }
+.lang-flag {
+  width: 17px; height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.12);
+}
 
 /* Nav readable over the dark hero (top of page, before the solid scrolled state) */
 .nav:not(.scrolled) .nav__logo img { filter: brightness(0) invert(1); }
 .nav:not(.scrolled) .nav__hamburger span { background: #fff; }
+.nav:not(.scrolled) .nav__lang { background: rgba(255,255,255,0.16); }
+.nav:not(.scrolled) .lang-btn { color: rgba(255,255,255,0.8); }
+.nav:not(.scrolled) .lang-btn.active { color: var(--primary); background: #fff; }
+.nav:not(.scrolled) .lang-btn:hover:not(.active) { color: #fff; }
 @media (min-width: 769px) {
   .nav:not(.scrolled) .nav__links a { color: #fff; }
   .nav:not(.scrolled) .nav__links a:hover { color: rgba(255,255,255,0.72); }
-  .nav:not(.scrolled) .lang-btn { color: rgba(255,255,255,0.72); }
-  .nav:not(.scrolled) .lang-btn.active { color: #fff; }
   .nav:not(.scrolled) .nav__investor-login { color: #fff; border-color: rgba(255,255,255,0.45); }
 }
 .nav__hamburger {

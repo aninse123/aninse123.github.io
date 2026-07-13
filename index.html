@@ -48,10 +48,15 @@
         <li class="nav__links--investor"><a href="/portal/login.html" data-i18n="nav.investorLogin">Investor Login</a></li>
       </ul>
       <a href="/portal/login.html" class="nav__investor-login" data-i18n="nav.investorLogin">Investor Login</a>
-      <div class="nav__lang">
-        <button class="lang-btn active" id="btn-en" onclick="setLang('en')">EN</button>
-        <span>|</span>
-        <button class="lang-btn" id="btn-pt" onclick="setLang('pt')">PT</button>
+      <div class="nav__lang" role="group" aria-label="Language">
+        <button class="lang-btn active" id="btn-en" onclick="setLang('en')" aria-pressed="true">
+          <svg class="lang-flag" viewBox="0 0 20 14" aria-hidden="true"><defs><clipPath id="flagClipEn"><rect width="20" height="14" rx="2"/></clipPath></defs><g clip-path="url(#flagClipEn)"><rect width="20" height="14" fill="#00247D"/><path d="M0 0L20 14M20 0L0 14" stroke="#fff" stroke-width="3"/><path d="M0 0L20 14M20 0L0 14" stroke="#CF142B" stroke-width="1.2"/><path d="M10 0V14M0 7H20" stroke="#fff" stroke-width="4.6"/><path d="M10 0V14M0 7H20" stroke="#CF142B" stroke-width="2.4"/></g></svg>
+          <span>EN</span>
+        </button>
+        <button class="lang-btn" id="btn-pt" onclick="setLang('pt')" aria-pressed="false">
+          <svg class="lang-flag" viewBox="0 0 20 14" aria-hidden="true"><defs><clipPath id="flagClipPt"><rect width="20" height="14" rx="2"/></clipPath></defs><g clip-path="url(#flagClipPt)"><rect width="20" height="14" fill="#FF0000"/><rect width="8" height="14" fill="#046A38"/><circle cx="8" cy="7" r="2.6" fill="#FFCC00" stroke="#FF0000" stroke-width="0.5"/></g></svg>
+          <span>PT</span>
+        </button>
       </div>
       <button class="nav__hamburger" id="hamburger" aria-label="Open menu" aria-expanded="false">
         <span></span><span></span><span></span>
