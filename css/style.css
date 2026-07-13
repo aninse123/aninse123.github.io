@@ -164,7 +164,7 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   justify-content: center;
   text-align: center;
   background: #1E2A38 url('../assets/douro-hero-poster.jpg') center/cover no-repeat;
-  padding: 140px 24px 100px;
+  padding: 140px 24px 170px;
   position: relative;
   overflow: hidden;
 }
@@ -228,9 +228,13 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
    cut a flat edge across the video near the page edges) up into the curve for
    a smoother hero→section transition. The curve is tallest at the horizontal
    center, exactly where this centered button sits, so it stays safely on
-   white. Mobile keeps its own flow position — already reads well there. */
+   white. -90px keeps the button's bottom edge at/above hero's own bottom edge
+   (hero is min-height:100vh, so that edge sits at the initial-load fold on
+   short viewports) — verified it never crosses below it, so the button can't
+   render partly below the fold. Mobile keeps its own flow position — already
+   reads well there. */
 @media (min-width: 769px) {
-  .hero-cta .btn { transform: translateY(-70px); }
+  .hero-cta .btn { transform: translateY(-90px); }
 }
 
 /* Scroll-reveal (added via JS; absent → content just shows) */
