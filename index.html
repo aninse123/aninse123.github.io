@@ -23,6 +23,18 @@
   <link rel="icon" href="/assets/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
   <link rel="stylesheet" href="css/style.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Douro Partners",
+    "url": "https://douropartners.pt/",
+    "logo": "https://douropartners.pt/assets/logo.png",
+    "description": "Douro Partners is a search fund focused on acquiring and operating a single high-quality business in the Portuguese market.",
+    "email": "andre.rocha@douropartners.pt",
+    "address": { "@type": "PostalAddress", "addressCountry": "PT" }
+  }
+  </script>
   <!-- Microsoft Clarity -->
   <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
@@ -232,6 +244,10 @@
           <div class="form__group">
             <label for="femail" data-i18n="contact.form.email">Email</label>
             <input type="email" id="femail" name="_replyto" autocomplete="email" required>
+          </div>
+          <div class="form__group">
+            <label for="fphone"><span data-i18n="contact.form.phone">Phone</span> <span class="form__optional" data-i18n="contact.form.optional">(optional)</span></label>
+            <input type="tel" id="fphone" name="phone" autocomplete="tel">
           </div>
           <div class="form__group">
             <label for="fmessage" data-i18n="contact.form.message">Message</label>

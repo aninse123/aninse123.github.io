@@ -466,6 +466,12 @@ h1, h2, h3 { font-family: var(--font-serif); line-height: 1.2; }
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+.form__optional {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-light);
+}
 .form__group input,
 .form__group textarea {
   padding: 13px 16px;

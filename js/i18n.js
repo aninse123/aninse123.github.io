@@ -53,7 +53,7 @@ const translations = {
       title: "Our Approach",
       confidential: {
         title: "Confidential, No Obligation",
-        text: "Every conversation is confidential and without obligation. We move at a pace that respects your business, your employees, and your customers."
+        text: "It starts with a confidential, no-obligation call — on your schedule. We move at a pace that respects your business, your employees, and your customers."
       },
       backed: {
         title: "Backed by Experienced Investors",
@@ -82,6 +82,8 @@ const translations = {
       form: {
         name: "Name",
         email: "Email",
+        phone: "Phone",
+        optional: "(optional)",
         message: "Message",
         submit: "Send Message",
         success: "Thank you — your message has been sent. We'll be in touch shortly.",
@@ -153,7 +155,7 @@ const translations = {
       title: "A Nossa Abordagem",
       confidential: {
         title: "Confidencial, Sem Compromisso",
-        text: "Cada conversa é confidencial e sem qualquer compromisso. Avançamos a um ritmo que respeita o seu negócio, os seus colaboradores e os seus clientes."
+        text: "Começa com uma chamada confidencial e sem qualquer compromisso, à sua conveniência. Avançamos a um ritmo que respeita o seu negócio, os seus colaboradores e os seus clientes."
       },
       backed: {
         title: "Apoiados por Investidores Experientes",
@@ -182,6 +184,8 @@ const translations = {
       form: {
         name: "Nome",
         email: "Email",
+        phone: "Telefone",
+        optional: "(opcional)",
         message: "Mensagem",
         submit: "Enviar Mensagem",
         success: "Obrigado — a sua mensagem foi enviada. Entraremos em contacto brevemente.",
