@@ -974,11 +974,19 @@ function computeFields(co){
   else if (num((f.Y2||{}).revenue) > 0) { base = num(f.Y2.revenue); span = 1; }
   co.computedCAGR3y = (base && num(y1.revenue) > 0) ? (Math.pow(num(y1.revenue)/base, 1/span) - 1) : null;
   co.fitScore = calcFit(co);
-  // Geocode from postcode prefix (CP4) via the static PT postcode lookup table.
-  // No lat/lng field on the doc itself -- resolved fresh on every load, same as
-  // the other computed* fields above.
-  const cp4 = String(co.postcode||'').slice(0,4);
-  const geo = (/^\d{4}$/.test(cp4) && window.PT_POSTCODES) ? window.PT_POSTCODES[cp4] : null;
+  // Geocode via the static PT postcode lookup tables. Postcode is free text
+  // (manual entry / bulk import, no format enforcement), so pull out the first
+  // 4-7 digits regardless of dash/spacing, try the exact CP7 postcode first
+  // (precise), and fall back to the CP4 prefix (coarser, but resolves typos/
+  // truncated postcodes that wouldn't hit an exact CP7 match). No lat/lng
+  // field on the doc itself -- resolved fresh on every load, same as the
+  // other computed* fields above.
+  const digits = String(co.postcode||'').replace(/\D/g, '');
+  const cp4 = digits.slice(0, 4);
+  const cp7 = digits.length >= 7 ? `${cp4}-${digits.slice(4, 7)}` : null;
+  const geo = (cp7 && window.PT_POSTCODES_CP7?.[cp7])
+    || (cp4.length === 4 && window.PT_POSTCODES_CP4?.[cp4])
+    || null;
   co.computedLat = geo ? geo[0] : null;
   co.computedLng = geo ? geo[1] : null;
   return co;
