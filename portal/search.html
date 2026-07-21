@@ -10,6 +10,9 @@
   <link rel="icon" href="/assets/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="./vendor/leaflet/MarkerCluster.css">
+  <link rel="stylesheet" href="./vendor/leaflet/MarkerCluster.Default.css">
   <style>
     :root {
       --primary:      #4A6B8A;
@@ -287,6 +290,19 @@
     .row-ok { color: var(--secondary); }
     .row-warn { background: #FFFBEC; }
     .row-bad  { background: #FBE9E9; }
+
+    /* Map view */
+    .map-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+    .map-attr { font-size: 0.7rem; color: var(--text-light); margin-left: auto; }
+    .map-layout { display: flex; gap: 16px; }
+    .map-sidebar { width: 300px; flex: none; max-height: 640px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--white); }
+    .map-sidebar-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 0.82rem; border-bottom: 1px solid #F0EDE6; cursor: pointer; }
+    .map-sidebar-item:hover { background: var(--bg); }
+    .map-sidebar-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .map-sidebar-item input { width: auto; flex: none; }
+    #mapContainer { flex: 1; min-width: 0; }
+    .dp-pin { background: none; border: none; }
+    @media (max-width: 900px) { .map-layout { flex-direction: column; } .map-sidebar { width: 100%; max-height: 220px; } }
   </style>
 </head>
 <body>
@@ -346,8 +362,9 @@
       <div class="view-toggle">
         <button id="viewListBtn" class="active">List</button>
         <button id="viewGroupedBtn">Grouped</button>
+        <button id="viewMapBtn">Map</button>
       </div>
-      <input type="text" class="search-input" id="searchInput" placeholder="Search company name…">
+      <input type="text" class="search-input" id="searchInput" placeholder="Search by name or NIF…">
       <select class="filter-sel" id="stageFilter"><option value="">All Stages</option></select>
       <select class="filter-sel" id="ownerFilter"><option value="">All Owners</option><option value="andre">André</option><option value="antonio">António</option></select>
       <select class="filter-sel" id="priorityFilter"><option value="">All Priorities</option><option value="a">A</option><option value="b">B</option><option value="c">C</option></select>
@@ -403,6 +420,25 @@
 
     <!-- Grouped mode -->
     <div id="groupedCard" style="display:none;"></div>
+
+    <!-- Map mode -->
+    <div id="mapCard" style="display:none;">
+      <div class="map-toolbar">
+        <div class="view-toggle">
+          <button id="mapModeFilteredBtn" class="active">Filtered (<span id="mapFilteredCount">0</span>)</button>
+          <button id="mapModeCustomBtn">Custom selection (<span id="mapCustomCount">0</span>)</button>
+        </div>
+        <button class="btn btn--ghost btn--sm" id="mapSaveBtn">Save selection…</button>
+        <button class="btn btn--ghost btn--sm" id="mapLoadBtn">Load saved map…</button>
+        <button class="btn btn--ghost btn--sm" id="mapExportBtn">Export CSV</button>
+        <span class="results-count" id="mapUnresolvedNote"></span>
+        <span class="map-attr">Postal code centroids © GeoNames.org (CC BY 4.0)</span>
+      </div>
+      <div class="map-layout">
+        <div class="map-sidebar" id="mapSidebar"></div>
+        <div id="mapContainer" style="height:640px;border-radius:var(--radius);"></div>
+      </div>
+    </div>
   </div>
 
   <!-- ══════════ DETAIL VIEW ══════════ -->
@@ -697,6 +733,34 @@
   </div>
 </div>
 
+<div class="overlay" id="mapListsModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Saved Maps</div>
+    <div class="form-group">
+      <label>Save current selection as</label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" class="field" id="mapListName" placeholder="e.g. Norte outreach — Q3">
+        <button class="btn btn--primary" id="mapListSaveBtn" style="white-space:nowrap;">Save</button>
+      </div>
+      <div class="hint" id="mapListSaveHint"></div>
+    </div>
+    <div class="modal-section-title">Existing saved maps</div>
+    <div id="mapListsBody" style="max-height:280px;overflow-y:auto;"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="mapListsCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="miniMapModal" style="display:none;">
+  <div class="modal modal--lg" style="padding:0;overflow:hidden;">
+    <div id="miniMapContainer" style="height:420px;"></div>
+  </div>
+</div>
+
+<script src="./vendor/leaflet/leaflet.js"></script>
+<script src="./vendor/leaflet/leaflet.markercluster.js"></script>
+<script src="./vendor/pt-postcodes.js"></script>
 <script type="module">
 import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
 import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -910,6 +974,13 @@ function computeFields(co){
   else if (num((f.Y2||{}).revenue) > 0) { base = num(f.Y2.revenue); span = 1; }
   co.computedCAGR3y = (base && num(y1.revenue) > 0) ? (Math.pow(num(y1.revenue)/base, 1/span) - 1) : null;
   co.fitScore = calcFit(co);
+  // Geocode from postcode prefix (CP4) via the static PT postcode lookup table.
+  // No lat/lng field on the doc itself -- resolved fresh on every load, same as
+  // the other computed* fields above.
+  const cp4 = String(co.postcode||'').slice(0,4);
+  const geo = (/^\d{4}$/.test(cp4) && window.PT_POSTCODES) ? window.PT_POSTCODES[cp4] : null;
+  co.computedLat = geo ? geo[0] : null;
+  co.computedLng = geo ? geo[1] : null;
   return co;
 }
 function calcFit(co){
@@ -1099,6 +1170,7 @@ function renderSummary(){
 // ── Filtering ────────────────────────────────────────────────────────────────
 function getFiltered(){
   const search = (document.getElementById('searchInput').value||'').toLowerCase();
+  const searchDigits = search.replace(/[^a-z0-9]/gi,'');
   const stageF = document.getElementById('stageFilter').value;
   const ownerF = document.getElementById('ownerFilter').value;
   const prioF  = document.getElementById('priorityFilter').value;
@@ -1121,7 +1193,11 @@ function getFiltered(){
   const ltF    = document.getElementById('lastTouchFilter').value;
 
   return companies.filter(c => {
-    if (search && !(c.name||'').toLowerCase().includes(search)) return false;
+    if (search) {
+      const nameHit = (c.name||'').toLowerCase().includes(search);
+      const nifHit  = searchDigits && String(c.nif||'').replace(/[^a-z0-9]/gi,'').toLowerCase().includes(searchDigits);
+      if (!nameHit && !nifHit) return false;
+    }
     if (stageF && c.stage !== stageF) return false;
     if (ownerF && c.owner !== ownerF) return false;
     if (prioF && c.priority !== prioF) return false;
@@ -1167,7 +1243,8 @@ function sortList(list){
 // ── Render list ────────────────────────────────────────────────────────────
 function renderList(){
   if (viewMode === 'grouped') return renderGrouped();
-  showEl('tableCard', true); showEl('groupedCard', false);
+  if (viewMode === 'map') return renderMap();
+  showEl('tableCard', true); showEl('groupedCard', false); showEl('mapCard', false);
   const list = sortList(getFiltered());
   document.getElementById('resultsCount').textContent = `${list.length} of ${companies.length}`;
   const tbody = document.getElementById('companyBody');
@@ -1202,7 +1279,7 @@ function rowHtml(c){
 
 // ── Grouped view ─────────────────────────────────────────────────────────────
 function renderGrouped(){
-  showEl('tableCard', false); showEl('groupedCard', true); showEl('pagination', false);
+  showEl('tableCard', false); showEl('groupedCard', true); showEl('mapCard', false); showEl('pagination', false);
   const list = sortList(getFiltered());
   document.getElementById('resultsCount').textContent = `${list.length} of ${companies.length}`;
   const groups = {};
@@ -1239,6 +1316,139 @@ function renderGrouped(){
     h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed'));
   });
   document.querySelectorAll('#groupedCard .row-clickable').forEach(r => r.addEventListener('click', () => openDetail(r.dataset.id)));
+}
+
+// ── Map view ─────────────────────────────────────────────────────────────────
+let mapMode = 'filtered';     // 'filtered' | 'custom'
+let mapSelection = new Set(); // company IDs hand-picked for the custom map
+let leafletMap = null, markerClusterGroup = null;
+let miniMap = null, miniMapMarker = null;
+
+function pinIcon(){
+  return L.divIcon({
+    className: 'dp-pin',
+    html: `<svg width="22" height="30" viewBox="0 0 22 30" xmlns="http://www.w3.org/2000/svg">
+      <path d="M11 0C4.9 0 0 4.9 0 11c0 8.3 11 19 11 19s11-10.7 11-19C22 4.9 17.1 0 11 0z" fill="#4A6B8A"/>
+      <circle cx="11" cy="11" r="4.2" fill="#fff"/></svg>`,
+    iconSize: [22,30], iconAnchor: [11,30], popupAnchor: [0,-28]
+  });
+}
+function ensureLeafletMap(){
+  if (leafletMap) return;
+  leafletMap = L.map('mapContainer').setView([39.6, -8.0], 6.3); // Portugal centre
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    maxZoom: 19
+  }).addTo(leafletMap);
+  markerClusterGroup = L.markerClusterGroup({ maxClusterRadius: 50 });
+  leafletMap.addLayer(markerClusterGroup);
+}
+function renderMap(){
+  showEl('tableCard', false); showEl('groupedCard', false); showEl('mapCard', true); showEl('pagination', false);
+  ensureLeafletMap();
+  const base = sortList(getFiltered());
+  document.getElementById('resultsCount').textContent = `${base.length} of ${companies.length}`;
+  document.getElementById('mapFilteredCount').textContent = base.length;
+  document.getElementById('mapCustomCount').textContent = mapSelection.size;
+  document.getElementById('mapSidebar').innerHTML = base.map(c => `
+    <label class="map-sidebar-item">
+      <input type="checkbox" class="mapSelChk" data-id="${c.id}" ${mapSelection.has(c.id)?'checked':''}>
+      <span title="${esc(c.name)}">${esc(c.name)}</span>
+    </label>`).join('') || '<div class="empty" style="padding:16px;">No companies match the current filters.</div>';
+  document.getElementById('mapSidebar').querySelectorAll('.mapSelChk').forEach(chk => {
+    chk.addEventListener('change', () => {
+      if (chk.checked) mapSelection.add(chk.dataset.id); else mapSelection.delete(chk.dataset.id);
+      document.getElementById('mapCustomCount').textContent = mapSelection.size;
+      if (mapMode === 'custom') updateMapMarkers();
+    });
+  });
+  updateMapMarkers();
+}
+function updateMapMarkers(){
+  const base = sortList(getFiltered());
+  const source = mapMode === 'custom' ? base.filter(c => mapSelection.has(c.id)) : base;
+  const resolved = source.filter(c => c.computedLat != null && c.computedLng != null);
+  const unresolved = source.length - resolved.length;
+  document.getElementById('mapUnresolvedNote').textContent =
+    unresolved ? `${unresolved} of ${source.length} not shown (no usable postcode)` : (source.length ? `${source.length} shown` : '');
+  markerClusterGroup.clearLayers();
+  const markers = resolved.map(c => {
+    const m = L.marker([c.computedLat, c.computedLng], { icon: pinIcon() });
+    m.bindPopup(`<strong>${esc(c.name)}</strong><br>${esc(c.sector||'—')}<br>${stagePill(c.stage||'universe')} · Fit ${(Number(c.fitScore)||0).toFixed(1)}<br><a href="#" data-goto="${c.id}">Open profile →</a>`);
+    m.on('popupopen', () => {
+      document.querySelector(`.leaflet-popup [data-goto="${c.id}"]`)?.addEventListener('click', e => { e.preventDefault(); openDetail(c.id); });
+    });
+    return m;
+  });
+  markerClusterGroup.addLayers(markers);
+  if (markers.length) leafletMap.fitBounds(markerClusterGroup.getBounds(), { padding:[24,24] });
+}
+function exportMapCsv(){
+  const base = sortList(getFiltered());
+  const list = mapMode === 'custom' ? base.filter(c => mapSelection.has(c.id)) : base;
+  const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
+  const headers = ['Name','Sector','Sub-sector','Stage','Owner','Concelho','Postcode','NUTS2','NUTS3','Latitude','Longitude','Revenue Y1','EBITDA Y1','EBITDA%'];
+  const rows = list.map(c => [
+    c.name, c.sector, c.subSector, STAGES[c.stage]?.label||c.stage, OWNER_LABELS[c.owner]||'',
+    c.concelho, c.postcode, c.nuts2, c.nuts3, c.computedLat??'', c.computedLng??'',
+    c.computedRevenue??'', c.computedEBITDA??'', c.computedEBITDAMargin!=null?(c.computedEBITDAMargin*100).toFixed(1):'',
+  ].map(esc2).join(','));
+  const csv = [headers.map(esc2).join(','), ...rows].join('\r\n');
+  const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download:`douro-search-map-${todayStr()}.csv` });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ── Saved map lists (searchMapLists) ──────────────────────────────────────────
+async function openMapListsModal(){
+  document.getElementById('mapListName').value = '';
+  document.getElementById('mapListSaveHint').textContent = mapSelection.size
+    ? `Will save the current ${mapSelection.size}-company custom selection.`
+    : 'Custom selection is empty — check some companies first (in the sidebar, or switch to "Custom selection" mode).';
+  showEl('mapListsModal', true);
+  await refreshMapListsBody();
+}
+async function refreshMapListsBody(){
+  const body = document.getElementById('mapListsBody');
+  body.innerHTML = '<div class="empty" style="padding:12px;">Loading…</div>';
+  const snap = await getDocs(collection(db, 'searchMapLists'));
+  const lists = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a,b) => (tsToDate(b.updatedAt)?.getTime()||0) - (tsToDate(a.updatedAt)?.getTime()||0));
+  if (!lists.length) { body.innerHTML = '<div class="empty" style="padding:12px;">No saved maps yet.</div>'; return; }
+  body.innerHTML = lists.map(l => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid #F0EDE6;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(l.name)}</div>
+        <div style="font-size:0.72rem;color:var(--text-light);">${(l.companyIds||[]).length} companies · ${fmtDate(l.updatedAt)}</div>
+      </div>
+      <button class="btn btn--ghost btn--sm" data-load="${l.id}">Load</button>
+      <button class="btn btn--ghost btn--sm" data-del="${l.id}">Delete</button>
+    </div>`).join('');
+  body.querySelectorAll('[data-load]').forEach(b => b.addEventListener('click', () => {
+    const l = lists.find(x => x.id === b.dataset.load);
+    mapSelection = new Set(l.companyIds||[]);
+    mapMode = 'custom';
+    document.getElementById('mapModeCustomBtn').classList.add('active');
+    document.getElementById('mapModeFilteredBtn').classList.remove('active');
+    showEl('mapListsModal', false);
+    renderMap();
+  }));
+  body.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete this saved map?')) return;
+    await deleteDoc(doc(db, 'searchMapLists', b.dataset.del));
+    refreshMapListsBody();
+  }));
+}
+async function saveMapList(){
+  const name = document.getElementById('mapListName').value.trim();
+  if (!name) { document.getElementById('mapListSaveHint').textContent = 'Give the map a name first.'; return; }
+  if (!mapSelection.size) { document.getElementById('mapListSaveHint').textContent = 'Custom selection is empty — nothing to save.'; return; }
+  await addDoc(collection(db, 'searchMapLists'), {
+    name, companyIds: [...mapSelection], createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: auth.currentUser.email
+  });
+  document.getElementById('mapListName').value = '';
+  document.getElementById('mapListSaveHint').textContent = 'Saved.';
+  refreshMapListsBody();
 }
 
 // ── Detail view ──────────────────────────────────────────────────────────────
@@ -1308,7 +1518,15 @@ function renderOverview(c){
         <div class="info-row"><span class="k">BvD ID</span><span class="v">${esc(c.bvdId||'—')}</span></div>
       </div>
       <div class="card">
-        <div class="sec-title">Geography & Contact</div>
+        <div class="sec-title" style="display:flex;align-items:center;gap:8px;">
+          Geography & Contact
+          ${c.computedLat != null ? `<button class="btn btn--icon btn--ghost" id="miniMapBtn" title="Show on map" style="margin-left:auto;">
+            <svg width="14" height="14" viewBox="0 0 22 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M11 0C4.9 0 0 4.9 0 11c0 8.3 11 19 11 19s11-10.7 11-19C22 4.9 17.1 0 11 0z" fill="#4A6B8A"/>
+              <circle cx="11" cy="11" r="4.2" fill="#fff"/>
+            </svg>
+          </button>` : ''}
+        </div>
         <div class="info-row"><span class="k">Concelho</span><span class="v">${esc(c.concelho||'—')}</span></div>
         <div class="info-row"><span class="k">Postcode</span><span class="v">${esc(c.postcode||'—')}</span></div>
         <div class="info-row"><span class="k">Address</span><span class="v">${esc(c.hqAddress||'—')}</span></div>
@@ -2409,11 +2627,54 @@ document.getElementById('panel-overview').addEventListener('click', e => {
   if (e.target.id === 'addAddonBtn') openAddon();
   else if (e.target.dataset.rmaddon != null) removeAddon(Number(e.target.dataset.rmaddon));
   else if (e.target.dataset.goto) openDetail(e.target.dataset.goto);
+  else if (e.target.closest('#miniMapBtn')) openMiniMap(getCompany());
 });
+function openMiniMap(c){
+  if (!c || c.computedLat == null) return;
+  showEl('miniMapModal', true);
+  setTimeout(() => { // modal must be visible/sized before Leaflet measures the container
+    if (!miniMap) {
+      miniMap = L.map('miniMapContainer');
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+      }).addTo(miniMap);
+    }
+    miniMap.setView([c.computedLat, c.computedLng], 14);
+    if (miniMapMarker) miniMap.removeLayer(miniMapMarker);
+    miniMapMarker = L.marker([c.computedLat, c.computedLng], { icon: pinIcon() }).addTo(miniMap).bindPopup(esc(c.name)).openPopup();
+    miniMap.invalidateSize();
+  }, 50);
+}
 
 // View toggle
-document.getElementById('viewListBtn').addEventListener('click', () => { viewMode='list'; document.getElementById('viewListBtn').classList.add('active'); document.getElementById('viewGroupedBtn').classList.remove('active'); renderList(); });
-document.getElementById('viewGroupedBtn').addEventListener('click', () => { viewMode='grouped'; document.getElementById('viewGroupedBtn').classList.add('active'); document.getElementById('viewListBtn').classList.remove('active'); renderGrouped(); });
+const viewBtns = { list:'viewListBtn', grouped:'viewGroupedBtn', map:'viewMapBtn' };
+function setViewMode(mode){
+  viewMode = mode;
+  Object.values(viewBtns).forEach(id => document.getElementById(id).classList.remove('active'));
+  document.getElementById(viewBtns[mode]).classList.add('active');
+  renderList();
+}
+document.getElementById('viewListBtn').addEventListener('click', () => setViewMode('list'));
+document.getElementById('viewGroupedBtn').addEventListener('click', () => setViewMode('grouped'));
+document.getElementById('viewMapBtn').addEventListener('click', () => setViewMode('map'));
+
+document.getElementById('mapModeFilteredBtn').addEventListener('click', () => {
+  mapMode = 'filtered';
+  document.getElementById('mapModeFilteredBtn').classList.add('active');
+  document.getElementById('mapModeCustomBtn').classList.remove('active');
+  updateMapMarkers();
+});
+document.getElementById('mapModeCustomBtn').addEventListener('click', () => {
+  mapMode = 'custom';
+  document.getElementById('mapModeCustomBtn').classList.add('active');
+  document.getElementById('mapModeFilteredBtn').classList.remove('active');
+  updateMapMarkers();
+});
+document.getElementById('mapSaveBtn').addEventListener('click', openMapListsModal);
+document.getElementById('mapLoadBtn').addEventListener('click', openMapListsModal);
+document.getElementById('mapListsCloseBtn').addEventListener('click', () => showEl('mapListsModal', false));
+document.getElementById('mapListSaveBtn').addEventListener('click', saveMapList);
+document.getElementById('mapExportBtn').addEventListener('click', exportMapCsv);
 
 // Filters
 ['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id => {
@@ -2460,7 +2721,7 @@ document.getElementById('cNaceCode').addEventListener('blur', () => {
 });
 
 // Overlay click-to-close
-['companyModal','contactModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal','reportModal'].forEach(id => {
+['companyModal','contactModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal','reportModal','mapListsModal','miniMapModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id, false); });
 });
 </script>
