@@ -760,7 +760,7 @@
 
 <script src="./vendor/leaflet/leaflet.js"></script>
 <script src="./vendor/leaflet/leaflet.markercluster.js"></script>
-<script src="./vendor/pt-postcodes.js?v=cp7-1"></script>
+<script src="./vendor/pt-postcodes.js?v=cp7-nominatim-1"></script>
 <script type="module">
 import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
 import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -976,15 +976,20 @@ function computeFields(co){
   co.fitScore = calcFit(co);
   // Geocode via the static PT postcode lookup tables. Postcode is free text
   // (manual entry / bulk import, no format enforcement), so pull out the first
-  // 4-7 digits regardless of dash/spacing, try the exact CP7 postcode first
-  // (precise), and fall back to the CP4 prefix (coarser, but resolves typos/
-  // truncated postcodes that wouldn't hit an exact CP7 match). No lat/lng
-  // field on the doc itself -- resolved fresh on every load, same as the
-  // other computed* fields above.
+  // 4-7 digits regardless of dash/spacing. Lookup priority: PT_POSTCODES_NOMINATIM
+  // (individually-geocoded, real precision, one-time backfill covering the
+  // postcodes actually in use) first; then the exact CP7 postcode from GeoNames
+  // (precise where GeoNames has real per-postcode data, but ~80% of GeoNames'
+  // rows fall back to a shared "nearest named place" point -- concentrated in
+  // exactly the dense cities most companies are in, which is why the Nominatim
+  // table takes priority when it has a real answer); then the CP4 prefix
+  // (coarsest, resolves typos/truncated postcodes). No lat/lng field on the doc
+  // itself -- resolved fresh on every load, same as the other computed* fields.
   const digits = String(co.postcode||'').replace(/\D/g, '');
   const cp4 = digits.slice(0, 4);
   const cp7 = digits.length >= 7 ? `${cp4}-${digits.slice(4, 7)}` : null;
-  const geo = (cp7 && window.PT_POSTCODES_CP7?.[cp7])
+  const geo = (cp7 && window.PT_POSTCODES_NOMINATIM?.[cp7])
+    || (cp7 && window.PT_POSTCODES_CP7?.[cp7])
     || (cp4.length === 4 && window.PT_POSTCODES_CP4?.[cp4])
     || null;
   co.computedLat = geo ? geo[0] : null;
