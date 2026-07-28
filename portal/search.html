@@ -1914,6 +1914,14 @@ async function saveCompany(){
       companies.push(local);
       await logAuto(ref.id, 'company_created', 'Added to Search CRM.');
       currentCoId = ref.id;
+      // A brand-new company has lastTouchAt:null (creating/editing a profile
+      // doesn't count as a "touch" — see recomputeActivityFields's AUTO_TYPES),
+      // so it sorts outside the bounded default window until someone logs a
+      // real activity against it. Without this, the next unrelated bounded
+      // snapshot update would silently drop it from view (replace-mode, since
+      // it's absent from the bounded query's results) even while its detail
+      // page is still open.
+      await ensureFullDataset();
     }
     cacheCompanies();
     showEl('companyModal', false);
