@@ -1226,7 +1226,10 @@ function renderSummary(){
   // dataset is loaded, the live array is authoritative and self-corrects.
   const total = fullyLoaded ? companies.length : (cachedTotalCount ?? companies.length);
   const active = companies.filter(c => !['pass','closed'].includes(c.stage)).length;
-  const avgFit = total ? (companies.reduce((s,c)=>s+(Number(c.fitScore)||0),0)/total) : 0;
+  // Averaged over companies.length (what's actually loaded and summed), not
+  // `total` (the true server-side count while bounded) — self-corrects once
+  // fullyLoaded, same as active/inDeal above.
+  const avgFit = companies.length ? (companies.reduce((s,c)=>s+(Number(c.fitScore)||0),0)/companies.length) : 0;
   const inDeal = companies.filter(c => ['engaged','teaser_received','under_nda','cim_received','nbo','loi','due_diligence','financing','closing'].includes(c.stage)).length;
   document.getElementById('summaryStats').innerHTML =
     `<span class="summary-stat"><strong>${total}</strong> total</span>
