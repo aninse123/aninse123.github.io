@@ -766,8 +766,8 @@ import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
 import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
   collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
-  getDocs, getDoc, query, where, serverTimestamp, Timestamp,
-  onSnapshot, arrayUnion, arrayRemove, writeBatch
+  getDocs, getDoc, query, where, orderBy, limit, serverTimestamp, Timestamp,
+  onSnapshot, arrayUnion, arrayRemove, writeBatch, getCountFromServer
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -910,12 +910,14 @@ let editCoId = null;
 let editCtIdx = null;
 let closeActId = null;
 let activityType = 'note';
-let sortCol = 'fitScore';
+let sortCol = 'lastTouchAt';
 let sortDir = 'desc';
 let viewMode = 'list';
 let visibleCount = 100;
 const PAGE = 100;
 let companiesUnsub = null;
+let fullyLoaded = false;
+const DEFAULT_FETCH_LIMIT = 300;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -1069,9 +1071,10 @@ async function loadAll(){
   if (!brokers.length) await seedBrokers();
   buildStaticOptions();
   await startCompaniesListener();
-  backfillSectors(); // fill Sector/Sub-sector from NACE on any companies missing it (one pass)
+  fetchTotalCount(); // async, non-blocking — corrects the "total" stat while only a bounded page is loaded
 }
 // Backfill Sector/Sub-sector from NACE/CAE for companies imported before derivation existed.
+// Needs the full dataset to know what's missing, so only runs from ensureFullDataset().
 async function backfillSectors(){
   const need = companies.filter(c => !c.sector && (c.naceCode || c.caeCode) && naceDerive(c.naceCode || c.caeCode).sector);
   if (!need.length) return;
@@ -1087,18 +1090,48 @@ async function backfillSectors(){
     await batch.commit();
   }
 }
+// Backfill lastTouchAt for companies created before this field was always set on
+// write — a doc missing the field entirely (not just null) is silently excluded
+// from the bounded default view's orderBy('lastTouchAt') query, so this closes
+// that gap once. Needs the full dataset to find every straggler, not just the
+// bounded 300, so only runs from ensureFullDataset().
+async function backfillLastTouch(){
+  const need = companies.filter(c => !('lastTouchAt' in c));
+  if (!need.length) return;
+  for (let i=0; i<need.length; i+=450) {
+    const batch = writeBatch(db);
+    for (const c of need.slice(i, i+450)) {
+      batch.update(doc(db,'searchCompanies',c.id), { lastTouchAt: null });
+      c.lastTouchAt = null;
+    }
+    await batch.commit();
+  }
+}
 // No-op retained for call sites — data is kept live via onSnapshot below.
 function cacheCompanies(){}
-// Live listener: keeps `companies` current across both partners in real time.
-// With Firestore persistence (firebase-config.js), re-attaches are served from
-// the local cache + a server delta, so this stays cheap as the list grows.
+// Live listener, bounded to the DEFAULT_FETCH_LIMIT most recently-touched
+// companies — the common case (checking in, logging an activity) only ever
+// pays for this bounded window, not the whole collection. Anything that
+// genuinely needs the full dataset (search/filter/sort/Grouped/Map/export/bulk
+// import) calls ensureFullDataset() first, which does a one-time full read.
 function startCompaniesListener(){
   return new Promise(resolve => {
     let done = false;
     if (companiesUnsub) companiesUnsub();
-    companiesUnsub = onSnapshot(collection(db, 'searchCompanies'),
+    companiesUnsub = onSnapshot(
+      query(collection(db, 'searchCompanies'), orderBy('lastTouchAt', 'desc'), limit(DEFAULT_FETCH_LIMIT)),
       snap => {
-        companies = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (fullyLoaded) {
+          // Merge live updates for the bounded window into the full array;
+          // never remove on eviction from this window — once the full set is
+          // loaded, that array (not this bounded query) is authoritative for
+          // completeness.
+          const byId = new Map(companies.map(c => [c.id, c]));
+          snap.docs.forEach(d => byId.set(d.id, { id: d.id, ...d.data() }));
+          companies = [...byId.values()];
+        } else {
+          companies = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
         companies.forEach(computeFields);
         refreshSectorOptions();
         renderSummary();
@@ -1110,6 +1143,36 @@ function startCompaniesListener(){
       err => { console.error('companies listener error:', err); if (!done) { done = true; resolve(); } }
     );
   });
+}
+// One-time full-collection read, triggered only by actions that genuinely need
+// every company (filtering/sorting beyond the bounded window, Grouped/Map view,
+// CSV export, Bulk Import dedup). Merges into the existing `companies` array
+// rather than replacing it, so nothing already rendered flickers.
+let fullDatasetPromise = null;
+function ensureFullDataset(){
+  if (fullyLoaded) return Promise.resolve();
+  if (fullDatasetPromise) return fullDatasetPromise;
+  fullDatasetPromise = (async () => {
+    const snap = await getDocs(collection(db, 'searchCompanies'));
+    const have = new Set(companies.map(c => c.id));
+    snap.docs.forEach(d => { if (!have.has(d.id)) companies.push(computeFields({ id: d.id, ...d.data() })); });
+    fullyLoaded = true;
+    refreshSectorOptions();
+    renderSummary();
+    await backfillSectors();
+    await backfillLastTouch();
+  })();
+  return fullDatasetPromise;
+}
+// Cached total company count, shown while only the bounded default window is
+// loaded (companies.length would otherwise read as ~300, not the real total).
+let cachedTotalCount = null;
+async function fetchTotalCount(){
+  try {
+    const snap = await getCountFromServer(collection(db, 'searchCompanies'));
+    cachedTotalCount = snap.data().count;
+  } catch(e) { cachedTotalCount = null; }
+  renderSummary();
 }
 
 async function seedBrokers(){
@@ -1158,7 +1221,10 @@ function buildFilterOptions(){ buildStaticOptions(); refreshSectorOptions(); }
 
 // ── Summary ──────────────────────────────────────────────────────────────────
 function renderSummary(){
-  const total = companies.length;
+  // True total from the server while only the bounded default window is
+  // loaded (companies.length would otherwise read as ~300); once the full
+  // dataset is loaded, the live array is authoritative and self-corrects.
+  const total = fullyLoaded ? companies.length : (cachedTotalCount ?? companies.length);
   const active = companies.filter(c => !['pass','closed'].includes(c.stage)).length;
   const avgFit = total ? (companies.reduce((s,c)=>s+(Number(c.fitScore)||0),0)/total) : 0;
   const inDeal = companies.filter(c => ['engaged','teaser_received','under_nda','cim_received','nbo','loi','due_diligence','financing','closing'].includes(c.stage)).length;
@@ -1176,7 +1242,7 @@ function renderSummary(){
   ).join('');
   document.getElementById('pipelinePills').innerHTML = `<span class="label">Pipeline</span>${pills || '<span style="font-size:0.8rem;color:var(--text-light)">No companies yet</span>'}`;
   document.querySelectorAll('#pipelinePills [data-stage]').forEach(p => {
-    p.addEventListener('click', () => { document.getElementById('stageFilter').value = p.dataset.stage; renderList(); });
+    p.addEventListener('click', async () => { document.getElementById('stageFilter').value = p.dataset.stage; await ensureFullDataset(); renderList(); });
   });
 }
 
@@ -1396,7 +1462,8 @@ function updateMapMarkers(){
   markerClusterGroup.addLayers(markers);
   if (markers.length) leafletMap.fitBounds(markerClusterGroup.getBounds(), { padding:[24,24] });
 }
-function exportMapCsv(){
+async function exportMapCsv(){
+  await ensureFullDataset();
   const base = sortList(getFiltered());
   const list = mapMode === 'custom' ? base.filter(c => mapSelection.has(c.id)) : base;
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
@@ -1819,8 +1886,14 @@ async function saveCompany(){
     if (editCoId) {
       const idx = companies.findIndex(c=>c.id===editCoId);
       const oldStage = companies[idx]?.stage;
-      await updateDoc(doc(db,'searchCompanies',editCoId), data);
-      companies[idx] = computeFields({ ...companies[idx], ...data });
+      const merged = computeFields({ ...companies[idx], ...data });
+      await updateDoc(doc(db,'searchCompanies',editCoId), {
+        ...data,
+        computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
+        computedEBITDAMargin: merged.computedEBITDAMargin, computedCAGR3y: merged.computedCAGR3y,
+        computedEmployees: merged.computedEmployees, fitScore: merged.fitScore,
+      });
+      companies[idx] = merged;
       if (oldStage !== data.stage) {
         const reason = (data.stage==='pass'||data.stage==='on_hold') && data.reasonExcluded ? ` · ${(data.stage==='pass'?PASS_REASONS:HOLD_REASONS)[data.reasonExcluded]||data.reasonExcluded}` : '';
         await logAuto(editCoId, 'stage_changed', `${STAGES[oldStage]?.label||oldStage} → ${STAGES[data.stage]?.label||data.stage}${reason}`);
@@ -1828,7 +1901,14 @@ async function saveCompany(){
         await logAuto(editCoId, 'company_edited', 'Profile updated.');
       }
     } else {
-      const full = { ...data, financials:{}, contacts:[], addOnTo:[], addOns:[], createdAt: serverTimestamp(), createdBy: currentUser };
+      const base = { ...data, financials:{}, contacts:[], addOnTo:[], addOns:[], lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), createdBy: currentUser };
+      const computed = computeFields({ ...base });
+      const full = {
+        ...base,
+        computedRevenue: computed.computedRevenue, computedEBITDA: computed.computedEBITDA,
+        computedEBITDAMargin: computed.computedEBITDAMargin, computedCAGR3y: computed.computedCAGR3y,
+        computedEmployees: computed.computedEmployees, fitScore: computed.fitScore,
+      };
       const ref = await addDoc(collection(db,'searchCompanies'), full);
       const local = computeFields({ id: ref.id, ...full });
       companies.push(local);
@@ -2229,6 +2309,7 @@ async function recalcAll(){
   const n = id => num(document.getElementById(id).value);
   fitCriteria = { ...fitCriteria, revMin:n('setRevMin'), revMax:n('setRevMax'), revSweetMin:n('setRevSweetMin'), revSweetMax:n('setRevSweetMax'), marginTarget:n('setMarginTarget'), cagrTarget:n('setCagrTarget'), ebitdaMin:n('setEbitdaMin') };
   await setDoc(doc(db,'searchConfig','fitCriteria'), fitCriteria);
+  await ensureFullDataset(); // "Recalculate all" must mean all, not just the bounded default window
   try {
     for (const c of companies) {
       const old = c.fitScore;
@@ -2241,7 +2322,8 @@ async function recalcAll(){
 }
 
 // ── Export CSV ───────────────────────────────────────────────────────────────
-function exportCsv(){
+async function exportCsv(){
+  await ensureFullDataset();
   const list = sortList(getFiltered());
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
   const headers = ['Name','Sector','Sub-sector','NACE','CAE','Stage','Priority','Fit','Owner','Source','Concelho','Postcode','NUTS2','NUTS3','Address','Primary Contact','Revenue Y1','EBITDA Y1','EBITDA%','CAGR 3y','Employees','Last Touch','Attempts','Reason'];
@@ -2620,7 +2702,7 @@ document.getElementById('settingsSaveBtn').addEventListener('click', saveSetting
 document.getElementById('recalcBtn').addEventListener('click', recalcAll);
 document.getElementById('addBrokerBtn').addEventListener('click', addBroker);
 document.getElementById('exportBtn').addEventListener('click', exportCsv);
-document.getElementById('bulkImportBtn').addEventListener('click', openBulk);
+document.getElementById('bulkImportBtn').addEventListener('click', async () => { await ensureFullDataset(); openBulk(); });
 document.getElementById('bulkCancelBtn').addEventListener('click', () => showEl('bulkModal', false));
 document.getElementById('bulkConfirmBtn').addEventListener('click', confirmBulk);
 document.getElementById('bulkTemplateBtn').addEventListener('click', downloadTemplate);
@@ -2659,12 +2741,14 @@ function openMiniMap(c){
   }, 50);
 }
 
-// View toggle
+// View toggle — Grouped and Map are inherently full-dataset views (sector
+// aggregates, national coverage), so switching to either needs the full load.
 const viewBtns = { list:'viewListBtn', grouped:'viewGroupedBtn', map:'viewMapBtn' };
-function setViewMode(mode){
+async function setViewMode(mode){
   viewMode = mode;
   Object.values(viewBtns).forEach(id => document.getElementById(id).classList.remove('active'));
   document.getElementById(viewBtns[mode]).classList.add('active');
+  if (mode === 'grouped' || mode === 'map') await ensureFullDataset();
   renderList();
 }
 document.getElementById('viewListBtn').addEventListener('click', () => setViewMode('list'));
@@ -2689,11 +2773,12 @@ document.getElementById('mapListsCloseBtn').addEventListener('click', () => show
 document.getElementById('mapListSaveBtn').addEventListener('click', saveMapList);
 document.getElementById('mapExportBtn').addEventListener('click', exportMapCsv);
 
-// Filters
+// Filters — any real filter/search interaction needs the full dataset (the
+// bounded default window is "recently touched", not a representative sample).
 ['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id => {
   const el = document.getElementById(id);
-  el.addEventListener('input', () => { visibleCount = PAGE; renderList(); });
-  el.addEventListener('change', () => { visibleCount = PAGE; renderList(); });
+  el.addEventListener('input', async () => { await ensureFullDataset(); visibleCount = PAGE; renderList(); });
+  el.addEventListener('change', async () => { await ensureFullDataset(); visibleCount = PAGE; renderList(); });
 });
 document.getElementById('advFilterBtn').addEventListener('click', () => document.getElementById('advFilters').classList.toggle('open'));
 document.getElementById('clearFiltersBtn').addEventListener('click', () => {
@@ -2711,14 +2796,20 @@ function updateCodeLabel(inputId, labelId, codeField, descField){
   document.getElementById(labelId).textContent = match ? '= '+match[descField] : '';
 }
 
-// Load more
-document.getElementById('loadMoreBtn').addEventListener('click', () => { visibleCount += PAGE; renderList(); });
+// Load more — stays purely client-side while paging through what's already
+// loaded; only reaches for the full dataset once the bounded window runs out.
+document.getElementById('loadMoreBtn').addEventListener('click', async () => {
+  if (visibleCount >= companies.length && !fullyLoaded) await ensureFullDataset();
+  visibleCount += PAGE; renderList();
+});
 
-// Sort
-document.querySelectorAll('#companyTable th[data-col]').forEach(th => th.addEventListener('click', () => {
+// Sort — sorting a bounded "recently touched" window by e.g. Revenue would be
+// misleading, so any column sort needs the full dataset first.
+document.querySelectorAll('#companyTable th[data-col]').forEach(th => th.addEventListener('click', async () => {
   const col = th.dataset.col;
   if (sortCol === col) sortDir = sortDir==='asc'?'desc':'asc';
   else { sortCol = col; sortDir = (col==='name'||col==='sector')?'asc':'desc'; }
+  await ensureFullDataset();
   renderList();
 }));
 
