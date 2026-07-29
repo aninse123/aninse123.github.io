@@ -1144,24 +1144,52 @@ function startCompaniesListener(){
     );
   });
 }
-// One-time full-collection read, triggered only by actions that genuinely need
-// every company (filtering/sorting beyond the bounded window, Grouped/Map view,
-// CSV export, Bulk Import dedup). Merges into the existing `companies` array
-// rather than replacing it, so nothing already rendered flickers.
+// Full-collection LIVE listener (not a one-shot read), triggered only by
+// actions that genuinely need every company (filtering/sorting beyond the
+// bounded window, Grouped/Map view, CSV export, Bulk Import dedup). Using
+// onSnapshot instead of getDocs matters for cost: Firestore's persistent
+// IndexedDB cache (see firebase-config.js) tracks a resume point per query
+// target, so once this exact unscoped query has synced once on a given
+// browser profile, later re-attaches — a page reload, a new tab, tomorrow —
+// only bill for documents that actually changed since, not the whole
+// collection again. A one-shot getDocs() has no such memory and would
+// re-bill in full every single time it's called. First-ever sync on a fresh
+// profile still pays the full read cost once.
+let fullDatasetUnsub = null;
 let fullDatasetPromise = null;
+let fullDatasetBackfilled = false;
 function ensureFullDataset(){
   if (fullyLoaded) return Promise.resolve();
   if (fullDatasetPromise) return fullDatasetPromise;
-  fullDatasetPromise = (async () => {
-    const snap = await getDocs(collection(db, 'searchCompanies'));
-    const have = new Set(companies.map(c => c.id));
-    snap.docs.forEach(d => { if (!have.has(d.id)) companies.push(computeFields({ id: d.id, ...d.data() })); });
-    fullyLoaded = true;
-    refreshSectorOptions();
-    renderSummary();
-    await backfillSectors();
-    await backfillLastTouch();
-  })();
+  fullDatasetPromise = new Promise(resolve => {
+    let done = false;
+    fullDatasetUnsub = onSnapshot(
+      collection(db, 'searchCompanies'),
+      snap => {
+        // This query is unscoped, so every snapshot IS the complete set —
+        // no merge/eviction logic needed, unlike the bounded listener above.
+        companies = snap.docs.map(d => computeFields({ id: d.id, ...d.data() }));
+        fullyLoaded = true;
+        // The bounded listener is now a strict subset of this one — leaving
+        // it attached would double-bill any doc that changes after this
+        // point (it would match both query targets).
+        if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
+        refreshSectorOptions();
+        renderSummary();
+        if (document.getElementById('listView').style.display !== 'none') renderList();
+        if (!done) {
+          done = true;
+          if (!fullDatasetBackfilled) {
+            fullDatasetBackfilled = true;
+            backfillSectors();
+            backfillLastTouch();
+          }
+          resolve();
+        }
+      },
+      err => { console.error('full dataset listener error:', err); if (!done) { done = true; resolve(); } }
+    );
+  });
   return fullDatasetPromise;
 }
 // Cached total company count, shown while only the bounded default window is
