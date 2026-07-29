@@ -1144,49 +1144,107 @@ function startCompaniesListener(){
     );
   });
 }
-// Full-collection LIVE listener (not a one-shot read), triggered only by
-// actions that genuinely need every company (filtering/sorting beyond the
-// bounded window, Grouped/Map view, CSV export, Bulk Import dedup). Using
-// onSnapshot instead of getDocs matters for cost: Firestore's persistent
-// IndexedDB cache (see firebase-config.js) tracks a resume point per query
-// target, so once this exact unscoped query has synced once on a given
-// browser profile, later re-attaches — a page reload, a new tab, tomorrow —
-// only bill for documents that actually changed since, not the whole
-// collection again. A one-shot getDocs() has no such memory and would
-// re-bill in full every single time it's called. First-ever sync on a fresh
-// profile still pays the full read cost once.
+// Full-collection cache: our own TTL cache is the primary defense against
+// repeat full-collection read costs, not Firestore's own resume-token
+// behavior. Resume tokens turned out to be unpredictable in practice (a
+// backgrounded tab getting silently discarded/reloaded forces a full resync
+// regardless of elapsed time, and behavior isn't something we can verify or
+// guarantee across browsers/devices we don't control — e.g. whatever
+// António happens to be using). A TTL we set ourselves is deterministic
+// instead. IndexedDB, not localStorage: the full ~20,682-doc set serializes
+// to ~30MB, well past localStorage's ~5-10MB per-origin quota.
+const FULL_CACHE_DB = 'searchCrmCache';
+const FULL_CACHE_STORE = 'fullDataset';
+const FULL_CACHE_KEY = 'all';
+const FULL_CACHE_TTL_MS = 25 * 60 * 1000; // 25 minutes
+
+function openCacheDb(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FULL_CACHE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(FULL_CACHE_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function readFullDatasetCache(){
+  try {
+    const db = await openCacheDb();
+    const entry = await new Promise((resolve, reject) => {
+      const tx = db.transaction(FULL_CACHE_STORE, 'readonly');
+      const req = tx.objectStore(FULL_CACHE_STORE).get(FULL_CACHE_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+    if (!entry || (Date.now() - entry.cachedAt) > FULL_CACHE_TTL_MS) return null;
+    return entry.docs;
+  } catch(e) { return null; } // any failure (quota, private mode, corrupt db) just falls back to a live fetch
+}
+// Timestamp fields are stored as plain epoch-ms numbers, not Firestore
+// Timestamp instances — tsToDate() (line 928) already handles both via
+// new Date(ts), so nothing downstream needs to change to read cached data.
+function writeFullDatasetCache(docs){
+  const plain = docs.map(d => ({
+    ...d,
+    updatedAt: tsToDate(d.updatedAt)?.getTime() ?? null,
+    createdAt: tsToDate(d.createdAt)?.getTime() ?? null,
+    lastTouchAt: tsToDate(d.lastTouchAt)?.getTime() ?? null,
+  }));
+  openCacheDb().then(db => {
+    const tx = db.transaction(FULL_CACHE_STORE, 'readwrite');
+    tx.objectStore(FULL_CACHE_STORE).put({ docs: plain, cachedAt: Date.now() }, FULL_CACHE_KEY);
+  }).catch(() => {}); // best-effort — a failed cache write just means no speedup next time
+}
+
 let fullDatasetUnsub = null;
 let fullDatasetPromise = null;
 let fullDatasetBackfilled = false;
+async function runBackfillsOnce(){
+  if (fullDatasetBackfilled) return;
+  fullDatasetBackfilled = true;
+  await backfillSectors();
+  await backfillLastTouch();
+}
 function ensureFullDataset(){
   if (fullyLoaded) return Promise.resolve();
   if (fullDatasetPromise) return fullDatasetPromise;
-  fullDatasetPromise = new Promise(resolve => {
-    let done = false;
-    fullDatasetUnsub = onSnapshot(
-      collection(db, 'searchCompanies'),
-      async snap => {
-        // This query is unscoped, so every snapshot IS the complete set —
-        // no merge/eviction logic needed, unlike the bounded listener above.
-        companies = snap.docs.map(d => computeFields({ id: d.id, ...d.data() }));
-        fullyLoaded = true;
-        // The bounded listener is now a strict subset of this one — leaving
-        // it attached would double-bill any doc that changes after this
-        // point (it would match both query targets).
-        if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
-        refreshSectorOptions();
-        renderSummary();
-        if (document.getElementById('listView').style.display !== 'none') renderList();
-        if (!fullDatasetBackfilled) {
-          fullDatasetBackfilled = true;
-          await backfillSectors();
-          await backfillLastTouch();
-        }
-        if (!done) { done = true; resolve(); }
-      },
-      err => { console.error('full dataset listener error:', err); if (!done) { done = true; resolve(); } }
-    );
-  });
+  fullDatasetPromise = (async () => {
+    const cached = await readFullDatasetCache();
+    if (cached) {
+      const have = new Set(companies.map(c => c.id));
+      cached.forEach(raw => { if (!have.has(raw.id)) companies.push(computeFields({ ...raw })); });
+      fullyLoaded = true;
+      // Same reasoning as the live-fetch path below: a stale bounded
+      // listener left attached after the full set is loaded would
+      // double-bill any doc that changes from here on.
+      if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
+      refreshSectorOptions();
+      renderSummary();
+      if (document.getElementById('listView').style.display !== 'none') renderList();
+      await runBackfillsOnce();
+      return;
+    }
+    await new Promise(resolve => {
+      let done = false;
+      fullDatasetUnsub = onSnapshot(
+        collection(db, 'searchCompanies'),
+        async snap => {
+          // This query is unscoped, so every snapshot IS the complete set —
+          // no merge/eviction logic needed, unlike the bounded listener above.
+          const raw = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          companies = raw.map(r => computeFields({ ...r }));
+          fullyLoaded = true;
+          if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
+          writeFullDatasetCache(raw);
+          refreshSectorOptions();
+          renderSummary();
+          if (document.getElementById('listView').style.display !== 'none') renderList();
+          await runBackfillsOnce();
+          if (!done) { done = true; resolve(); }
+        },
+        err => { console.error('full dataset listener error:', err); if (!done) { done = true; resolve(); } }
+      );
+    });
+  })();
   return fullDatasetPromise;
 }
 // Cached total company count, shown while only the bounded default window is
