@@ -1165,7 +1165,7 @@ function ensureFullDataset(){
     let done = false;
     fullDatasetUnsub = onSnapshot(
       collection(db, 'searchCompanies'),
-      snap => {
+      async snap => {
         // This query is unscoped, so every snapshot IS the complete set —
         // no merge/eviction logic needed, unlike the bounded listener above.
         companies = snap.docs.map(d => computeFields({ id: d.id, ...d.data() }));
@@ -1177,15 +1177,12 @@ function ensureFullDataset(){
         refreshSectorOptions();
         renderSummary();
         if (document.getElementById('listView').style.display !== 'none') renderList();
-        if (!done) {
-          done = true;
-          if (!fullDatasetBackfilled) {
-            fullDatasetBackfilled = true;
-            backfillSectors();
-            backfillLastTouch();
-          }
-          resolve();
+        if (!fullDatasetBackfilled) {
+          fullDatasetBackfilled = true;
+          await backfillSectors();
+          await backfillLastTouch();
         }
+        if (!done) { done = true; resolve(); }
       },
       err => { console.error('full dataset listener error:', err); if (!done) { done = true; resolve(); } }
     );
