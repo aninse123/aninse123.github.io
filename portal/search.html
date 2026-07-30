@@ -76,6 +76,12 @@
     .summary-stats { display: flex; gap: 22px; flex-wrap: wrap; }
     .summary-stat { font-size: 0.8rem; color: var(--text-light); }
     .summary-stat strong { color: var(--text); font-size: 1.05rem; }
+    /* Data freshness — subtle, not competing with the real stats */
+    .freshness-badge { font-size: 0.7rem; font-weight: 500; vertical-align: middle; margin-left: 6px; padding: 2px 8px; border-radius: 10px; }
+    .freshness-badge.live   { background: #E6F4EA; color: #1E7A34; }
+    .freshness-badge.cached { background: #FBF3E0; color: #92650C; }
+    /* Nav bar read counter — same muted treatment as the email next to it */
+    .nav__reads { font-size: 0.78rem; color: rgba(255,255,255,0.45); cursor: default; }
     .pipeline-pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
     .pipeline-pills .label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-light); margin-right: 4px; }
 
@@ -324,6 +330,7 @@
       <a href="/portal/search.html"   class="nav__link active">Search</a>
       <a href="/portal/budget.html"   class="nav__link">Budget</a>
       <a href="/portal/log.html"      class="nav__link">Activity Log</a>
+      <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today — resets at midnight, not billing-exact"></span>
       <span class="nav__email" id="navEmail"></span>
       <button class="sign-out-btn" id="signOutBtn">Sign out</button>
     </div>
@@ -351,7 +358,7 @@
     <div class="card summary-card">
       <div class="summary-header">
         <div class="summary-header-left">
-          <h2>Pipeline Overview</h2>
+          <h2>Pipeline Overview <span id="dataFreshness" class="freshness-badge"></span></h2>
           <div class="summary-stats" id="summaryStats">—</div>
         </div>
       </div>
@@ -763,7 +770,7 @@
 <script src="./vendor/leaflet/leaflet.markercluster.js"></script>
 <script src="./vendor/pt-postcodes.js?v=cp7-nominatim-1"></script>
 <script type="module">
-import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
+import { auth, db, ADMIN_EMAILS, addReads, getTodayReads } from './firebase-config.js';
 import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
   collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
@@ -928,6 +935,21 @@ let groupedExpandedFull = new Set();
 let companiesUnsub = null;
 let fullyLoaded = false;
 const DEFAULT_FETCH_LIMIT = 300;
+// null = data is live (an onSnapshot listener is attached and current — true
+// for the bounded default view, and true for the full set right after a
+// fresh sync). A Date = the full set came from the IndexedDB cache instead
+// and is a frozen snapshot as of that time — a change made elsewhere (e.g.
+// António editing a company) won't show until the cache refreshes.
+let dataAsOf = null;
+function renderReadsAndFreshness(){
+  const badge = document.getElementById('dataFreshness');
+  if (badge) {
+    if (dataAsOf) { badge.textContent = 'Cached · updated ' + relTime(dataAsOf); badge.className = 'freshness-badge cached'; }
+    else { badge.textContent = 'Live'; badge.className = 'freshness-badge live'; }
+  }
+  const reads = document.getElementById('navReads');
+  if (reads) reads.textContent = `~${getTodayReads().toLocaleString()} reads today`;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -1131,6 +1153,9 @@ function startCompaniesListener(){
     companiesUnsub = onSnapshot(
       query(collection(db, 'searchCompanies'), orderBy('lastTouchAt', 'desc'), limit(DEFAULT_FETCH_LIMIT)),
       snap => {
+        // First snapshot bills for every doc it returns; every snapshot after
+        // that only bills for docs that actually changed (see addReads doc).
+        addReads(done ? snap.docChanges().length : snap.docs.length);
         if (fullyLoaded) {
           // Merge live updates for the bounded window into the full array;
           // never remove on eviction from this window — once the full set is
@@ -1141,10 +1166,12 @@ function startCompaniesListener(){
           companies = [...byId.values()];
         } else {
           companies = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          dataAsOf = null; // bounded window is always live
         }
         companies.forEach(computeFields);
         refreshSectorOptions();
         renderSummary();
+        renderReadsAndFreshness();
         // Only re-render the list when it's visible — never disturb an open
         // detail view (preserves any in-progress inline edits like financials).
         if (document.getElementById('listView').style.display !== 'none') renderList();
@@ -1186,7 +1213,7 @@ async function readFullDatasetCache(){
       req.onerror = () => reject(req.error);
     });
     if (!entry || (Date.now() - entry.cachedAt) > FULL_CACHE_TTL_MS) return null;
-    return entry.docs;
+    return entry;
   } catch(e) { return null; } // any failure (quota, private mode, corrupt db) just falls back to a live fetch
 }
 // Timestamp fields are stored as plain epoch-ms numbers, not Firestore
@@ -1221,14 +1248,16 @@ function ensureFullDataset(){
     const cached = await readFullDatasetCache();
     if (cached) {
       const have = new Set(companies.map(c => c.id));
-      cached.forEach(raw => { if (!have.has(raw.id)) companies.push(computeFields({ ...raw })); });
+      cached.docs.forEach(raw => { if (!have.has(raw.id)) companies.push(computeFields({ ...raw })); });
       fullyLoaded = true;
+      dataAsOf = new Date(cached.cachedAt); // served from cache, not live — no Firestore reads spent
       // Same reasoning as the live-fetch path below: a stale bounded
       // listener left attached after the full set is loaded would
       // double-bill any doc that changes from here on.
       if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
       refreshSectorOptions();
       renderSummary();
+      renderReadsAndFreshness();
       if (document.getElementById('listView').style.display !== 'none') renderList();
       await runBackfillsOnce();
       return;
@@ -1240,13 +1269,16 @@ function ensureFullDataset(){
         async snap => {
           // This query is unscoped, so every snapshot IS the complete set —
           // no merge/eviction logic needed, unlike the bounded listener above.
+          addReads(done ? snap.docChanges().length : snap.docs.length);
           const raw = snap.docs.map(d => ({ id: d.id, ...d.data() }));
           companies = raw.map(r => computeFields({ ...r }));
           fullyLoaded = true;
+          dataAsOf = null; // live listener — stays current for the rest of the session
           if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
           writeFullDatasetCache(raw);
           refreshSectorOptions();
           renderSummary();
+          renderReadsAndFreshness();
           if (document.getElementById('listView').style.display !== 'none') renderList();
           await runBackfillsOnce();
           if (!done) { done = true; resolve(); }
@@ -1264,8 +1296,12 @@ async function fetchTotalCount(){
   try {
     const snap = await getCountFromServer(collection(db, 'searchCompanies'));
     cachedTotalCount = snap.data().count;
+    // Aggregation queries bill roughly 1 read per ~1,000 entries scanned —
+    // an estimate, not an exact figure, but small either way (~21 here).
+    addReads(Math.max(1, Math.ceil(cachedTotalCount / 1000)));
   } catch(e) { cachedTotalCount = null; }
   renderSummary();
+  renderReadsAndFreshness();
 }
 
 async function seedBrokers(){

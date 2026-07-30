@@ -27,3 +27,27 @@ export const ADMIN_EMAILS = [
   'andre.rocha@douropartners.pt',
   'antonio.carvalho@douropartners.pt'
 ];
+
+// Rough, local, per-browser estimate of Firestore document reads "today" —
+// not billing-grade (Firestore's SDK doesn't expose actual billed reads to
+// the client), but close: an onSnapshot listener's first snapshot bills for
+// every doc it returns, and each snapshot after that only bills for the docs
+// that actually changed (snap.docChanges().length), so callers pass exactly
+// those numbers in. Keyed by calendar date (not a tab session) because the
+// number that actually matters — the 50k reads/day free-tier quota — resets
+// daily, not per-tab; localStorage (not sessionStorage) so it's shared across
+// every tab on this browser, not reset by opening a new one.
+function todayReadsKey(){
+  const d = new Date();
+  return 'dp_reads_' + d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+export function addReads(n){
+  if (!n) return getTodayReads();
+  const key = todayReadsKey();
+  const total = (Number(localStorage.getItem(key)) || 0) + n;
+  localStorage.setItem(key, total);
+  return total;
+}
+export function getTodayReads(){
+  return Number(localStorage.getItem(todayReadsKey())) || 0;
+}
