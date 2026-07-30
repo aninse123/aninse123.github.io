@@ -91,6 +91,7 @@
     .bar-fill { height: 100%; border-radius: 4px; transition: width 0.6s ease; min-width: 0; }
     .bar-soft { background: #F59E0B; }
     .bar-hard { background: #10B981; }
+    .bar-wired { background: #1D4ED8; }
     .bar-remaining { background: var(--border); }
     .commit-meta { font-size: 0.78rem; color: var(--text-light); text-align: right; white-space: nowrap; }
     .commit-meta strong { color: var(--text); }
@@ -250,8 +251,8 @@
     <div class="nav__right">
       <a href="/portal/investor.html" class="nav__link">Investor view</a>
       <a href="/portal/admin.html"    class="nav__link">Admin</a>
-      <a href="/portal/crm.html"      class="nav__link active">CRM</a>
-      <a href="/portal/search.html"   class="nav__link">Search</a>
+      <a href="/portal/crm.html"      class="nav__link active">Investor CRM</a>
+      <a href="/portal/search.html"   class="nav__link">Search CRM</a>
       <a href="/portal/budget.html"   class="nav__link">Budget</a>
       <a href="/portal/log.html"      class="nav__link">Activity Log</a>
       <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today — resets at midnight, not billing-exact"></span>
@@ -349,6 +350,7 @@
             <th data-col="nextContactAt">Next Contact</th>
             <th data-col="soft">Soft Commit</th>
             <th data-col="hard">Hard Commit</th>
+            <th data-col="wired">Wired</th>
           </tr>
         </thead>
         <tbody id="investorBody"></tbody>
@@ -633,7 +635,7 @@
       </div>
       <div class="hint" id="softPct"></div>
     </div>
-    <div>
+    <div style="margin-bottom:20px;">
       <div class="sec-title" style="margin-bottom:10px;">Hard Commitment</div>
       <div class="form-row">
         <div class="form-group">
@@ -646,6 +648,20 @@
         </div>
       </div>
       <div class="hint" id="hardPct"></div>
+    </div>
+    <div>
+      <div class="sec-title" style="margin-bottom:10px;">Wired Commitment</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label># Units</label>
+          <input type="number" class="field" id="wiredUnits" min="0" step="0.01" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Value (€)</label>
+          <input type="number" class="field" id="wiredValue" min="0" step="1000" placeholder="0">
+        </div>
+      </div>
+      <div class="hint" id="wiredPct"></div>
     </div>
     <div class="modal-actions">
       <button class="btn btn--ghost" id="commitCancelBtn">Cancel</button>
@@ -1082,10 +1098,12 @@ function renderSummary() {
 
   let softUnits = 0, softVal = 0, softCount = 0;
   let hardUnits = 0, hardVal = 0, hardCount = 0;
+  let wiredUnits = 0, wiredVal = 0, wiredCount = 0;
 
   crmInvestors.forEach(inv => {
     if (inv.softCommitment?.units) { softUnits += Number(inv.softCommitment.units)||0; softVal += Number(inv.softCommitment.value)||0; softCount++; }
     if (inv.hardCommitment?.units) { hardUnits += Number(inv.hardCommitment.units)||0; hardVal += Number(inv.hardCommitment.value)||0; hardCount++; }
+    if (inv.wiredCommitment?.units) { wiredUnits += Number(inv.wiredCommitment.units)||0; wiredVal += Number(inv.wiredCommitment.value)||0; wiredCount++; }
   });
 
   const remUnits = Math.max(0, units - hardUnits);
@@ -1122,9 +1140,10 @@ function renderSummary() {
     return;
   }
 
-  const softPct = units ? softUnits / units : 0;
-  const hardPct = units ? hardUnits / units : 0;
-  const remPct  = units ? remUnits  / units : 0;
+  const softPct  = units ? softUnits  / units : 0;
+  const hardPct  = units ? hardUnits  / units : 0;
+  const wiredPct = units ? wiredUnits / units : 0;
+  const remPct   = units ? remUnits   / units : 0;
 
   document.getElementById('commitRows').innerHTML = `
     <div class="commit-row">
@@ -1136,6 +1155,11 @@ function renderSummary() {
       <div class="commit-label">Hard</div>
       <div class="bar-wrap"><div class="bar-fill bar-hard" style="width:${Math.min(100,hardPct*100).toFixed(1)}%"></div></div>
       <div class="commit-meta"><strong>${hardUnits}</strong> units · <strong>${fmtEur(hardVal)}</strong> · ${fmtPct(hardUnits,units)} · ${hardCount} inv</div>
+    </div>
+    <div class="commit-row">
+      <div class="commit-label">Wired</div>
+      <div class="bar-wrap"><div class="bar-fill bar-wired" style="width:${Math.min(100,wiredPct*100).toFixed(1)}%"></div></div>
+      <div class="commit-meta"><strong>${wiredUnits}</strong> units · <strong>${fmtEur(wiredVal)}</strong> · ${fmtPct(wiredUnits,units)} · ${wiredCount} inv</div>
     </div>
     <div class="commit-row">
       <div class="commit-label">Remaining</div>
@@ -1182,7 +1206,7 @@ function renderList() {
       va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
     } else if (sortCol === 'documentsSent') {
       va = a.documentsSent ? 1 : 0; vb = b.documentsSent ? 1 : 0;
-    } else if (['soft','hard'].includes(sortCol)) {
+    } else if (['soft','hard','wired'].includes(sortCol)) {
       va = Number(a[sortCol+'Commitment']?.value) || 0;
       vb = Number(b[sortCol+'Commitment']?.value) || 0;
     }
@@ -1196,7 +1220,7 @@ function renderList() {
 
   const tbody = document.getElementById('investorBody');
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="11"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No investors found</div><div>Try adjusting your filters.</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No investors found</div><div>Try adjusting your filters.</div></div></td></tr>`;
     return;
   }
 
@@ -1204,6 +1228,7 @@ function renderList() {
     const interest = inv.interest ? (INTEREST_ICONS[inv.interest] || '') : '—';
     const soft = inv.softCommitment?.value ? fmtEur(inv.softCommitment.value) : '—';
     const hard = inv.hardCommitment?.value ? fmtEur(inv.hardCommitment.value) : '—';
+    const wired = inv.wiredCommitment?.value ? fmtEur(inv.wiredCommitment.value) : '—';
     const nextContact = inv.nextContactAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(inv.nextContactAt)}</span>` : '—';
     const overdue = inv.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
     const ownerLabel = inv.owner ? `<span style="font-size:0.82rem;font-weight:500;">${esc(OWNER_LABELS[inv.owner]||inv.owner)}</span>` : '<span style="color:var(--text-light);">—</span>';
@@ -1219,6 +1244,7 @@ function renderList() {
       <td>${nextContact}</td>
       <td>${soft}</td>
       <td>${hard}</td>
+      <td>${wired}</td>
     </tr>`;
   }).join('');
 
@@ -1318,6 +1344,7 @@ function renderCommitDisplay() {
   const { target=0, units=0 } = fundSettings;
   const soft = inv.softCommitment || {};
   const hard = inv.hardCommitment || {};
+  const wired = inv.wiredCommitment || {};
   const el = document.getElementById('commitDisplay');
   el.innerHTML = `
     <div class="commit-block">
@@ -1329,6 +1356,11 @@ function renderCommitDisplay() {
       <div class="commit-block-label">Hard Commitment</div>
       <div class="commit-block-value">${hard.units ? `${hard.units} units · ${fmtEur(hard.value)}` : '—'}</div>
       ${hard.units && units ? `<div class="commit-block-sub">${fmtPct(hard.units, units)} of fund</div>` : ''}
+    </div>
+    <div class="commit-block">
+      <div class="commit-block-label">Wired Commitment</div>
+      <div class="commit-block-value">${wired.units ? `${wired.units} units · ${fmtEur(wired.value)}` : '—'}</div>
+      ${wired.units && units ? `<div class="commit-block-sub">${fmtPct(wired.units, units)} of fund</div>` : ''}
     </div>`;
 }
 
@@ -1566,10 +1598,10 @@ async function saveInvestor() {
       crmInvestors = crmInvestors.map(i => i.id === editInvId ? { ...i, ...data, updatedAt: Timestamp.now() } : i);
     } else {
       const ref = await addDoc(collection(db,'crmInvestors'), {
-        ...data, contacts:[], softCommitment:{}, hardCommitment:{},
+        ...data, contacts:[], softCommitment:{}, hardCommitment:{}, wiredCommitment:{},
         portalInvestorId: null, createdAt: serverTimestamp(),
       });
-      const newInv = { id: ref.id, ...data, contacts:[], softCommitment:{}, hardCommitment:{}, portalInvestorId: null, createdAt: Timestamp.now(), lastTouchAt: null, nextContactAt: null };
+      const newInv = { id: ref.id, ...data, contacts:[], softCommitment:{}, hardCommitment:{}, wiredCommitment:{}, portalInvestorId: null, createdAt: Timestamp.now(), lastTouchAt: null, nextContactAt: null };
       crmInvestors.push(newInv);
       await logActivity(ref.id, 'investor_created', { date: new Date(), content: `Added to CRM.` });
     }
@@ -1878,6 +1910,8 @@ function openCommitModal() {
   document.getElementById('softValue').value = inv.softCommitment?.value || '';
   document.getElementById('hardUnits').value = inv.hardCommitment?.units || '';
   document.getElementById('hardValue').value = inv.hardCommitment?.value || '';
+  document.getElementById('wiredUnits').value = inv.wiredCommitment?.units || '';
+  document.getElementById('wiredValue').value = inv.wiredCommitment?.value || '';
   const up = fundSettings.units ? fundSettings.target / fundSettings.units : 0;
   document.getElementById('commitHint').textContent = units
     ? `Fund: ${units} units @ ${fmtEur(Math.round(up))}/unit. Units and value auto-fill each other; % is automatic.`
@@ -1888,7 +1922,7 @@ function openCommitModal() {
 
 function updateCommitPct() {
   const { units=0 } = fundSettings;
-  ['soft','hard'].forEach(t => {
+  ['soft','hard','wired'].forEach(t => {
     const u = Number(document.getElementById(t+'Units').value)||0;
     document.getElementById(t+'Pct').textContent = units && u ? `= ${fmtPct(u, units)} of fund (${units} total units)` : '';
   });
@@ -1900,10 +1934,11 @@ async function saveCommitments() {
   const round2 = x => Math.round((Number(x)||0) * 100) / 100;
   const softCommitment = { units: round2(document.getElementById('softUnits').value), value: Number(document.getElementById('softValue').value)||0 };
   const hardCommitment = { units: round2(document.getElementById('hardUnits').value), value: Number(document.getElementById('hardValue').value)||0 };
+  const wiredCommitment = { units: round2(document.getElementById('wiredUnits').value), value: Number(document.getElementById('wiredValue').value)||0 };
   try {
-    await updateDoc(doc(db,'crmInvestors',currentInvId), { softCommitment, hardCommitment, updatedAt: serverTimestamp() });
-    await logActivity(currentInvId, 'commit_updated', { date: new Date(), content: `Soft: ${softCommitment.units} units / ${fmtEur(softCommitment.value)}. Hard: ${hardCommitment.units} units / ${fmtEur(hardCommitment.value)}.` });
-    crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, softCommitment, hardCommitment} : i);
+    await updateDoc(doc(db,'crmInvestors',currentInvId), { softCommitment, hardCommitment, wiredCommitment, updatedAt: serverTimestamp() });
+    await logActivity(currentInvId, 'commit_updated', { date: new Date(), content: `Soft: ${softCommitment.units} units / ${fmtEur(softCommitment.value)}. Hard: ${hardCommitment.units} units / ${fmtEur(hardCommitment.value)}. Wired: ${wiredCommitment.units} units / ${fmtEur(wiredCommitment.value)}.` });
+    crmInvestors = crmInvestors.map(i => i.id===currentInvId ? {...i, softCommitment, hardCommitment, wiredCommitment} : i);
     showEl('commitModal',false);
     renderCommitDisplay(); renderSummary();
   } catch(e) { alert('Error: ' + e.message); }
@@ -2065,12 +2100,12 @@ async function confirmImport() {
       const ref = await addDoc(collection(db, 'crmInvestors'), {
         name: portal.name, type: '', stage: 'engaged',
         interest: null, source: null, sourceDetail: null,
-        contacts: [], softCommitment: {}, hardCommitment: {},
+        contacts: [], softCommitment: {}, hardCommitment: {}, wiredCommitment: {},
         portalInvestorId: portalId,
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
       await logActivity(ref.id, 'investor_created', { date: new Date(), content: `Imported from portal.` });
-      crmInvestors.push({ id: ref.id, name: portal.name, type: '', stage: 'engaged', portalInvestorId: portalId, contacts: [], softCommitment: {}, hardCommitment: {}, lastTouchAt: null, nextContactAt: null });
+      crmInvestors.push({ id: ref.id, name: portal.name, type: '', stage: 'engaged', portalInvestorId: portalId, contacts: [], softCommitment: {}, hardCommitment: {}, wiredCommitment: {}, lastTouchAt: null, nextContactAt: null });
     }
     showEl('importModal', false);
     renderList(); renderSummary();
@@ -2135,14 +2170,14 @@ document.getElementById('closeMtgSaveBtn').addEventListener('click', closeMeetin
 document.getElementById('editCommitBtn').addEventListener('click', openCommitModal);
 // Units ↔ value auto-fill in the commitments editor, via the fund's unit price (target ÷ units)
 function commitUnitPrice() { return fundSettings.units > 0 ? fundSettings.target / fundSettings.units : 0; }
-['soft','hard'].forEach(t => {
+['soft','hard','wired'].forEach(t => {
   const u = document.getElementById(t+'Units'), v = document.getElementById(t+'Value');
   u.addEventListener('input', () => { const p = commitUnitPrice(); if (p > 0 && u.value !== '') v.value = Math.round(Number(u.value) * p); updateCommitPct(); });
   v.addEventListener('input', () => { const p = commitUnitPrice(); if (p > 0 && v.value !== '') u.value = Math.round((Number(v.value) / p) * 100) / 100; updateCommitPct(); });
 });
 document.getElementById('commitCancelBtn').addEventListener('click', () => showEl('commitModal',false));
 document.getElementById('commitSaveBtn').addEventListener('click', saveCommitments);
-['softUnits','softValue','hardUnits','hardValue'].forEach(id => document.getElementById(id).addEventListener('input', updateCommitPct));
+['softUnits','softValue','hardUnits','hardValue','wiredUnits','wiredValue'].forEach(id => document.getElementById(id).addEventListener('input', updateCommitPct));
 
 document.getElementById('fundSettingsBtn').addEventListener('click', openFundSettings);
 document.getElementById('fundCancelBtn').addEventListener('click', () => showEl('fundModal',false));
@@ -2308,11 +2343,11 @@ async function confirmBulkImport() {
   try {
     for (const { investor } of toImport) {
       const ref = await addDoc(collection(db, 'crmInvestors'), {
-        ...investor, softCommitment: {}, hardCommitment: {},
+        ...investor, softCommitment: {}, hardCommitment: {}, wiredCommitment: {},
         portalInvestorId: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
       await logActivity(ref.id, 'investor_created', { date: new Date(), content: 'Added via bulk import.' });
-      crmInvestors.push({ id: ref.id, ...investor, softCommitment: {}, hardCommitment: {}, portalInvestorId: null, lastTouchAt: null, nextContactAt: null });
+      crmInvestors.push({ id: ref.id, ...investor, softCommitment: {}, hardCommitment: {}, wiredCommitment: {}, portalInvestorId: null, lastTouchAt: null, nextContactAt: null });
     }
     showEl('bulkImportModal', false);
     renderList(); renderSummary();
@@ -2372,7 +2407,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
       va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
     } else if (sortCol === 'documentsSent') {
       va = a.documentsSent ? 1 : 0; vb = b.documentsSent ? 1 : 0;
-    } else if (['soft','hard'].includes(sortCol)) {
+    } else if (['soft','hard','wired'].includes(sortCol)) {
       va = Number(a[sortCol+'Commitment']?.value) || 0;
       vb = Number(b[sortCol+'Commitment']?.value) || 0;
     }
@@ -2385,7 +2420,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   const fmtTs  = ts => { const d = tsToDate(ts); return d ? d.toLocaleDateString('en-GB') : ''; };
 
   const headers = ['Name','Type','Stage','Owner','Country','Documents Sent','Interest','Source','Source Detail',
-                   'Soft Commit (€)','Soft Units','Hard Commit (€)','Hard Units',
+                   'Soft Commit (€)','Soft Units','Hard Commit (€)','Hard Units','Wired Commit (€)','Wired Units',
                    'Last Touch','Next Contact','Contacts'];
 
   const rows = list.map(inv => {
@@ -2404,6 +2439,8 @@ document.getElementById('exportBtn').addEventListener('click', () => {
       inv.softCommitment?.units || '',
       inv.hardCommitment?.value || '',
       inv.hardCommitment?.units || '',
+      inv.wiredCommitment?.value || '',
+      inv.wiredCommitment?.units || '',
       fmtTs(effectiveLastTouch(inv)),
       fmtTs(inv.nextContactAt),
       contacts,
