@@ -127,6 +127,7 @@
     .group-count { margin-left: auto; font-size: 0.78rem; color: var(--text-light); }
     .group-block.collapsed .group-body { display: none; }
     .subgroup-title { padding: 8px 16px; font-size: 0.78rem; font-weight: 600; color: var(--primary); background: #FCFBF8; border-top: 1px solid #F0EDE6; }
+    .subgroup-more, .map-sidebar-more { padding: 10px 16px; text-align: center; }
 
     /* Stage pills */
     .stage-pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; letter-spacing: 0.02em; }
@@ -915,6 +916,15 @@ let sortDir = 'desc';
 let viewMode = 'list';
 let visibleCount = 100;
 const PAGE = 100;
+// Grouped/Map views paginate independently of the List view above — each
+// renders thousands of DOM nodes at current scale (~20,682 companies), which
+// froze the page for 8-10s when built all at once. See renderGrouped()/
+// renderMap() for the lazy/paginated rendering that replaced that.
+let mapSidebarVisibleCount = 200;
+const MAP_SIDEBAR_PAGE = 200;
+const GROUP_ROW_CAP = 200;
+let groupedDataCache = {};
+let groupedExpandedFull = new Set();
 let companiesUnsub = null;
 let fullyLoaded = false;
 const DEFAULT_FETCH_LIMIT = 300;
@@ -1455,18 +1465,20 @@ function renderGrouped(){
     groups[sec][sub] = groups[sec][sub] || [];
     groups[sec][sub].push(c);
   });
+  groupedDataCache = groups;
+  groupedExpandedFull = new Set();
   const secNames = Object.keys(groups).sort();
   if (!secNames.length) { document.getElementById('groupedCard').innerHTML = `<div class="card"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No companies found</div></div></div>`; return; }
+  // Groups render collapsed by default — only the headers are built here.
+  // Each group's rows are rendered lazily on first expand (renderGroupBody),
+  // since building HTML for every row in every group up front (all ~20,682
+  // companies, even while collapsed/hidden) is what caused the multi-second
+  // freeze this replaced.
   document.getElementById('groupedCard').innerHTML = secNames.map(sec => {
     const subs = groups[sec];
     const all = Object.values(subs).flat();
     const avgFit = all.reduce((s,c)=>s+(Number(c.fitScore)||0),0)/all.length;
     const inOut = all.filter(c=>!['universe','screened','pass'].includes(c.stage)).length;
-    const subHtml = Object.keys(subs).sort().map(sub => {
-      const rows = subs[sub].map(rowHtml).join('');
-      return `<div class="subgroup-title">${esc(sub)} · ${subs[sub].length}</div>
-        <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>`;
-    }).join('');
     return `<div class="group-block collapsed" data-sec="${esc(sec)}">
       <div class="group-head">
         <span class="group-arrow">▼</span>
@@ -1474,13 +1486,44 @@ function renderGrouped(){
         <span class="group-sub">avg fit ${avgFit.toFixed(1)} · ${inOut} engaged+</span>
         <span class="group-count">${all.length} companies</span>
       </div>
-      <div class="group-body">${subHtml}</div>
+      <div class="group-body" data-rendered="0"></div>
     </div>`;
   }).join('');
   document.querySelectorAll('#groupedCard .group-head').forEach(h => {
-    h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed'));
+    h.addEventListener('click', () => {
+      const block = h.parentElement;
+      const wasCollapsed = block.classList.contains('collapsed');
+      block.classList.toggle('collapsed');
+      if (wasCollapsed) renderGroupBody(block.dataset.sec, block.querySelector('.group-body'));
+    });
   });
-  document.querySelectorAll('#groupedCard .row-clickable').forEach(r => r.addEventListener('click', () => openDetail(r.dataset.id)));
+}
+// Renders one sector's rows, capped at GROUP_ROW_CAP per sub-sector with a
+// "show all" expand — a single sub-sector can itself hold thousands of
+// companies (e.g. "Wholesale & retail trade"), so even a lazily-rendered
+// group needs its own cap to stay responsive.
+function renderGroupBody(sec, bodyEl){
+  if (bodyEl.dataset.rendered === '1') return; // already built — collapse/expand is just a CSS toggle from here
+  bodyEl.dataset.rendered = '1';
+  const subs = groupedDataCache[sec] || {};
+  bodyEl.innerHTML = Object.keys(subs).sort().map(sub => {
+    const subCompanies = subs[sub];
+    const key = sec + '|||' + sub;
+    const capped = groupedExpandedFull.has(key) ? subCompanies : subCompanies.slice(0, GROUP_ROW_CAP);
+    const rows = capped.map(rowHtml).join('');
+    const hidden = subCompanies.length - capped.length;
+    const more = hidden > 0
+      ? `<div class="subgroup-more"><button class="btn btn--ghost btn--sm show-all-sub" data-key="${esc(key)}">Show all ${subCompanies.length} (${hidden} hidden)</button></div>`
+      : '';
+    return `<div class="subgroup-title">${esc(sub)} · ${subCompanies.length}</div>
+      <div class="table-wrap"><table><tbody>${rows}</tbody></table></div>${more}`;
+  }).join('');
+  bodyEl.querySelectorAll('.row-clickable').forEach(r => r.addEventListener('click', () => openDetail(r.dataset.id)));
+  bodyEl.querySelectorAll('.show-all-sub').forEach(btn => btn.addEventListener('click', () => {
+    groupedExpandedFull.add(btn.dataset.key);
+    bodyEl.dataset.rendered = '0';
+    renderGroupBody(sec, bodyEl);
+  }));
 }
 
 // ── Map view ─────────────────────────────────────────────────────────────────
@@ -1515,11 +1558,26 @@ function renderMap(){
   document.getElementById('resultsCount').textContent = `${base.length} of ${companies.length}`;
   document.getElementById('mapFilteredCount').textContent = base.length;
   document.getElementById('mapCustomCount').textContent = mapSelection.size;
-  document.getElementById('mapSidebar').innerHTML = base.map(c => `
+  renderMapSidebarList(base);
+  updateMapMarkers();
+}
+// Sidebar is paginated independently from the map itself — markers/clustering
+// and CSV export (below) already read `base`/getFiltered() directly, so they
+// were never affected by how many checkboxes are actually in the DOM. Only
+// the sidebar's own checkbox list needed bounding: rendering one <label> +
+// checkbox + change-listener per company (up to ~20,682) in one pass was the
+// actual freeze, not the map/markers.
+function renderMapSidebarList(base){
+  const shown = base.slice(0, mapSidebarVisibleCount);
+  const hidden = base.length - shown.length;
+  const moreHtml = hidden > 0
+    ? `<div class="map-sidebar-more"><button class="btn btn--ghost btn--sm" id="mapSidebarLoadMore">Load more (${hidden} hidden)</button></div>`
+    : '';
+  document.getElementById('mapSidebar').innerHTML = (shown.map(c => `
     <label class="map-sidebar-item">
       <input type="checkbox" class="mapSelChk" data-id="${c.id}" ${mapSelection.has(c.id)?'checked':''}>
       <span title="${esc(c.name)}">${esc(c.name)}</span>
-    </label>`).join('') || '<div class="empty" style="padding:16px;">No companies match the current filters.</div>';
+    </label>`).join('') + moreHtml) || '<div class="empty" style="padding:16px;">No companies match the current filters.</div>';
   document.getElementById('mapSidebar').querySelectorAll('.mapSelChk').forEach(chk => {
     chk.addEventListener('change', () => {
       if (chk.checked) mapSelection.add(chk.dataset.id); else mapSelection.delete(chk.dataset.id);
@@ -1527,7 +1585,10 @@ function renderMap(){
       if (mapMode === 'custom') updateMapMarkers();
     });
   });
-  updateMapMarkers();
+  document.getElementById('mapSidebarLoadMore')?.addEventListener('click', () => {
+    mapSidebarVisibleCount += MAP_SIDEBAR_PAGE;
+    renderMapSidebarList(base);
+  });
 }
 function updateMapMarkers(){
   const base = sortList(getFiltered());
@@ -2843,6 +2904,7 @@ async function setViewMode(mode){
   Object.values(viewBtns).forEach(id => document.getElementById(id).classList.remove('active'));
   document.getElementById(viewBtns[mode]).classList.add('active');
   if (mode === 'grouped' || mode === 'map') await ensureFullDataset();
+  if (mode === 'map') mapSidebarVisibleCount = MAP_SIDEBAR_PAGE;
   renderList();
 }
 document.getElementById('viewListBtn').addEventListener('click', () => setViewMode('list'));
@@ -2871,14 +2933,14 @@ document.getElementById('mapExportBtn').addEventListener('click', exportMapCsv);
 // bounded default window is "recently touched", not a representative sample).
 ['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id => {
   const el = document.getElementById(id);
-  el.addEventListener('input', async () => { await ensureFullDataset(); visibleCount = PAGE; renderList(); });
-  el.addEventListener('change', async () => { await ensureFullDataset(); visibleCount = PAGE; renderList(); });
+  el.addEventListener('input', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
+  el.addEventListener('change', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
 });
 document.getElementById('advFilterBtn').addEventListener('click', () => document.getElementById('advFilters').classList.toggle('open'));
 document.getElementById('clearFiltersBtn').addEventListener('click', () => {
   ['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('naceLabel').textContent=''; document.getElementById('caeLabel').textContent='';
-  visibleCount = PAGE; renderList();
+  visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList();
 });
 // NACE/CAE filter labels
 document.getElementById('naceFilter').addEventListener('input', () => updateCodeLabel('naceFilter','naceLabel','naceCode','naceDescription'));
