@@ -39,10 +39,10 @@
     .nav__main-link { font-size: 0.82rem; color: rgba(255,255,255,0.6); text-decoration: none; transition: color 0.2s; }
     .nav__main-link:hover { color: rgba(255,255,255,1); }
     .nav__logo { height: 65px; filter: brightness(0) invert(1); opacity: 0.85; }
-    .nav__label { font-family: var(--font-serif); color: rgba(255,255,255,0.8); font-size: 0.95rem; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.2); }
     .nav__right { display: flex; align-items: center; }
     .nav__links { display: flex; align-items: center; gap: 14px; }
-    .nav__status { display: flex; align-items: center; gap: 14px; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.15); }
+    .nav__status { display: flex; align-items: center; gap: 12px; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.15); }
+    .nav__account { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
     .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.55); white-space: nowrap; }
     .nav__reads { font-size: 0.72rem; font-weight: 500; color: rgba(255,255,255,0.55); cursor: default; white-space: nowrap; background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 10px; }
     .nav__link { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.65); text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent; transition: color 0.2s; }
@@ -137,7 +137,7 @@
 
     @media (max-width: 768px) {
       .nav__inner { flex-wrap: wrap; gap: 8px; }
-      .nav__label, .nav__email, .nav__reads { display: none; }
+      .nav__email, .nav__reads { display: none; }
       .nav__status { padding-left: 0; border-left: none; }
       .main { padding: 24px 16px; }
       .summary-grid { grid-template-columns: repeat(2, 1fr); }
@@ -160,7 +160,6 @@
       <div class="nav__inner">
         <div class="nav__left">
           <a href="/"><img src="../assets/logo.png" alt="Douro Partners" class="nav__logo"></a>
-          <span class="nav__label">Budget</span>
         </div>
         <div class="nav__right">
           <div class="nav__links">
@@ -172,8 +171,10 @@
             <a href="/portal/log.html"      class="nav__link">Activity Log</a>
           </div>
           <div class="nav__status">
-            <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today (this browser only) — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
-            <span class="nav__email" id="adminEmail"></span>
+            <div class="nav__account">
+              <span class="nav__email" id="adminEmail"></span>
+              <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today (this browser only) — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
+            </div>
             <button class="sign-out-btn" id="signOutBtn">Sign out</button>
           </div>
         </div>
