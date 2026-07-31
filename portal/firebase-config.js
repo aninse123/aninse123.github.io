@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
 import { getAuth }        from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, onSnapshot, increment } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import { getStorage }     from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
 
 const firebaseConfig = {
@@ -37,15 +37,19 @@ export const ADMIN_EMAILS = [
 // number that actually matters — the 50k reads/day free-tier quota — resets
 // daily, not per-tab; localStorage (not sessionStorage) so it's shared across
 // every tab on this browser, not reset by opening a new one.
-function todayReadsKey(){
+function todayDateStr(){
   const d = new Date();
-  return 'dp_reads_' + d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function todayReadsKey(){
+  return 'dp_reads_' + todayDateStr();
 }
 export function addReads(n){
   if (!n) return getTodayReads();
   const key = todayReadsKey();
   const total = (Number(localStorage.getItem(key)) || 0) + n;
   localStorage.setItem(key, total);
+  addSharedReads(n);
   return total;
 }
 export function getTodayReads(){
@@ -53,3 +57,21 @@ export function getTodayReads(){
 }
 // Firestore Spark/Blaze free-tier daily read quota — see infra doc §11b.
 export const FREE_TIER_DAILY_READS = 50000;
+
+// Shared, cross-browser version of the counter above: one Firestore doc per
+// day (admin-only, covered by the existing catch-all rule — no rules change
+// needed), incremented atomically so André's and António's browsers add up to
+// one real total instead of two separate personal ones. Best-effort — never
+// throws, since the localStorage count above is always shown first/instead
+// if this write or read fails (offline, permission hiccup, etc).
+export function addSharedReads(n){
+  if (!n) return;
+  setDoc(doc(db, 'dailyReadCounters', todayDateStr()), { count: increment(n) }, { merge: true }).catch(() => {});
+}
+export function watchSharedReads(callback){
+  return onSnapshot(
+    doc(db, 'dailyReadCounters', todayDateStr()),
+    snap => callback(snap.exists() ? (snap.data().count || 0) : 0),
+    () => {}
+  );
+}
