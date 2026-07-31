@@ -166,7 +166,7 @@
           <a href="/portal/search.html"   class="nav__link">Search CRM</a>
           <a href="/portal/budget.html"   class="nav__link active">Budget</a>
           <a href="/portal/log.html"      class="nav__link">Activity Log</a>
-          <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today — resets at midnight, not billing-exact"></span>
+          <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today (this browser only) — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
           <span class="nav__email" id="adminEmail"></span>
           <button class="sign-out-btn" id="signOutBtn">Sign out</button>
         </div>
@@ -298,7 +298,7 @@
   </div>
 
   <script type="module">
-    import { auth, db, storage, ADMIN_EMAILS, addReads, getTodayReads } from './firebase-config.js';
+    import { auth, db, storage, ADMIN_EMAILS, addReads, getTodayReads, FREE_TIER_DAILY_READS } from './firebase-config.js';
     import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
       collection, getDocs, addDoc, updateDoc, deleteDoc,
@@ -352,7 +352,7 @@
     // see addReads()/getTodayReads() in firebase-config.js for what this is and isn't.
     function renderNavReads(){
       const el = document.getElementById('navReads');
-      if (el) el.textContent = `~${getTodayReads().toLocaleString()} reads today`;
+      if (el) el.textContent = `${getTodayReads().toLocaleString('de-DE')} est./${FREE_TIER_DAILY_READS.toLocaleString('de-DE')} free reads`;
     }
 
     function populateCategorySelects() {

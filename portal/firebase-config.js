@@ -51,3 +51,5 @@ export function addReads(n){
 export function getTodayReads(){
   return Number(localStorage.getItem(todayReadsKey())) || 0;
 }
+// Firestore Spark/Blaze free-tier daily read quota — see infra doc §11b.
+export const FREE_TIER_DAILY_READS = 50000;
