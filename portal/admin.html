@@ -43,7 +43,7 @@
     /* Nav */
     .nav { background: var(--bg-dark); padding: 16px 0; }
     .nav__inner {
-      max-width: 1100px; margin: 0 auto; padding: 0 24px;
+      max-width: 1180px; margin: 0 auto; padding: 0 24px;
       display: flex; align-items: center; justify-content: space-between;
     }
     .nav__left { display: flex; align-items: center; gap: 14px; }
@@ -57,9 +57,11 @@
       padding-left: 14px;
       border-left: 1px solid rgba(255,255,255,0.2);
     }
-    .nav__right { display: flex; align-items: center; gap: 14px; }
-    .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.55); }
-    .nav__reads { font-size: 0.78rem; color: rgba(255,255,255,0.45); cursor: default; }
+    .nav__right { display: flex; align-items: center; }
+    .nav__links { display: flex; align-items: center; gap: 14px; }
+    .nav__status { display: flex; align-items: center; gap: 14px; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.15); }
+    .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.55); white-space: nowrap; }
+    .nav__reads { font-size: 0.72rem; font-weight: 500; color: rgba(255,255,255,0.55); cursor: default; white-space: nowrap; background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 10px; }
     .nav__link {
       font-size: 0.82rem; font-weight: 600;
       color: rgba(255,255,255,0.65); text-decoration: none;
@@ -72,7 +74,7 @@
       color: rgba(255,255,255,0.65);
       background: none; border: 1px solid rgba(255,255,255,0.3);
       border-radius: var(--radius); padding: 6px 14px;
-      cursor: pointer; transition: 0.2s;
+      cursor: pointer; transition: 0.2s; white-space: nowrap;
     }
     .sign-out-btn:hover { color: white; border-color: white; }
 
@@ -306,6 +308,7 @@
       .nav__label { display: none; }
       .nav__email { display: none; }
       .nav__reads { display: none; }
+      .nav__status { padding-left: 0; border-left: none; }
       .main { padding: 24px 16px; }
       .section-header { flex-direction: column; align-items: flex-start; gap: 12px; }
       .modal { padding: 24px 16px; margin: 16px; width: calc(100% - 32px); max-width: none; }
@@ -328,15 +331,19 @@
           <span class="nav__label">Admin Panel</span>
         </div>
         <div class="nav__right">
-          <a href="/portal/investor.html" class="nav__link">Investor view</a>
-          <a href="/portal/admin.html"    class="nav__link active">Admin</a>
-          <a href="/portal/crm.html"      class="nav__link">Investor CRM</a>
-          <a href="/portal/search.html"   class="nav__link">Search CRM</a>
-          <a href="/portal/budget.html"   class="nav__link">Budget</a>
-          <a href="/portal/log.html"      class="nav__link">Activity Log</a>
-          <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today (this browser only) — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
-          <span class="nav__email" id="adminEmail"></span>
-          <button class="sign-out-btn" id="signOutBtn">Sign out</button>
+          <div class="nav__links">
+            <a href="/portal/investor.html" class="nav__link">Investor view</a>
+            <a href="/portal/admin.html"    class="nav__link active">Admin</a>
+            <a href="/portal/crm.html"      class="nav__link">Investor CRM</a>
+            <a href="/portal/search.html"   class="nav__link">Search CRM</a>
+            <a href="/portal/budget.html"   class="nav__link">Budget</a>
+            <a href="/portal/log.html"      class="nav__link">Activity Log</a>
+          </div>
+          <div class="nav__status">
+            <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today (this browser only) — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
+            <span class="nav__email" id="adminEmail"></span>
+            <button class="sign-out-btn" id="signOutBtn">Sign out</button>
+          </div>
         </div>
       </div>
     </nav>

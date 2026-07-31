@@ -43,12 +43,14 @@
     .nav__left { display: flex; align-items: center; gap: 14px; }
     .nav__logo { height: 65px; filter: brightness(0) invert(1); opacity: 0.85; }
     .nav__label { font-family: var(--font-serif); color: rgba(255,255,255,0.8); font-size: 0.95rem; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.2); }
-    .nav__right { display: flex; align-items: center; gap: 14px; }
-    .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.45); }
+    .nav__right { display: flex; align-items: center; }
+    .nav__links { display: flex; align-items: center; gap: 14px; }
+    .nav__status { display: flex; align-items: center; gap: 14px; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.15); }
+    .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.45); white-space: nowrap; }
     .nav__link { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.65); text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent; transition: color 0.2s; }
     .nav__link:hover { color: #fff; }
     .nav__link.active { color: #fff; border-bottom-color: rgba(255,255,255,0.9); }
-    .sign-out-btn { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.65); background: none; border: 1px solid rgba(255,255,255,0.3); border-radius: var(--radius); padding: 6px 14px; cursor: pointer; transition: 0.2s; }
+    .sign-out-btn { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.65); background: none; border: 1px solid rgba(255,255,255,0.3); border-radius: var(--radius); padding: 6px 14px; cursor: pointer; transition: 0.2s; white-space: nowrap; }
     .sign-out-btn:hover { color: white; border-color: white; }
 
     .main { max-width: 1320px; margin: 0 auto; padding: 36px 24px; }
@@ -80,8 +82,8 @@
     .freshness-badge { font-size: 0.7rem; font-weight: 500; vertical-align: middle; margin-left: 6px; padding: 2px 8px; border-radius: 10px; }
     .freshness-badge.live   { background: #E6F4EA; color: #1E7A34; }
     .freshness-badge.cached { background: #FBF3E0; color: #92650C; }
-    /* Nav bar read counter — same muted treatment as the email next to it */
-    .nav__reads { font-size: 0.78rem; color: rgba(255,255,255,0.45); cursor: default; }
+    /* Nav bar read counter — pill, matches the freshness badge treatment */
+    .nav__reads { font-size: 0.72rem; font-weight: 500; color: rgba(255,255,255,0.55); cursor: default; white-space: nowrap; background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 10px; }
     .pipeline-pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
     .pipeline-pills .label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-light); margin-right: 4px; }
 
@@ -324,15 +326,19 @@
       <span class="nav__label">Search CRM</span>
     </div>
     <div class="nav__right">
-      <a href="/portal/investor.html" class="nav__link">Investor view</a>
-      <a href="/portal/admin.html"    class="nav__link">Admin</a>
-      <a href="/portal/crm.html"      class="nav__link">Investor CRM</a>
-      <a href="/portal/search.html"   class="nav__link active">Search CRM</a>
-      <a href="/portal/budget.html"   class="nav__link">Budget</a>
-      <a href="/portal/log.html"      class="nav__link">Activity Log</a>
-      <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today (this browser only) — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
-      <span class="nav__email" id="navEmail"></span>
-      <button class="sign-out-btn" id="signOutBtn">Sign out</button>
+      <div class="nav__links">
+        <a href="/portal/investor.html" class="nav__link">Investor view</a>
+        <a href="/portal/admin.html"    class="nav__link">Admin</a>
+        <a href="/portal/crm.html"      class="nav__link">Investor CRM</a>
+        <a href="/portal/search.html"   class="nav__link active">Search CRM</a>
+        <a href="/portal/budget.html"   class="nav__link">Budget</a>
+        <a href="/portal/log.html"      class="nav__link">Activity Log</a>
+      </div>
+      <div class="nav__status">
+        <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today (this browser only) — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
+        <span class="nav__email" id="navEmail"></span>
+        <button class="sign-out-btn" id="signOutBtn">Sign out</button>
+      </div>
     </div>
   </div>
 </nav>
