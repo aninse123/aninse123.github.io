@@ -105,6 +105,11 @@
     .row-clickable { cursor: pointer; }
     .row-clickable:hover td { background: #FAFAF8; }
     .company-name-cell { font-weight: 600; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+    /* Sticky first column (company name) so it stays visible while the many
+       remaining columns (financials, dates, etc.) scroll horizontally. */
+    #companyTable td.company-name-cell { position: sticky; left: 0; z-index: 2; background: var(--white); box-shadow: 2px 0 4px rgba(0,0,0,0.06); }
+    #companyTable th:first-child { position: sticky; left: 0; z-index: 3; box-shadow: 2px 0 4px rgba(0,0,0,0.06); }
+    #companyTable .row-clickable:hover td.company-name-cell { background: #FAFAF8; }
     .sector-cell { color: var(--text-light); font-size: 0.8rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 
     /* Pagination */

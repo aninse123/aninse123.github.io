@@ -103,6 +103,11 @@
     tr:last-child td { border-bottom: none; }
     .row-clickable { cursor: pointer; }
     .row-clickable:hover td { background: #FAFAF8; }
+    /* Sticky first column (investor name) so it stays visible while the many
+       remaining columns (commitments, dates, etc.) scroll horizontally. */
+    #investorTable td:first-child { position: sticky; left: 0; z-index: 2; background: var(--white); box-shadow: 2px 0 4px rgba(0,0,0,0.06); }
+    #investorTable th:first-child { position: sticky; left: 0; z-index: 3; box-shadow: 2px 0 4px rgba(0,0,0,0.06); }
+    #investorTable .row-clickable:hover td:first-child { background: #FAFAF8; }
 
     /* Stage pills */
     .stage-pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; letter-spacing: 0.02em; }
