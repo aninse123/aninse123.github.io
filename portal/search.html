@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="./vendor/leaflet/MarkerCluster.css">
   <link rel="stylesheet" href="./vendor/leaflet/MarkerCluster.Default.css">
+  <link rel="stylesheet" href="./nav.css">
   <style>
     :root {
       --primary:      #4A6B8A;
@@ -37,21 +38,8 @@
     .spinner-ring { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Nav */
-    .nav { background: var(--bg-dark); padding: 16px 0; }
-    .nav__inner { max-width: 1320px; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; }
-    .nav__left { display: flex; align-items: center; gap: 14px; }
-    .nav__logo { height: 65px; filter: brightness(0) invert(1); opacity: 0.85; }
-    .nav__right { display: flex; align-items: center; gap: 14px; }
-    .nav__links { display: flex; align-items: center; gap: 14px; }
-    .nav__status { display: flex; align-items: center; gap: 12px; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.15); }
-    .nav__account { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
-    .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.45); white-space: nowrap; }
-    .nav__link { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.65); text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent; transition: color 0.2s; }
-    .nav__link:hover { color: #fff; }
-    .nav__link.active { color: #fff; border-bottom-color: rgba(255,255,255,0.9); }
-    .sign-out-btn { font-size: 0.82rem; font-weight: 600; color: rgba(255,255,255,0.65); background: none; border: 1px solid rgba(255,255,255,0.3); border-radius: var(--radius); padding: 6px 14px; cursor: pointer; transition: 0.2s; white-space: nowrap; }
-    .sign-out-btn:hover { color: white; border-color: white; }
+    /* Nav — see nav.css (shared across all admin pages) */
+    #siteNav { --nav-width: 1320px; }
 
     .main { max-width: 1320px; margin: 0 auto; padding: 36px 24px; }
 
@@ -82,8 +70,6 @@
     .freshness-badge { font-size: 0.7rem; font-weight: 500; vertical-align: middle; margin-left: 6px; padding: 2px 8px; border-radius: 10px; }
     .freshness-badge.live   { background: #E6F4EA; color: #1E7A34; }
     .freshness-badge.cached { background: #FBF3E0; color: #92650C; }
-    /* Nav bar read counter — pill, matches the freshness badge treatment */
-    .nav__reads { font-size: 0.72rem; font-weight: 500; color: rgba(255,255,255,0.55); cursor: default; white-space: nowrap; background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 10px; }
     .pipeline-pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
     .pipeline-pills .label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-light); margin-right: 4px; }
 
@@ -319,30 +305,7 @@
 <div id="loadingScreen"><div class="spinner-ring"></div></div>
 
 <!-- Nav -->
-<nav class="nav">
-  <div class="nav__inner">
-    <div class="nav__left">
-      <a href="/"><img src="../assets/logo.png" alt="Douro Partners" class="nav__logo"></a>
-    </div>
-    <div class="nav__right">
-      <div class="nav__links">
-        <a href="/portal/investor.html" class="nav__link">Investor view</a>
-        <a href="/portal/admin.html"    class="nav__link">Admin</a>
-        <a href="/portal/crm.html"      class="nav__link">Investor CRM</a>
-        <a href="/portal/search.html"   class="nav__link active">Search CRM</a>
-        <a href="/portal/budget.html"   class="nav__link">Budget</a>
-        <a href="/portal/log.html"      class="nav__link">Activity Log</a>
-      </div>
-      <div class="nav__status">
-        <div class="nav__account">
-          <span class="nav__email" id="navEmail"></span>
-          <span class="nav__reads" id="navReads" title="Rough local estimate of Firestore reads today (this browser only) — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
-        </div>
-        <button class="sign-out-btn" id="signOutBtn">Sign out</button>
-      </div>
-    </div>
-  </div>
-</nav>
+<nav class="nav" id="siteNav"></nav>
 
 <div class="main">
 
@@ -777,8 +740,9 @@
 <script src="./vendor/leaflet/leaflet.markercluster.js"></script>
 <script src="./vendor/pt-postcodes.js?v=cp7-nominatim-1"></script>
 <script type="module">
-import { auth, db, ADMIN_EMAILS, addReads, getTodayReads, FREE_TIER_DAILY_READS, watchSharedReads } from './firebase-config.js';
-import { signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+import { auth, db, ADMIN_EMAILS, addReads } from './firebase-config.js';
+import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
   collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
   getDocs, getDoc, query, where, orderBy, limit, serverTimestamp, Timestamp,
@@ -948,23 +912,13 @@ const DEFAULT_FETCH_LIMIT = 300;
 // and is a frozen snapshot as of that time — a change made elsewhere (e.g.
 // António editing a company) won't show until the cache refreshes.
 let dataAsOf = null;
-// sharedReads (combined across André + António, once watchSharedReads()
-// reports in) takes priority over the local, this-browser-only count; the
-// local count stays visible in the tooltip. See firebase-config.js.
-let sharedReads = null;
 function renderReadsAndFreshness(){
   const badge = document.getElementById('dataFreshness');
   if (badge) {
     if (dataAsOf) { badge.textContent = 'Cached · updated ' + relTime(dataAsOf); badge.className = 'freshness-badge cached'; }
     else { badge.textContent = 'Live'; badge.className = 'freshness-badge live'; }
   }
-  const reads = document.getElementById('navReads');
-  if (reads) {
-    const local = getTodayReads();
-    const shown = sharedReads != null ? sharedReads : local;
-    reads.textContent = `${shown.toLocaleString('de-DE')} est./${FREE_TIER_DAILY_READS.toLocaleString('de-DE')} free reads`;
-    reads.title = `Rough estimate of Firestore reads today — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day. This browser: ${local.toLocaleString('de-DE')}.`;
-  }
+  refreshReads();
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1098,13 +1052,14 @@ function fitBreakdown(co){
   return dims;
 }
 
+initNav('search');
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 onAuthStateChanged(auth, async user => {
   if (!user || !ADMIN_EMAILS.includes(user.email)) { window.location.href = '/portal/login.html'; return; }
   currentUser = user.email;
-  document.getElementById('navEmail').textContent = user.email;
-  document.getElementById('signOutBtn').onclick = () => signOut(auth).then(() => window.location.href='/portal/login.html');
-  watchSharedReads(n => { sharedReads = n; renderReadsAndFreshness(); });
+  setNavEmail(user.email);
+  startSharedReadsWatch();
   await loadAll();
   document.getElementById('loadingScreen').style.display = 'none';
 });
