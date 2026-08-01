@@ -97,11 +97,21 @@ export function initNav(activeKey, opts = {}) {
   refreshReads();
 }
 
+// Two letters from the email's local part (e.g. "andre.rocha" → "AR"),
+// so different admins with the same first initial (André/António both
+// start with "A") are still distinguishable at a glance.
+function initials(email) {
+  const local = (email || '').split('@')[0];
+  const parts = local.split(/[.\-_]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return local.slice(0, 2).toUpperCase() || '?';
+}
+
 export function setNavEmail(email) {
   const el = document.getElementById('navEmail');
   if (el) el.textContent = email;
   const btn = document.getElementById('navAvatarBtn');
-  if (btn) btn.textContent = (email || '?').charAt(0).toUpperCase();
+  if (btn) btn.textContent = initials(email);
 }
 
 // Call after any addReads() to refresh the local-estimate figure shown until
@@ -115,10 +125,20 @@ export function refreshReads() {
   el.title = `Rough estimate of Firestore reads today — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day. This browser: ${local.toLocaleString('de-DE')}.`;
 
   const pct = Math.min(100, (shown / FREE_TIER_DAILY_READS) * 100);
+  const isFull = shown >= FREE_TIER_DAILY_READS;
+  const fillColor = isFull ? '#B33A3A' : '#F59E0B';
+
   const fill = document.getElementById('navQuotaFill');
   if (fill) {
     fill.style.width = pct + '%';
-    fill.classList.toggle('nav__quota-fill--full', shown >= FREE_TIER_DAILY_READS);
+    fill.classList.toggle('nav__quota-fill--full', isFull);
+  }
+
+  // Same amber→red fill as the bar above, radially, so the avatar doubles as
+  // a compact at-a-glance echo of the same quota signal shown in the dropdown.
+  const avatarBtn = document.getElementById('navAvatarBtn');
+  if (avatarBtn) {
+    avatarBtn.style.background = `conic-gradient(${fillColor} ${pct}%, rgba(255,255,255,0.12) ${pct}% 100%)`;
   }
 
   const extraReads = Math.max(0, shown - FREE_TIER_DAILY_READS);
