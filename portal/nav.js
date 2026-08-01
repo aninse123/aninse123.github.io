@@ -18,6 +18,13 @@ const PAGES = [
 
 let sharedReads = null;
 
+// Firestore Blaze pricing beyond the free tier: $0.06 per 100,000 document
+// reads (publicly documented rate, not project-specific). USD_TO_EUR is a
+// fixed rough conversion, not a live rate — the resulting €/day figure is a
+// ballpark, same spirit as the rest of this counter ("not billing-exact").
+const USD_PER_100K_EXTRA_READS = 0.06;
+const USD_TO_EUR = 0.92;
+
 // activeKey: which PAGES entry is the current page.
 // opts.beforeSignOut: optional async hook run (and awaited) before signOut —
 // e.g. admin.html logs a 'logout' activity event first; the other pages don't.
@@ -43,6 +50,8 @@ export function initNav(activeKey, opts = {}) {
           <div class="nav__dropdown" id="navDropdown" hidden>
             <span class="nav__email" id="navEmail"></span>
             <span class="nav__reads" id="navReads" title="Rough estimate of Firestore reads today — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
+            <div class="nav__quota-bar"><div class="nav__quota-fill" id="navQuotaFill"></div></div>
+            <span class="nav__cost" id="navCost" title="Very rough estimate: $0.06/100k reads beyond the free tier, converted to EUR at a fixed approximate rate. Not billing-exact — check the Firebase Console for the real number."></span>
             <button class="nav__signout" id="signOutBtn" type="button">Sign out</button>
           </div>
         </div>
@@ -104,6 +113,18 @@ export function refreshReads() {
   const shown = sharedReads != null ? sharedReads : local;
   el.textContent = `${shown.toLocaleString('de-DE')} est./${FREE_TIER_DAILY_READS.toLocaleString('de-DE')} free reads`;
   el.title = `Rough estimate of Firestore reads today — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day. This browser: ${local.toLocaleString('de-DE')}.`;
+
+  const pct = Math.min(100, (shown / FREE_TIER_DAILY_READS) * 100);
+  const fill = document.getElementById('navQuotaFill');
+  if (fill) {
+    fill.style.width = pct + '%';
+    fill.classList.toggle('nav__quota-fill--full', shown >= FREE_TIER_DAILY_READS);
+  }
+
+  const extraReads = Math.max(0, shown - FREE_TIER_DAILY_READS);
+  const estEur = (extraReads / 100000) * USD_PER_100K_EXTRA_READS * USD_TO_EUR;
+  const cost = document.getElementById('navCost');
+  if (cost) cost.textContent = `${estEur.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ est. today`;
 }
 
 // Call once, after auth confirms the user is an admin (the shared counter
