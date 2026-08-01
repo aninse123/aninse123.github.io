@@ -136,9 +136,13 @@ export function refreshReads() {
 
   // Same amber→red fill as the bar above, radially, so the avatar doubles as
   // a compact at-a-glance echo of the same quota signal shown in the dropdown.
+  // A hard 0-width stop (color X%, color X%) anti-aliases into a visible
+  // fringe bleeding past the circle's edge in Chromium — giving the seam a
+  // hair of width (still visually a sharp edge at this size) avoids it.
   const avatarBtn = document.getElementById('navAvatarBtn');
   if (avatarBtn) {
-    avatarBtn.style.background = `conic-gradient(${fillColor} ${pct}%, rgba(255,255,255,0.12) ${pct}% 100%)`;
+    const seamEnd = Math.min(100, pct + 0.75);
+    avatarBtn.style.background = `conic-gradient(${fillColor} ${pct}%, rgba(255,255,255,0.12) ${seamEnd}%, rgba(255,255,255,0.12) 100%)`;
   }
 
   const extraReads = Math.max(0, shown - FREE_TIER_DAILY_READS);
