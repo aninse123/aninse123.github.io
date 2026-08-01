@@ -136,13 +136,25 @@ export function refreshReads() {
 
   // Same amber→red fill as the bar above, radially, so the avatar doubles as
   // a compact at-a-glance echo of the same quota signal shown in the dropdown.
-  // A hard 0-width stop (color X%, color X%) anti-aliases into a visible
-  // fringe bleeding past the circle's edge in Chromium — giving the seam a
-  // hair of width (still visually a sharp edge at this size) avoids it.
+  // A conic-gradient is a closed loop with two colors here, which means two
+  // seams: the one at pct% (fill→track) AND the 12-o'clock wrap-around
+  // (track ending at 100% meeting fill starting fresh at 0%). Chromium
+  // anti-aliases any hard 0-width stop into a visible fringe past the
+  // circle's border, so both seams need a hair of transition — not just
+  // the one at pct%. At the 0%/100% extremes there's only one color, so
+  // skip the gradient machinery entirely (nothing to seam).
   const avatarBtn = document.getElementById('navAvatarBtn');
   if (avatarBtn) {
-    const seamEnd = Math.min(100, pct + 0.75);
-    avatarBtn.style.background = `conic-gradient(${fillColor} ${pct}%, rgba(255,255,255,0.12) ${seamEnd}%, rgba(255,255,255,0.12) 100%)`;
+    const track = 'rgba(255,255,255,0.12)';
+    if (pct <= 0) {
+      avatarBtn.style.background = track;
+    } else if (pct >= 100) {
+      avatarBtn.style.background = fillColor;
+    } else {
+      const seam = Math.min(0.75, pct, 100 - pct);
+      avatarBtn.style.background =
+        `conic-gradient(${track} 0%, ${fillColor} ${seam}%, ${fillColor} ${pct}%, ${track} ${pct + seam}%, ${track} 100%)`;
+    }
   }
 
   const extraReads = Math.max(0, shown - FREE_TIER_DAILY_READS);
