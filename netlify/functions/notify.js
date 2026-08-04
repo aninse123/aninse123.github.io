@@ -346,7 +346,7 @@ function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescripti
           <td style="background:#F7F3EC;padding:20px 40px;border-radius:0 0 8px 8px;text-align:center;
                      border-top:1px solid #D8D3C8;">
             <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.8;">
-              André Rocha &amp; António Carvalho &middot;
+              André Rocha &amp; António Carvalho &middot;<br>
               <a href="https://douropartners.pt" style="color:#9CA3AF;text-decoration:none;">
                 douropartners.pt
               </a>
