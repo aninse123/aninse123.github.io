@@ -42,7 +42,7 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
 
-  const { recipients, subject, message, docName, docCategory, docDescription, from, kind, combined } = body;
+  const { recipients, subject, message, docName, docCategory, docDescription, docUrl, from, kind, combined } = body;
 
   if (!recipients?.length || !subject?.trim() || !message?.trim()) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields: recipients, subject, message' }) };
@@ -57,8 +57,9 @@ exports.handler = async (event) => {
 
   const sender = SENDERS[from] || SENDERS.noreply;
   const isOutreach = kind === 'outreach';
+  const outreachDocFields = { docName, docCategory, docDescription, docUrl };
   const html = isOutreach
-    ? buildOutreachHtml({ message: message.trim(), senderName: sender.name })
+    ? buildOutreachHtml({ message: message.trim(), senderName: sender.name, ...outreachDocFields })
     : null; // per-recipient investor template built below, needs each r.name
 
   // combined: true sends ONE email with every recipient in "to" (so they see
@@ -74,7 +75,7 @@ exports.handler = async (event) => {
       to:   recipients.map(r => r.email),
       ...(other ? { cc: [`${other.name} <${other.email}>`] } : {}),
       subject: subject.trim(),
-      html: html || buildOutreachHtml({ message: message.trim(), senderName: sender.name }),
+      html: html || buildOutreachHtml({ message: message.trim(), senderName: sender.name, ...outreachDocFields }),
     }];
   } else {
     emails = recipients.map(r => ({
@@ -238,13 +239,44 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
 </html>`;
 }
 
-// Lighter template for free-form outreach (Search CRM company contacts) —
-// same visual shell as buildHtml above, but no investor-portal framing:
-// no auto-greeting, no "View in Investor Portal" CTA, no "registered
-// investor" footer line. The sender's real name (shown in the From header)
-// does the signing-off; the body is genuinely free text.
-function buildOutreachHtml({ message, senderName }) {
+// Lighter template for free-form outreach (Search CRM company contacts,
+// Investor CRM contacts) — same visual shell as buildHtml above, but no
+// investor-portal framing: no auto-greeting, no "View in Investor Portal"
+// CTA, no "registered investor" footer line. The sender's real name (shown
+// in the From header) does the signing-off; the body is genuinely free text.
+// docName/docCategory/docDescription/docUrl are all optional — when
+// docName is set, an attached-document card renders below the message
+// (used by the Investor CRM's "attach a document" picker). This function
+// (not buildHtml) is what actually renders for combined/"Email All" sends,
+// since buildHtml needs one investorName per recipient and combined sends
+// have no single recipient to address.
+function buildOutreachHtml({ message, senderName, docName, docCategory, docUrl, docDescription }) {
   const messageHtml = esc(message).replace(/\n/g, '<br>');
+
+  const docDescRow = docDescription
+    ? `<p style="margin:8px 0 0;font-size:13px;color:#6B7280;line-height:1.6;">${esc(docDescription)}</p>`
+    : '';
+  const docLinkRow = docUrl
+    ? `<p style="margin:12px 0 0;"><a href="${esc(docUrl)}" style="color:#4A6B8A;font-size:13px;font-weight:600;text-decoration:none;">View Document &rarr;</a></p>`
+    : '';
+  const docCard = docName ? `
+            <!-- Document card -->
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+                   style="background:#F7F3EC;border-radius:8px;margin-top:24px;">
+              <tr>
+                <td style="padding:20px 24px;">
+                  <p style="margin:0 0 4px;font-size:10px;font-weight:700;
+                            text-transform:uppercase;letter-spacing:0.1em;color:#6B7280;">
+                    ${esc(docCategory || 'Document')}
+                  </p>
+                  <p style="margin:0;font-size:17px;font-weight:600;color:#2C2C2C;">
+                    ${esc(docName)}
+                  </p>
+                  ${docDescRow}
+                  ${docLinkRow}
+                </td>
+              </tr>
+            </table>` : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -278,6 +310,7 @@ function buildOutreachHtml({ message, senderName }) {
             <p style="margin:0;font-size:15px;color:#2C2C2C;line-height:1.75;">
               ${messageHtml}
             </p>
+            ${docCard}
           </td>
         </tr>
 

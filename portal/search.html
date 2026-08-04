@@ -1868,7 +1868,19 @@ function renderFinancials(c){
 
 function renderContacts(c){
   const contacts = c.contacts || [];
-  const list = contacts.length ? contacts.map((ct,i) => `
+  const list = contacts.length ? contacts.map((ct,i) => {
+    const sentEmails = ct.email
+      ? activities.filter(a => a.type === 'email' && (a.recipientEmails||[]).includes(ct.email))
+          .sort((a,b) => (tsToDate(b.date)?.getTime()||0) - (tsToDate(a.date)?.getTime()||0))
+      : [];
+    const emailHistory = sentEmails.length ? `
+      <button data-toggle-hist="${i}" style="background:none;border:none;padding:0;cursor:pointer;color:var(--primary);text-decoration:underline;font-size:0.8rem;">
+        ${sentEmails.length} email${sentEmails.length>1?'s':''} sent ▸
+      </button>
+      <div id="hist-${i}" style="display:none;margin-top:4px;padding-left:10px;border-left:2px solid #F0EDE6;">
+        ${sentEmails.map(a => `<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:3px;">${fmtDate(a.date)} — ${esc(a.title||'(no subject)')}</div>`).join('')}
+      </div>` : '';
+    return `
     <div class="contact-item">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <div>
@@ -1879,6 +1891,7 @@ function renderContacts(c){
           ${ct.linkedin?`<div class="contact-detail">💼 <a href="${esc(extUrl(ct.linkedin))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">LinkedIn</a></div>`:''}
           ${ct.source?`<div class="contact-detail">Source: ${esc((ct.source||'').replace(/_/g,' '))}</div>`:''}
           ${ct.notes?`<div class="contact-detail">${esc(ct.notes)}</div>`:''}
+          ${emailHistory}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
           ${ct.email?`<button class="btn btn--icon btn--ghost" data-sendct="${i}" title="Send email">✉</button>`:''}
@@ -1886,7 +1899,8 @@ function renderContacts(c){
           <button class="btn btn--icon btn--danger" data-rmct="${i}">✕</button>
         </div>
       </div>
-    </div>`).join('') : '<div style="font-size:0.85rem;color:var(--text-light);">No contacts yet.</div>';
+    </div>`;
+  }).join('') : '<div style="font-size:0.85rem;color:var(--text-light);">No contacts yet.</div>';
   const emailCount = contacts.filter(ct => ct.email).length;
   document.getElementById('panel-contacts').innerHTML = `
     <div class="card">
@@ -1900,6 +1914,12 @@ function renderContacts(c){
     </div>`;
   document.getElementById('addContactBtn').addEventListener('click', () => openContact(null));
   if (emailCount > 1) document.getElementById('emailAllBtn').addEventListener('click', openSendEmailAll);
+  document.querySelectorAll('[data-toggle-hist]').forEach(btn => btn.addEventListener('click', () => {
+    const panel = document.getElementById(`hist-${btn.dataset.toggleHist}`);
+    const open = panel.style.display !== 'none';
+    panel.style.display = open ? 'none' : 'block';
+    btn.textContent = btn.textContent.replace(open ? '▾' : '▸', open ? '▸' : '▾');
+  }));
   document.querySelectorAll('[data-sendct]').forEach(b => b.addEventListener('click', () => openSendEmail(Number(b.dataset.sendct))));
   document.querySelectorAll('[data-editct]').forEach(b => b.addEventListener('click', () => openContact(Number(b.dataset.editct))));
   document.querySelectorAll('[data-rmct]').forEach(b => b.addEventListener('click', () => removeContact(Number(b.dataset.rmct))));
@@ -2291,6 +2311,7 @@ async function sendCompanyEmail(){
     const actData = {
       companyId: c.id, type: 'email', date: Timestamp.now(), title: subject,
       content, via: 'email', contactName: single ? single.name : null, contactRole: single ? (single.role || null) : null,
+      recipientEmails: recipients.map(r => r.email),
       responseCategory: null, status: null, createdAt: serverTimestamp(), createdBy: currentUser,
     };
     const ref = await addDoc(collection(db, 'searchActivities'), actData);

@@ -564,6 +564,10 @@
     <p id="semCcHint" style="font-size:0.78rem;color:var(--text-light);margin:-8px 0 12px;display:none;"></p>
     <div class="form-group"><label>Subject</label><input type="text" class="field" id="semSubject"></div>
     <div class="form-group"><label>Message</label><textarea class="field" id="semMessage" rows="8"></textarea></div>
+    <div class="form-group">
+      <label>Attach Document <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <select class="field" id="semDoc"><option value="">— None —</option></select>
+    </div>
     <div class="modal-err" id="semErr"></div>
     <div class="modal-actions">
       <button class="btn btn--ghost" id="semCancelBtn">Cancel</button>
@@ -1323,7 +1327,19 @@ function renderContacts() {
     el.innerHTML = '<p style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">No contacts yet.</p>';
     return;
   }
-  el.innerHTML = contacts.map((c, i) => `
+  el.innerHTML = contacts.map((c, i) => {
+    const sentEmails = c.email
+      ? activities.filter(a => a.type === 'email' && (a.recipientEmails||[]).includes(c.email))
+          .sort((a,b) => (tsToDate(b.date)?.getTime()||0) - (tsToDate(a.date)?.getTime()||0))
+      : [];
+    const emailHistory = sentEmails.length ? `
+      <button class="contact-detail" data-toggle-hist="${i}" style="background:none;border:none;padding:0;cursor:pointer;color:var(--primary);text-decoration:underline;">
+        ${sentEmails.length} email${sentEmails.length>1?'s':''} sent ▸
+      </button>
+      <div id="hist-${i}" style="display:none;margin-top:4px;padding-left:10px;border-left:2px solid #F0EDE6;">
+        ${sentEmails.map(a => `<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:3px;">${fmtDateShort(a.date)} — ${esc(a.title||'(no subject)')}</div>`).join('')}
+      </div>` : '';
+    return `
     <div class="contact-item">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;">
         <div>
@@ -1334,12 +1350,20 @@ function renderContacts() {
       ${c.email ? `<div class="contact-detail">✉ <a href="mailto:${esc(c.email)}" style="color:var(--primary);">${esc(c.email)}</a></div>` : ''}
       ${c.phone ? `<div class="contact-detail">📱 ${esc(c.phone)}</div>` : ''}
       ${c.notes ? `<div class="contact-detail" style="margin-top:4px;font-style:italic;">${esc(c.notes)}</div>` : ''}
+      ${emailHistory}
       <div class="contact-foot">
         ${c.email ? `<button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="send-ct" title="Send email">✉</button>` : ''}
         <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="edit-ct">✏</button>
         <button class="btn btn--danger btn--icon" data-ci="${i}" data-action="del-ct">🗑</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-toggle-hist]').forEach(btn => btn.addEventListener('click', () => {
+    const panel = document.getElementById(`hist-${btn.dataset.toggleHist}`);
+    const open = panel.style.display !== 'none';
+    panel.style.display = open ? 'none' : 'block';
+    btn.textContent = btn.textContent.replace(open ? '▾' : '▸', open ? '▸' : '▾');
+  }));
   el.querySelectorAll('[data-action="send-ct"]').forEach(btn => btn.addEventListener('click', () => openSendEmail(Number(btn.dataset.ci))));
   el.querySelectorAll('[data-action="edit-ct"]').forEach(btn => btn.addEventListener('click', () => openEditContact(Number(btn.dataset.ci))));
   el.querySelectorAll('[data-action="del-ct"]').forEach(btn => btn.addEventListener('click', () => deleteContact(Number(btn.dataset.ci))));
@@ -1721,6 +1745,12 @@ async function deleteContact(idx) {
 // (every contact with an email, one combined email — see notify.js's
 // `combined` mode, which CC's whichever partner isn't the sender).
 
+function populateSemDoc(){
+  const sel = document.getElementById('semDoc');
+  sel.innerHTML = '<option value="">— None —</option>' +
+    portalDocList.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+}
+
 function openSendEmail(idx){
   sendCtIdx = idx;
   const inv = getInvestor();
@@ -1730,6 +1760,7 @@ function openSendEmail(idx){
   document.getElementById('semSubject').value = '';
   document.getElementById('semMessage').value = '';
   document.getElementById('semErr').style.display = 'none';
+  populateSemDoc();
   updateCcHint();
   showEl('sendEmailModal', true);
 }
@@ -1743,6 +1774,7 @@ function openSendEmailAll(){
   document.getElementById('semSubject').value = '';
   document.getElementById('semMessage').value = '';
   document.getElementById('semErr').style.display = 'none';
+  populateSemDoc();
   updateCcHint();
   showEl('sendEmailModal', true);
 }
@@ -1765,6 +1797,8 @@ async function sendInvestorEmail(){
   const subject = document.getElementById('semSubject').value.trim();
   const msg = document.getElementById('semMessage').value.trim();
   const from = document.getElementById('semFrom').value;
+  const docId = document.getElementById('semDoc').value;
+  const selectedDoc = docId ? portalDocList.find(d => d.id === docId) : null;
   const el = document.getElementById('semErr');
   el.style.display = 'none';
   if (!recipients.length) { el.textContent = 'No contact email to send to.'; el.style.display = 'block'; return; }
@@ -1775,11 +1809,14 @@ async function sendInvestorEmail(){
     const res = await fetch('/.netlify/functions/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-notify-secret': notifySecret },
-      body: JSON.stringify({ recipients, subject, message: msg, from, kind: 'outreach', combined: isAll }),
+      body: JSON.stringify({
+        recipients, subject, message: msg, from, kind: 'outreach', combined: isAll,
+        ...(selectedDoc ? { docName: selectedDoc.name, docCategory: selectedDoc.category || '', docDescription: selectedDoc.description || '', docUrl: selectedDoc.downloadURL || '' } : {}),
+      }),
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `Send failed (${res.status})`); }
     const content = isAll ? `To: ${recipients.map(r => r.name).join(', ')}\n\n${msg}` : msg;
-    const actData = { investorId: inv.id, type: 'email', date: Timestamp.now(), title: subject, content, via: 'email', status: null, createdAt: serverTimestamp(), createdBy: currentUser };
+    const actData = { investorId: inv.id, type: 'email', date: Timestamp.now(), title: subject, content, via: 'email', recipientEmails: recipients.map(r => r.email), docName: selectedDoc?.name || null, status: null, createdAt: serverTimestamp(), createdBy: currentUser };
     const ref = await addDoc(collection(db, 'crmActivities'), actData);
     activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
     const updates = { lastTouchAt: serverTimestamp(), updatedAt: serverTimestamp() };
