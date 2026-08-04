@@ -42,7 +42,7 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
 
-  const { recipients, subject, message, docName, docCategory, docDescription, from, kind } = body;
+  const { recipients, subject, message, docName, docCategory, docDescription, from, kind, combined } = body;
 
   if (!recipients?.length || !subject?.trim() || !message?.trim()) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields: recipients, subject, message' }) };
@@ -57,22 +57,39 @@ exports.handler = async (event) => {
 
   const sender = SENDERS[from] || SENDERS.noreply;
   const isOutreach = kind === 'outreach';
+  const html = isOutreach
+    ? buildOutreachHtml({ message: message.trim(), senderName: sender.name })
+    : null; // per-recipient investor template built below, needs each r.name
 
-  // Build one email per recipient
-  const emails = recipients.map(r => ({
-    from: `${sender.name} <${sender.email}>`,
-    to:   [r.email],
-    subject: subject.trim(),
-    html: isOutreach
-      ? buildOutreachHtml({ message: message.trim(), senderName: sender.name })
-      : buildHtml({
-          investorName:   r.name,
-          message:        message.trim(),
-          docName:        docName        || '',
-          docCategory:    docCategory    || 'Document',
-          docDescription: docDescription || '',
-        }),
-  }));
+  // combined: true sends ONE email with every recipient in "to" (so they see
+  // each other — for a firm's whole team at one investor/company), CC'ing
+  // whichever of André/António did NOT send it so both partners stay looped
+  // in on the thread. Otherwise (default) send one separate email per
+  // recipient, as today.
+  let emails;
+  if (combined) {
+    const other = from === 'andre' ? SENDERS.antonio : from === 'antonio' ? SENDERS.andre : null;
+    emails = [{
+      from: `${sender.name} <${sender.email}>`,
+      to:   recipients.map(r => r.email),
+      ...(other ? { cc: [`${other.name} <${other.email}>`] } : {}),
+      subject: subject.trim(),
+      html: html || buildOutreachHtml({ message: message.trim(), senderName: sender.name }),
+    }];
+  } else {
+    emails = recipients.map(r => ({
+      from: `${sender.name} <${sender.email}>`,
+      to:   [r.email],
+      subject: subject.trim(),
+      html: html || buildHtml({
+        investorName:   r.name,
+        message:        message.trim(),
+        docName:        docName        || '',
+        docCategory:    docCategory    || 'Document',
+        docDescription: docDescription || '',
+      }),
+    }));
+  }
 
   // Send via Resend batch API
   try {

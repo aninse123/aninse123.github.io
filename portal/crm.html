@@ -366,7 +366,10 @@
 
     <!-- Left: Contacts -->
     <div class="card" style="margin-bottom:0;">
-      <div class="sec-title">Contacts</div>
+      <div class="sec-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Contacts</span>
+        <button class="btn btn--ghost btn--sm" id="emailAllBtn" style="display:none;">✉ Email All</button>
+      </div>
       <div id="contactsList"></div>
       <button class="btn btn--ghost btn--sm" id="addContactBtn" style="margin-top:8px;">＋ Add Contact</button>
     </div>
@@ -543,6 +546,28 @@
     <div class="modal-actions">
       <button class="btn btn--ghost" id="ctCancelBtn">Cancel</button>
       <button class="btn btn--primary" id="ctSaveBtn">Save Contact</button>
+    </div>
+  </div>
+</div>
+
+<!-- Send email modal -->
+<div class="overlay" id="sendEmailModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Send Email</div>
+    <div class="form-row">
+      <div class="form-group"><label>To</label><input type="text" class="field" id="semTo" readonly></div>
+      <div class="form-group"><label>From</label><select class="field" id="semFrom">
+        <option value="andre">André Rocha</option>
+        <option value="antonio">António Carvalho</option>
+      </select></div>
+    </div>
+    <p id="semCcHint" style="font-size:0.78rem;color:var(--text-light);margin:-8px 0 12px;display:none;"></p>
+    <div class="form-group"><label>Subject</label><input type="text" class="field" id="semSubject"></div>
+    <div class="form-group"><label>Message</label><textarea class="field" id="semMessage" rows="8"></textarea></div>
+    <div class="modal-err" id="semErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="semCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="semSendBtn">Send</button>
     </div>
   </div>
 </div>
@@ -836,6 +861,7 @@ const ACT = {
 // ── State ────────────────────────────────────────────────────────────────────
 
 let currentUser   = null;
+let notifySecret  = '';
 let crmInvestors  = [];
 let activities    = [];       // for current detail investor
 let portalInvList = [];
@@ -845,6 +871,7 @@ let fundSettings  = { target: 0, units: 0 };
 let currentInvId  = null;
 let editInvId     = null;
 let editCtIdx     = null;     // contact index being edited
+let sendCtIdx     = null;     // contact index being emailed
 let closeMtgId    = null;
 let sortCol       = 'lastTouchAt';
 let sortDir       = 'desc';
@@ -942,6 +969,10 @@ onAuthStateChanged(auth, async user => {
   setNavEmail(user.email);
   startSharedReadsWatch();
   populateCountrySelects();
+  try {
+    const secretSnap = await getDoc(doc(db, 'adminConfig', 'notify'));
+    if (secretSnap.exists() && secretSnap.data().notifySecret) notifySecret = secretSnap.data().notifySecret;
+  } catch (e) { /* Send Email button will show a config-needed alert */ }
   await loadAll();
   document.getElementById('loadingScreen').style.display = 'none';
 });
@@ -1286,6 +1317,8 @@ function renderContacts() {
   const inv = getInvestor();
   const contacts = inv.contacts || [];
   const el = document.getElementById('contactsList');
+  const emailCount = contacts.filter(c => c.email).length;
+  document.getElementById('emailAllBtn').style.display = emailCount > 1 ? '' : 'none';
   if (!contacts.length) {
     el.innerHTML = '<p style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">No contacts yet.</p>';
     return;
@@ -1302,10 +1335,12 @@ function renderContacts() {
       ${c.phone ? `<div class="contact-detail">📱 ${esc(c.phone)}</div>` : ''}
       ${c.notes ? `<div class="contact-detail" style="margin-top:4px;font-style:italic;">${esc(c.notes)}</div>` : ''}
       <div class="contact-foot">
+        ${c.email ? `<button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="send-ct" title="Send email">✉</button>` : ''}
         <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="edit-ct">✏</button>
         <button class="btn btn--danger btn--icon" data-ci="${i}" data-action="del-ct">🗑</button>
       </div>
     </div>`).join('');
+  el.querySelectorAll('[data-action="send-ct"]').forEach(btn => btn.addEventListener('click', () => openSendEmail(Number(btn.dataset.ci))));
   el.querySelectorAll('[data-action="edit-ct"]').forEach(btn => btn.addEventListener('click', () => openEditContact(Number(btn.dataset.ci))));
   el.querySelectorAll('[data-action="del-ct"]').forEach(btn => btn.addEventListener('click', () => deleteContact(Number(btn.dataset.ci))));
 }
@@ -1679,6 +1714,82 @@ async function deleteContact(idx) {
   await logActivity(inv.id, 'contact_removed', { date: new Date(), content: `Removed contact: ${ctName}` });
   crmInvestors = crmInvestors.map(i => i.id === inv.id ? { ...i, contacts } : i);
   renderContacts();
+}
+
+// ── Send email ───────────────────────────────────────────────────────────────
+// sendCtIdx is either a contact index (single send) or the string 'all'
+// (every contact with an email, one combined email — see notify.js's
+// `combined` mode, which CC's whichever partner isn't the sender).
+
+function openSendEmail(idx){
+  sendCtIdx = idx;
+  const inv = getInvestor();
+  const ct = (inv.contacts||[])[idx];
+  document.getElementById('semTo').value = ct ? `${ct.name} <${ct.email}>` : '';
+  document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
+  document.getElementById('semSubject').value = '';
+  document.getElementById('semMessage').value = '';
+  document.getElementById('semErr').style.display = 'none';
+  updateCcHint();
+  showEl('sendEmailModal', true);
+}
+
+function openSendEmailAll(){
+  sendCtIdx = 'all';
+  const inv = getInvestor();
+  const withEmail = (inv.contacts||[]).filter(c => c.email);
+  document.getElementById('semTo').value = withEmail.map(c => `${c.name} <${c.email}>`).join(', ');
+  document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
+  document.getElementById('semSubject').value = '';
+  document.getElementById('semMessage').value = '';
+  document.getElementById('semErr').style.display = 'none';
+  updateCcHint();
+  showEl('sendEmailModal', true);
+}
+
+function updateCcHint(){
+  const hint = document.getElementById('semCcHint');
+  if (sendCtIdx !== 'all') { hint.style.display = 'none'; return; }
+  const from = document.getElementById('semFrom').value;
+  const other = from === 'andre' ? 'António Carvalho' : from === 'antonio' ? 'André Rocha' : null;
+  hint.textContent = other ? `Sent to all contacts above · CC: ${other}` : 'Sent to all contacts above';
+  hint.style.display = 'block';
+}
+
+async function sendInvestorEmail(){
+  const inv = getInvestor();
+  const isAll = sendCtIdx === 'all';
+  const recipients = isAll
+    ? (inv.contacts||[]).filter(c => c.email).map(c => ({ email: c.email, name: c.name }))
+    : [(inv.contacts||[])[sendCtIdx]].filter(c => c?.email).map(c => ({ email: c.email, name: c.name }));
+  const subject = document.getElementById('semSubject').value.trim();
+  const msg = document.getElementById('semMessage').value.trim();
+  const from = document.getElementById('semFrom').value;
+  const el = document.getElementById('semErr');
+  el.style.display = 'none';
+  if (!recipients.length) { el.textContent = 'No contact email to send to.'; el.style.display = 'block'; return; }
+  if (!subject || !msg) { el.textContent = 'Subject and message are required.'; el.style.display = 'block'; return; }
+  if (!notifySecret) { el.textContent = "Email sending isn't configured yet (missing adminConfig/notify secret)."; el.style.display = 'block'; return; }
+  const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
+  try {
+    const res = await fetch('/.netlify/functions/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-notify-secret': notifySecret },
+      body: JSON.stringify({ recipients, subject, message: msg, from, kind: 'outreach', combined: isAll }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `Send failed (${res.status})`); }
+    const content = isAll ? `To: ${recipients.map(r => r.name).join(', ')}\n\n${msg}` : msg;
+    const actData = { investorId: inv.id, type: 'email', date: Timestamp.now(), title: subject, content, via: 'email', status: null, createdAt: serverTimestamp(), createdBy: currentUser };
+    const ref = await addDoc(collection(db, 'crmActivities'), actData);
+    activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
+    const updates = { lastTouchAt: serverTimestamp(), updatedAt: serverTimestamp() };
+    Object.assign(updates, computeNextContact(activities));
+    await updateDoc(doc(db, 'crmInvestors', inv.id), updates);
+    crmInvestors = crmInvestors.map(i => i.id === inv.id ? { ...i, ...updates, lastTouchAt: Timestamp.now() } : i);
+    showEl('sendEmailModal', false);
+    renderActivityLog(); renderList();
+  } catch (e) { el.textContent = e.message; el.style.display = 'block'; }
+  finally { btn.disabled = false; btn.innerHTML = 'Send'; }
 }
 
 // ── Activity logging ──────────────────────────────────────────────────────────
@@ -2125,6 +2236,11 @@ document.getElementById('deleteConfirmBtn').addEventListener('click', confirmDel
 document.getElementById('addContactBtn').addEventListener('click', openAddContact);
 document.getElementById('ctCancelBtn').addEventListener('click', () => showEl('contactModal',false));
 document.getElementById('ctSaveBtn').addEventListener('click', saveContact);
+
+document.getElementById('emailAllBtn').addEventListener('click', openSendEmailAll);
+document.getElementById('semCancelBtn').addEventListener('click', () => showEl('sendEmailModal', false));
+document.getElementById('semSendBtn').addEventListener('click', sendInvestorEmail);
+document.getElementById('semFrom').addEventListener('change', updateCcHint);
 
 document.querySelectorAll('[data-atype]').forEach(btn => {
   btn.addEventListener('click', () => openActivityModal(btn.dataset.atype));
