@@ -6,6 +6,10 @@
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const NOTIFY_SECRET  = process.env.NOTIFY_SECRET;
 const PORTAL_URL     = 'https://douropartners.pt/portal/investor.html';
+// Always the production domain (like PORTAL_URL above), regardless of which
+// branch's function actually sends the email — the asset only needs to exist
+// on main/production to resolve for recipients.
+const LOGO_URL        = 'https://douropartners.pt/assets/logo-transparent.png';
 // Generous enough to never throttle a real "Send Update" blast to all
 // portal investors — just a backstop against the endpoint being abused as
 // an open mass-mailer if the secret ever leaked, not a real-world cap.
@@ -59,28 +63,34 @@ exports.handler = async (event) => {
   const isOutreach = kind === 'outreach';
   const outreachDocFields = { docName, docCategory, docDescription, docUrl };
   const html = isOutreach
-    ? buildOutreachHtml({ message: message.trim(), senderName: sender.name, ...outreachDocFields })
+    ? buildOutreachHtml({ message: message.trim(), ...outreachDocFields })
     : null; // per-recipient investor template built below, needs each r.name
 
+  // Whichever of André/António did NOT send it gets CC'd on outreach sends
+  // (single or combined) so both partners stay looped in on the thread —
+  // applies to outreach only, not official investor Notify/Blast sends,
+  // which stay CC-free even when a named sender is picked for those.
+  const other = isOutreach
+    ? (from === 'andre' ? SENDERS.antonio : from === 'antonio' ? SENDERS.andre : null)
+    : null;
+
   // combined: true sends ONE email with every recipient in "to" (so they see
-  // each other — for a firm's whole team at one investor/company), CC'ing
-  // whichever of André/António did NOT send it so both partners stay looped
-  // in on the thread. Otherwise (default) send one separate email per
-  // recipient, as today.
+  // each other — for a firm's whole team at one investor/company). Otherwise
+  // (default) send one separate email per recipient, as today.
   let emails;
   if (combined) {
-    const other = from === 'andre' ? SENDERS.antonio : from === 'antonio' ? SENDERS.andre : null;
     emails = [{
       from: `${sender.name} <${sender.email}>`,
       to:   recipients.map(r => r.email),
       ...(other ? { cc: [`${other.name} <${other.email}>`] } : {}),
       subject: subject.trim(),
-      html: html || buildOutreachHtml({ message: message.trim(), senderName: sender.name, ...outreachDocFields }),
+      html: html || buildOutreachHtml({ message: message.trim(), ...outreachDocFields }),
     }];
   } else {
     emails = recipients.map(r => ({
       from: `${sender.name} <${sender.email}>`,
       to:   [r.email],
+      ...(other ? { cc: [`${other.name} <${other.email}>`] } : {}),
       subject: subject.trim(),
       html: html || buildHtml({
         investorName:   r.name,
@@ -167,6 +177,15 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
       <table width="560" cellpadding="0" cellspacing="0" role="presentation"
              style="max-width:560px;width:100%;">
 
+        <!-- ── Logo strip (outside the branded card — the logo's navy/gold
+             coloring needs a light background, so it sits here rather than
+             inside the dark header banner below) ── -->
+        <tr>
+          <td style="padding:0 4px 14px;text-align:left;">
+            <img src="${LOGO_URL}" alt="Douro Partners" width="110" style="display:block;border:0;">
+          </td>
+        </tr>
+
         <!-- ── Header ── -->
         <tr>
           <td style="background:#1E2A38;padding:28px 40px;border-radius:8px 8px 0 0;text-align:center;">
@@ -250,7 +269,7 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
 // (not buildHtml) is what actually renders for combined/"Email All" sends,
 // since buildHtml needs one investorName per recipient and combined sends
 // have no single recipient to address.
-function buildOutreachHtml({ message, senderName, docName, docCategory, docUrl, docDescription }) {
+function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescription }) {
   const messageHtml = esc(message).replace(/\n/g, '<br>');
 
   const docDescRow = docDescription
@@ -294,6 +313,13 @@ function buildOutreachHtml({ message, senderName, docName, docCategory, docUrl, 
       <table width="560" cellpadding="0" cellspacing="0" role="presentation"
              style="max-width:560px;width:100%;">
 
+        <!-- ── Logo strip (outside the branded card — see buildHtml's comment) ── -->
+        <tr>
+          <td style="padding:0 4px 14px;text-align:left;">
+            <img src="${LOGO_URL}" alt="Douro Partners" width="110" style="display:block;border:0;">
+          </td>
+        </tr>
+
         <!-- ── Header ── -->
         <tr>
           <td style="background:#1E2A38;padding:28px 40px;border-radius:8px 8px 0 0;text-align:center;">
@@ -314,12 +340,13 @@ function buildOutreachHtml({ message, senderName, docName, docCategory, docUrl, 
           </td>
         </tr>
 
-        <!-- ── Footer ── -->
+        <!-- ── Footer — always signed with both partners' names, since the
+             firm is a two-person team even when only one of them sent it ── -->
         <tr>
           <td style="background:#F7F3EC;padding:20px 40px;border-radius:0 0 8px 8px;text-align:center;
                      border-top:1px solid #D8D3C8;">
             <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.8;">
-              ${esc(senderName)} &middot;
+              André Rocha &amp; António Carvalho &middot;
               <a href="https://douropartners.pt" style="color:#9CA3AF;text-decoration:none;">
                 douropartners.pt
               </a>
