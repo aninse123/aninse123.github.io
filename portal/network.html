@@ -73,6 +73,21 @@
     .filter-sel { padding: 7px 10px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.875rem; color: var(--text); background: var(--white); cursor: pointer; }
     .filter-sel:focus { outline: none; border-color: var(--primary); }
     .results-count { font-size: 0.8rem; color: var(--text-light); margin-left: auto; }
+    .view-toggle { display: flex; border: 1.5px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .view-toggle button { padding: 7px 12px; border: none; background: var(--white); color: var(--text-light); font-family: var(--font-sans); font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+    .view-toggle button + button { border-left: 1px solid var(--border); }
+    .view-toggle button.active { background: var(--primary); color: var(--white); }
+
+    /* Grouped-by-firm view */
+    .group-block { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; overflow: hidden; background: var(--white); }
+    .group-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; background: #FAFAF8; user-select: none; }
+    .group-head:hover { background: #F2EFE7; }
+    .group-arrow { font-size: 0.7rem; color: var(--text-light); transition: transform 0.2s; }
+    .group-block.collapsed .group-arrow { transform: rotate(-90deg); }
+    .group-title { font-weight: 600; font-size: 0.9rem; }
+    .group-count { margin-left: auto; font-size: 0.78rem; color: var(--text-light); }
+    .group-block.collapsed .group-body { display: none; }
+    .individuals-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin: 0 0 8px 2px; }
 
     /* Table */
     .table-card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
@@ -179,6 +194,7 @@
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn--ghost" id="followupsBtn">📋 Follow-ups</button>
+      <button class="btn btn--ghost btn--icon" id="categorySettingsBtn" title="Edit categories">⚙</button>
       <button class="btn btn--primary" id="newContactBtn">＋ New Contact</button>
     </div>
   </div>
@@ -194,12 +210,16 @@
       <option value="antonio">António</option>
     </select>
     <select class="filter-sel" id="countryFilter"><option value="">All Countries</option></select>
+    <div class="view-toggle" id="viewToggle">
+      <button data-view="list" class="active">List</button>
+      <button data-view="grouped">Grouped by Firm</button>
+    </div>
     <span class="results-count" id="resultsCount"></span>
     <button class="btn btn--ghost btn--sm" id="exportBtn">⬇ Export CSV</button>
   </div>
 
   <!-- Table -->
-  <div class="table-card">
+  <div class="table-card" id="tableCard">
     <div class="table-wrap">
       <table id="networkTable">
         <thead>
@@ -218,6 +238,9 @@
       </table>
     </div>
   </div>
+
+  <!-- Grouped-by-firm view -->
+  <div id="groupedCard" style="display:none;"></div>
 </div>
 
 <!-- ══════════════════ DETAIL VIEW ══════════════════ -->
@@ -289,6 +312,21 @@
       </select>
     </div>
     <div id="followupsBody" style="max-height:60vh;overflow-y:auto;"></div>
+  </div>
+</div>
+
+<!-- Category settings modal -->
+<div class="overlay" id="categorySettingsModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Edit Categories</div>
+    <p class="hint" style="margin-bottom:14px;">Rename or remove existing categories, or add new ones. Contacts keep whatever category they already had if you remove it from this list — it just won't be offered for new picks.</p>
+    <div id="categoryRows" style="margin-bottom:12px;"></div>
+    <button class="btn btn--ghost btn--sm" id="addCategoryBtn" type="button">＋ Add Category</button>
+    <div class="modal-err" id="catSettingsErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="catSettingsCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="catSettingsSaveBtn">Save Categories</button>
+    </div>
   </div>
 </div>
 
@@ -449,18 +487,22 @@ import { auth, db, ADMIN_EMAILS, addReads } from './firebase-config.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc,
+  collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
   getDocs, getDoc, query, where, serverTimestamp, Timestamp, onSnapshot
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const CATEGORIES = {
+// Seed default — overridden at load by networkConfig/categories if André or
+// António have customized the list (see loadCategories()/saveCategorySettings()).
+// Contacts store categories by key, so keys are never renamed, only labels.
+const DEFAULT_CATEGORIES = {
   lawyer: 'Lawyer', accountant: 'Accountant', banker_broker: 'Banker/Broker',
   current_searcher: 'Current Searcher', former_searcher: 'Former Searcher',
   operator: 'Operator', investor_outside_process: 'Investor (outside process)',
   journalist: 'Journalist', advisor: 'Advisor', service_provider: 'Service Provider', other: 'Other',
 };
+let CATEGORIES = { ...DEFAULT_CATEGORIES };
 const PHASES = {
   fundraising: 'Fundraising', search: 'Search', acquisition: 'Acquisition',
   post_acquisition: 'Post-Acquisition', general: 'General',
@@ -489,6 +531,77 @@ function readChipPicker(containerId){
   return [...document.querySelectorAll(`#${containerId} .type-tab.active`)].map(b => b.dataset.val);
 }
 
+// ── Category settings (editable, unlike PHASES which stay fixed) ─────────────
+
+async function loadCategories(){
+  try {
+    const snap = await getDoc(doc(db, 'networkConfig', 'categories'));
+    if (snap.exists() && snap.data().list?.length) {
+      CATEGORIES = Object.fromEntries(snap.data().list.map(c => [c.key, c.label]));
+    }
+  } catch (e) { console.error('loadCategories error:', e); /* falls back to DEFAULT_CATEGORIES */ }
+}
+
+function slugify(label){
+  return label.toLowerCase().trim().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || 'category';
+}
+
+function openCategorySettings(){
+  renderCategoryRows(Object.entries(CATEGORIES).map(([key,label]) => ({ key, label })));
+  document.getElementById('catSettingsErr').style.display = 'none';
+  showEl('categorySettingsModal', true);
+}
+
+function renderCategoryRows(rows){
+  const el = document.getElementById('categoryRows');
+  el.innerHTML = rows.map((r,i) => `
+    <div class="form-row" data-row="${i}" style="grid-template-columns:1fr auto;align-items:center;margin-bottom:8px;">
+      <input type="text" class="field" data-key="${esc(r.key)}" value="${esc(r.label)}">
+      <button type="button" class="btn btn--icon btn--danger" data-remove="${i}" style="margin-left:8px;">✕</button>
+    </div>`).join('');
+  el.querySelectorAll('[data-remove]').forEach(btn => btn.addEventListener('click', () => {
+    btn.closest('[data-row]').remove();
+  }));
+}
+
+function addCategoryRow(){
+  const el = document.getElementById('categoryRows');
+  const i = el.children.length;
+  const row = document.createElement('div');
+  row.className = 'form-row';
+  row.dataset.row = i;
+  row.style.cssText = 'grid-template-columns:1fr auto;align-items:center;margin-bottom:8px;';
+  row.innerHTML = `
+    <input type="text" class="field" data-key="" placeholder="e.g. Landlord" value="">
+    <button type="button" class="btn btn--icon btn--danger" data-remove="${i}" style="margin-left:8px;">✕</button>`;
+  el.appendChild(row);
+  row.querySelector('[data-remove]').addEventListener('click', () => row.remove());
+  row.querySelector('input').focus();
+}
+
+async function saveCategorySettings(){
+  const err = document.getElementById('catSettingsErr');
+  err.style.display = 'none';
+  const rows = [...document.querySelectorAll('#categoryRows [data-row]')];
+  const list = rows.map(row => {
+    const input = row.querySelector('input');
+    const existingKey = input.dataset.key;
+    const label = input.value.trim();
+    return label ? { key: existingKey || slugify(label), label } : null;
+  }).filter(Boolean);
+  if (!list.length) { err.textContent = 'Add at least one category.'; err.style.display = 'block'; return; }
+  const btn = document.getElementById('catSettingsSaveBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Saving…';
+  try {
+    await setDoc(doc(db, 'networkConfig', 'categories'), { list, updatedAt: serverTimestamp(), updatedBy: currentUser });
+    CATEGORIES = Object.fromEntries(list.map(c => [c.key, c.label]));
+    populateCategoryPhaseFilters();
+    renderList();
+    showEl('categorySettingsModal', false);
+  } catch (e) { err.textContent = e.message; err.style.display = 'block'; }
+  finally { btn.disabled = false; btn.innerHTML = 'Save Categories'; }
+}
+
 const ACT = {
   note:              { label:'Note',               icon:'📝' },
   call:              { label:'Call',               icon:'📞' },
@@ -512,6 +625,7 @@ let editContactId    = null; // set when the contact modal is editing (vs creati
 let closeMtgId        = null;
 let sortCol = 'lastTouchAt';
 let sortDir = 'desc';
+let viewMode = 'list'; // 'list' | 'grouped' (by firm)
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -576,6 +690,7 @@ onAuthStateChanged(auth, async user => {
   setNavEmail(user.email);
   startSharedReadsWatch();
   populateCountrySelects();
+  await loadCategories();
   populateCategoryPhaseFilters();
   try {
     const secretSnap = await getDoc(doc(db, 'adminConfig', 'notify'));
@@ -673,8 +788,29 @@ function renderFollowups() {
 
 // ── Render: List ─────────────────────────────────────────────────────────────
 
-function renderList() {
-  updateFollowupsBadge();
+function badgeRow(arr, labels, cls) {
+  return (arr||[]).length
+    ? (arr||[]).map(k => `<span class="badge ${cls}">${esc(labels[k]||k)}</span>`).join(' ')
+    : '<span style="color:var(--text-light);">—</span>';
+}
+
+function rowHtml(c) {
+  const nextContact = c.nextContactAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(c.nextContactAt)}</span>` : '—';
+  const overdue = c.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
+  const ownerLabel = c.owner ? `<span style="font-size:0.82rem;font-weight:500;">${esc(OWNER_LABELS[c.owner]||c.owner)}</span>` : '<span style="color:var(--text-light);">—</span>';
+  return `<tr class="row-clickable" data-id="${c.id}">
+      <td><strong>${c.priority?'⭐ ':''}${esc(c.name)}</strong>${overdue}</td>
+      <td>${badgeRow(c.categories, CATEGORIES, 'badge-grey')}</td>
+      <td style="font-size:0.82rem;">${c.firm ? esc(c.firm) : '<span style="color:var(--text-light);">—</span>'}</td>
+      <td>${badgeRow(c.phases, PHASES, 'badge-purple')}</td>
+      <td>${ownerLabel}</td>
+      <td style="font-size:0.82rem;">${c.country ? esc(c.country) : '<span style="color:var(--text-light);">—</span>'}</td>
+      <td style="color:var(--text-light);">${relTime(c.lastTouchAt)}</td>
+      <td>${nextContact}</td>
+    </tr>`;
+}
+
+function getFilteredSorted() {
   const search   = (document.getElementById('searchInput').value || '').toLowerCase();
   const catF     = document.getElementById('categoryFilter').value;
   const phaseF   = document.getElementById('phaseFilter').value;
@@ -705,9 +841,18 @@ function renderList() {
     if (va > vb) return sortDir === 'asc' ? 1 : -1;
     return 0;
   });
+  return list;
+}
+
+function renderList() {
+  updateFollowupsBadge();
+  const list = getFilteredSorted();
 
   document.getElementById('resultsCount').textContent = `${list.length} contact${list.length!==1?'s':''}`;
   document.getElementById('listSub').textContent = `${networkContacts.length} contacts total`;
+
+  if (viewMode === 'grouped') { showEl('tableCard', false); showEl('groupedCard', true); renderGrouped(list); return; }
+  showEl('tableCard', true); showEl('groupedCard', false);
 
   const tbody = document.getElementById('networkBody');
   if (!list.length) {
@@ -715,29 +860,52 @@ function renderList() {
     return;
   }
 
-  const badgeRow = (arr, labels, cls) => (arr||[]).length
-    ? (arr||[]).map(k => `<span class="badge ${cls}">${esc(labels[k]||k)}</span>`).join(' ')
-    : '<span style="color:var(--text-light);">—</span>';
-
-  tbody.innerHTML = list.map(c => {
-    const nextContact = c.nextContactAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(c.nextContactAt)}</span>` : '—';
-    const overdue = c.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
-    const ownerLabel = c.owner ? `<span style="font-size:0.82rem;font-weight:500;">${esc(OWNER_LABELS[c.owner]||c.owner)}</span>` : '<span style="color:var(--text-light);">—</span>';
-    return `<tr class="row-clickable" data-id="${c.id}">
-      <td><strong>${c.priority?'⭐ ':''}${esc(c.name)}</strong>${overdue}</td>
-      <td>${badgeRow(c.categories, CATEGORIES, 'badge-grey')}</td>
-      <td style="font-size:0.82rem;">${c.firm ? esc(c.firm) : '<span style="color:var(--text-light);">—</span>'}</td>
-      <td>${badgeRow(c.phases, PHASES, 'badge-purple')}</td>
-      <td>${ownerLabel}</td>
-      <td style="font-size:0.82rem;">${c.country ? esc(c.country) : '<span style="color:var(--text-light);">—</span>'}</td>
-      <td style="color:var(--text-light);">${relTime(c.lastTouchAt)}</td>
-      <td>${nextContact}</td>
-    </tr>`;
-  }).join('');
-
+  tbody.innerHTML = list.map(rowHtml).join('');
   tbody.querySelectorAll('.row-clickable').forEach(row => {
     row.addEventListener('click', () => openDetail(row.dataset.id));
   });
+}
+
+// ── Grouped-by-firm view ──────────────────────────────────────────────────────
+// Person-first model — a "firm" isn't its own record, just a shared value on
+// the `firm` field of several contacts. Grouping the existing flat list by
+// that field (instead of introducing a separate Firm entity) is enough to
+// show "everyone at CCSL" on one screen, while contacts without a firm just
+// render as individuals, ungrouped.
+function renderGrouped(list) {
+  const el = document.getElementById('groupedCard');
+  const individuals = list.filter(c => !c.firm);
+  const byFirm = {};
+  list.filter(c => c.firm).forEach(c => { (byFirm[c.firm] = byFirm[c.firm] || []).push(c); });
+  const firmNames = Object.keys(byFirm).sort((a,b) => a.localeCompare(b));
+
+  if (!list.length) {
+    el.innerHTML = `<div class="table-card"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No contacts found</div><div>Try adjusting your filters.</div></div></div>`;
+    return;
+  }
+
+  const indivHtml = individuals.length ? `
+    <div class="individuals-label">Individuals (no firm) · ${individuals.length}</div>
+    <div class="table-card" style="margin-bottom:20px;">
+      <div class="table-wrap"><table><tbody>${individuals.map(rowHtml).join('')}</tbody></table></div>
+    </div>` : '';
+
+  const firmsHtml = firmNames.map(firm => {
+    const members = byFirm[firm];
+    return `<div class="group-block" data-firm="${esc(firm)}">
+      <div class="group-head">
+        <span class="group-arrow">▼</span>
+        <span class="group-title">${esc(firm)}</span>
+        <span class="group-count">${members.length} contact${members.length!==1?'s':''}</span>
+      </div>
+      <div class="group-body"><div class="table-wrap"><table><tbody>${members.map(rowHtml).join('')}</tbody></table></div></div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = indivHtml + firmsHtml;
+
+  el.querySelectorAll('.row-clickable').forEach(row => row.addEventListener('click', () => openDetail(row.dataset.id)));
+  el.querySelectorAll('.group-head').forEach(h => h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed')));
 }
 
 // ── Detail view ──────────────────────────────────────────────────────────────
@@ -1232,6 +1400,19 @@ function exportCSV() {
 // ── Event listeners ───────────────────────────────────────────────────────────
 
 document.getElementById('newContactBtn').addEventListener('click', openNewContact);
+
+document.getElementById('categorySettingsBtn').addEventListener('click', openCategorySettings);
+document.getElementById('addCategoryBtn').addEventListener('click', addCategoryRow);
+document.getElementById('catSettingsCancelBtn').addEventListener('click', () => showEl('categorySettingsModal', false));
+document.getElementById('catSettingsSaveBtn').addEventListener('click', saveCategorySettings);
+
+document.querySelectorAll('#viewToggle [data-view]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    viewMode = btn.dataset.view;
+    document.querySelectorAll('#viewToggle [data-view]').forEach(b => b.classList.toggle('active', b === btn));
+    renderList();
+  });
+});
 document.getElementById('followupsBtn').addEventListener('click', openFollowups);
 document.getElementById('fuOwnerFilter').addEventListener('change', renderFollowups);
 document.getElementById('ctCancelBtn').addEventListener('click', () => showEl('contactModal',false));
@@ -1275,7 +1456,7 @@ document.querySelectorAll('th[data-col]').forEach(th => {
 });
 
 // Close modals on overlay click
-['contactModal','sendEmailModal','activityModal','closeMtgModal','deleteModal','followupsModal'].forEach(id => {
+['contactModal','sendEmailModal','activityModal','closeMtgModal','deleteModal','followupsModal','categorySettingsModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id,false); });
 });
 </script>
