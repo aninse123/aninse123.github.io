@@ -1269,7 +1269,10 @@ async function openDetail(id) {
   window.scrollTo({ top: 0 });     // start the profile at the top, not wherever the table was scrolled
   renderDetail();                  // core info (name/stage/contacts/commitments) is already in memory → render immediately
   try { await loadActivities(id); } catch(e) { console.error('loadActivities error:', e); activities = []; }
-  if (currentInvId === id) renderActivityLog();   // fill in the log once loaded (guard against a fast switch to another investor)
+  // fill in the log once loaded (guard against a fast switch to another investor).
+  // Also re-render contacts: renderDetail() above painted them before activities
+  // existed, so each contact's email-history toggle needs a second pass now.
+  if (currentInvId === id) { renderActivityLog(); renderContacts(); }
 }
 
 function getInvestor() { return crmInvestors.find(i => i.id === currentInvId); }
@@ -1824,7 +1827,7 @@ async function sendInvestorEmail(){
     await updateDoc(doc(db, 'crmInvestors', inv.id), updates);
     crmInvestors = crmInvestors.map(i => i.id === inv.id ? { ...i, ...updates, lastTouchAt: Timestamp.now() } : i);
     showEl('sendEmailModal', false);
-    renderActivityLog(); renderList();
+    renderActivityLog(); renderContacts(); renderList();
   } catch (e) { el.textContent = e.message; el.style.display = 'block'; }
   finally { btn.disabled = false; btn.innerHTML = 'Send'; }
 }

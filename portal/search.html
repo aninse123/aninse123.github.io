@@ -2318,7 +2318,7 @@ async function sendCompanyEmail(){
     activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
     await recomputeActivityFields(c);
     showEl('sendEmailModal', false);
-    renderActivityLog(); renderList();
+    renderActivityLog(); renderContacts(c); renderList();
   } catch (e) {
     el.textContent = e.message; el.style.display = 'block';
   } finally {
