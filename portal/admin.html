@@ -425,6 +425,15 @@
       </div>
 
       <div class="form-group" style="margin-top:20px;">
+        <label>From</label>
+        <select id="blastSender">
+          <option value="noreply" selected>Douro Partners (noreply@)</option>
+          <option value="andre">André Rocha</option>
+          <option value="antonio">António Carvalho</option>
+        </select>
+      </div>
+
+      <div class="form-group">
         <label>Subject line</label>
         <input type="text" id="blastSubject" placeholder="Investor Update — Douro Partners">
       </div>
@@ -671,6 +680,15 @@
       </div>
 
       <div class="form-group" style="margin-top:20px;">
+        <label>From</label>
+        <select id="notifySender">
+          <option value="noreply" selected>Douro Partners (noreply@)</option>
+          <option value="andre">André Rocha</option>
+          <option value="antonio">António Carvalho</option>
+        </select>
+      </div>
+
+      <div class="form-group">
         <label>Subject line</label>
         <input type="text" id="notifySubject" placeholder="New document available — Douro Partners">
       </div>
@@ -2054,6 +2072,7 @@
       document.getElementById('notifyModalDocName').textContent = d.name;
       document.getElementById('notifySubject').value  = `New document available — Douro Partners`;
       document.getElementById('notifyMessage').value  = '';
+      document.getElementById('notifySender').value   = 'noreply';
       document.getElementById('notifySendCount').textContent = '';
 
       const invIds    = [...effectiveInvestorIds(d)];   // individuals + group members + all
@@ -2143,6 +2162,7 @@
             recipients,
             subject,
             message,
+            from:           document.getElementById('notifySender').value,
             docName:        d.name,
             docCategory:    d.category        || '',
             docDescription: d.description     || '',
@@ -2185,6 +2205,7 @@
     function openBlastModal() {
       document.getElementById('blastSubject').value  = 'Investor Update — Douro Partners';
       document.getElementById('blastMessage').value  = '';
+      document.getElementById('blastSender').value   = 'noreply';
       document.getElementById('blastSendCount').textContent = '';
 
       const list = document.getElementById('blastRecipientList');
@@ -2262,7 +2283,7 @@
             'Content-Type':    'application/json',
             'x-notify-secret': notifySecret,
           },
-          body: JSON.stringify({ recipients, subject, message }),
+          body: JSON.stringify({ recipients, subject, message, from: document.getElementById('blastSender').value }),
         });
 
         if (!res.ok) {

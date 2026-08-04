@@ -573,6 +573,27 @@
   </div>
 </div>
 
+<!-- Send email modal -->
+<div class="overlay" id="sendEmailModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Send Email</div>
+    <div class="form-row">
+      <div class="form-group"><label>To</label><input type="text" class="field" id="semTo" readonly></div>
+      <div class="form-group"><label>From</label><select class="field" id="semFrom">
+        <option value="andre">André Rocha</option>
+        <option value="antonio">António Carvalho</option>
+      </select></div>
+    </div>
+    <div class="form-group"><label>Subject</label><input type="text" class="field" id="semSubject"></div>
+    <div class="form-group"><label>Message</label><textarea class="field" id="semMessage" rows="8"></textarea></div>
+    <div class="modal-err" id="semErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="semCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="semSendBtn">Send</button>
+    </div>
+  </div>
+</div>
+
 <!-- Activity modal -->
 <div class="overlay" id="activityModal" style="display:none;">
   <div class="modal">
@@ -885,6 +906,7 @@ function naceDerive(code){
 
 // ── State ──────────────────────────────────────────────────────────────────
 let currentUser = null;
+let notifySecret = ''; // adminConfig/notify — same pattern as admin.html, needed to call the notify Netlify function
 let companies = [];
 let brokers = [];
 let fitCriteria = { ...DEFAULT_FIT };
@@ -892,6 +914,7 @@ let activities = [];
 let currentCoId = null;
 let editCoId = null;
 let editCtIdx = null;
+let sendCtIdx = null;
 let closeActId = null;
 let activityType = 'note';
 let sortCol = 'lastTouchAt';
@@ -1065,6 +1088,10 @@ onAuthStateChanged(auth, async user => {
   currentUser = user.email;
   setNavEmail(user.email);
   startSharedReadsWatch();
+  try {
+    const secretSnap = await getDoc(doc(db, 'adminConfig', 'notify'));
+    if (secretSnap.exists() && secretSnap.data().notifySecret) notifySecret = secretSnap.data().notifySecret;
+  } catch (e) { /* Send Email button will show a config-needed alert */ }
   await loadAll();
   document.getElementById('loadingScreen').style.display = 'none';
 });
@@ -1853,6 +1880,7 @@ function renderContacts(c){
           ${ct.notes?`<div class="contact-detail">${esc(ct.notes)}</div>`:''}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
+          ${ct.email?`<button class="btn btn--icon btn--ghost" data-sendct="${i}" title="Send email">✉</button>`:''}
           <button class="btn btn--icon btn--ghost" data-editct="${i}">✎</button>
           <button class="btn btn--icon btn--danger" data-rmct="${i}">✕</button>
         </div>
@@ -1866,6 +1894,7 @@ function renderContacts(c){
       </div>${list}
     </div>`;
   document.getElementById('addContactBtn').addEventListener('click', () => openContact(null));
+  document.querySelectorAll('[data-sendct]').forEach(b => b.addEventListener('click', () => openSendEmail(Number(b.dataset.sendct))));
   document.querySelectorAll('[data-editct]').forEach(b => b.addEventListener('click', () => openContact(Number(b.dataset.editct))));
   document.querySelectorAll('[data-rmct]').forEach(b => b.addEventListener('click', () => removeContact(Number(b.dataset.rmct))));
 }
@@ -2185,6 +2214,63 @@ async function removeContact(idx){
   c.contacts = contacts; cacheCompanies();
   await logAuto(c.id, 'contact_removed', `Removed contact: ${removed?.name||''}`);
   renderContacts(c); renderDetail();
+}
+
+function openSendEmail(idx){
+  sendCtIdx = idx;
+  const c = getCompany();
+  const ct = (c.contacts||[])[idx];
+  document.getElementById('semTo').value = ct ? `${ct.name} <${ct.email}>` : '';
+  document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
+  document.getElementById('semSubject').value = '';
+  document.getElementById('semMessage').value = '';
+  document.getElementById('semErr').style.display = 'none';
+  showEl('sendEmailModal', true);
+}
+// Sends a free-form email via the notify Netlify function (kind:'outreach' —
+// see notify.js), then logs it as a real 'email' activity (same shape
+// saveActivity() writes) so it shows on the Activities tab and counts
+// toward lastTouchAt/outreachAttempts via the existing recomputeActivityFields().
+async function sendCompanyEmail(){
+  const c = getCompany();
+  const ct = (c.contacts||[])[sendCtIdx];
+  const subject = document.getElementById('semSubject').value.trim();
+  const msg = document.getElementById('semMessage').value.trim();
+  const from = document.getElementById('semFrom').value;
+  const el = document.getElementById('semErr');
+  el.style.display = 'none';
+  if (!ct?.email) { el.textContent = 'This contact has no email.'; el.style.display='block'; return; }
+  if (!subject || !msg) { el.textContent = 'Subject and message are required.'; el.style.display='block'; return; }
+  if (!notifySecret) { el.textContent = "Email sending isn't configured yet (missing adminConfig/notify secret)."; el.style.display='block'; return; }
+  const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
+  try {
+    const res = await fetch('/.netlify/functions/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-notify-secret': notifySecret },
+      body: JSON.stringify({
+        recipients: [{ email: ct.email, name: ct.name }],
+        subject, message: msg, from, kind: 'outreach',
+      }),
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || `Send failed (${res.status})`);
+    }
+    const actData = {
+      companyId: c.id, type: 'email', date: Timestamp.now(), title: subject,
+      content: msg, via: 'email', contactName: ct.name, contactRole: ct.role || null,
+      responseCategory: null, status: null, createdAt: serverTimestamp(), createdBy: currentUser,
+    };
+    const ref = await addDoc(collection(db, 'searchActivities'), actData);
+    activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
+    await recomputeActivityFields(c);
+    showEl('sendEmailModal', false);
+    renderActivityLog(); renderList();
+  } catch (e) {
+    el.textContent = e.message; el.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.innerHTML = 'Send';
+  }
 }
 
 // ── Activities ───────────────────────────────────────────────────────────────
@@ -2858,6 +2944,8 @@ document.getElementById('deleteConfirmBtn').addEventListener('click', confirmDel
 document.getElementById('backBtn').addEventListener('click', backToList);
 document.getElementById('contactCancelBtn').addEventListener('click', () => showEl('contactModal', false));
 document.getElementById('contactSaveBtn').addEventListener('click', saveContact);
+document.getElementById('semCancelBtn').addEventListener('click', () => showEl('sendEmailModal', false));
+document.getElementById('semSendBtn').addEventListener('click', sendCompanyEmail);
 document.getElementById('actCancelBtn').addEventListener('click', () => showEl('activityModal', false));
 document.getElementById('actSaveBtn').addEventListener('click', saveActivity);
 document.getElementById('closeMtgCancelBtn').addEventListener('click', () => showEl('closeMtgModal', false));

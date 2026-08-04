@@ -5,9 +5,22 @@
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const NOTIFY_SECRET  = process.env.NOTIFY_SECRET;
-const FROM_EMAIL     = 'noreply@douropartners.pt';
-const FROM_NAME      = 'Douro Partners';
 const PORTAL_URL     = 'https://douropartners.pt/portal/investor.html';
+// Generous enough to never throttle a real "Send Update" blast to all
+// portal investors — just a backstop against the endpoint being abused as
+// an open mass-mailer if the secret ever leaked, not a real-world cap.
+const MAX_RECIPIENTS = 250;
+
+// Server-side allow-list — the client sends a key (never a raw address), so
+// a tampered payload can never make this function send from an arbitrary
+// "from" address, only one of these three verified domain identities.
+const SENDERS = {
+  andre:   { email: 'andre.rocha@douropartners.pt',      name: 'André Rocha' },
+  antonio: { email: 'antonio.carvalho@douropartners.pt',  name: 'António Carvalho' },
+  noreply: { email: 'noreply@douropartners.pt',           name: 'Douro Partners' },
+};
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 exports.handler = async (event) => {
   // Only accept POST
@@ -29,24 +42,36 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
 
-  const { recipients, subject, message, docName, docCategory, docDescription } = body;
+  const { recipients, subject, message, docName, docCategory, docDescription, from, kind } = body;
 
   if (!recipients?.length || !subject?.trim() || !message?.trim()) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields: recipients, subject, message' }) };
   }
+  if (recipients.length > MAX_RECIPIENTS) {
+    return { statusCode: 400, body: JSON.stringify({ error: `Too many recipients (max ${MAX_RECIPIENTS})` }) };
+  }
+  const badEmail = recipients.find(r => !r?.email || !EMAIL_RE.test(r.email));
+  if (badEmail) {
+    return { statusCode: 400, body: JSON.stringify({ error: `Invalid recipient email: ${badEmail?.email || '(missing)'}` }) };
+  }
+
+  const sender = SENDERS[from] || SENDERS.noreply;
+  const isOutreach = kind === 'outreach';
 
   // Build one email per recipient
   const emails = recipients.map(r => ({
-    from: `${FROM_NAME} <${FROM_EMAIL}>`,
+    from: `${sender.name} <${sender.email}>`,
     to:   [r.email],
     subject: subject.trim(),
-    html: buildHtml({
-      investorName:   r.name,
-      message:        message.trim(),
-      docName:        docName        || '',
-      docCategory:    docCategory    || 'Document',
-      docDescription: docDescription || '',
-    }),
+    html: isOutreach
+      ? buildOutreachHtml({ message: message.trim(), senderName: sender.name })
+      : buildHtml({
+          investorName:   r.name,
+          message:        message.trim(),
+          docName:        docName        || '',
+          docCategory:    docCategory    || 'Document',
+          docDescription: docDescription || '',
+        }),
   }));
 
   // Send via Resend batch API
@@ -184,6 +209,70 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
               or
               <a href="mailto:antonio.carvalho@douropartners.pt"
                  style="color:#9CA3AF;">antonio.carvalho@douropartners.pt</a>
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+
+</body>
+</html>`;
+}
+
+// Lighter template for free-form outreach (Search CRM company contacts) —
+// same visual shell as buildHtml above, but no investor-portal framing:
+// no auto-greeting, no "View in Investor Portal" CTA, no "registered
+// investor" footer line. The sender's real name (shown in the From header)
+// does the signing-off; the body is genuinely free text.
+function buildOutreachHtml({ message, senderName }) {
+  const messageHtml = esc(message).replace(/\n/g, '<br>');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Douro Partners</title>
+</head>
+<body style="margin:0;padding:0;background:#F7F3EC;font-family:'Helvetica Neue',Arial,sans-serif;-webkit-text-size-adjust:100%;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+         style="background:#F7F3EC;padding:40px 0;">
+    <tr><td align="center" style="padding:0 16px;">
+
+      <table width="560" cellpadding="0" cellspacing="0" role="presentation"
+             style="max-width:560px;width:100%;">
+
+        <!-- ── Header ── -->
+        <tr>
+          <td style="background:#1E2A38;padding:28px 40px;border-radius:8px 8px 0 0;text-align:center;">
+            <p style="margin:0;font-family:Georgia,'Times New Roman',serif;
+                      font-size:22px;color:#FFFFFF;font-weight:bold;letter-spacing:0.02em;">
+              Douro Partners
+            </p>
+          </td>
+        </tr>
+
+        <!-- ── Body ── -->
+        <tr>
+          <td style="background:#FFFFFF;padding:36px 40px;">
+            <p style="margin:0;font-size:15px;color:#2C2C2C;line-height:1.75;">
+              ${messageHtml}
+            </p>
+          </td>
+        </tr>
+
+        <!-- ── Footer ── -->
+        <tr>
+          <td style="background:#F7F3EC;padding:20px 40px;border-radius:0 0 8px 8px;text-align:center;
+                     border-top:1px solid #D8D3C8;">
+            <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.8;">
+              ${esc(senderName)} &middot;
+              <a href="https://douropartners.pt" style="color:#9CA3AF;text-decoration:none;">
+                douropartners.pt
+              </a>
             </p>
           </td>
         </tr>
