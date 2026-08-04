@@ -1,0 +1,1283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Network — Douro Partners</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="icon" href="/assets/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./nav.css">
+  <style>
+    :root {
+      --primary:      #4A6B8A;
+      --primary-dark: #3A5570;
+      --secondary:    #3D6430;
+      --bg:           #F7F3EC;
+      --bg-dark:      #1E2A38;
+      --text:         #2C2C2C;
+      --text-light:   #6B7280;
+      --border:       #D8D3C8;
+      --white:        #FFFFFF;
+      --font-serif:   'Playfair Display', Georgia, serif;
+      --font-sans:    'Inter', sans-serif;
+      --radius:       8px;
+      --shadow:       0 4px 24px rgba(30,42,56,0.08);
+      --shadow-sm:    0 1px 6px rgba(30,42,56,0.06);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Loading */
+    #loadingScreen {
+      position: fixed; inset: 0; background: var(--bg);
+      display: flex; align-items: center; justify-content: center; z-index: 100;
+    }
+    .spinner-ring {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Nav — see nav.css (shared across all admin pages) */
+    #siteNav { --nav-width: 1200px; }
+
+    /* Layout */
+    .main { max-width: 1200px; margin: 0 auto; padding: 36px 24px; }
+
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.875rem; font-weight: 600; cursor: pointer; transition: 0.2s; border: none; text-decoration: none; }
+    .btn--primary { background: var(--primary); color: var(--white); }
+    .btn--primary:hover { background: var(--primary-dark); }
+    .btn--ghost { background: none; border: 1px solid var(--border); color: var(--text-light); }
+    .btn--ghost:hover { border-color: var(--primary); color: var(--primary); background: transparent; }
+    .btn--danger { background: #FEE2E2; color: #B91C1C; border: 1px solid #FECACA; }
+    .btn--danger:hover { background: #FECACA; }
+    .btn--action { background: var(--white); border: 1px solid var(--border); color: var(--text); font-size: 0.82rem; padding: 7px 13px; }
+    .btn--action:hover { border-color: var(--primary); color: var(--primary); }
+    .btn--sm { padding: 5px 10px; font-size: 0.75rem; }
+    .btn--icon { padding: 5px 8px; font-size: 0.8rem; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Cards */
+    .card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); padding: 20px 24px; margin-bottom: 20px; }
+
+    /* Filters */
+    .filters-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+    .search-input { padding: 8px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.875rem; color: var(--text); background: var(--white); min-width: 220px; }
+    .search-input:focus { outline: none; border-color: var(--primary); }
+    .filter-sel { padding: 7px 10px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.875rem; color: var(--text); background: var(--white); cursor: pointer; }
+    .filter-sel:focus { outline: none; border-color: var(--primary); }
+    .results-count { font-size: 0.8rem; color: var(--text-light); margin-left: auto; }
+
+    /* Table */
+    .table-card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); padding: 10px 14px; text-align: left; border-bottom: 1.5px solid var(--border); background: #FAFAF8; white-space: nowrap; cursor: pointer; user-select: none; }
+    th:hover { color: var(--primary); }
+    td { padding: 13px 14px; font-size: 0.875rem; border-bottom: 1px solid #F0EDE6; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .row-clickable { cursor: pointer; }
+    .row-clickable:hover td { background: #FAFAF8; }
+    #networkTable td:first-child { position: sticky; left: 0; z-index: 2; background: var(--white); box-shadow: 2px 0 4px rgba(0,0,0,0.06); }
+    #networkTable th:first-child { position: sticky; left: 0; z-index: 3; box-shadow: 2px 0 4px rgba(0,0,0,0.06); }
+    #networkTable .row-clickable:hover td:first-child { background: #FAFAF8; }
+
+    /* Badges */
+    .badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+    .badge-blue  { background: #DBEAFE; color: #1D4ED8; }
+    .badge-green { background: #D1FAE5; color: #065F46; }
+    .badge-grey  { background: #F3F4F6; color: #6B7280; }
+    .badge-warn  { background: #FEF3C7; color: #D97706; }
+    .badge-red   { background: #FEE2E2; color: #B91C1C; }
+    .badge-purple{ background: #EDE9FE; color: #7C3AED; }
+
+    /* Empty */
+    .empty { text-align: center; padding: 52px 24px; color: var(--text-light); }
+    .empty__icon { font-size: 2rem; margin-bottom: 10px; }
+    .empty__title { font-size: 0.95rem; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+
+    /* ── Detail view ── */
+    .detail-back { display: inline-flex; align-items: center; gap: 6px; color: var(--text-light); font-size: 0.85rem; cursor: pointer; margin-bottom: 20px; transition: color 0.2s; background: none; border: none; font-family: var(--font-sans); padding: 0; }
+    .detail-back:hover { color: var(--primary); }
+    .detail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+    .detail-name { font-family: var(--font-serif); font-size: 1.7rem; color: var(--text); }
+    .detail-meta { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    .detail-header-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .action-bar { display: flex; gap: 8px; flex-wrap: wrap; padding: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 16px 0; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+    @media (max-width: 760px) { .detail-grid { grid-template-columns: 1fr; } }
+    .sec-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin-bottom: 14px; }
+    .info-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #F0EDE6; font-size: 0.85rem; gap: 10px; }
+    .info-row:last-child { border-bottom: none; }
+    .info-row-label { color: var(--text-light); font-size: 0.78rem; flex-shrink: 0; }
+    .info-row-value { text-align: right; }
+
+    /* Activity log */
+    .overdue-banner { background: #FEF3C7; border: 1px solid #FDE68A; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px; }
+    .overdue-banner p { font-size: 0.85rem; color: #92400E; margin-bottom: 8px; font-weight: 600; }
+    .overdue-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.82rem; color: #92400E; padding: 4px 0; flex-wrap: wrap; }
+    .activity-item { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid #F0EDE6; }
+    .activity-item:last-child { border-bottom: none; }
+    .act-icon { font-size: 1rem; width: 22px; flex-shrink: 0; text-align: center; margin-top: 2px; }
+    .act-body { flex: 1; min-width: 0; }
+    .act-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+    .act-type { font-weight: 600; font-size: 0.85rem; }
+    .act-date { font-size: 0.75rem; color: var(--text-light); }
+    .act-content { font-size: 0.82rem; color: var(--text-light); line-height: 1.55; margin-top: 3px; white-space: pre-wrap; }
+
+    /* Modals */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 500; padding: 16px; }
+    .modal { background: var(--white); border-radius: var(--radius); box-shadow: 0 20px 60px rgba(0,0,0,0.22); width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 28px 32px; }
+    .modal-title { font-family: var(--font-serif); font-size: 1.3rem; color: var(--primary); margin-bottom: 20px; }
+    .form-group { margin-bottom: 16px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 500px) { .form-row { grid-template-columns: 1fr; } .modal { padding: 22px 18px; } }
+    label { display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text); margin-bottom: 5px; }
+    .field { width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.9rem; color: var(--text); background: var(--white); transition: 0.2s; }
+    .field:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(74,107,138,0.1); }
+    .field[readonly] { background: #FAFAF8; color: var(--text-light); }
+    textarea.field { resize: vertical; min-height: 90px; }
+    .hint { font-size: 0.72rem; color: var(--text-light); margin-top: 4px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .modal-err { font-size: 0.82rem; color: #B91C1C; margin-top: 8px; display: none; }
+
+    /* Chip pickers (categories/phases) + activity type tabs reuse the same look */
+    .type-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+    .type-tab { padding: 5px 12px; border-radius: 20px; font-size: 0.78rem; font-weight: 600; cursor: pointer; border: 1.5px solid var(--border); background: var(--white); color: var(--text-light); transition: 0.2s; }
+    .type-tab:hover { border-color: var(--primary); color: var(--primary); }
+    .type-tab.active { background: var(--primary); color: var(--white); border-color: var(--primary); }
+
+    /* Inline spinner */
+    .spin-sm { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.35); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 5px; }
+
+    /* Misc */
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; gap: 16px; flex-wrap: wrap; }
+    .page-title { font-family: var(--font-serif); font-size: 1.75rem; color: var(--primary); }
+    .page-sub   { font-size: 0.85rem; color: var(--text-light); margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<div id="loadingScreen"><div class="spinner-ring"></div></div>
+
+<!-- Nav -->
+<nav class="nav" id="siteNav"></nav>
+
+<!-- ══════════════════ LIST VIEW ══════════════════ -->
+<div class="main" id="listView">
+
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Network</h1>
+      <p class="page-sub" id="listSub">Loading…</p>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn--ghost" id="followupsBtn">📋 Follow-ups</button>
+      <button class="btn btn--primary" id="newContactBtn">＋ New Contact</button>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="filters-row">
+    <input type="text" class="search-input" id="searchInput" placeholder="Search name, firm or email…">
+    <select class="filter-sel" id="categoryFilter"><option value="">All Categories</option></select>
+    <select class="filter-sel" id="phaseFilter"><option value="">All Phases</option></select>
+    <select class="filter-sel" id="ownerFilter">
+      <option value="">All Owners</option>
+      <option value="andre">André</option>
+      <option value="antonio">António</option>
+    </select>
+    <select class="filter-sel" id="countryFilter"><option value="">All Countries</option></select>
+    <span class="results-count" id="resultsCount"></span>
+    <button class="btn btn--ghost btn--sm" id="exportBtn">⬇ Export CSV</button>
+  </div>
+
+  <!-- Table -->
+  <div class="table-card">
+    <div class="table-wrap">
+      <table id="networkTable">
+        <thead>
+          <tr>
+            <th data-col="name">Name ↕</th>
+            <th data-col="categories">Categories</th>
+            <th data-col="firm">Firm</th>
+            <th data-col="phases">Phases</th>
+            <th data-col="owner">Owner</th>
+            <th data-col="country">Country</th>
+            <th data-col="lastTouchAt">Last Touch ↕</th>
+            <th data-col="nextContactAt">Next Contact</th>
+          </tr>
+        </thead>
+        <tbody id="networkBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ DETAIL VIEW ══════════════════ -->
+<div class="main" id="detailView" style="display:none;">
+
+  <button class="detail-back" id="backBtn">← Back to Network</button>
+
+  <div class="detail-header">
+    <div>
+      <div class="detail-name" id="dName"></div>
+      <div class="detail-meta" id="dMeta"></div>
+    </div>
+    <div class="detail-header-actions">
+      <button class="btn btn--ghost btn--sm" id="editContactBtn">✏ Edit</button>
+      <button class="btn btn--danger btn--sm" id="deleteContactBtn">🗑 Delete</button>
+    </div>
+  </div>
+
+  <!-- Action bar -->
+  <div class="action-bar">
+    <button class="btn btn--action" data-atype="note">📝 Note</button>
+    <button class="btn btn--action" data-atype="call">📞 Log Call</button>
+    <button class="btn btn--action" data-atype="email">📧 Log Email</button>
+    <button class="btn btn--action" data-atype="meeting_scheduled">📅 Schedule Meeting</button>
+    <button class="btn btn--action" data-atype="meeting_done">✅ Meeting Done</button>
+    <button class="btn btn--action" data-atype="observation">💡 Observation</button>
+  </div>
+
+  <!-- Detail body -->
+  <div class="detail-grid">
+
+    <div class="card" style="margin-bottom:0;">
+      <div class="sec-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Contact Info</span>
+        <button class="btn btn--ghost btn--sm" id="sendEmailBtn" style="display:none;">✉ Send Email</button>
+      </div>
+      <div id="infoDisplay"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:0;">
+      <div class="sec-title">Relationship</div>
+      <div id="relDisplay"></div>
+    </div>
+  </div>
+
+  <!-- Activity log -->
+  <div class="card" style="margin-top:20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div class="sec-title" style="margin-bottom:0;">Activity Log</div>
+      <span id="actCount" style="font-size:0.78rem;color:var(--text-light);"></span>
+    </div>
+    <div id="overdueBanners"></div>
+    <div id="activityLog"></div>
+  </div>
+</div>
+
+<!-- ══════════════════ MODALS ══════════════════ -->
+
+<!-- Follow-ups dashboard -->
+<div class="overlay" id="followupsModal" style="display:none;">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-title">📋 Follow-ups</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+      <span style="font-size:0.82rem;color:var(--text-light);">Across all network contacts</span>
+      <select class="filter-sel" id="fuOwnerFilter" style="margin-left:auto;">
+        <option value="">All owners</option>
+        <option value="andre">André</option>
+        <option value="antonio">António</option>
+      </select>
+    </div>
+    <div id="followupsBody" style="max-height:60vh;overflow-y:auto;"></div>
+  </div>
+</div>
+
+<!-- Contact modal (create / edit — this IS the top-level record) -->
+<div class="overlay" id="contactModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title" id="ctModalTitle">New Contact</div>
+    <div class="form-group">
+      <label>Full Name *</label>
+      <input type="text" class="field" id="ncName" placeholder="e.g. João Silva">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" class="field" id="ncEmail" placeholder="joao@firm.com">
+      </div>
+      <div class="form-group">
+        <label>Phone</label>
+        <input type="tel" class="field" id="ncPhone" placeholder="+351 91 000 0000">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Role / Title</label>
+        <input type="text" class="field" id="ncRole" placeholder="e.g. Partner">
+      </div>
+      <div class="form-group">
+        <label>Firm / Organization</label>
+        <input type="text" class="field" id="ncFirm" placeholder="e.g. Kirkland & Ellis">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>LinkedIn</label>
+      <input type="text" class="field" id="ncLinkedin" placeholder="linkedin.com/in/…">
+    </div>
+    <div class="form-group">
+      <label>Categories</label>
+      <div class="type-tabs" id="ncCategories"></div>
+    </div>
+    <div class="form-group">
+      <label>Relevant Phases</label>
+      <div class="type-tabs" id="ncPhases"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Owner</label>
+        <select class="field" id="ncOwner">
+          <option value="">—</option>
+          <option value="andre">André</option>
+          <option value="antonio">António</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Country</label>
+        <select class="field" id="ncCountry"><option value="">—</option></select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>How We Met <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <input type="text" class="field" id="ncHowMet" placeholder="e.g. Introduced by António, or met at ETA Conference 2026">
+    </div>
+    <div class="form-group">
+      <label>Notes <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <textarea class="field" id="ncNotes" placeholder="Anything else worth remembering…"></textarea>
+    </div>
+    <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="ncPriority" style="width:auto;padding:0;">
+      <label for="ncPriority" style="text-transform:none;font-size:0.875rem;font-weight:500;margin-bottom:0;">⭐ Priority contact</label>
+    </div>
+    <div class="modal-err" id="ctErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="ctCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="ctSaveBtn">Save Contact</button>
+    </div>
+  </div>
+</div>
+
+<!-- Send email modal (single-contact — no combined/CC, no doc attach: neither applies here) -->
+<div class="overlay" id="sendEmailModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Send Email</div>
+    <div class="form-row">
+      <div class="form-group"><label>To</label><input type="text" class="field" id="semTo" readonly></div>
+      <div class="form-group"><label>From</label><select class="field" id="semFrom">
+        <option value="andre">André Rocha</option>
+        <option value="antonio">António Carvalho</option>
+      </select></div>
+    </div>
+    <div class="form-group"><label>Subject</label><input type="text" class="field" id="semSubject"></div>
+    <div class="form-group"><label>Message</label><textarea class="field" id="semMessage" rows="8"></textarea></div>
+    <div class="modal-err" id="semErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="semCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="semSendBtn">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- Activity modal -->
+<div class="overlay" id="activityModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title" id="actModalTitle">Log Activity</div>
+    <div class="type-tabs" id="actTypeTabs">
+      <button class="type-tab" data-type="note">📝 Note</button>
+      <button class="type-tab" data-type="call">📞 Call</button>
+      <button class="type-tab" data-type="email">📧 Email</button>
+      <button class="type-tab" data-type="meeting_scheduled">📅 Schedule</button>
+      <button class="type-tab" data-type="meeting_done">✅ Meeting Done</button>
+      <button class="type-tab" data-type="observation">💡 Observation</button>
+      <button class="type-tab" data-type="other">💬 Other</button>
+    </div>
+    <div id="actFields"></div>
+    <div class="modal-err" id="actErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="actCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="actSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Close meeting modal -->
+<div class="overlay" id="closeMtgModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Close Meeting</div>
+    <p style="font-size:0.9rem;color:var(--text-light);margin-bottom:16px;" id="closeMtgDesc"></p>
+    <div class="form-group">
+      <label>Outcome</label>
+      <select class="field" id="closeMtgOutcome">
+        <option value="happened">✅ Meeting happened</option>
+        <option value="cancelled">❌ Meeting was cancelled / rescheduled</option>
+      </select>
+    </div>
+    <div class="form-group" id="closeMtgNotesGroup">
+      <label>Notes <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <textarea class="field" id="closeMtgNotes" placeholder="How did it go? Key takeaways…"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="closeMtgCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="closeMtgSaveBtn">Close Meeting</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="overlay" id="deleteModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Delete Contact</div>
+    <p style="font-size:0.9rem;color:var(--text-light);margin-bottom:20px;" id="deleteDesc"></p>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="deleteCancelBtn">Cancel</button>
+      <button class="btn btn--danger" id="deleteConfirmBtn">Yes, delete permanently</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { auth, db, ADMIN_EMAILS, addReads } from './firebase-config.js';
+import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+import {
+  collection, doc, addDoc, updateDoc, deleteDoc,
+  getDocs, getDoc, query, where, serverTimestamp, Timestamp, onSnapshot
+} from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const CATEGORIES = {
+  lawyer: 'Lawyer', accountant: 'Accountant', banker_broker: 'Banker/Broker',
+  current_searcher: 'Current Searcher', former_searcher: 'Former Searcher',
+  operator: 'Operator', investor_outside_process: 'Investor (outside process)',
+  journalist: 'Journalist', advisor: 'Advisor', service_provider: 'Service Provider', other: 'Other',
+};
+const PHASES = {
+  fundraising: 'Fundraising', search: 'Search', acquisition: 'Acquisition',
+  post_acquisition: 'Post-Acquisition', general: 'General',
+};
+const OWNER_LABELS = { andre: 'André', antonio: 'António' };
+
+const COUNTRIES = ['Portugal','Spain','United Kingdom','Ireland','France','Germany','Switzerland','Netherlands','Belgium','Luxembourg','Italy','Austria','Denmark','Sweden','Norway','Finland','Poland','Czech Republic','Greece','Hungary','Romania','Bulgaria','Croatia','Slovenia','Slovakia','Estonia','Latvia','Lithuania','Iceland','Malta','Cyprus','Monaco','Liechtenstein','Andorra','United States','Canada','Mexico','Brazil','Argentina','Chile','Colombia','Peru','Uruguay','Panama','Angola','Mozambique','Cape Verde','South Africa','Nigeria','Morocco','Egypt','United Arab Emirates','Saudi Arabia','Qatar','Kuwait','Bahrain','Oman','Israel','Turkey','India','China','Hong Kong','Singapore','Japan','South Korea','Australia','New Zealand','Afghanistan','Albania','Algeria','Armenia','Azerbaijan','Bangladesh','Belarus','Bolivia','Bosnia and Herzegovina','Botswana','Brunei','Cambodia','Cameroon','Costa Rica','Cuba','Dominican Republic','Ecuador','El Salvador','Ethiopia','Fiji','Gabon','Georgia','Ghana','Guatemala','Honduras','Indonesia','Iran','Iraq','Ivory Coast','Jamaica','Jordan','Kazakhstan','Kenya','Kosovo','Laos','Lebanon','Libya','Liberia','Madagascar','Malaysia','Maldives','Mali','Mauritius','Moldova','Mongolia','Montenegro','Myanmar','Namibia','Nepal','Nicaragua','North Macedonia','Pakistan','Palestine','Paraguay','Philippines','Russia','Rwanda','San Marino','Senegal','Serbia','Seychelles','Sri Lanka','Sudan','Syria','Taiwan','Tanzania','Thailand','Tunisia','Turkmenistan','Uganda','Ukraine','Uzbekistan','Venezuela','Vietnam','Yemen','Zambia','Zimbabwe','Other'];
+function populateCountrySelects(){
+  const opts = COUNTRIES.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  document.getElementById('ncCountry').innerHTML = '<option value="">—</option>' + opts;
+  document.getElementById('countryFilter').innerHTML = '<option value="">All Countries</option>' + opts;
+}
+function populateCategoryPhaseFilters(){
+  document.getElementById('categoryFilter').innerHTML = '<option value="">All Categories</option>' +
+    Object.entries(CATEGORIES).map(([k,l]) => `<option value="${k}">${esc(l)}</option>`).join('');
+  document.getElementById('phaseFilter').innerHTML = '<option value="">All Phases</option>' +
+    Object.entries(PHASES).map(([k,l]) => `<option value="${k}">${esc(l)}</option>`).join('');
+}
+function renderChipPicker(containerId, options, selected){
+  const el = document.getElementById(containerId);
+  el.innerHTML = Object.entries(options).map(([k,l]) =>
+    `<button type="button" class="type-tab${(selected||[]).includes(k)?' active':''}" data-val="${k}">${esc(l)}</button>`).join('');
+  el.querySelectorAll('.type-tab').forEach(btn => btn.addEventListener('click', () => btn.classList.toggle('active')));
+}
+function readChipPicker(containerId){
+  return [...document.querySelectorAll(`#${containerId} .type-tab.active`)].map(b => b.dataset.val);
+}
+
+const ACT = {
+  note:              { label:'Note',               icon:'📝' },
+  call:              { label:'Call',               icon:'📞' },
+  email:             { label:'Email',              icon:'📧' },
+  meeting_scheduled: { label:'Meeting Scheduled',  icon:'📅' },
+  meeting_done:      { label:'Meeting Done',        icon:'✅' },
+  observation:       { label:'Observation',        icon:'💡' },
+  other:             { label:'Other',              icon:'💬' },
+  contact_created:   { label:'Added to Network',   icon:'➕' },
+  contact_edited:    { label:'Profile Updated',    icon:'✏️' },
+};
+
+// ── State ────────────────────────────────────────────────────────────────────
+
+let currentUser     = null;
+let notifySecret    = '';
+let networkContacts = [];
+let activities       = [];   // for current detail contact
+let currentContactId = null;
+let editContactId    = null; // set when the contact modal is editing (vs creating)
+let closeMtgId        = null;
+let sortCol = 'lastTouchAt';
+let sortDir = 'desc';
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function todayStr() { return new Date().toISOString().slice(0,10); }
+function tsToDate(ts) { return ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null); }
+function relTime(ts) {
+  const d = tsToDate(ts); if (!d) return '—';
+  const diff = Math.floor((Date.now() - d) / 1000);
+  if (diff < 60)          return 'just now';
+  if (diff < 3600)        return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400)       return Math.floor(diff/3600) + 'h ago';
+  if (diff < 86400*7)     return Math.floor(diff/86400) + 'd ago';
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+}
+function fmtDate(ts) {
+  const d = tsToDate(ts); if (!d) return '—';
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+}
+function fmtDateShort(ts) {
+  const d = tsToDate(ts); if (!d) return '—';
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+}
+function fmtDateTime(ts) {
+  const d = tsToDate(ts); if (!d) return '—';
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) + ', ' +
+         d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+}
+function timeFromTs(ts) {
+  const d = tsToDate(ts); if (!d) return '';
+  if (d.getHours() === 0 && d.getMinutes() === 0) return '';
+  return d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+}
+function isPastDue(a) {
+  const d = tsToDate(a.date); if (!d) return false;
+  if (a.time) return d.getTime() < Date.now();
+  const today = new Date(); today.setHours(0,0,0,0);
+  return d < today;
+}
+function computeNextContact(acts) {
+  const open = acts.filter(a => a.status === 'open');
+  const future = open.filter(a => !isPastDue(a)).sort((a,b) => tsToDate(a.date) - tsToDate(b.date));
+  const next = future[0] || null;
+  return {
+    nextContactAt:   next ? next.date : null,
+    nextContactTime: next?.time || null,
+    nextContactTz:   next?.timezone || null,
+    hasOverdue:      open.some(a => isPastDue(a)),
+  };
+}
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function showEl(id, show) { document.getElementById(id).style.display = show ? '' : 'none'; }
+
+initNav('network');
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+onAuthStateChanged(auth, async user => {
+  if (!user || !ADMIN_EMAILS.includes(user.email)) {
+    window.location.href = '/portal/login.html'; return;
+  }
+  currentUser = user.email;
+  setNavEmail(user.email);
+  startSharedReadsWatch();
+  populateCountrySelects();
+  populateCategoryPhaseFilters();
+  try {
+    const secretSnap = await getDoc(doc(db, 'adminConfig', 'notify'));
+    if (secretSnap.exists() && secretSnap.data().notifySecret) notifySecret = secretSnap.data().notifySecret;
+  } catch (e) { /* Send Email button will show a config-needed alert */ }
+  await startContactsListener();
+  document.getElementById('loadingScreen').style.display = 'none';
+});
+
+// ── Load ─────────────────────────────────────────────────────────────────────
+
+let contactsUnsub = null;
+function startContactsListener() {
+  return new Promise(resolve => {
+    let done = false;
+    if (contactsUnsub) contactsUnsub();
+    contactsUnsub = onSnapshot(collection(db, 'networkContacts'),
+      snap => {
+        addReads(done ? snap.docChanges().length : snap.docs.length);
+        refreshReads();
+        networkContacts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderList();
+        if (!done) { done = true; resolve(); }
+      },
+      err => { console.error('networkContacts listener error:', err); if (!done) { done = true; resolve(); } }
+    );
+  });
+}
+
+async function loadActivities(contactId) {
+  const snap = await getDocs(query(
+    collection(db, 'networkActivities'),
+    where('contactId', '==', contactId)
+  ));
+  activities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  activities.sort((a, b) => (tsToDate(b.date)?.getTime()||0) - (tsToDate(a.date)?.getTime()||0));
+}
+
+// ── Follow-ups dashboard ──────────────────────────────────────────────────────
+
+function updateFollowupsBadge() {
+  const btn = document.getElementById('followupsBtn'); if (!btn) return;
+  const n = networkContacts.filter(c => c.hasOverdue).length;
+  btn.textContent = n ? `📋 Follow-ups (${n})` : '📋 Follow-ups';
+}
+function openFollowups() {
+  document.getElementById('fuOwnerFilter').value = '';
+  renderFollowups();
+  showEl('followupsModal', true);
+}
+function renderFollowups() {
+  const ownerF = document.getElementById('fuOwnerFilter').value;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const pool = networkContacts.filter(c => !ownerF || c.owner === ownerF);
+  const overdue = pool.filter(c => c.hasOverdue);
+  const upcoming = pool
+    .filter(c => { const d = tsToDate(c.nextContactAt); return d && d >= today; })
+    .sort((a,b) => tsToDate(a.nextContactAt) - tsToDate(b.nextContactAt));
+
+  const row = (c, label, color) => `
+    <div class="fu-item" data-id="${c.id}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;cursor:pointer;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:0.88rem;">${c.priority?'⭐ ':''}${esc(c.name)}</div>
+        <div style="font-size:0.75rem;color:var(--text-light);margin-top:3px;">${c.owner?esc(OWNER_LABELS[c.owner]||c.owner):''}</div>
+      </div>
+      <div style="text-align:right;font-size:0.8rem;color:${color};font-weight:600;white-space:nowrap;">${label}</div>
+    </div>`;
+
+  let html = '';
+  if (overdue.length) {
+    html += `<div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#B91C1C;margin:4px 0 8px;">⚠ Overdue (${overdue.length})</div>`;
+    html += overdue.map(c => row(c, 'Needs follow-up', '#B91C1C')).join('');
+  }
+  if (upcoming.length) {
+    html += `<div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:${overdue.length?'18px':'4px'} 0 8px;">📅 Upcoming (${upcoming.length})</div>`;
+    html += upcoming.map(c => {
+      const d = tsToDate(c.nextContactAt);
+      const dDay = new Date(d); dDay.setHours(0,0,0,0);
+      const days = Math.round((dDay - today) / 86400000);
+      const rel = days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : days <= 7 ? `in ${days} days` : '';
+      const color = days <= 1 ? 'var(--primary)' : 'var(--text)';
+      const time = c.nextContactTime || timeFromTs(c.nextContactAt);
+      const tparts = [time, c.nextContactTz].filter(Boolean).join(' ');
+      const label = `${fmtDateShort(c.nextContactAt)}${rel?' · '+rel:''}${tparts?'<br><span style="font-weight:500;color:var(--text-light);">🕐 '+esc(tparts)+'</span>':''}`;
+      return row(c, label, color);
+    }).join('');
+  }
+  if (!overdue.length && !upcoming.length) {
+    html = `<div style="text-align:center;padding:32px;color:var(--text-light);font-size:0.9rem;">✅ No follow-ups${ownerF?' for '+esc(OWNER_LABELS[ownerF]):''}. All clear.</div>`;
+  }
+  document.getElementById('followupsBody').innerHTML = html;
+  document.querySelectorAll('#followupsBody .fu-item').forEach(el =>
+    el.addEventListener('click', () => { showEl('followupsModal', false); openDetail(el.dataset.id); }));
+}
+
+// ── Render: List ─────────────────────────────────────────────────────────────
+
+function renderList() {
+  updateFollowupsBadge();
+  const search   = (document.getElementById('searchInput').value || '').toLowerCase();
+  const catF     = document.getElementById('categoryFilter').value;
+  const phaseF   = document.getElementById('phaseFilter').value;
+  const ownerF   = document.getElementById('ownerFilter').value;
+  const countryF = document.getElementById('countryFilter').value;
+
+  let list = networkContacts.filter(c => {
+    if (catF     && !(c.categories||[]).includes(catF))   return false;
+    if (phaseF   && !(c.phases||[]).includes(phaseF))     return false;
+    if (ownerF   && c.owner   !== ownerF)   return false;
+    if (countryF && c.country !== countryF) return false;
+    if (search) {
+      const hay = `${c.name||''} ${c.firm||''} ${c.email||''}`.toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+
+  list.sort((a,b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (['name','owner','country','firm'].includes(sortCol)) { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
+    else if (['lastTouchAt','nextContactAt'].includes(sortCol)) {
+      va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
+    } else if (['categories','phases'].includes(sortCol)) {
+      va = (a[sortCol]||[]).length; vb = (b[sortCol]||[]).length;
+    }
+    if (va < vb) return sortDir === 'asc' ? -1 : 1;
+    if (va > vb) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  document.getElementById('resultsCount').textContent = `${list.length} contact${list.length!==1?'s':''}`;
+  document.getElementById('listSub').textContent = `${networkContacts.length} contacts total`;
+
+  const tbody = document.getElementById('networkBody');
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No contacts found</div><div>Try adjusting your filters.</div></div></td></tr>`;
+    return;
+  }
+
+  const badgeRow = (arr, labels, cls) => (arr||[]).length
+    ? (arr||[]).map(k => `<span class="badge ${cls}">${esc(labels[k]||k)}</span>`).join(' ')
+    : '<span style="color:var(--text-light);">—</span>';
+
+  tbody.innerHTML = list.map(c => {
+    const nextContact = c.nextContactAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(c.nextContactAt)}</span>` : '—';
+    const overdue = c.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
+    const ownerLabel = c.owner ? `<span style="font-size:0.82rem;font-weight:500;">${esc(OWNER_LABELS[c.owner]||c.owner)}</span>` : '<span style="color:var(--text-light);">—</span>';
+    return `<tr class="row-clickable" data-id="${c.id}">
+      <td><strong>${c.priority?'⭐ ':''}${esc(c.name)}</strong>${overdue}</td>
+      <td>${badgeRow(c.categories, CATEGORIES, 'badge-grey')}</td>
+      <td style="font-size:0.82rem;">${c.firm ? esc(c.firm) : '<span style="color:var(--text-light);">—</span>'}</td>
+      <td>${badgeRow(c.phases, PHASES, 'badge-purple')}</td>
+      <td>${ownerLabel}</td>
+      <td style="font-size:0.82rem;">${c.country ? esc(c.country) : '<span style="color:var(--text-light);">—</span>'}</td>
+      <td style="color:var(--text-light);">${relTime(c.lastTouchAt)}</td>
+      <td>${nextContact}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('.row-clickable').forEach(row => {
+    row.addEventListener('click', () => openDetail(row.dataset.id));
+  });
+}
+
+// ── Detail view ──────────────────────────────────────────────────────────────
+
+async function openDetail(id) {
+  currentContactId = id;
+  activities = [];
+  showEl('listView', false);
+  showEl('detailView', true);
+  window.scrollTo({ top: 0 });
+  renderDetail();
+  try { await loadActivities(id); } catch(e) { console.error('loadActivities error:', e); activities = []; }
+  if (currentContactId === id) renderActivityLog();
+}
+
+function getContact() { return networkContacts.find(c => c.id === currentContactId); }
+
+function renderDetail() {
+  const c = getContact();
+  if (!c) return;
+
+  document.getElementById('dName').textContent = (c.priority?'⭐ ':'') + (c.name || '—');
+  const catBadges = (c.categories||[]).map(k => `<span class="badge badge-grey">${esc(CATEGORIES[k]||k)}</span>`).join(' ');
+  const phaseBadges = (c.phases||[]).map(k => `<span class="badge badge-purple">${esc(PHASES[k]||k)}</span>`).join(' ');
+  document.getElementById('dMeta').innerHTML = `
+    ${c.role ? `<span style="font-size:0.85rem;color:var(--text-light);">${esc(c.role)}${c.firm?' at '+esc(c.firm):''}</span>` : (c.firm?`<span style="font-size:0.85rem;color:var(--text-light);">${esc(c.firm)}</span>`:'')}
+    ${c.owner?`<span class="badge badge-grey">👤 ${esc(OWNER_LABELS[c.owner]||c.owner)}</span>`:''}
+    ${c.country?`<span class="badge badge-grey">🌍 ${esc(c.country)}</span>`:''}
+    ${catBadges} ${phaseBadges}`;
+
+  document.getElementById('sendEmailBtn').style.display = c.email ? '' : 'none';
+
+  document.getElementById('infoDisplay').innerHTML = `
+    <div class="info-row"><span class="info-row-label">Email</span><span class="info-row-value">${c.email?`<a href="mailto:${esc(c.email)}" style="color:var(--primary);">${esc(c.email)}</a>`:'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">Phone</span><span class="info-row-value">${c.phone?esc(c.phone):'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">Role</span><span class="info-row-value">${c.role?esc(c.role):'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">Firm</span><span class="info-row-value">${c.firm?esc(c.firm):'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">LinkedIn</span><span class="info-row-value">${c.linkedin?`<a href="${esc(/^https?:\/\//.test(c.linkedin)?c.linkedin:'https://'+c.linkedin)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">Profile</a>`:'—'}</span></div>`;
+
+  document.getElementById('relDisplay').innerHTML = `
+    <div class="info-row"><span class="info-row-label">How We Met</span><span class="info-row-value">${c.howWeMet?esc(c.howWeMet):'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">Notes</span><span class="info-row-value" style="white-space:pre-wrap;text-align:left;">${c.notes?esc(c.notes):'—'}</span></div>`;
+}
+
+// ── Contact CRUD (this IS the top-level record) ───────────────────────────────
+
+function openNewContact() {
+  editContactId = null;
+  document.getElementById('ctModalTitle').textContent = 'New Contact';
+  ['ncName','ncEmail','ncPhone','ncRole','ncFirm','ncLinkedin','ncHowMet','ncNotes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('ncOwner').value = '';
+  document.getElementById('ncCountry').value = '';
+  document.getElementById('ncPriority').checked = false;
+  renderChipPicker('ncCategories', CATEGORIES, []);
+  renderChipPicker('ncPhases', PHASES, []);
+  document.getElementById('ctErr').style.display = 'none';
+  showEl('contactModal', true);
+}
+
+function openEditContact() {
+  const c = getContact();
+  editContactId = c.id;
+  document.getElementById('ctModalTitle').textContent = 'Edit Contact';
+  document.getElementById('ncName').value     = c.name     || '';
+  document.getElementById('ncEmail').value    = c.email    || '';
+  document.getElementById('ncPhone').value    = c.phone    || '';
+  document.getElementById('ncRole').value     = c.role     || '';
+  document.getElementById('ncFirm').value     = c.firm     || '';
+  document.getElementById('ncLinkedin').value = c.linkedin || '';
+  document.getElementById('ncOwner').value    = c.owner    || '';
+  document.getElementById('ncCountry').value  = c.country  || '';
+  document.getElementById('ncHowMet').value   = c.howWeMet || '';
+  document.getElementById('ncNotes').value    = c.notes    || '';
+  document.getElementById('ncPriority').checked = !!c.priority;
+  renderChipPicker('ncCategories', CATEGORIES, c.categories||[]);
+  renderChipPicker('ncPhases', PHASES, c.phases||[]);
+  document.getElementById('ctErr').style.display = 'none';
+  showEl('contactModal', true);
+}
+
+async function saveContact() {
+  const name = document.getElementById('ncName').value.trim();
+  if (!name) { document.getElementById('ctErr').textContent = 'Name is required.'; document.getElementById('ctErr').style.display = 'block'; return; }
+  const btn = document.getElementById('ctSaveBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Saving…';
+
+  const data = {
+    name,
+    email:    document.getElementById('ncEmail').value.trim()    || null,
+    phone:    document.getElementById('ncPhone').value.trim()    || null,
+    role:     document.getElementById('ncRole').value.trim()     || null,
+    firm:     document.getElementById('ncFirm').value.trim()     || null,
+    linkedin: document.getElementById('ncLinkedin').value.trim() || null,
+    owner:    document.getElementById('ncOwner').value           || null,
+    country:  document.getElementById('ncCountry').value         || null,
+    howWeMet: document.getElementById('ncHowMet').value.trim()   || null,
+    notes:    document.getElementById('ncNotes').value.trim()    || null,
+    priority: document.getElementById('ncPriority').checked,
+    categories: readChipPicker('ncCategories'),
+    phases:     readChipPicker('ncPhases'),
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    if (editContactId) {
+      await updateDoc(doc(db,'networkContacts',editContactId), data);
+      await logActivity(editContactId, 'contact_edited', { date: new Date(), content: 'Profile updated.' });
+    } else {
+      const ref = await addDoc(collection(db,'networkContacts'), {
+        ...data, createdAt: serverTimestamp(), lastTouchAt: null, nextContactAt: null,
+      });
+      await logActivity(ref.id, 'contact_created', { date: new Date(), content: 'Added to Network.' });
+    }
+    showEl('contactModal', false);
+    if (editContactId === currentContactId) renderDetail();
+  } catch(e) {
+    document.getElementById('ctErr').textContent = e.message; document.getElementById('ctErr').style.display = 'block';
+  } finally { btn.disabled = false; btn.innerHTML = 'Save Contact'; }
+}
+
+function deleteContact() {
+  const c = getContact(); if (!c) return;
+  document.getElementById('deleteDesc').textContent = `Delete "${c.name}"? All activity history will be permanently removed. This cannot be undone.`;
+  showEl('deleteModal', true);
+}
+
+async function confirmDelete() {
+  const btn = document.getElementById('deleteConfirmBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Deleting…';
+  try {
+    const snap = await getDocs(query(collection(db,'networkActivities'), where('contactId','==',currentContactId)));
+    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    await deleteDoc(doc(db,'networkContacts',currentContactId));
+    showEl('deleteModal', false);
+    showDetail(false);
+  } catch(e) { alert('Delete failed: ' + e.message); }
+  finally { btn.disabled = false; btn.innerHTML = 'Yes, delete permanently'; }
+}
+
+// ── Send email (single contact — no combined/CC, no doc attach) ──────────────
+
+function openSendEmail() {
+  const c = getContact();
+  document.getElementById('semTo').value = c ? `${c.name} <${c.email}>` : '';
+  document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
+  document.getElementById('semSubject').value = '';
+  document.getElementById('semMessage').value = '';
+  document.getElementById('semErr').style.display = 'none';
+  showEl('sendEmailModal', true);
+}
+
+async function sendContactEmail() {
+  const c = getContact();
+  const subject = document.getElementById('semSubject').value.trim();
+  const msg = document.getElementById('semMessage').value.trim();
+  const from = document.getElementById('semFrom').value;
+  const el = document.getElementById('semErr');
+  el.style.display = 'none';
+  if (!c?.email) { el.textContent = 'This contact has no email.'; el.style.display = 'block'; return; }
+  if (!subject || !msg) { el.textContent = 'Subject and message are required.'; el.style.display = 'block'; return; }
+  if (!notifySecret) { el.textContent = "Email sending isn't configured yet (missing adminConfig/notify secret)."; el.style.display = 'block'; return; }
+  const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
+  try {
+    const res = await fetch('/.netlify/functions/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-notify-secret': notifySecret },
+      body: JSON.stringify({ recipients: [{ email: c.email, name: c.name }], subject, message: msg, from, kind: 'outreach' }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `Send failed (${res.status})`); }
+    const actData = {
+      contactId: c.id, type: 'email', date: Timestamp.now(), title: subject, content: msg,
+      via: 'email', recipientEmails: [c.email], status: null, createdAt: serverTimestamp(), createdBy: currentUser,
+    };
+    const ref = await addDoc(collection(db, 'networkActivities'), actData);
+    activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
+    await updateDoc(doc(db,'networkContacts', c.id), { lastTouchAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    showEl('sendEmailModal', false);
+    renderActivityLog();
+  } catch (e) {
+    el.textContent = e.message; el.style.display = 'block';
+  } finally { btn.disabled = false; btn.innerHTML = 'Send'; }
+}
+
+// ── Activity logging ──────────────────────────────────────────────────────────
+
+let activityType = 'note';
+
+function openActivityModal(type) {
+  activityType = type || 'note';
+  document.getElementById('actErr').style.display = 'none';
+  document.querySelectorAll('.type-tab[data-type]').forEach(t => t.classList.toggle('active', t.dataset.type === activityType));
+  renderActFields();
+  showEl('activityModal', true);
+}
+
+function renderActFields() {
+  const el = document.getElementById('actFields');
+  const today = todayStr();
+  const isFutureOnly = activityType === 'meeting_scheduled';
+  const isAnyDate    = ['call','email'].includes(activityType);
+  const isMeeting    = ['meeting_scheduled','meeting_done'].includes(activityType);
+  const needVia = ['call','email','meeting_scheduled','meeting_done'].includes(activityType);
+  const needTitle = ['meeting_scheduled','meeting_done','other'].includes(activityType);
+
+  const viaOptions = activityType === 'call'
+    ? ['Phone','WhatsApp','LinkedIn','Video Call','Other']
+    : activityType === 'email'
+    ? ['Email','LinkedIn','Other']
+    : ['Video Call','In-Person','Phone','Other'];
+
+  const tzOptions = [
+    ['WET','Lisbon (WET, UTC+0)'],
+    ['GMT','London (GMT, UTC+0)'],
+    ['CET','Paris / Madrid / Berlin (CET, UTC+1)'],
+    ['EST','New York (EST)'],
+    ['PST','Los Angeles (PST)'],
+    ['GST','Dubai (GST)'],
+    ['SGT','Singapore (SGT)'],
+  ];
+
+  el.innerHTML = `
+    ${needTitle ? `<div class="form-group"><label>Title *</label><input type="text" class="field" id="actTitle" placeholder="${activityType==='meeting_scheduled'?'e.g. Intro call':''}"></div>` : ''}
+    <div class="form-row">
+      <div class="form-group">
+        <label>Date *</label>
+        <input type="date" class="field" id="actDate" value="${today}" ${isFutureOnly ? `min="${today}"` : isAnyDate ? '' : `max="${today}"`}>
+      </div>
+      ${needVia ? `<div class="form-group"><label>${isMeeting ? 'Format' : 'Via'}</label><select class="field" id="actVia">${viaOptions.map(v=>`<option value="${v.toLowerCase().replace(' ','_')}">${v}</option>`).join('')}</select></div>` : '<div></div>'}
+    </div>
+    ${isMeeting ? `
+    <div class="form-row">
+      <div class="form-group">
+        <label>Time <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+        <input type="time" class="field" id="actTime" value="09:00">
+      </div>
+      <div class="form-group">
+        <label>Timezone</label>
+        <select class="field" id="actTimezone">
+          ${tzOptions.map(([v,l])=>`<option value="${v}"${v==='WET'?' selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Duration</label>
+        <select class="field" id="actDuration">
+          <option value="15">15 min</option>
+          <option value="30">30 min</option>
+          <option value="60" selected>60 min</option>
+          <option value="90">90 min</option>
+          <option value="120">120 min</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Guests <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+        <input type="text" class="field" id="actGuests" placeholder="Names or emails, comma-separated">
+      </div>
+    </div>` : ''}
+    <div class="form-group">
+      <label>Notes <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <textarea class="field" id="actContent" placeholder="${activityType==='note'?'What happened? What were the key points?':activityType==='meeting_scheduled'?'Agenda or objectives…':''}"></textarea>
+    </div>`;
+}
+
+async function saveActivity() {
+  const dateStr = document.getElementById('actDate')?.value;
+  if (!dateStr) { document.getElementById('actErr').textContent='Date is required.'; document.getElementById('actErr').style.display='block'; return; }
+  const needTitle = ['meeting_scheduled','meeting_done','other'].includes(activityType);
+  const title = document.getElementById('actTitle')?.value.trim() || '';
+  if (needTitle && !title) { document.getElementById('actErr').textContent='Title is required.'; document.getElementById('actErr').style.display='block'; return; }
+
+  const isMeeting = ['meeting_scheduled','meeting_done'].includes(activityType);
+  const timeStr   = isMeeting ? (document.getElementById('actTime')?.value || null) : null;
+  const timezone  = isMeeting ? (document.getElementById('actTimezone')?.value || 'CET') : null;
+  const duration  = isMeeting ? (Number(document.getElementById('actDuration')?.value) || null) : null;
+  const guests    = isMeeting ? (document.getElementById('actGuests')?.value.trim() || null) : null;
+
+  const actDateObj = timeStr ? new Date(`${dateStr}T${timeStr}`) : new Date(dateStr);
+
+  const btn = document.getElementById('actSaveBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
+
+  const actData = {
+    contactId: currentContactId,
+    type: activityType,
+    date: Timestamp.fromDate(actDateObj),
+    title: title || null,
+    content: document.getElementById('actContent')?.value.trim() || null,
+    via: document.getElementById('actVia')?.value || null,
+    time: timeStr,
+    timezone,
+    duration,
+    guests,
+    status: (activityType === 'meeting_scheduled' || actDateObj > new Date()) ? 'open' : null,
+    createdAt: serverTimestamp(),
+    createdBy: currentUser,
+  };
+
+  try {
+    const ref = await addDoc(collection(db,'networkActivities'), actData);
+    activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
+    const isActFuture = actDateObj > new Date();
+    const updates = { updatedAt: serverTimestamp() };
+    if (!isActFuture && activityType !== 'meeting_scheduled') updates.lastTouchAt = serverTimestamp();
+    Object.assign(updates, computeNextContact(activities));
+    await updateDoc(doc(db,'networkContacts',currentContactId), updates);
+    showEl('activityModal',false);
+    renderActivityLog();
+    if (activityType === 'meeting_scheduled' && isPastDue({ date: Timestamp.fromDate(actDateObj), time: timeStr })) {
+      openCloseMeeting(ref.id);
+    }
+  } catch(e) { document.getElementById('actErr').textContent=e.message; document.getElementById('actErr').style.display='block'; }
+  finally { btn.disabled=false; btn.innerHTML='Save'; }
+}
+
+function renderActivityLog() {
+  const overdueBanners = document.getElementById('overdueBanners');
+  const logEl = document.getElementById('activityLog');
+  document.getElementById('actCount').textContent = activities.length + ' entries';
+
+  const overdue = activities.filter(a => a.status === 'open' && isPastDue(a));
+
+  if (overdue.length) {
+    overdueBanners.innerHTML = `<div class="overdue-banner">
+      <p>⚠️ ${overdue.length} overdue action${overdue.length>1?'s':''} need${overdue.length===1?'s':''} closing</p>
+      ${overdue.map(a => `<div class="overdue-item">
+        <span>${esc(a.title || (ACT[a.type]?.label||a.type) || 'Untitled')} — ${fmtDate(a.date)}</span>
+        <button class="btn btn--sm btn--action" data-mid="${a.id}">Close</button>
+      </div>`).join('')}
+    </div>`;
+    overdueBanners.querySelectorAll('[data-mid]').forEach(btn => {
+      btn.addEventListener('click', () => openCloseMeeting(btn.dataset.mid));
+    });
+  } else { overdueBanners.innerHTML = ''; }
+
+  if (!activities.length) {
+    logEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-light);font-size:0.85rem;">No activity yet. Use the buttons above to log your first interaction.</div>';
+    return;
+  }
+
+  logEl.innerHTML = activities.map(a => {
+    const info = ACT[a.type] || { label: a.type, icon: '📌' };
+    const isMeetingType = ['meeting_scheduled','meeting_done'].includes(a.type);
+    const pastDue = a.status === 'open' && isPastDue(a);
+    let statusBadge = '';
+    if (isMeetingType) {
+      if (a.status === 'open') statusBadge = pastDue ? `<span class="badge badge-red">Needs closing</span>` : `<span class="badge badge-warn">Scheduled</span>`;
+      else if (a.status === 'happened') statusBadge = `<span class="badge badge-green">Happened</span>`;
+      else if (a.status === 'cancelled') statusBadge = `<span class="badge badge-grey">Cancelled</span>`;
+    }
+    const via = a.via ? `<span class="badge badge-grey">${esc(a.via.replace(/_/g,' '))}</span>` : '';
+    const closedNotes = a.status && a.status !== 'open' && a.closedNotes
+      ? `<div class="act-content" style="margin-top:6px;padding-top:6px;border-top:1px solid #F0EDE6;"><em>Closing notes:</em> ${esc(a.closedNotes)}</div>` : '';
+    const meetingMeta = isMeetingType && (a.time || a.duration || a.guests) ? `
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:5px;font-size:0.8rem;color:var(--text-light);">
+        ${a.time ? `<span>🕐 ${esc(a.time)}${a.timezone ? ' ' + esc(a.timezone) : ''}</span>` : ''}
+        ${a.duration ? `<span>⏱ ${a.duration} min</span>` : ''}
+        ${a.guests ? `<span>👥 ${esc(a.guests)}</span>` : ''}
+      </div>` : '';
+    const cancelBtn = isMeetingType ? `<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
+      ${(a.status === 'open' && pastDue) ? `<button class="btn btn--sm btn--action" data-close="${a.id}" style="padding:3px 9px;font-size:0.72rem;">Close</button>` : ''}
+      ${(a.status !== 'cancelled') ? `<button class="btn btn--sm btn--ghost" data-cancel="${a.id}" style="padding:3px 9px;font-size:0.72rem;">Cancel</button>` : ''}
+    </span>` : '';
+    const loggedLine = a.createdAt
+      ? `<div style="font-size:0.72rem;color:var(--text-light);margin-top:5px;">logged ${fmtDateTime(a.createdAt)} · by ${esc(a.createdBy||'')}</div>`
+      : `<div style="font-size:0.72rem;color:var(--text-light);margin-top:5px;">by ${esc(a.createdBy||'')}</div>`;
+
+    return `<div class="activity-item">
+      <div class="act-icon">${info.icon}</div>
+      <div class="act-body">
+        <div class="act-head">
+          <span class="act-type">${esc(info.label)}</span>
+          ${a.title ? `<span style="font-size:0.82rem;color:var(--text);">— ${esc(a.title)}</span>` : ''}
+          ${statusBadge} ${via}
+          <span class="act-date">${fmtDate(a.date)}</span>
+          ${cancelBtn}
+        </div>
+        ${meetingMeta}
+        ${a.content ? `<div class="act-content">${esc(a.content)}</div>` : ''}
+        ${closedNotes}
+        ${loggedLine}
+      </div>
+    </div>`;
+  }).join('');
+
+  logEl.querySelectorAll('[data-cancel]').forEach(btn => {
+    btn.addEventListener('click', () => cancelMeetingActivity(btn.dataset.cancel));
+  });
+  logEl.querySelectorAll('[data-close]').forEach(btn => {
+    btn.addEventListener('click', () => openCloseMeeting(btn.dataset.close));
+  });
+}
+
+async function cancelMeetingActivity(actId) {
+  if (!confirm('Mark this meeting as cancelled? The log entry is kept for history.')) return;
+  try {
+    await updateDoc(doc(db,'networkActivities',actId), { status:'cancelled', closedAt: serverTimestamp(), closedBy: currentUser });
+    activities = activities.map(a => a.id===actId ? { ...a, status:'cancelled' } : a);
+    await recomputeNextContact();
+    renderActivityLog();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+function openCloseMeeting(actId) {
+  closeMtgId = actId;
+  const act = activities.find(a => a.id === actId);
+  document.getElementById('closeMtgDesc').textContent = `"${act?.title||'Untitled'}" — scheduled for ${fmtDate(act?.date)}`;
+  document.getElementById('closeMtgNotes').value = '';
+  document.getElementById('closeMtgOutcome').value = 'happened';
+  showEl('closeMtgModal', true);
+}
+
+async function closeMeeting() {
+  const outcome = document.getElementById('closeMtgOutcome').value;
+  const notes   = document.getElementById('closeMtgNotes').value.trim();
+  const btn = document.getElementById('closeMtgSaveBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Closing…';
+  try {
+    await updateDoc(doc(db,'networkActivities',closeMtgId), {
+      status: outcome, closedAt: serverTimestamp(), closedBy: currentUser, closedNotes: notes || null,
+    });
+    activities = activities.map(a => a.id===closeMtgId ? {...a, status:outcome, closedNotes:notes||null} : a);
+    if (outcome === 'happened') {
+      const act = activities.find(a => a.id === closeMtgId);
+      const c = getContact();
+      const mtgDate = tsToDate(act?.date);
+      const curTouch = tsToDate(c?.lastTouchAt);
+      if (mtgDate && (!curTouch || mtgDate > curTouch)) {
+        const ts = Timestamp.fromDate(mtgDate);
+        await updateDoc(doc(db,'networkContacts',currentContactId), { lastTouchAt: ts, updatedAt: serverTimestamp() });
+      }
+    }
+    await recomputeNextContact();
+    showEl('closeMtgModal',false);
+    renderActivityLog();
+  } catch(e) { alert('Error: ' + e.message); }
+  finally { btn.disabled=false; btn.innerHTML='Close Meeting'; }
+}
+
+async function recomputeNextContact() {
+  const upd = computeNextContact(activities);
+  await updateDoc(doc(db,'networkContacts',currentContactId), upd);
+}
+
+// ── Auto-logger ───────────────────────────────────────────────────────────────
+
+async function logActivity(contactId, type, { date, content, title=null }) {
+  await addDoc(collection(db,'networkActivities'), {
+    contactId, type,
+    date: Timestamp.fromDate(date instanceof Date ? date : new Date(date)),
+    title, content: content || null, via: null, status: null,
+    createdAt: serverTimestamp(), createdBy: currentUser,
+  });
+}
+
+// ── View helpers ──────────────────────────────────────────────────────────────
+
+function showDetail(show) {
+  showEl('listView', !show);
+  showEl('detailView', show);
+  if (!show) { currentContactId = null; activities = []; }
+}
+
+// ── Export CSV ────────────────────────────────────────────────────────────────
+
+function exportCSV() {
+  const csvEsc = v => { const s = String(v ?? ''); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g, '""')}"`; };
+  const fmtTs  = ts => { const d = tsToDate(ts); return d ? d.toLocaleDateString('en-GB') : ''; };
+
+  const headers = ['Name','Categories','Firm','Role','Email','Phone','LinkedIn','Phases','Owner','Country','Priority','How We Met','Last Touch','Next Contact','Notes'];
+  const rows = networkContacts.map(c => [
+    c.name,
+    (c.categories||[]).map(k=>CATEGORIES[k]||k).join(' | '),
+    c.firm || '', c.role || '', c.email || '', c.phone || '', c.linkedin || '',
+    (c.phases||[]).map(k=>PHASES[k]||k).join(' | '),
+    OWNER_LABELS[c.owner] || c.owner || '',
+    c.country || '',
+    c.priority ? 'Yes' : 'No',
+    c.howWeMet || '',
+    fmtTs(c.lastTouchAt), fmtTs(c.nextContactAt),
+    c.notes || '',
+  ].map(csvEsc).join(','));
+
+  const csv = [headers.map(csvEsc).join(','), ...rows].join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href: url, download: `douro-network-${new Date().toISOString().slice(0,10)}.csv` });
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Event listeners ───────────────────────────────────────────────────────────
+
+document.getElementById('newContactBtn').addEventListener('click', openNewContact);
+document.getElementById('followupsBtn').addEventListener('click', openFollowups);
+document.getElementById('fuOwnerFilter').addEventListener('change', renderFollowups);
+document.getElementById('ctCancelBtn').addEventListener('click', () => showEl('contactModal',false));
+document.getElementById('ctSaveBtn').addEventListener('click', saveContact);
+
+document.getElementById('backBtn').addEventListener('click', () => showDetail(false));
+document.getElementById('editContactBtn').addEventListener('click', openEditContact);
+document.getElementById('deleteContactBtn').addEventListener('click', deleteContact);
+document.getElementById('deleteCancelBtn').addEventListener('click', () => showEl('deleteModal',false));
+document.getElementById('deleteConfirmBtn').addEventListener('click', confirmDelete);
+
+document.getElementById('sendEmailBtn').addEventListener('click', openSendEmail);
+document.getElementById('semCancelBtn').addEventListener('click', () => showEl('sendEmailModal', false));
+document.getElementById('semSendBtn').addEventListener('click', sendContactEmail);
+
+document.querySelectorAll('[data-atype]').forEach(btn => {
+  btn.addEventListener('click', () => openActivityModal(btn.dataset.atype));
+});
+document.querySelectorAll('#actTypeTabs .type-tab').forEach(tab => {
+  tab.addEventListener('click', () => { activityType = tab.dataset.type; document.querySelectorAll('#actTypeTabs .type-tab').forEach(t=>t.classList.toggle('active',t===tab)); renderActFields(); });
+});
+document.getElementById('actCancelBtn').addEventListener('click', () => showEl('activityModal',false));
+document.getElementById('actSaveBtn').addEventListener('click', saveActivity);
+
+document.getElementById('closeMtgCancelBtn').addEventListener('click', () => showEl('closeMtgModal',false));
+document.getElementById('closeMtgSaveBtn').addEventListener('click', closeMeeting);
+
+document.getElementById('exportBtn').addEventListener('click', exportCSV);
+
+document.querySelectorAll('th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortCol === col) { sortDir = sortDir==='asc'?'desc':'asc'; } else { sortCol=col; sortDir='desc'; }
+    renderList();
+  });
+});
+
+['searchInput','categoryFilter','phaseFilter','ownerFilter','countryFilter'].forEach(id => {
+  document.getElementById(id).addEventListener('input', renderList);
+  document.getElementById(id).addEventListener('change', renderList);
+});
+
+// Close modals on overlay click
+['contactModal','sendEmailModal','activityModal','closeMtgModal','deleteModal','followupsModal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id,false); });
+});
+</script>
+</body>
+</html>

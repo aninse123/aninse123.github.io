@@ -12,6 +12,7 @@ const PAGES = [
   { key: 'admin',    href: '/portal/admin.html',    label: 'Admin' },
   { key: 'crm',      href: '/portal/crm.html',      label: 'Investor CRM' },
   { key: 'search',   href: '/portal/search.html',   label: 'Search CRM' },
+  { key: 'network',  href: '/portal/network.html',  label: 'Network' },
   { key: 'budget',   href: '/portal/budget.html',   label: 'Budget' },
   { key: 'log',      href: '/portal/log.html',      label: 'Activity Log' },
 ];
