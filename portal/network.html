@@ -450,9 +450,27 @@
       <label>Firm Name *</label>
       <input type="text" class="field" id="fmName" placeholder="e.g. Kirkland & Ellis">
     </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Website <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+        <input type="text" class="field" id="fmWebsite" placeholder="e.g. kirkland.com">
+      </div>
+      <div class="form-group">
+        <label>Phone <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+        <input type="tel" class="field" id="fmPhone" placeholder="+351 91 000 0000">
+      </div>
+    </div>
     <div class="form-group">
-      <label>Website <span style="font-weight:400;text-transform:none;">(optional)</span></label>
-      <input type="text" class="field" id="fmWebsite" placeholder="e.g. kirkland.com">
+      <label>LinkedIn <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <input type="text" class="field" id="fmLinkedin" placeholder="linkedin.com/company/…">
+    </div>
+    <div class="form-group">
+      <label>Categories</label>
+      <div class="type-tabs" id="fmCategories"></div>
+    </div>
+    <div class="form-group">
+      <label>Relevant Phases</label>
+      <div class="type-tabs" id="fmPhases"></div>
     </div>
     <div class="form-row">
       <div class="form-group">
@@ -469,8 +487,16 @@
       </div>
     </div>
     <div class="form-group">
+      <label>How We Met <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <input type="text" class="field" id="fmHowMet" placeholder="e.g. Introduced by António, or met at ETA Conference 2026">
+    </div>
+    <div class="form-group">
       <label>Notes <span style="font-weight:400;text-transform:none;">(optional)</span></label>
       <textarea class="field" id="fmNotes" placeholder="Anything worth remembering about this firm…"></textarea>
+    </div>
+    <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="fmPriority" style="width:auto;padding:0;">
+      <label for="fmPriority" style="text-transform:none;font-size:0.875rem;font-weight:500;margin-bottom:0;">⭐ Priority firm</label>
     </div>
     <div class="modal-err" id="fmErr"></div>
     <div class="modal-actions">
@@ -937,7 +963,7 @@ function itemRowHtml(item) {
   const nextContact = item.nextContactAtDate ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(item.nextContactAtDate)}</span>` : '—';
   const overdue = item.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
   const ownerLabel = item.owner ? `<span style="font-size:0.82rem;font-weight:500;">${esc(OWNER_LABELS[item.owner]||item.owner)}</span>` : '<span style="color:var(--text-light);">—</span>';
-  const nameIcon = item.kind === 'firm' ? '🏢 ' : (item.priority ? '⭐ ' : '');
+  const nameIcon = (item.kind === 'firm' ? '🏢 ' : '') + (item.priority ? '⭐ ' : '');
   const contactsCol = item.kind === 'firm'
     ? `${item.memberCount} contact${item.memberCount!==1?'s':''}`
     : '<span style="color:var(--text-light);">—</span>';
@@ -962,15 +988,14 @@ function getFilteredSorted() {
 
   const firmItems = firms.map(f => {
     const members = networkContacts.filter(c => c.firmId === f.id);
-    const categories = [...new Set(members.flatMap(c => c.categories||[]))];
-    const phases = [...new Set(members.flatMap(c => c.phases||[]))];
-    const lastTouchAtDate = members.reduce((max,c) => {
-      const d = tsToDate(c.lastTouchAt); return (d && (!max || d > max)) ? d : max;
-    }, null);
+    // Last touch = most recent of (a) activity logged on the firm directly
+    // and (b) any of its members' own last touch.
+    const lastTouchAtDate = [tsToDate(f.lastTouchAt), ...members.map(c => tsToDate(c.lastTouchAt))]
+      .filter(Boolean).reduce((max,d) => (!max || d > max) ? d : max, null);
     const upcoming = members.map(c => tsToDate(c.nextContactAt)).filter(Boolean).sort((a,b) => a-b);
     return {
-      kind: 'firm', id: f.id, name: f.name, categories, phases,
-      owner: f.owner, country: f.country,
+      kind: 'firm', id: f.id, name: f.name, categories: f.categories||[], phases: f.phases||[],
+      owner: f.owner, country: f.country, priority: f.priority,
       lastTouchAtDate, nextContactAtDate: upcoming[0] || null,
       hasOverdue: members.some(c => c.hasOverdue), memberCount: members.length,
       searchHay: `${f.name||''} ${f.website||''} ${members.map(c=>`${c.name||''} ${c.email||''}`).join(' ')}`.toLowerCase(),
@@ -1113,13 +1138,19 @@ function renderFirmDetail() {
   const f = getFirm();
   if (!f) return;
 
-  document.getElementById('fdName').textContent = f.name || '—';
+  document.getElementById('fdName').textContent = (f.priority?'⭐ ':'') + (f.name || '—');
+  const catBadges = (f.categories||[]).map(k => `<span class="badge badge-grey">${esc(CATEGORIES[k]||k)}</span>`).join(' ');
+  const phaseBadges = (f.phases||[]).map(k => `<span class="badge badge-purple">${esc(PHASES[k]||k)}</span>`).join(' ');
   document.getElementById('fdMeta').innerHTML = `
     ${f.owner?`<span class="badge badge-grey">👤 ${esc(OWNER_LABELS[f.owner]||f.owner)}</span>`:''}
-    ${f.country?`<span class="badge badge-grey">🌍 ${esc(f.country)}</span>`:''}`;
+    ${f.country?`<span class="badge badge-grey">🌍 ${esc(f.country)}</span>`:''}
+    ${catBadges} ${phaseBadges}`;
 
   document.getElementById('fdInfoDisplay').innerHTML = `
     <div class="info-row"><span class="info-row-label">Website</span><span class="info-row-value">${f.website?`<a href="${esc(/^https?:\/\//.test(f.website)?f.website:'https://'+f.website)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">${esc(f.website)}</a>`:'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">Phone</span><span class="info-row-value">${f.phone?esc(f.phone):'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">LinkedIn</span><span class="info-row-value">${f.linkedin?`<a href="${esc(/^https?:\/\//.test(f.linkedin)?f.linkedin:'https://'+f.linkedin)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">Profile</a>`:'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">How We Met</span><span class="info-row-value">${f.howWeMet?esc(f.howWeMet):'—'}</span></div>
     <div class="info-row"><span class="info-row-label">Notes</span><span class="info-row-value" style="white-space:pre-wrap;text-align:left;">${f.notes?esc(f.notes):'—'}</span></div>`;
 
   const members = networkContacts.filter(c => c.firmId === f.id);
@@ -1139,9 +1170,12 @@ function openQuickAddFirm() {
   editFirmId = null;
   firmModalContext = 'contact-picker';
   document.getElementById('fmModalTitle').textContent = 'New Firm';
-  ['fmName','fmWebsite','fmNotes'].forEach(id => document.getElementById(id).value = '');
+  ['fmName','fmWebsite','fmPhone','fmLinkedin','fmHowMet','fmNotes'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('fmOwner').value = '';
   document.getElementById('fmCountry').value = '';
+  document.getElementById('fmPriority').checked = false;
+  renderChipPicker('fmCategories', CATEGORIES, []);
+  renderChipPicker('fmPhases', PHASES, []);
   document.getElementById('fmErr').style.display = 'none';
   showEl('firmModal', true);
 }
@@ -1151,11 +1185,17 @@ function openEditFirm() {
   editFirmId = f.id;
   firmModalContext = 'standalone';
   document.getElementById('fmModalTitle').textContent = 'Edit Firm';
-  document.getElementById('fmName').value    = f.name    || '';
-  document.getElementById('fmWebsite').value = f.website || '';
-  document.getElementById('fmOwner').value   = f.owner   || '';
-  document.getElementById('fmCountry').value = f.country || '';
-  document.getElementById('fmNotes').value   = f.notes   || '';
+  document.getElementById('fmName').value     = f.name     || '';
+  document.getElementById('fmWebsite').value  = f.website  || '';
+  document.getElementById('fmPhone').value    = f.phone    || '';
+  document.getElementById('fmLinkedin').value = f.linkedin || '';
+  document.getElementById('fmOwner').value    = f.owner    || '';
+  document.getElementById('fmCountry').value  = f.country  || '';
+  document.getElementById('fmHowMet').value   = f.howWeMet || '';
+  document.getElementById('fmNotes').value    = f.notes    || '';
+  document.getElementById('fmPriority').checked = !!f.priority;
+  renderChipPicker('fmCategories', CATEGORIES, f.categories||[]);
+  renderChipPicker('fmPhases', PHASES, f.phases||[]);
   document.getElementById('fmErr').style.display = 'none';
   showEl('firmModal', true);
 }
@@ -1169,10 +1209,16 @@ async function saveFirm() {
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Saving…';
   const data = {
     name,
-    website: document.getElementById('fmWebsite').value.trim() || null,
-    owner:   document.getElementById('fmOwner').value           || null,
-    country: document.getElementById('fmCountry').value         || null,
-    notes:   document.getElementById('fmNotes').value.trim()    || null,
+    website:  document.getElementById('fmWebsite').value.trim()  || null,
+    phone:    document.getElementById('fmPhone').value.trim()    || null,
+    linkedin: document.getElementById('fmLinkedin').value.trim() || null,
+    owner:    document.getElementById('fmOwner').value           || null,
+    country:  document.getElementById('fmCountry').value         || null,
+    howWeMet: document.getElementById('fmHowMet').value.trim()   || null,
+    notes:    document.getElementById('fmNotes').value.trim()    || null,
+    priority: document.getElementById('fmPriority').checked,
+    categories: readChipPicker('fmCategories'),
+    phases:     readChipPicker('fmPhases'),
     updatedAt: serverTimestamp(),
   };
   try {
