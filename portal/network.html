@@ -85,6 +85,7 @@
     .group-arrow { font-size: 0.7rem; color: var(--text-light); transition: transform 0.2s; }
     .group-block.collapsed .group-arrow { transform: rotate(-90deg); }
     .group-title { font-weight: 600; font-size: 0.9rem; }
+    .group-title:hover { color: var(--primary); text-decoration: underline; cursor: pointer; }
     .group-count { margin-left: auto; font-size: 0.78rem; color: var(--text-light); }
     .group-block.collapsed .group-body { display: none; }
     .individuals-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin: 0 0 8px 2px; }
@@ -297,6 +298,61 @@
   </div>
 </div>
 
+<!-- ══════════════════ FIRM DETAIL VIEW ══════════════════ -->
+<div class="main" id="firmDetailView" style="display:none;">
+
+  <button class="detail-back" id="firmBackBtn">← Back to Network</button>
+
+  <div class="detail-header">
+    <div>
+      <div class="detail-name" id="fdName"></div>
+      <div class="detail-meta" id="fdMeta"></div>
+    </div>
+    <div class="detail-header-actions">
+      <button class="btn btn--ghost btn--sm" id="editFirmBtn">✏ Edit</button>
+      <button class="btn btn--danger btn--sm" id="deleteFirmBtn">🗑 Delete</button>
+    </div>
+  </div>
+
+  <!-- Action bar -->
+  <div class="action-bar">
+    <button class="btn btn--action" data-atype="note">📝 Note</button>
+    <button class="btn btn--action" data-atype="call">📞 Log Call</button>
+    <button class="btn btn--action" data-atype="email">📧 Log Email</button>
+    <button class="btn btn--action" data-atype="meeting_scheduled">📅 Schedule Meeting</button>
+    <button class="btn btn--action" data-atype="meeting_done">✅ Meeting Done</button>
+    <button class="btn btn--action" data-atype="observation">💡 Observation</button>
+  </div>
+
+  <div class="detail-grid">
+    <div class="card" style="margin-bottom:0;">
+      <div class="sec-title">Firm Info</div>
+      <div id="fdInfoDisplay"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:0;">
+      <div class="sec-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Contacts at this Firm</span>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn--ghost btn--sm" id="firmEmailAllBtn" style="display:none;">✉ Email All</button>
+          <button class="btn btn--ghost btn--sm" id="firmAddContactBtn">＋ Add Contact</button>
+        </div>
+      </div>
+      <div id="fdContactsWrap"></div>
+    </div>
+  </div>
+
+  <!-- Activity log -->
+  <div class="card" style="margin-top:20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div class="sec-title" style="margin-bottom:0;">Activity Log</div>
+      <span id="firmActCount" style="font-size:0.78rem;color:var(--text-light);"></span>
+    </div>
+    <div id="firmOverdueBanners"></div>
+    <div id="firmActivityLog"></div>
+  </div>
+</div>
+
 <!-- ══════════════════ MODALS ══════════════════ -->
 
 <!-- Follow-ups dashboard -->
@@ -355,7 +411,10 @@
       </div>
       <div class="form-group">
         <label>Firm / Organization</label>
-        <input type="text" class="field" id="ncFirm" placeholder="e.g. Kirkland & Ellis">
+        <div style="display:flex;gap:6px;">
+          <select class="field" id="ncFirmId" style="flex:1;"></select>
+          <button type="button" class="btn btn--ghost btn--sm" id="ncNewFirmBtn" style="flex-shrink:0;">＋ New</button>
+        </div>
       </div>
     </div>
     <div class="form-group">
@@ -400,6 +459,44 @@
     <div class="modal-actions">
       <button class="btn btn--ghost" id="ctCancelBtn">Cancel</button>
       <button class="btn btn--primary" id="ctSaveBtn">Save Contact</button>
+    </div>
+  </div>
+</div>
+
+<!-- Firm modal (quick add from the contact form, or edit from a firm's detail page) -->
+<div class="overlay" id="firmModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title" id="fmModalTitle">New Firm</div>
+    <div class="form-group">
+      <label>Firm Name *</label>
+      <input type="text" class="field" id="fmName" placeholder="e.g. Kirkland & Ellis">
+    </div>
+    <div class="form-group">
+      <label>Website <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <input type="text" class="field" id="fmWebsite" placeholder="e.g. kirkland.com">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Owner</label>
+        <select class="field" id="fmOwner">
+          <option value="">—</option>
+          <option value="andre">André</option>
+          <option value="antonio">António</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Country</label>
+        <select class="field" id="fmCountry"><option value="">—</option></select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Notes <span style="font-weight:400;text-transform:none;">(optional)</span></label>
+      <textarea class="field" id="fmNotes" placeholder="Anything worth remembering about this firm…"></textarea>
+    </div>
+    <div class="modal-err" id="fmErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="fmCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="fmSaveBtn">Save Firm</button>
     </div>
   </div>
 </div>
@@ -514,6 +611,15 @@ function populateCountrySelects(){
   const opts = COUNTRIES.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
   document.getElementById('ncCountry').innerHTML = '<option value="">—</option>' + opts;
   document.getElementById('countryFilter').innerHTML = '<option value="">All Countries</option>' + opts;
+  document.getElementById('fmCountry').innerHTML = '<option value="">—</option>' + opts;
+}
+function populateFirmSelect(){
+  const sorted = [...firms].sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  document.getElementById('ncFirmId').innerHTML = '<option value="">— No firm —</option>' +
+    sorted.map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join('');
+}
+function firmName(firmId){
+  return firms.find(f => f.id === firmId)?.name || '';
 }
 function populateCategoryPhaseFilters(){
   document.getElementById('categoryFilter').innerHTML = '<option value="">All Categories</option>' +
@@ -619,13 +725,27 @@ const ACT = {
 let currentUser     = null;
 let notifySecret    = '';
 let networkContacts = [];
-let activities       = [];   // for current detail contact
+let firms            = [];
+let activities       = [];   // for current detail contact/firm (see activityScope)
 let currentContactId = null;
+let currentFirmId    = null;
 let editContactId    = null; // set when the contact modal is editing (vs creating)
+let editFirmId        = null; // set when the firm modal is editing (vs creating)
+let firmModalContext  = 'standalone'; // 'standalone' | 'contact-picker' — where the firm modal was opened from
+let deleteTarget       = 'contact'; // 'contact' | 'firm' — which delete flow #deleteModal is confirming
+let sendEmailMode      = 'contact'; // 'contact' | 'firm-all' — which flow #sendEmailModal's Send button runs
 let closeMtgId        = null;
 let sortCol = 'lastTouchAt';
 let sortDir = 'desc';
 let viewMode = 'list'; // 'list' | 'grouped' (by firm)
+
+// Which entity the activity-log functions (loadActivities/saveActivity/
+// renderActivityLog/closeMeeting/cancelMeetingActivity) currently operate on
+// — contact detail and firm detail share the same code, switched via this.
+let activityScope = {
+  kind: 'contact', collection: 'networkActivities', idField: 'contactId', id: null,
+  elIds: { log: 'activityLog', banners: 'overdueBanners', count: 'actCount' },
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -696,7 +816,7 @@ onAuthStateChanged(auth, async user => {
     const secretSnap = await getDoc(doc(db, 'adminConfig', 'notify'));
     if (secretSnap.exists() && secretSnap.data().notifySecret) notifySecret = secretSnap.data().notifySecret;
   } catch (e) { /* Send Email button will show a config-needed alert */ }
-  await startContactsListener();
+  await Promise.all([startContactsListener(), startFirmsListener()]);
   document.getElementById('loadingScreen').style.display = 'none';
 });
 
@@ -713,6 +833,7 @@ function startContactsListener() {
         refreshReads();
         networkContacts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         renderList();
+        if (currentFirmId) renderFirmDetail();
         if (!done) { done = true; resolve(); }
       },
       err => { console.error('networkContacts listener error:', err); if (!done) { done = true; resolve(); } }
@@ -720,10 +841,29 @@ function startContactsListener() {
   });
 }
 
-async function loadActivities(contactId) {
+let firmsUnsub = null;
+function startFirmsListener() {
+  return new Promise(resolve => {
+    let done = false;
+    if (firmsUnsub) firmsUnsub();
+    firmsUnsub = onSnapshot(collection(db, 'networkFirms'),
+      snap => {
+        addReads(done ? snap.docChanges().length : snap.docs.length);
+        refreshReads();
+        firms = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderList(); // firm names shown in the table/CSV/grouped view depend on this
+        if (currentFirmId) renderFirmDetail();
+        if (!done) { done = true; resolve(); }
+      },
+      err => { console.error('networkFirms listener error:', err); if (!done) { done = true; resolve(); } }
+    );
+  });
+}
+
+async function loadActivities() {
   const snap = await getDocs(query(
-    collection(db, 'networkActivities'),
-    where('contactId', '==', contactId)
+    collection(db, activityScope.collection),
+    where(activityScope.idField, '==', activityScope.id)
   ));
   activities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   activities.sort((a, b) => (tsToDate(b.date)?.getTime()||0) - (tsToDate(a.date)?.getTime()||0));
@@ -798,10 +938,11 @@ function rowHtml(c) {
   const nextContact = c.nextContactAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(c.nextContactAt)}</span>` : '—';
   const overdue = c.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
   const ownerLabel = c.owner ? `<span style="font-size:0.82rem;font-weight:500;">${esc(OWNER_LABELS[c.owner]||c.owner)}</span>` : '<span style="color:var(--text-light);">—</span>';
+  const fName = firmName(c.firmId);
   return `<tr class="row-clickable" data-id="${c.id}">
       <td><strong>${c.priority?'⭐ ':''}${esc(c.name)}</strong>${overdue}</td>
       <td>${badgeRow(c.categories, CATEGORIES, 'badge-grey')}</td>
-      <td style="font-size:0.82rem;">${c.firm ? esc(c.firm) : '<span style="color:var(--text-light);">—</span>'}</td>
+      <td style="font-size:0.82rem;">${fName ? esc(fName) : '<span style="color:var(--text-light);">—</span>'}</td>
       <td>${badgeRow(c.phases, PHASES, 'badge-purple')}</td>
       <td>${ownerLabel}</td>
       <td style="font-size:0.82rem;">${c.country ? esc(c.country) : '<span style="color:var(--text-light);">—</span>'}</td>
@@ -823,20 +964,19 @@ function getFilteredSorted() {
     if (ownerF   && c.owner   !== ownerF)   return false;
     if (countryF && c.country !== countryF) return false;
     if (search) {
-      const hay = `${c.name||''} ${c.firm||''} ${c.email||''}`.toLowerCase();
+      const hay = `${c.name||''} ${firmName(c.firmId)} ${c.email||''}`.toLowerCase();
       if (!hay.includes(search)) return false;
     }
     return true;
   });
 
   list.sort((a,b) => {
-    let va = a[sortCol], vb = b[sortCol];
-    if (['name','owner','country','firm'].includes(sortCol)) { va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase(); }
-    else if (['lastTouchAt','nextContactAt'].includes(sortCol)) {
-      va = tsToDate(va)?.getTime() || 0; vb = tsToDate(vb)?.getTime() || 0;
-    } else if (['categories','phases'].includes(sortCol)) {
-      va = (a[sortCol]||[]).length; vb = (b[sortCol]||[]).length;
-    }
+    let va, vb;
+    if (sortCol === 'firm') { va = firmName(a.firmId).toLowerCase(); vb = firmName(b.firmId).toLowerCase(); }
+    else if (['name','owner','country'].includes(sortCol)) { va = (a[sortCol]||'').toLowerCase(); vb = (b[sortCol]||'').toLowerCase(); }
+    else if (['lastTouchAt','nextContactAt'].includes(sortCol)) { va = tsToDate(a[sortCol])?.getTime() || 0; vb = tsToDate(b[sortCol])?.getTime() || 0; }
+    else if (['categories','phases'].includes(sortCol)) { va = (a[sortCol]||[]).length; vb = (b[sortCol]||[]).length; }
+    else { va = a[sortCol]; vb = b[sortCol]; }
     if (va < vb) return sortDir === 'asc' ? -1 : 1;
     if (va > vb) return sortDir === 'asc' ? 1 : -1;
     return 0;
@@ -867,17 +1007,16 @@ function renderList() {
 }
 
 // ── Grouped-by-firm view ──────────────────────────────────────────────────────
-// Person-first model — a "firm" isn't its own record, just a shared value on
-// the `firm` field of several contacts. Grouping the existing flat list by
-// that field (instead of introducing a separate Firm entity) is enough to
-// show "everyone at CCSL" on one screen, while contacts without a firm just
-// render as individuals, ungrouped.
+// Contacts reference a firm by firmId (see the Firm entity section below) —
+// grouping by that id, not a typed string, is what makes this immune to
+// misspellings. Clicking a group's title opens that firm's own detail page;
+// clicking anywhere else in the header just expands/collapses the group.
 function renderGrouped(list) {
   const el = document.getElementById('groupedCard');
-  const individuals = list.filter(c => !c.firm);
+  const individuals = list.filter(c => !c.firmId);
   const byFirm = {};
-  list.filter(c => c.firm).forEach(c => { (byFirm[c.firm] = byFirm[c.firm] || []).push(c); });
-  const firmNames = Object.keys(byFirm).sort((a,b) => a.localeCompare(b));
+  list.filter(c => c.firmId).forEach(c => { (byFirm[c.firmId] = byFirm[c.firmId] || []).push(c); });
+  const firmIds = Object.keys(byFirm).sort((a,b) => firmName(a).localeCompare(firmName(b)));
 
   if (!list.length) {
     el.innerHTML = `<div class="table-card"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No contacts found</div><div>Try adjusting your filters.</div></div></div>`;
@@ -890,12 +1029,13 @@ function renderGrouped(list) {
       <div class="table-wrap"><table><tbody>${individuals.map(rowHtml).join('')}</tbody></table></div>
     </div>` : '';
 
-  const firmsHtml = firmNames.map(firm => {
-    const members = byFirm[firm];
-    return `<div class="group-block" data-firm="${esc(firm)}">
+  const firmsHtml = firmIds.map(fid => {
+    const members = byFirm[fid];
+    const fName = firmName(fid) || '(unknown firm)';
+    return `<div class="group-block" data-firm-id="${fid}">
       <div class="group-head">
         <span class="group-arrow">▼</span>
-        <span class="group-title">${esc(firm)}</span>
+        <span class="group-title" data-firm-link="${fid}">${esc(fName)}</span>
         <span class="group-count">${members.length} contact${members.length!==1?'s':''}</span>
       </div>
       <div class="group-body"><div class="table-wrap"><table><tbody>${members.map(rowHtml).join('')}</tbody></table></div></div>
@@ -906,18 +1046,28 @@ function renderGrouped(list) {
 
   el.querySelectorAll('.row-clickable').forEach(row => row.addEventListener('click', () => openDetail(row.dataset.id)));
   el.querySelectorAll('.group-head').forEach(h => h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed')));
+  el.querySelectorAll('.group-title').forEach(title => title.addEventListener('click', e => {
+    e.stopPropagation();
+    openFirmDetail(title.dataset.firmLink);
+  }));
 }
 
 // ── Detail view ──────────────────────────────────────────────────────────────
 
 async function openDetail(id) {
   currentContactId = id;
+  currentFirmId = null;
   activities = [];
+  activityScope = {
+    kind: 'contact', collection: 'networkActivities', idField: 'contactId', id,
+    elIds: { log: 'activityLog', banners: 'overdueBanners', count: 'actCount' },
+  };
   showEl('listView', false);
+  showEl('firmDetailView', false);
   showEl('detailView', true);
   window.scrollTo({ top: 0 });
   renderDetail();
-  try { await loadActivities(id); } catch(e) { console.error('loadActivities error:', e); activities = []; }
+  try { await loadActivities(); } catch(e) { console.error('loadActivities error:', e); activities = []; }
   if (currentContactId === id) renderActivityLog();
 }
 
@@ -926,12 +1076,13 @@ function getContact() { return networkContacts.find(c => c.id === currentContact
 function renderDetail() {
   const c = getContact();
   if (!c) return;
+  const fName = firmName(c.firmId);
 
   document.getElementById('dName').textContent = (c.priority?'⭐ ':'') + (c.name || '—');
   const catBadges = (c.categories||[]).map(k => `<span class="badge badge-grey">${esc(CATEGORIES[k]||k)}</span>`).join(' ');
   const phaseBadges = (c.phases||[]).map(k => `<span class="badge badge-purple">${esc(PHASES[k]||k)}</span>`).join(' ');
   document.getElementById('dMeta').innerHTML = `
-    ${c.role ? `<span style="font-size:0.85rem;color:var(--text-light);">${esc(c.role)}${c.firm?' at '+esc(c.firm):''}</span>` : (c.firm?`<span style="font-size:0.85rem;color:var(--text-light);">${esc(c.firm)}</span>`:'')}
+    ${c.role ? `<span style="font-size:0.85rem;color:var(--text-light);">${esc(c.role)}${fName?' at '+esc(fName):''}</span>` : (fName?`<span style="font-size:0.85rem;color:var(--text-light);">${esc(fName)}</span>`:'')}
     ${c.owner?`<span class="badge badge-grey">👤 ${esc(OWNER_LABELS[c.owner]||c.owner)}</span>`:''}
     ${c.country?`<span class="badge badge-grey">🌍 ${esc(c.country)}</span>`:''}
     ${catBadges} ${phaseBadges}`;
@@ -942,20 +1093,195 @@ function renderDetail() {
     <div class="info-row"><span class="info-row-label">Email</span><span class="info-row-value">${c.email?`<a href="mailto:${esc(c.email)}" style="color:var(--primary);">${esc(c.email)}</a>`:'—'}</span></div>
     <div class="info-row"><span class="info-row-label">Phone</span><span class="info-row-value">${c.phone?esc(c.phone):'—'}</span></div>
     <div class="info-row"><span class="info-row-label">Role</span><span class="info-row-value">${c.role?esc(c.role):'—'}</span></div>
-    <div class="info-row"><span class="info-row-label">Firm</span><span class="info-row-value">${c.firm?esc(c.firm):'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">Firm</span><span class="info-row-value">${fName?`<a href="#" id="dFirmLink" style="color:var(--primary);">${esc(fName)}</a>`:'—'}</span></div>
     <div class="info-row"><span class="info-row-label">LinkedIn</span><span class="info-row-value">${c.linkedin?`<a href="${esc(/^https?:\/\//.test(c.linkedin)?c.linkedin:'https://'+c.linkedin)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">Profile</a>`:'—'}</span></div>`;
+  const dFirmLink = document.getElementById('dFirmLink');
+  if (dFirmLink) dFirmLink.addEventListener('click', e => { e.preventDefault(); openFirmDetail(c.firmId); });
 
   document.getElementById('relDisplay').innerHTML = `
     <div class="info-row"><span class="info-row-label">How We Met</span><span class="info-row-value">${c.howWeMet?esc(c.howWeMet):'—'}</span></div>
     <div class="info-row"><span class="info-row-label">Notes</span><span class="info-row-value" style="white-space:pre-wrap;text-align:left;">${c.notes?esc(c.notes):'—'}</span></div>`;
 }
 
+// ── Firm entity (detail view, CRUD) ───────────────────────────────────────────
+
+async function openFirmDetail(id) {
+  currentFirmId = id;
+  currentContactId = null;
+  activities = [];
+  activityScope = {
+    kind: 'firm', collection: 'networkFirmActivities', idField: 'firmId', id,
+    elIds: { log: 'firmActivityLog', banners: 'firmOverdueBanners', count: 'firmActCount' },
+  };
+  showEl('listView', false);
+  showEl('detailView', false);
+  showEl('firmDetailView', true);
+  window.scrollTo({ top: 0 });
+  renderFirmDetail();
+  try { await loadActivities(); } catch(e) { console.error('loadActivities error:', e); activities = []; }
+  if (currentFirmId === id) renderActivityLog();
+}
+
+function getFirm() { return firms.find(f => f.id === currentFirmId); }
+
+function showFirmDetail(show) {
+  showEl('listView', !show);
+  showEl('firmDetailView', show);
+  if (!show) { currentFirmId = null; activities = []; }
+}
+
+function renderFirmDetail() {
+  const f = getFirm();
+  if (!f) return;
+
+  document.getElementById('fdName').textContent = f.name || '—';
+  document.getElementById('fdMeta').innerHTML = `
+    ${f.owner?`<span class="badge badge-grey">👤 ${esc(OWNER_LABELS[f.owner]||f.owner)}</span>`:''}
+    ${f.country?`<span class="badge badge-grey">🌍 ${esc(f.country)}</span>`:''}`;
+
+  document.getElementById('fdInfoDisplay').innerHTML = `
+    <div class="info-row"><span class="info-row-label">Website</span><span class="info-row-value">${f.website?`<a href="${esc(/^https?:\/\//.test(f.website)?f.website:'https://'+f.website)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">${esc(f.website)}</a>`:'—'}</span></div>
+    <div class="info-row"><span class="info-row-label">Notes</span><span class="info-row-value" style="white-space:pre-wrap;text-align:left;">${f.notes?esc(f.notes):'—'}</span></div>`;
+
+  const members = networkContacts.filter(c => c.firmId === f.id);
+  const wrap = document.getElementById('fdContactsWrap');
+  if (!members.length) {
+    wrap.innerHTML = `<div style="text-align:center;padding:24px;color:var(--text-light);font-size:0.85rem;">No contacts at this firm yet.</div>`;
+  } else {
+    wrap.innerHTML = `<div class="table-card"><div class="table-wrap"><table><tbody>${members.map(rowHtml).join('')}</tbody></table></div></div>`;
+    wrap.querySelectorAll('.row-clickable').forEach(row => row.addEventListener('click', () => openDetail(row.dataset.id)));
+  }
+
+  const withEmail = members.filter(c => c.email);
+  document.getElementById('firmEmailAllBtn').style.display = withEmail.length > 1 ? '' : 'none';
+}
+
+function openQuickAddFirm() {
+  editFirmId = null;
+  firmModalContext = 'contact-picker';
+  document.getElementById('fmModalTitle').textContent = 'New Firm';
+  ['fmName','fmWebsite','fmNotes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('fmOwner').value = '';
+  document.getElementById('fmCountry').value = '';
+  document.getElementById('fmErr').style.display = 'none';
+  showEl('firmModal', true);
+}
+
+function openEditFirm() {
+  const f = getFirm(); if (!f) return;
+  editFirmId = f.id;
+  firmModalContext = 'standalone';
+  document.getElementById('fmModalTitle').textContent = 'Edit Firm';
+  document.getElementById('fmName').value    = f.name    || '';
+  document.getElementById('fmWebsite').value = f.website || '';
+  document.getElementById('fmOwner').value   = f.owner   || '';
+  document.getElementById('fmCountry').value = f.country || '';
+  document.getElementById('fmNotes').value   = f.notes   || '';
+  document.getElementById('fmErr').style.display = 'none';
+  showEl('firmModal', true);
+}
+
+async function saveFirm() {
+  const name = document.getElementById('fmName').value.trim();
+  const err = document.getElementById('fmErr');
+  err.style.display = 'none';
+  if (!name) { err.textContent = 'Firm name is required.'; err.style.display = 'block'; return; }
+  const btn = document.getElementById('fmSaveBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Saving…';
+  const data = {
+    name,
+    website: document.getElementById('fmWebsite').value.trim() || null,
+    owner:   document.getElementById('fmOwner').value           || null,
+    country: document.getElementById('fmCountry').value         || null,
+    notes:   document.getElementById('fmNotes').value.trim()    || null,
+    updatedAt: serverTimestamp(),
+  };
+  try {
+    if (editFirmId) {
+      await updateDoc(doc(db,'networkFirms',editFirmId), data);
+    } else {
+      const ref = await addDoc(collection(db,'networkFirms'), { ...data, createdAt: serverTimestamp(), lastTouchAt: null });
+      if (firmModalContext === 'contact-picker') {
+        firms.push({ id: ref.id, ...data });
+        populateFirmSelect();
+        document.getElementById('ncFirmId').value = ref.id;
+      }
+    }
+    showEl('firmModal', false);
+    if (editFirmId && currentFirmId === editFirmId) renderFirmDetail();
+  } catch(e) {
+    err.textContent = e.message; err.style.display = 'block';
+  } finally { btn.disabled = false; btn.innerHTML = 'Save Firm'; }
+}
+
+function deleteFirm() {
+  const f = getFirm(); if (!f) return;
+  const memberCount = networkContacts.filter(c => c.firmId === f.id).length;
+  if (memberCount > 0) {
+    alert(`Reassign or remove ${memberCount} contact${memberCount!==1?'s':''} from this firm before deleting it.`);
+    return;
+  }
+  deleteTarget = 'firm';
+  document.getElementById('deleteDesc').textContent = `Delete "${f.name}"? This cannot be undone.`;
+  showEl('deleteModal', true);
+}
+
+// ── Send email — Email All to a firm's whole team (combined send) ────────────
+
+function openSendEmailAll() {
+  const f = getFirm(); if (!f) return;
+  sendEmailMode = 'firm-all';
+  const members = networkContacts.filter(c => c.firmId === f.id && c.email);
+  document.getElementById('semTo').value = members.map(c => `${c.name} <${c.email}>`).join(', ');
+  document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
+  document.getElementById('semSubject').value = '';
+  document.getElementById('semMessage').value = '';
+  document.getElementById('semErr').style.display = 'none';
+  showEl('sendEmailModal', true);
+}
+
+async function sendFirmEmailAll() {
+  const f = getFirm(); if (!f) return;
+  const members = networkContacts.filter(c => c.firmId === f.id && c.email);
+  const subject = document.getElementById('semSubject').value.trim();
+  const msg = document.getElementById('semMessage').value.trim();
+  const from = document.getElementById('semFrom').value;
+  const el = document.getElementById('semErr');
+  el.style.display = 'none';
+  if (!members.length) { el.textContent = 'No contacts at this firm have an email.'; el.style.display = 'block'; return; }
+  if (!subject || !msg) { el.textContent = 'Subject and message are required.'; el.style.display = 'block'; return; }
+  if (!notifySecret) { el.textContent = "Email sending isn't configured yet (missing adminConfig/notify secret)."; el.style.display = 'block'; return; }
+  const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
+  try {
+    const recipients = members.map(c => ({ email: c.email, name: c.name }));
+    const res = await fetch('/.netlify/functions/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-notify-secret': notifySecret },
+      body: JSON.stringify({ recipients, subject, message: msg, from, kind: 'outreach', combined: true }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `Send failed (${res.status})`); }
+    const actData = {
+      firmId: f.id, type: 'email', date: Timestamp.now(), title: subject, content: msg,
+      via: 'email', recipientEmails: recipients.map(r=>r.email), status: null, createdAt: serverTimestamp(), createdBy: currentUser,
+    };
+    const ref = await addDoc(collection(db, 'networkFirmActivities'), actData);
+    activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
+    await updateDoc(doc(db,'networkFirms', f.id), { lastTouchAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    showEl('sendEmailModal', false);
+    renderActivityLog();
+  } catch (e) {
+    el.textContent = e.message; el.style.display = 'block';
+  } finally { btn.disabled = false; btn.innerHTML = 'Send'; }
+}
+
 // ── Contact CRUD (this IS the top-level record) ───────────────────────────────
 
-function openNewContact() {
+function openNewContact(prefillFirmId) {
   editContactId = null;
   document.getElementById('ctModalTitle').textContent = 'New Contact';
-  ['ncName','ncEmail','ncPhone','ncRole','ncFirm','ncLinkedin','ncHowMet','ncNotes'].forEach(id => document.getElementById(id).value = '');
+  ['ncName','ncEmail','ncPhone','ncRole','ncLinkedin','ncHowMet','ncNotes'].forEach(id => document.getElementById(id).value = '');
+  populateFirmSelect();
+  document.getElementById('ncFirmId').value = prefillFirmId || '';
   document.getElementById('ncOwner').value = '';
   document.getElementById('ncCountry').value = '';
   document.getElementById('ncPriority').checked = false;
@@ -973,7 +1299,8 @@ function openEditContact() {
   document.getElementById('ncEmail').value    = c.email    || '';
   document.getElementById('ncPhone').value    = c.phone    || '';
   document.getElementById('ncRole').value     = c.role     || '';
-  document.getElementById('ncFirm').value     = c.firm     || '';
+  populateFirmSelect();
+  document.getElementById('ncFirmId').value   = c.firmId   || '';
   document.getElementById('ncLinkedin').value = c.linkedin || '';
   document.getElementById('ncOwner').value    = c.owner    || '';
   document.getElementById('ncCountry').value  = c.country  || '';
@@ -997,7 +1324,7 @@ async function saveContact() {
     email:    document.getElementById('ncEmail').value.trim()    || null,
     phone:    document.getElementById('ncPhone').value.trim()    || null,
     role:     document.getElementById('ncRole').value.trim()     || null,
-    firm:     document.getElementById('ncFirm').value.trim()     || null,
+    firmId:   document.getElementById('ncFirmId').value          || null,
     linkedin: document.getElementById('ncLinkedin').value.trim() || null,
     owner:    document.getElementById('ncOwner').value           || null,
     country:  document.getElementById('ncCountry').value         || null,
@@ -1021,6 +1348,7 @@ async function saveContact() {
     }
     showEl('contactModal', false);
     if (editContactId === currentContactId) renderDetail();
+    if (currentFirmId) renderFirmDetail();
   } catch(e) {
     document.getElementById('ctErr').textContent = e.message; document.getElementById('ctErr').style.display = 'block';
   } finally { btn.disabled = false; btn.innerHTML = 'Save Contact'; }
@@ -1028,6 +1356,7 @@ async function saveContact() {
 
 function deleteContact() {
   const c = getContact(); if (!c) return;
+  deleteTarget = 'contact';
   document.getElementById('deleteDesc').textContent = `Delete "${c.name}"? All activity history will be permanently removed. This cannot be undone.`;
   showEl('deleteModal', true);
 }
@@ -1036,11 +1365,19 @@ async function confirmDelete() {
   const btn = document.getElementById('deleteConfirmBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Deleting…';
   try {
-    const snap = await getDocs(query(collection(db,'networkActivities'), where('contactId','==',currentContactId)));
-    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
-    await deleteDoc(doc(db,'networkContacts',currentContactId));
-    showEl('deleteModal', false);
-    showDetail(false);
+    if (deleteTarget === 'firm') {
+      const snap = await getDocs(query(collection(db,'networkFirmActivities'), where('firmId','==',currentFirmId)));
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+      await deleteDoc(doc(db,'networkFirms',currentFirmId));
+      showEl('deleteModal', false);
+      showFirmDetail(false);
+    } else {
+      const snap = await getDocs(query(collection(db,'networkActivities'), where('contactId','==',currentContactId)));
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+      await deleteDoc(doc(db,'networkContacts',currentContactId));
+      showEl('deleteModal', false);
+      showDetail(false);
+    }
   } catch(e) { alert('Delete failed: ' + e.message); }
   finally { btn.disabled = false; btn.innerHTML = 'Yes, delete permanently'; }
 }
@@ -1048,6 +1385,7 @@ async function confirmDelete() {
 // ── Send email (single contact — no combined/CC, no doc attach) ──────────────
 
 function openSendEmail() {
+  sendEmailMode = 'contact';
   const c = getContact();
   document.getElementById('semTo').value = c ? `${c.name} <${c.email}>` : '';
   document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
@@ -1189,7 +1527,7 @@ async function saveActivity() {
   btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
 
   const actData = {
-    contactId: currentContactId,
+    [activityScope.idField]: activityScope.id,
     type: activityType,
     date: Timestamp.fromDate(actDateObj),
     title: title || null,
@@ -1205,13 +1543,13 @@ async function saveActivity() {
   };
 
   try {
-    const ref = await addDoc(collection(db,'networkActivities'), actData);
+    const ref = await addDoc(collection(db,activityScope.collection), actData);
     activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
     const isActFuture = actDateObj > new Date();
     const updates = { updatedAt: serverTimestamp() };
     if (!isActFuture && activityType !== 'meeting_scheduled') updates.lastTouchAt = serverTimestamp();
-    Object.assign(updates, computeNextContact(activities));
-    await updateDoc(doc(db,'networkContacts',currentContactId), updates);
+    if (activityScope.kind === 'contact') Object.assign(updates, computeNextContact(activities));
+    await updateDoc(doc(db, activityScope.kind === 'contact' ? 'networkContacts' : 'networkFirms', activityScope.id), updates);
     showEl('activityModal',false);
     renderActivityLog();
     if (activityType === 'meeting_scheduled' && isPastDue({ date: Timestamp.fromDate(actDateObj), time: timeStr })) {
@@ -1222,9 +1560,9 @@ async function saveActivity() {
 }
 
 function renderActivityLog() {
-  const overdueBanners = document.getElementById('overdueBanners');
-  const logEl = document.getElementById('activityLog');
-  document.getElementById('actCount').textContent = activities.length + ' entries';
+  const overdueBanners = document.getElementById(activityScope.elIds.banners);
+  const logEl = document.getElementById(activityScope.elIds.log);
+  document.getElementById(activityScope.elIds.count).textContent = activities.length + ' entries';
 
   const overdue = activities.filter(a => a.status === 'open' && isPastDue(a));
 
@@ -1302,9 +1640,9 @@ function renderActivityLog() {
 async function cancelMeetingActivity(actId) {
   if (!confirm('Mark this meeting as cancelled? The log entry is kept for history.')) return;
   try {
-    await updateDoc(doc(db,'networkActivities',actId), { status:'cancelled', closedAt: serverTimestamp(), closedBy: currentUser });
+    await updateDoc(doc(db,activityScope.collection,actId), { status:'cancelled', closedAt: serverTimestamp(), closedBy: currentUser });
     activities = activities.map(a => a.id===actId ? { ...a, status:'cancelled' } : a);
-    await recomputeNextContact();
+    if (activityScope.kind === 'contact') await recomputeNextContact();
     renderActivityLog();
   } catch(e) { alert('Error: ' + e.message); }
 }
@@ -1324,21 +1662,22 @@ async function closeMeeting() {
   const btn = document.getElementById('closeMtgSaveBtn');
   btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Closing…';
   try {
-    await updateDoc(doc(db,'networkActivities',closeMtgId), {
+    await updateDoc(doc(db,activityScope.collection,closeMtgId), {
       status: outcome, closedAt: serverTimestamp(), closedBy: currentUser, closedNotes: notes || null,
     });
     activities = activities.map(a => a.id===closeMtgId ? {...a, status:outcome, closedNotes:notes||null} : a);
     if (outcome === 'happened') {
       const act = activities.find(a => a.id === closeMtgId);
-      const c = getContact();
+      const entity = activityScope.kind === 'contact' ? getContact() : getFirm();
       const mtgDate = tsToDate(act?.date);
-      const curTouch = tsToDate(c?.lastTouchAt);
+      const curTouch = tsToDate(entity?.lastTouchAt);
       if (mtgDate && (!curTouch || mtgDate > curTouch)) {
         const ts = Timestamp.fromDate(mtgDate);
-        await updateDoc(doc(db,'networkContacts',currentContactId), { lastTouchAt: ts, updatedAt: serverTimestamp() });
+        const entityCollection = activityScope.kind === 'contact' ? 'networkContacts' : 'networkFirms';
+        await updateDoc(doc(db,entityCollection,activityScope.id), { lastTouchAt: ts, updatedAt: serverTimestamp() });
       }
     }
-    await recomputeNextContact();
+    if (activityScope.kind === 'contact') await recomputeNextContact();
     showEl('closeMtgModal',false);
     renderActivityLog();
   } catch(e) { alert('Error: ' + e.message); }
@@ -1365,6 +1704,7 @@ async function logActivity(contactId, type, { date, content, title=null }) {
 
 function showDetail(show) {
   showEl('listView', !show);
+  showEl('firmDetailView', false);
   showEl('detailView', show);
   if (!show) { currentContactId = null; activities = []; }
 }
@@ -1379,7 +1719,7 @@ function exportCSV() {
   const rows = networkContacts.map(c => [
     c.name,
     (c.categories||[]).map(k=>CATEGORIES[k]||k).join(' | '),
-    c.firm || '', c.role || '', c.email || '', c.phone || '', c.linkedin || '',
+    firmName(c.firmId), c.role || '', c.email || '', c.phone || '', c.linkedin || '',
     (c.phases||[]).map(k=>PHASES[k]||k).join(' | '),
     OWNER_LABELS[c.owner] || c.owner || '',
     c.country || '',
@@ -1399,7 +1739,7 @@ function exportCSV() {
 
 // ── Event listeners ───────────────────────────────────────────────────────────
 
-document.getElementById('newContactBtn').addEventListener('click', openNewContact);
+document.getElementById('newContactBtn').addEventListener('click', () => openNewContact());
 
 document.getElementById('categorySettingsBtn').addEventListener('click', openCategorySettings);
 document.getElementById('addCategoryBtn').addEventListener('click', addCategoryRow);
@@ -1426,7 +1766,18 @@ document.getElementById('deleteConfirmBtn').addEventListener('click', confirmDel
 
 document.getElementById('sendEmailBtn').addEventListener('click', openSendEmail);
 document.getElementById('semCancelBtn').addEventListener('click', () => showEl('sendEmailModal', false));
-document.getElementById('semSendBtn').addEventListener('click', sendContactEmail);
+document.getElementById('semSendBtn').addEventListener('click', () => {
+  if (sendEmailMode === 'firm-all') sendFirmEmailAll(); else sendContactEmail();
+});
+
+document.getElementById('firmBackBtn').addEventListener('click', () => showFirmDetail(false));
+document.getElementById('editFirmBtn').addEventListener('click', openEditFirm);
+document.getElementById('deleteFirmBtn').addEventListener('click', deleteFirm);
+document.getElementById('firmAddContactBtn').addEventListener('click', () => openNewContact(currentFirmId));
+document.getElementById('firmEmailAllBtn').addEventListener('click', openSendEmailAll);
+document.getElementById('ncNewFirmBtn').addEventListener('click', openQuickAddFirm);
+document.getElementById('fmCancelBtn').addEventListener('click', () => showEl('firmModal', false));
+document.getElementById('fmSaveBtn').addEventListener('click', saveFirm);
 
 document.querySelectorAll('[data-atype]').forEach(btn => {
   btn.addEventListener('click', () => openActivityModal(btn.dataset.atype));
@@ -1456,7 +1807,7 @@ document.querySelectorAll('th[data-col]').forEach(th => {
 });
 
 // Close modals on overlay click
-['contactModal','sendEmailModal','activityModal','closeMtgModal','deleteModal','followupsModal','categorySettingsModal'].forEach(id => {
+['contactModal','sendEmailModal','activityModal','closeMtgModal','deleteModal','followupsModal','categorySettingsModal','firmModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id,false); });
 });
 </script>
