@@ -73,22 +73,6 @@
     .filter-sel { padding: 7px 10px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.875rem; color: var(--text); background: var(--white); cursor: pointer; }
     .filter-sel:focus { outline: none; border-color: var(--primary); }
     .results-count { font-size: 0.8rem; color: var(--text-light); margin-left: auto; }
-    .view-toggle { display: flex; border: 1.5px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-    .view-toggle button { padding: 7px 12px; border: none; background: var(--white); color: var(--text-light); font-family: var(--font-sans); font-size: 0.82rem; font-weight: 600; cursor: pointer; }
-    .view-toggle button + button { border-left: 1px solid var(--border); }
-    .view-toggle button.active { background: var(--primary); color: var(--white); }
-
-    /* Grouped-by-firm view */
-    .group-block { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; overflow: hidden; background: var(--white); }
-    .group-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; background: #FAFAF8; user-select: none; }
-    .group-head:hover { background: #F2EFE7; }
-    .group-arrow { font-size: 0.7rem; color: var(--text-light); transition: transform 0.2s; }
-    .group-block.collapsed .group-arrow { transform: rotate(-90deg); }
-    .group-title { font-weight: 600; font-size: 0.9rem; }
-    .group-title:hover { color: var(--primary); text-decoration: underline; cursor: pointer; }
-    .group-count { margin-left: auto; font-size: 0.78rem; color: var(--text-light); }
-    .group-block.collapsed .group-body { display: none; }
-    .individuals-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin: 0 0 8px 2px; }
 
     /* Table */
     .table-card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
@@ -211,15 +195,13 @@
       <option value="antonio">António</option>
     </select>
     <select class="filter-sel" id="countryFilter"><option value="">All Countries</option></select>
-    <div class="view-toggle" id="viewToggle">
-      <button data-view="list" class="active">List</button>
-      <button data-view="grouped">Grouped by Firm</button>
-    </div>
     <span class="results-count" id="resultsCount"></span>
     <button class="btn btn--ghost btn--sm" id="exportBtn">⬇ Export CSV</button>
   </div>
 
-  <!-- Table -->
+  <!-- Table — merged list: firms (🏢, clickable straight into their page) + -->
+  <!-- individuals with no firm. A firm-linked contact never gets its own row -->
+  <!-- here; it's only reachable by opening its firm first. -->
   <div class="table-card" id="tableCard">
     <div class="table-wrap">
       <table id="networkTable">
@@ -227,7 +209,7 @@
           <tr>
             <th data-col="name">Name ↕</th>
             <th data-col="categories">Categories</th>
-            <th data-col="firm">Firm</th>
+            <th data-col="contacts">Contacts</th>
             <th data-col="phases">Phases</th>
             <th data-col="owner">Owner</th>
             <th data-col="country">Country</th>
@@ -239,9 +221,6 @@
       </table>
     </div>
   </div>
-
-  <!-- Grouped-by-firm view -->
-  <div id="groupedCard" style="display:none;"></div>
 </div>
 
 <!-- ══════════════════ DETAIL VIEW ══════════════════ -->
@@ -737,7 +716,6 @@ let sendEmailMode      = 'contact'; // 'contact' | 'firm-all' — which flow #se
 let closeMtgId        = null;
 let sortCol = 'lastTouchAt';
 let sortDir = 'desc';
-let viewMode = 'list'; // 'list' | 'grouped' (by firm)
 
 // Which entity the activity-log functions (loadActivities/saveActivity/
 // renderActivityLog/closeMeeting/cancelMeetingActivity) currently operate on
@@ -934,19 +912,43 @@ function badgeRow(arr, labels, cls) {
     : '<span style="color:var(--text-light);">—</span>';
 }
 
+// Per-contact row — used only inside a firm's own detail page (its "Contacts
+// at this Firm" table), where the Firm column would just repeat the current
+// firm's name on every row, so it's dropped here.
 function rowHtml(c) {
   const nextContact = c.nextContactAt ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(c.nextContactAt)}</span>` : '—';
   const overdue = c.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
   const ownerLabel = c.owner ? `<span style="font-size:0.82rem;font-weight:500;">${esc(OWNER_LABELS[c.owner]||c.owner)}</span>` : '<span style="color:var(--text-light);">—</span>';
-  const fName = firmName(c.firmId);
   return `<tr class="row-clickable" data-id="${c.id}">
       <td><strong>${c.priority?'⭐ ':''}${esc(c.name)}</strong>${overdue}</td>
       <td>${badgeRow(c.categories, CATEGORIES, 'badge-grey')}</td>
-      <td style="font-size:0.82rem;">${fName ? esc(fName) : '<span style="color:var(--text-light);">—</span>'}</td>
       <td>${badgeRow(c.phases, PHASES, 'badge-purple')}</td>
       <td>${ownerLabel}</td>
       <td style="font-size:0.82rem;">${c.country ? esc(c.country) : '<span style="color:var(--text-light);">—</span>'}</td>
       <td style="color:var(--text-light);">${relTime(c.lastTouchAt)}</td>
+      <td>${nextContact}</td>
+    </tr>`;
+}
+
+// Row for the main list — either a firm (🏢, aggregated from its members) or
+// an individual (a contact with no firm). Firm-linked contacts never get
+// their own row here; open the firm to see them.
+function itemRowHtml(item) {
+  const nextContact = item.nextContactAtDate ? `<span style="color:var(--primary);font-weight:600;">${fmtDateShort(item.nextContactAtDate)}</span>` : '—';
+  const overdue = item.hasOverdue ? '<span class="badge badge-warn" style="margin-left:4px;">⚠</span>' : '';
+  const ownerLabel = item.owner ? `<span style="font-size:0.82rem;font-weight:500;">${esc(OWNER_LABELS[item.owner]||item.owner)}</span>` : '<span style="color:var(--text-light);">—</span>';
+  const nameIcon = item.kind === 'firm' ? '🏢 ' : (item.priority ? '⭐ ' : '');
+  const contactsCol = item.kind === 'firm'
+    ? `${item.memberCount} contact${item.memberCount!==1?'s':''}`
+    : '<span style="color:var(--text-light);">—</span>';
+  return `<tr class="row-clickable" data-kind="${item.kind}" data-id="${item.id}">
+      <td><strong>${nameIcon}${esc(item.name)}</strong>${overdue}</td>
+      <td>${badgeRow(item.categories, CATEGORIES, 'badge-grey')}</td>
+      <td style="font-size:0.82rem;">${contactsCol}</td>
+      <td>${badgeRow(item.phases, PHASES, 'badge-purple')}</td>
+      <td>${ownerLabel}</td>
+      <td style="font-size:0.82rem;">${item.country ? esc(item.country) : '<span style="color:var(--text-light);">—</span>'}</td>
+      <td style="color:var(--text-light);">${relTime(item.lastTouchAtDate)}</td>
       <td>${nextContact}</td>
     </tr>`;
 }
@@ -958,23 +960,45 @@ function getFilteredSorted() {
   const ownerF   = document.getElementById('ownerFilter').value;
   const countryF = document.getElementById('countryFilter').value;
 
-  let list = networkContacts.filter(c => {
-    if (catF     && !(c.categories||[]).includes(catF))   return false;
-    if (phaseF   && !(c.phases||[]).includes(phaseF))     return false;
-    if (ownerF   && c.owner   !== ownerF)   return false;
-    if (countryF && c.country !== countryF) return false;
-    if (search) {
-      const hay = `${c.name||''} ${firmName(c.firmId)} ${c.email||''}`.toLowerCase();
-      if (!hay.includes(search)) return false;
-    }
+  const firmItems = firms.map(f => {
+    const members = networkContacts.filter(c => c.firmId === f.id);
+    const categories = [...new Set(members.flatMap(c => c.categories||[]))];
+    const phases = [...new Set(members.flatMap(c => c.phases||[]))];
+    const lastTouchAtDate = members.reduce((max,c) => {
+      const d = tsToDate(c.lastTouchAt); return (d && (!max || d > max)) ? d : max;
+    }, null);
+    const upcoming = members.map(c => tsToDate(c.nextContactAt)).filter(Boolean).sort((a,b) => a-b);
+    return {
+      kind: 'firm', id: f.id, name: f.name, categories, phases,
+      owner: f.owner, country: f.country,
+      lastTouchAtDate, nextContactAtDate: upcoming[0] || null,
+      hasOverdue: members.some(c => c.hasOverdue), memberCount: members.length,
+      searchHay: `${f.name||''} ${f.website||''} ${members.map(c=>`${c.name||''} ${c.email||''}`).join(' ')}`.toLowerCase(),
+    };
+  });
+
+  const indivItems = networkContacts.filter(c => !c.firmId).map(c => ({
+    kind: 'contact', id: c.id, name: c.name, categories: c.categories||[], phases: c.phases||[],
+    owner: c.owner, country: c.country,
+    lastTouchAtDate: tsToDate(c.lastTouchAt), nextContactAtDate: tsToDate(c.nextContactAt),
+    hasOverdue: c.hasOverdue, priority: c.priority,
+    searchHay: `${c.name||''} ${c.email||''}`.toLowerCase(),
+  }));
+
+  let list = [...firmItems, ...indivItems].filter(item => {
+    if (catF     && !item.categories.includes(catF)) return false;
+    if (phaseF   && !item.phases.includes(phaseF))   return false;
+    if (ownerF   && item.owner   !== ownerF)   return false;
+    if (countryF && item.country !== countryF) return false;
+    if (search   && !item.searchHay.includes(search)) return false;
     return true;
   });
 
   list.sort((a,b) => {
     let va, vb;
-    if (sortCol === 'firm') { va = firmName(a.firmId).toLowerCase(); vb = firmName(b.firmId).toLowerCase(); }
+    if (sortCol === 'contacts') { va = a.kind==='firm'?a.memberCount:0; vb = b.kind==='firm'?b.memberCount:0; }
     else if (['name','owner','country'].includes(sortCol)) { va = (a[sortCol]||'').toLowerCase(); vb = (b[sortCol]||'').toLowerCase(); }
-    else if (['lastTouchAt','nextContactAt'].includes(sortCol)) { va = tsToDate(a[sortCol])?.getTime() || 0; vb = tsToDate(b[sortCol])?.getTime() || 0; }
+    else if (['lastTouchAt','nextContactAt'].includes(sortCol)) { va = a[sortCol+'Date']?.getTime() || 0; vb = b[sortCol+'Date']?.getTime() || 0; }
     else if (['categories','phases'].includes(sortCol)) { va = (a[sortCol]||[]).length; vb = (b[sortCol]||[]).length; }
     else { va = a[sortCol]; vb = b[sortCol]; }
     if (va < vb) return sortDir === 'asc' ? -1 : 1;
@@ -988,11 +1012,10 @@ function renderList() {
   updateFollowupsBadge();
   const list = getFilteredSorted();
 
-  document.getElementById('resultsCount').textContent = `${list.length} contact${list.length!==1?'s':''}`;
-  document.getElementById('listSub').textContent = `${networkContacts.length} contacts total`;
-
-  if (viewMode === 'grouped') { showEl('tableCard', false); showEl('groupedCard', true); renderGrouped(list); return; }
-  showEl('tableCard', true); showEl('groupedCard', false);
+  const nFirms = list.filter(i => i.kind === 'firm').length;
+  const nIndiv = list.length - nFirms;
+  document.getElementById('resultsCount').textContent = `${nFirms} firm${nFirms!==1?'s':''}, ${nIndiv} individual${nIndiv!==1?'s':''}`;
+  document.getElementById('listSub').textContent = `${firms.length} firm${firms.length!==1?'s':''} · ${networkContacts.length} contacts total`;
 
   const tbody = document.getElementById('networkBody');
   if (!list.length) {
@@ -1000,56 +1023,12 @@ function renderList() {
     return;
   }
 
-  tbody.innerHTML = list.map(rowHtml).join('');
+  tbody.innerHTML = list.map(itemRowHtml).join('');
   tbody.querySelectorAll('.row-clickable').forEach(row => {
-    row.addEventListener('click', () => openDetail(row.dataset.id));
+    row.addEventListener('click', () => {
+      if (row.dataset.kind === 'firm') openFirmDetail(row.dataset.id); else openDetail(row.dataset.id);
+    });
   });
-}
-
-// ── Grouped-by-firm view ──────────────────────────────────────────────────────
-// Contacts reference a firm by firmId (see the Firm entity section below) —
-// grouping by that id, not a typed string, is what makes this immune to
-// misspellings. Clicking a group's title opens that firm's own detail page;
-// clicking anywhere else in the header just expands/collapses the group.
-function renderGrouped(list) {
-  const el = document.getElementById('groupedCard');
-  const individuals = list.filter(c => !c.firmId);
-  const byFirm = {};
-  list.filter(c => c.firmId).forEach(c => { (byFirm[c.firmId] = byFirm[c.firmId] || []).push(c); });
-  const firmIds = Object.keys(byFirm).sort((a,b) => firmName(a).localeCompare(firmName(b)));
-
-  if (!list.length) {
-    el.innerHTML = `<div class="table-card"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No contacts found</div><div>Try adjusting your filters.</div></div></div>`;
-    return;
-  }
-
-  const indivHtml = individuals.length ? `
-    <div class="individuals-label">Individuals (no firm) · ${individuals.length}</div>
-    <div class="table-card" style="margin-bottom:20px;">
-      <div class="table-wrap"><table><tbody>${individuals.map(rowHtml).join('')}</tbody></table></div>
-    </div>` : '';
-
-  const firmsHtml = firmIds.map(fid => {
-    const members = byFirm[fid];
-    const fName = firmName(fid) || '(unknown firm)';
-    return `<div class="group-block" data-firm-id="${fid}">
-      <div class="group-head">
-        <span class="group-arrow">▼</span>
-        <span class="group-title" data-firm-link="${fid}">${esc(fName)}</span>
-        <span class="group-count">${members.length} contact${members.length!==1?'s':''}</span>
-      </div>
-      <div class="group-body"><div class="table-wrap"><table><tbody>${members.map(rowHtml).join('')}</tbody></table></div></div>
-    </div>`;
-  }).join('');
-
-  el.innerHTML = indivHtml + firmsHtml;
-
-  el.querySelectorAll('.row-clickable').forEach(row => row.addEventListener('click', () => openDetail(row.dataset.id)));
-  el.querySelectorAll('.group-head').forEach(h => h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed')));
-  el.querySelectorAll('.group-title').forEach(title => title.addEventListener('click', e => {
-    e.stopPropagation();
-    openFirmDetail(title.dataset.firmLink);
-  }));
 }
 
 // ── Detail view ──────────────────────────────────────────────────────────────
@@ -1746,13 +1725,6 @@ document.getElementById('addCategoryBtn').addEventListener('click', addCategoryR
 document.getElementById('catSettingsCancelBtn').addEventListener('click', () => showEl('categorySettingsModal', false));
 document.getElementById('catSettingsSaveBtn').addEventListener('click', saveCategorySettings);
 
-document.querySelectorAll('#viewToggle [data-view]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    viewMode = btn.dataset.view;
-    document.querySelectorAll('#viewToggle [data-view]').forEach(b => b.classList.toggle('active', b === btn));
-    renderList();
-  });
-});
 document.getElementById('followupsBtn').addEventListener('click', openFollowups);
 document.getElementById('fuOwnerFilter').addEventListener('change', renderFollowups);
 document.getElementById('ctCancelBtn').addEventListener('click', () => showEl('contactModal',false));
