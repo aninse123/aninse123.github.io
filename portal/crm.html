@@ -368,7 +368,10 @@
     <div class="card" style="margin-bottom:0;">
       <div class="sec-title" style="display:flex;justify-content:space-between;align-items:center;">
         <span>Contacts</span>
-        <button class="btn btn--ghost btn--sm" id="emailAllBtn" style="display:none;">✉ Email All</button>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn--ghost btn--sm" id="emailAllBtn" style="display:none;">✉ Email All</button>
+          <button class="btn btn--ghost btn--sm" id="duplicateContactsBtn" style="display:none;">📤 Duplicate to Network</button>
+        </div>
       </div>
       <div id="contactsList"></div>
       <button class="btn btn--ghost btn--sm" id="addContactBtn" style="margin-top:8px;">＋ Add Contact</button>
@@ -1326,6 +1329,7 @@ function renderContacts() {
   const el = document.getElementById('contactsList');
   const emailCount = contacts.filter(c => c.email).length;
   document.getElementById('emailAllBtn').style.display = emailCount > 1 ? '' : 'none';
+  document.getElementById('duplicateContactsBtn').style.display = contacts.length ? '' : 'none';
   if (!contacts.length) {
     el.innerHTML = '<p style="font-size:0.82rem;color:var(--text-light);margin-bottom:8px;">No contacts yet.</p>';
     return;
@@ -1357,6 +1361,7 @@ function renderContacts() {
       <div class="contact-foot">
         ${c.email ? `<button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="send-ct" title="Send email">✉</button>` : ''}
         <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="edit-ct">✏</button>
+        <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="dup-ct" title="Duplicate to Network">📤</button>
         <button class="btn btn--danger btn--icon" data-ci="${i}" data-action="del-ct">🗑</button>
       </div>
     </div>`;
@@ -1369,7 +1374,87 @@ function renderContacts() {
   }));
   el.querySelectorAll('[data-action="send-ct"]').forEach(btn => btn.addEventListener('click', () => openSendEmail(Number(btn.dataset.ci))));
   el.querySelectorAll('[data-action="edit-ct"]').forEach(btn => btn.addEventListener('click', () => openEditContact(Number(btn.dataset.ci))));
+  el.querySelectorAll('[data-action="dup-ct"]').forEach(btn => btn.addEventListener('click', () => duplicateContactToNetwork(Number(btn.dataset.ci), btn)));
   el.querySelectorAll('[data-action="del-ct"]').forEach(btn => btn.addEventListener('click', () => deleteContact(Number(btn.dataset.ci))));
+}
+
+// ── Duplicate to Network ──────────────────────────────────────────────────────
+// Copies investor contacts into the standalone Network CRM (networkContacts),
+// linked to a Network Firm named after this investor (reused if one already
+// exists with that name, created otherwise). No activity history carries over
+// — just the contact record. Dedup is email-only: a contact with no email
+// can't be reliably matched, so it always proceeds as new.
+
+function duplicateContactToNetwork(idx, btn) {
+  const inv = getInvestor();
+  const c = (inv.contacts||[])[idx];
+  if (!c) return;
+  runDuplicateToNetwork(inv, [c], btn);
+}
+
+function duplicateAllContactsToNetwork(btn) {
+  const inv = getInvestor();
+  const contacts = inv.contacts || [];
+  if (!contacts.length) return;
+  runDuplicateToNetwork(inv, contacts, btn);
+}
+
+async function runDuplicateToNetwork(inv, contactsToDuplicate, btn) {
+  if (btn) { btn.disabled = true; }
+  try {
+    const existingSnap = await getDocs(collection(db, 'networkContacts'));
+    const existingByEmail = new Map();
+    existingSnap.docs.forEach(d => {
+      const e = (d.data().email || '').trim().toLowerCase();
+      if (e) existingByEmail.set(e, d.id);
+    });
+
+    let firmId = null;
+    let firmCreated = false;
+    if (inv.name) {
+      const firmsSnap = await getDocs(collection(db, 'networkFirms'));
+      const match = firmsSnap.docs.find(d => (d.data().name || '').trim().toLowerCase() === inv.name.trim().toLowerCase());
+      if (match) {
+        firmId = match.id;
+      } else {
+        const ref = await addDoc(collection(db, 'networkFirms'), {
+          name: inv.name, website: null, phone: null, linkedin: null,
+          categories: ['investor_outside_process'], phases: [],
+          owner: inv.owner || null, country: inv.country || null,
+          howWeMet: null, notes: null, priority: false,
+          createdAt: serverTimestamp(), updatedAt: serverTimestamp(), lastTouchAt: null,
+        });
+        firmId = ref.id;
+        firmCreated = true;
+      }
+    }
+
+    let added = 0;
+    const skipped = [];
+    for (const c of contactsToDuplicate) {
+      const emailKey = (c.email || '').trim().toLowerCase();
+      if (emailKey && existingByEmail.has(emailKey)) { skipped.push(c.name || c.email); continue; }
+      await addDoc(collection(db, 'networkContacts'), {
+        name: c.name || '(no name)', email: c.email || null, phone: c.phone || null, role: c.role || null,
+        firmId, linkedin: null, owner: inv.owner || null, country: inv.country || null,
+        howWeMet: null, notes: c.notes || null, priority: false,
+        categories: ['investor_outside_process'], phases: [],
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(), lastTouchAt: null, nextContactAt: null,
+      });
+      if (emailKey) existingByEmail.set(emailKey, true);
+      added++;
+    }
+
+    let msg = added ? `${added} contact${added!==1?'s':''} added to Network` : 'No new contacts added to Network';
+    if (firmId) msg += firmCreated ? ` (new Firm "${inv.name}" created).` : ` (linked to existing Firm "${inv.name}").`;
+    else msg += '.';
+    if (skipped.length) msg += `\nSkipped (already in Network): ${skipped.join(', ')}.`;
+    alert(msg);
+  } catch (e) {
+    alert('Duplicate to Network failed: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; }
+  }
 }
 
 function renderCommitDisplay() {
@@ -2278,6 +2363,7 @@ document.getElementById('ctCancelBtn').addEventListener('click', () => showEl('c
 document.getElementById('ctSaveBtn').addEventListener('click', saveContact);
 
 document.getElementById('emailAllBtn').addEventListener('click', openSendEmailAll);
+document.getElementById('duplicateContactsBtn').addEventListener('click', (e) => duplicateAllContactsToNetwork(e.currentTarget));
 document.getElementById('semCancelBtn').addEventListener('click', () => showEl('sendEmailModal', false));
 document.getElementById('semSendBtn').addEventListener('click', sendInvestorEmail);
 document.getElementById('semFrom').addEventListener('change', updateCcHint);
