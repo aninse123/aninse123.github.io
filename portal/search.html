@@ -157,11 +157,6 @@
     .prio-b .prio-dot { background: #EAB308; }
     .prio-c .prio-dot { background: #EF4444; }
 
-    /* Fit dots */
-    .fit-dots { letter-spacing: 1px; font-size: 0.8rem; }
-    .fit-filled { color: var(--primary); }
-    .fit-empty  { color: #D8D3C8; }
-
     /* Badges */
     .badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
     .badge-blue  { background: #DBEAFE; color: #1D4ED8; }
@@ -200,7 +195,7 @@
 
     /* Fit breakdown */
     .fit-breakdown { display: flex; flex-direction: column; gap: 8px; }
-    .fit-dim { display: grid; grid-template-columns: 120px 1fr 40px; gap: 10px; align-items: center; font-size: 0.8rem; }
+    .fit-dim { display: grid; grid-template-columns: 145px 1fr 40px; gap: 10px; align-items: center; font-size: 0.8rem; }
     .fit-dim-bar { height: 7px; background: #EEE8DC; border-radius: 4px; overflow: hidden; }
     .fit-dim-fill { height: 100%; background: var(--primary); border-radius: 4px; }
     .fit-dim-val { text-align: right; font-weight: 600; font-size: 0.78rem; }
@@ -258,6 +253,9 @@
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
     @media (max-width: 560px) { .form-row, .form-row-3 { grid-template-columns: 1fr; } .modal { padding: 22px 18px; } }
+    .fit-dim-heading { font-size: 0.8rem; font-weight: 700; color: var(--text); margin: 16px 0 8px; display: flex; align-items: center; gap: 6px; }
+    .fit-dim-heading:first-of-type { margin-top: 0; }
+    .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: #EEE8DC; color: var(--text-light); font-size: 0.65rem; font-weight: 700; font-style: normal; cursor: help; flex-shrink: 0; }
     label { display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text); margin-bottom: 5px; }
     label .opt { font-weight: 400; text-transform: none; color: var(--text-light); letter-spacing: 0; }
     .field { width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.9rem; color: var(--text); background: var(--white); transition: 0.2s; }
@@ -351,7 +349,7 @@
       <select class="filter-sel" id="stageFilter"><option value="">All Stages</option></select>
       <select class="filter-sel" id="ownerFilter"><option value="">All Owners</option><option value="andre">André</option><option value="antonio">António</option></select>
       <select class="filter-sel" id="priorityFilter"><option value="">All Priorities</option><option value="a">A</option><option value="b">B</option><option value="c">C</option></select>
-      <select class="filter-sel" id="fitFilter"><option value="">Any Fit</option><option value="4">Fit ≥ 4</option><option value="3">Fit ≥ 3</option><option value="2">Fit ≥ 2</option><option value="1">Fit ≥ 1</option></select>
+      <div class="filter-group">Fit <input type="number" class="num-filter" id="fitMin" placeholder="min" min="0" max="100"> – <input type="number" class="num-filter" id="fitMax" placeholder="max" min="0" max="100"></div>
       <select class="filter-sel" id="sectorFilter"><option value="">All Sectors</option></select>
       <button class="btn btn--ghost btn--sm" id="advFilterBtn">More filters ▾</button>
       <span class="results-count" id="resultsCount" style="margin-left:auto;"></span>
@@ -388,7 +386,7 @@
               <th data-col="computedRevenue" class="num">Revenue</th>
               <th data-col="computedEBITDA" class="num">EBITDA</th>
               <th data-col="computedEBITDAMargin" class="num">EBITDA%</th>
-              <th data-col="computedCAGR3y" class="num">CAGR 3y</th>
+              <th data-col="computedGrowthRecent" class="num">Growth (Recent)</th>
               <th data-col="lastTouchAt">Last Touch</th>
               <th data-col="outreachAttempts" class="num">Att.</th>
             </tr>
@@ -655,20 +653,50 @@
     <div class="modal-title">Settings</div>
 
     <div class="modal-section-title">Fit Score Criteria</div>
+
+    <div class="fit-dim-heading">EBITDA Size (20%) <span class="info-icon" title="Recency-weighted average EBITDA across up to 5 years (more recent years count more). Below Floor = 0 points, at or above Ceiling = 100 points — no penalty for being larger.">i</span></div>
     <div class="form-row">
-      <div class="form-group"><label>Revenue Min (€)</label><input type="number" class="field" id="setRevMin"></div>
-      <div class="form-group"><label>Revenue Max (€)</label><input type="number" class="field" id="setRevMax"></div>
+      <div class="form-group"><label>Floor (€)</label><input type="number" class="field" id="setSizeFloor"></div>
+      <div class="form-group"><label>Ceiling (€)</label><input type="number" class="field" id="setSizeCeiling"></div>
+    </div>
+
+    <div class="fit-dim-heading">EBITDA Margin (15%) <span class="info-icon" title="Recency-weighted average of EBITDA ÷ Revenue per year, skipping any year missing either figure. 0 points at 0% margin, 100 points at Target or above.">i</span></div>
+    <div class="form-row">
+      <div class="form-group"><label>Target</label><input type="number" step="0.01" class="field" id="setMarginTarget" placeholder="0.15"></div>
+    </div>
+
+    <div class="fit-dim-heading">EBITDA Stability (15%) <span class="info-icon" title="Standard deviation of year-over-year EBITDA growth rates (not raw levels, so steady fast growth isn't penalized). 100 points at 0 volatility, 0 points at or above Max Volatility. Requires a full 5 years of EBITDA — if any year is missing, this dimension scores 0 rather than guessing.">i</span></div>
+    <div class="form-row">
+      <div class="form-group"><label>Max Volatility (std dev, 0 pts at/above)</label><input type="number" step="0.01" class="field" id="setStabilityMaxVolatility" placeholder="1.0"></div>
+    </div>
+
+    <div class="fit-dim-heading">Growth — Recent (10%) <span class="info-icon" title="Annualized revenue growth (CAGR) from Y1 to Y3. Requires all three years of positive revenue — if any is missing, this dimension scores 0 rather than a distorted partial figure. 0 points at 0% or below, 100 points at Target or above.">i</span></div>
+    <div class="form-row">
+      <div class="form-group"><label>Target (3yr CAGR)</label><input type="number" step="0.01" class="field" id="setGrowthRecentTarget" placeholder="0.10"></div>
+    </div>
+
+    <div class="fit-dim-heading">Growth — Sustained (10%) <span class="info-icon" title="Same as Growth Recent but over the full 5-year window (Y1 to Y5) — a stricter target since sustaining growth over 5 years is harder than over 3. Requires all 5 years of positive revenue or scores 0.">i</span></div>
+    <div class="form-row">
+      <div class="form-group"><label>Target (5yr CAGR)</label><input type="number" step="0.01" class="field" id="setGrowthSustainedTarget" placeholder="0.07"></div>
+    </div>
+
+    <div class="fit-dim-heading">Employees (15%) <span class="info-icon" title="Headcount from the latest year on file. 0 points below Floor, 100 points across the Sweet Min–Sweet Max plateau, ramping back down to 0 at Ceiling.">i</span></div>
+    <div class="form-row">
+      <div class="form-group"><label>Floor</label><input type="number" class="field" id="setEmpFloor"></div>
+      <div class="form-group"><label>Sweet Min</label><input type="number" class="field" id="setEmpSweetMin"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>Revenue Sweet Min (€)</label><input type="number" class="field" id="setRevSweetMin"></div>
-      <div class="form-group"><label>Revenue Sweet Max (€)</label><input type="number" class="field" id="setRevSweetMax"></div>
+      <div class="form-group"><label>Sweet Max</label><input type="number" class="field" id="setEmpSweetMax"></div>
+      <div class="form-group"><label>Ceiling</label><input type="number" class="field" id="setEmpCeiling"></div>
     </div>
-    <div class="form-row-3">
-      <div class="form-group"><label>EBITDA Margin Target</label><input type="number" step="0.01" class="field" id="setMarginTarget" placeholder="0.15"></div>
-      <div class="form-group"><label>CAGR Target</label><input type="number" step="0.01" class="field" id="setCagrTarget" placeholder="0.10"></div>
-      <div class="form-group"><label>EBITDA Min (€)</label><input type="number" class="field" id="setEbitdaMin" placeholder="1000000"></div>
+
+    <div class="fit-dim-heading">Company Age (15%) <span class="info-icon" title="Years since founding. 0 points below Floor, 100 points at Ceiling or above — no penalty for being older; an older company often signals a proven, stable business (and, for a search fund, a retiring owner).">i</span></div>
+    <div class="form-row">
+      <div class="form-group"><label>Floor (yr)</label><input type="number" class="field" id="setAgeFloor"></div>
+      <div class="form-group"><label>Ceiling (yr)</label><input type="number" class="field" id="setAgeCeiling"></div>
     </div>
-    <p class="hint">Sector priorities are set per-sector. After changing criteria, recalculate all fit scores.</p>
+
+    <p class="hint">After changing criteria, recalculate all fit scores.</p>
     <button class="btn btn--ghost btn--sm" id="recalcBtn" style="margin-top:8px;">↻ Recalculate all fit scores</button>
 
     <div class="modal-section-title">Brokers</div>
@@ -848,7 +876,17 @@ const RESPONSE_CATS = {
   wrong_contact:'Wrong contact', no_response:'No response', excluded:'Excluded',
 };
 
-const DEFAULT_FIT = { revMin:2000000, revMax:50000000, revSweetMin:5000000, revSweetMax:30000000, marginTarget:0.15, cagrTarget:0.10, ebitdaMin:1000000, sectorPriorities:{} };
+const DEFAULT_FIT = {
+  sizeFloor:500000, sizeCeiling:2000000,
+  marginTarget:0.15,
+  stabilityMaxVolatility:1.0,
+  growthRecentTarget:0.10, growthSustainedTarget:0.07,
+  empFloor:5, empSweetMin:20, empSweetMax:150, empCeiling:300,
+  ageFloor:5, ageCeiling:20,
+};
+// Fixed dimension weights (sum to 100) — validated via sensitivity analysis; not user-configurable.
+const FIT_WEIGHTS = { size:20, margin:15, stability:15, growthRecent:10, growthSustained:10, employees:15, age:15 };
+const FIT_RECENCY_WEIGHTS = { Y1:0.35, Y2:0.25, Y3:0.20, Y4:0.12, Y5:0.08 };
 
 // NACE Rev. 2 (≈ CAE Rev. 3) — Division (2-digit) titles, used to derive Sector/Sub-sector from a code.
 const NACE_DIVISIONS = {
@@ -983,11 +1021,15 @@ function relTime(ts){
 }
 function stagePill(st){ const s = STAGES[st] || STAGES.universe; return `<span class="stage-pill ${s.cls}">${s.label}</span>`; }
 function prioPill(p){ if(!p) return '<span style="color:var(--text-light)">—</span>'; return `<span class="prio prio-${p}"><span class="prio-dot"></span>${PRIO_LABELS[p]}</span>`; }
-function fitDots(score){
+function fitBadge(score){
   const s = Math.round(Number(score)||0);
-  let h = '';
-  for (let i=1;i<=5;i++) h += `<span class="${i<=s?'fit-filled':'fit-empty'}">●</span>`;
-  return `<span class="fit-dots" title="${(Number(score)||0).toFixed(1)}/5">${h}</span>`;
+  const cls = s>=70 ? 'badge-green' : s>=40 ? 'badge-warn' : 'badge-red';
+  return `<span class="badge ${cls}" title="${s}/100">${s}</span>`;
+}
+function independenceBadge(code){
+  if (!code) return '<span class="v" style="color:var(--text-light)">—</span>';
+  const cls = code==='A' ? 'badge-green' : code==='B' ? 'badge-blue' : code==='C' ? 'badge-warn' : code==='D' ? 'badge-grey' : 'badge-grey';
+  return `<span class="badge ${cls}">${esc(code)}</span>`;
 }
 function getCompany(){ return companies.find(c => c.id === currentCoId); }
 
@@ -999,13 +1041,43 @@ function computeFields(co){
   co.computedEBITDA  = (y1.ebitda!=null && y1.ebitda!=='') ? num(y1.ebitda) : null;
   co.computedEmployees = num(y1.employees) || null;
   co.computedEBITDAMargin = (co.computedRevenue && co.computedEBITDA!=null) ? (co.computedEBITDA / co.computedRevenue) : null;
-  // True up-to-3-year revenue CAGR: Y1 (most recent) → Y4 (3 years prior).
-  // Matches the Orbis-style (Y0/Y3)^(1/3) definition. Degrades to 2y / 1y if older years missing.
-  let base = null, span = 0;
-  if (num((f.Y4||{}).revenue) > 0)      { base = num(f.Y4.revenue); span = 3; }
-  else if (num((f.Y3||{}).revenue) > 0) { base = num(f.Y3.revenue); span = 2; }
-  else if (num((f.Y2||{}).revenue) > 0) { base = num(f.Y2.revenue); span = 1; }
-  co.computedCAGR3y = (base && num(y1.revenue) > 0) ? (Math.pow(num(y1.revenue)/base, 1/span) - 1) : null;
+
+  const FY = ['Y1','Y2','Y3','Y4','Y5'];
+  const weightedAvg = (getter) => {
+    let wsum=0, vsum=0;
+    for (const y of FY) { const v = getter(f[y]); if (v!=null) { wsum+=FIT_RECENCY_WEIGHTS[y]; vsum+=FIT_RECENCY_WEIGHTS[y]*v; } }
+    return wsum>0 ? vsum/wsum : null;
+  };
+  // EBITDA Size dimension: recency-weighted avg EBITDA over whatever years are present (graceful degradation).
+  co.computedEBITDAWeighted = weightedAvg(yr => (yr && yr.ebitda!=null) ? num(yr.ebitda) : null);
+  // EBITDA Margin dimension: recency-weighted avg of per-year margin; a year only counts if both EBITDA and positive Revenue exist.
+  {
+    let wsum=0, vsum=0;
+    for (const y of FY) { const yr=f[y]; if (yr && yr.ebitda!=null && num(yr.revenue)>0) { const m=num(yr.ebitda)/num(yr.revenue); wsum+=FIT_RECENCY_WEIGHTS[y]; vsum+=FIT_RECENCY_WEIGHTS[y]*m; } }
+    co.computedEBITDAMarginWeighted = wsum>0 ? vsum/wsum : null;
+  }
+  // Growth Recent (CAGR Y1→Y3) and Growth Sustained (CAGR Y1→Y5): strict gate — full window
+  // of positive revenue required, or null (scores 0 in calcFit). No partial-window degrading:
+  // a thin sample could otherwise make one lucky year look like a durable trend.
+  const posRev = (y) => num((f[y]||{}).revenue) > 0 ? num(f[y].revenue) : null;
+  const r1=posRev('Y1'), r2=posRev('Y2'), r3=posRev('Y3'), r4=posRev('Y4'), r5=posRev('Y5');
+  co.computedGrowthRecent = (r1!=null && r2!=null && r3!=null) ? (Math.pow(r1/r3, 1/2) - 1) : null;
+  co.computedGrowthSustained = (r1!=null && r2!=null && r3!=null && r4!=null && r5!=null) ? (Math.pow(r1/r5, 1/4) - 1) : null;
+  // EBITDA Stability: std. dev. of year-over-year EBITDA growth rates (not raw levels, so a
+  // smooth fast-growing company isn't penalized). Strict gate — full Y1-Y5 EBITDA required;
+  // zero-filling a gap would fabricate a false volatility signal ("the backfire").
+  {
+    const hasAll = FY.every(y => (f[y]||{}).ebitda != null);
+    if (hasAll) {
+      const gr = [];
+      for (let i=0;i<4;i++) { const a=num(f[FY[i]].ebitda), b=num(f[FY[i+1]].ebitda); if (b!==0) gr.push((a-b)/Math.abs(b)); }
+      if (gr.length) {
+        const mean = gr.reduce((s,v)=>s+v,0)/gr.length;
+        const variance = gr.reduce((s,v)=>s+(v-mean)*(v-mean),0)/gr.length;
+        co.computedEBITDAStability = Math.sqrt(variance);
+      } else co.computedEBITDAStability = null;
+    } else co.computedEBITDAStability = null;
+  }
   co.fitScore = calcFit(co);
   // Geocode via the static PT postcode lookup tables. Postcode is free text
   // (manual entry / bulk import, no format enforcement), so pull out the first
@@ -1029,56 +1101,56 @@ function computeFields(co){
   co.computedLng = geo ? geo[1] : null;
   return co;
 }
+// Both return 0-100. ramp: linear between x0(→0) and x1(→100), clamped, flat beyond x1.
+// trapezoid: 0 below a, ramps to 100 at b, flat 100 through c, ramps down to 0 at d.
+function ramp(x, x0, x1){
+  if (x==null || !isFinite(x)) return 0;
+  if (x1>x0) return Math.max(0, Math.min(100, (x-x0)/(x1-x0)*100));
+  return Math.max(0, Math.min(100, (x0-x)/(x0-x1)*100));
+}
+function trapezoid(x, a,b,c,d){
+  if (x==null || !isFinite(x)) return 0;
+  if (x<a) return 0;
+  if (x<b) return (x-a)/(b-a)*100;
+  if (x<=c) return 100;
+  if (x<d) return 100-(x-c)/(d-c)*100;
+  return 0;
+}
+function fitAge(co){ return co.yearFounded ? (new Date().getFullYear() - co.yearFounded) : null; }
 function calcFit(co){
   const c = fitCriteria;
-  let s = 0;
-  // Revenue fit
-  const rev = co.computedRevenue;
-  if (rev != null) {
-    if (rev >= c.revSweetMin && rev <= c.revSweetMax) s += 1;
-    else if (rev >= c.revMin && rev <= c.revMax) s += 0.5;
-  }
-  // Profitability: EBITDA above min + margin vs target
-  const eb = co.computedEBITDA, mg = co.computedEBITDAMargin;
-  if (eb != null) {
-    let p = 0;
-    if (eb >= c.ebitdaMin) p += 0.5;
-    if (mg != null) { if (mg >= c.marginTarget) p += 0.5; else if (mg >= c.marginTarget*0.5) p += 0.25; }
-    s += Math.min(1, p);
-  }
-  // Growth
-  const g = co.computedCAGR3y;
-  if (g != null) {
-    if (g >= c.cagrTarget) s += 1;
-    else if (g >= c.cagrTarget*0.3) s += 0.7;
-    else if (g >= 0) s += 0.4;
-  }
-  // Sector fit
-  const sp = (c.sectorPriorities || {})[co.sector];
-  if (sp === 'high') s += 1; else if (sp === 'medium') s += 0.5;
-  // Succession
-  const su = co.successionSit;
-  if (su === 'retirement' || su === 'no_heir') s += 1;
-  else if (su === 'financial') s += 0.8;
-  else if (su === 'other') s += 0.5;
-  return Math.round(s * 10) / 10;
+  const sizeScore = ramp(co.computedEBITDAWeighted, c.sizeFloor, c.sizeCeiling);
+  const marginScore = ramp(co.computedEBITDAMarginWeighted, 0, c.marginTarget);
+  const stabilityScore = co.computedEBITDAStability==null ? 0 : ramp(co.computedEBITDAStability, c.stabilityMaxVolatility, 0);
+  const growthRecentScore = ramp(co.computedGrowthRecent, 0, c.growthRecentTarget);
+  const growthSustainedScore = ramp(co.computedGrowthSustained, 0, c.growthSustainedTarget);
+  const employeesScore = trapezoid(co.computedEmployees, c.empFloor, c.empSweetMin, c.empSweetMax, c.empCeiling);
+  const ageScore = ramp(fitAge(co), c.ageFloor, c.ageCeiling);
+  const w = FIT_WEIGHTS;
+  const total = sizeScore*w.size + marginScore*w.margin + stabilityScore*w.stability
+    + growthRecentScore*w.growthRecent + growthSustainedScore*w.growthSustained
+    + employeesScore*w.employees + ageScore*w.age;
+  return Math.round(total / 100 * 10) / 10;
 }
 function fitBreakdown(co){
   const c = fitCriteria;
-  const dims = [];
-  const rev = co.computedRevenue;
-  let rv = 0; if (rev!=null){ if(rev>=c.revSweetMin&&rev<=c.revSweetMax) rv=1; else if(rev>=c.revMin&&rev<=c.revMax) rv=0.5; }
-  dims.push(['Revenue fit', rv, rev!=null ? fmtEurShort(rev) : 'no data']);
-  const eb=co.computedEBITDA, mg=co.computedEBITDAMargin; let pv=0;
-  if(eb!=null){ if(eb>=c.ebitdaMin)pv+=0.5; if(mg!=null){if(mg>=c.marginTarget)pv+=0.5;else if(mg>=c.marginTarget*0.5)pv+=0.25;} pv=Math.min(1,pv); }
-  dims.push(['Profitability', pv, eb!=null ? (fmtEurShort(eb)+(mg!=null?' · '+fmtPct(mg):'')) : 'no data']);
-  const g=co.computedCAGR3y; let gv=0; if(g!=null){if(g>=c.cagrTarget)gv=1;else if(g>=c.cagrTarget*0.3)gv=0.7;else if(g>=0)gv=0.4;}
-  dims.push(['Growth (CAGR)', gv, g!=null ? fmtPct(g) : 'no data']);
-  const sp=(c.sectorPriorities||{})[co.sector]; let sv=sp==='high'?1:sp==='medium'?0.5:0;
-  dims.push(['Sector fit', sv, co.sector || 'no sector']);
-  const su=co.successionSit; let suv=(su==='retirement'||su==='no_heir')?1:su==='financial'?0.8:su==='other'?0.5:0;
-  dims.push(['Succession', suv, SUCCESSION_LABELS[su] || 'unknown']);
-  return dims;
+  const age = fitAge(co);
+  return [
+    { name:'EBITDA Size', score: ramp(co.computedEBITDAWeighted, c.sizeFloor, c.sizeCeiling), weight: FIT_WEIGHTS.size,
+      note: co.computedEBITDAWeighted!=null ? fmtEurShort(co.computedEBITDAWeighted) : 'no data' },
+    { name:'EBITDA Margin', score: ramp(co.computedEBITDAMarginWeighted, 0, c.marginTarget), weight: FIT_WEIGHTS.margin,
+      note: co.computedEBITDAMarginWeighted!=null ? fmtPct(co.computedEBITDAMarginWeighted) : 'no data' },
+    { name:'EBITDA Stability', score: co.computedEBITDAStability==null ? 0 : ramp(co.computedEBITDAStability, c.stabilityMaxVolatility, 0), weight: FIT_WEIGHTS.stability,
+      note: co.computedEBITDAStability!=null ? fmtPct(co.computedEBITDAStability)+' std dev' : 'incomplete history' },
+    { name:'Growth (Recent)', score: ramp(co.computedGrowthRecent, 0, c.growthRecentTarget), weight: FIT_WEIGHTS.growthRecent,
+      note: co.computedGrowthRecent!=null ? fmtPct(co.computedGrowthRecent) : 'incomplete history' },
+    { name:'Growth (Sustained)', score: ramp(co.computedGrowthSustained, 0, c.growthSustainedTarget), weight: FIT_WEIGHTS.growthSustained,
+      note: co.computedGrowthSustained!=null ? fmtPct(co.computedGrowthSustained) : 'incomplete history' },
+    { name:'Employees', score: trapezoid(co.computedEmployees, c.empFloor, c.empSweetMin, c.empSweetMax, c.empCeiling), weight: FIT_WEIGHTS.employees,
+      note: co.computedEmployees!=null ? co.computedEmployees+' employees' : 'no data' },
+    { name:'Company Age', score: ramp(age, c.ageFloor, c.ageCeiling), weight: FIT_WEIGHTS.age,
+      note: age!=null ? age+' years' : 'no data' },
+  ];
 }
 
 initNav('search');
@@ -1390,7 +1462,8 @@ function getFiltered(){
   const stageF = document.getElementById('stageFilter').value;
   const ownerF = document.getElementById('ownerFilter').value;
   const prioF  = document.getElementById('priorityFilter').value;
-  const fitF   = Number(document.getElementById('fitFilter').value) || 0;
+  const fitMin = parseFloat(document.getElementById('fitMin').value);
+  const fitMax = parseFloat(document.getElementById('fitMax').value);
   const sectorF = document.getElementById('sectorFilter').value;
   const subF   = document.getElementById('subSectorFilter').value;
   const nuts2F = document.getElementById('nuts2Filter').value;
@@ -1417,7 +1490,8 @@ function getFiltered(){
     if (stageF && c.stage !== stageF) return false;
     if (ownerF && c.owner !== ownerF) return false;
     if (prioF && c.priority !== prioF) return false;
-    if (fitF && (Number(c.fitScore)||0) < fitF) return false;
+    if (!isNaN(fitMin) && (Number(c.fitScore)||0) < fitMin) return false;
+    if (!isNaN(fitMax) && (Number(c.fitScore)||0) > fitMax) return false;
     if (sectorF && c.sector !== sectorF) return false;
     if (subF && c.subSector !== subF) return false;
     if (nuts2F && c.nuts2 !== nuts2F) return false;
@@ -1431,8 +1505,8 @@ function getFiltered(){
     if (!isNaN(ebMax) && (c.computedEBITDA==null || c.computedEBITDA > ebMax)) return false;
     if (!isNaN(mgMin) && (c.computedEBITDAMargin==null || c.computedEBITDAMargin*100 < mgMin)) return false;
     if (!isNaN(mgMax) && (c.computedEBITDAMargin==null || c.computedEBITDAMargin*100 > mgMax)) return false;
-    if (!isNaN(cgMin) && (c.computedCAGR3y==null || c.computedCAGR3y*100 < cgMin)) return false;
-    if (!isNaN(cgMax) && (c.computedCAGR3y==null || c.computedCAGR3y*100 > cgMax)) return false;
+    if (!isNaN(cgMin) && (c.computedGrowthRecent==null || c.computedGrowthRecent*100 < cgMin)) return false;
+    if (!isNaN(cgMax) && (c.computedGrowthRecent==null || c.computedGrowthRecent*100 > cgMax)) return false;
     if (ltF === 'never' && c.lastTouchAt) return false;
     if (ltF && ltF !== 'never') {
       const d = tsToDate(c.lastTouchAt);
@@ -1481,13 +1555,13 @@ function rowHtml(c){
     <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}</td>
     <td class="sector-cell" title="${esc(c.sector||'')}${c.subSector?' › '+esc(c.subSector):''}">${esc(c.sector||'—')}${c.subSector?'<br><span style="font-size:0.72rem;">'+esc(c.subSector)+'</span>':''}</td>
     <td>${prioPill(c.priority)}</td>
-    <td>${fitDots(c.fitScore)}</td>
+    <td>${fitBadge(c.fitScore)}</td>
     <td>${stagePill(c.stage||'universe')}</td>
     <td>${OWNER_LABELS[c.owner]||'—'}</td>
     <td class="num">${fmtEurShort(c.computedRevenue)}</td>
     <td class="num">${fmtEurShort(c.computedEBITDA)}</td>
     <td class="num">${c.computedEBITDAMargin!=null?fmtPct(c.computedEBITDAMargin):'—'}</td>
-    <td class="num">${c.computedCAGR3y!=null?fmtPct(c.computedCAGR3y):'—'}</td>
+    <td class="num">${c.computedGrowthRecent!=null?fmtPct(c.computedGrowthRecent):'—'}</td>
     <td style="color:var(--text-light);">${relTime(c.lastTouchAt)}</td>
     <td class="num">${c.outreachAttempts||0}</td>
   </tr>`;
@@ -1745,7 +1819,7 @@ function renderDetail(){
       <div class="stage-menu" id="stageMenu">${STAGE_ORDER.map(k=>`<div class="stage-opt" data-stage="${k}">${stagePill(k)}</div>`).join('')}</div>
     </div>
     ${prioPill(c.priority)}
-    ${fitDots(c.fitScore)}
+    ${fitBadge(c.fitScore)}
     ${c.owner?`<span class="badge badge-grey">👤 ${OWNER_LABELS[c.owner]}</span>`:''}
     ${c.sourceType?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
     ${primary?`<span class="badge badge-grey">${esc(primary.name)}${primary.role?' · '+esc(primary.role):''}</span>`:''}`;
@@ -1761,12 +1835,12 @@ function renderDetail(){
 
 function renderOverview(c){
   const regions = (c.regions||[]).map(r=>REGION_LABELS[r]||r).join(', ') || '—';
-  const fb = fitBreakdown(c).map(([name,val,note]) => `
-    <div class="fit-dim"><span>${name}</span>
-      <div class="fit-dim-bar"><div class="fit-dim-fill" style="width:${val*100}%"></div></div>
-      <span class="fit-dim-val">${val.toFixed(1)}</span>
+  const fb = fitBreakdown(c).map(d => `
+    <div class="fit-dim"><span>${esc(d.name)} <small style="color:var(--text-light);">(${d.weight}%)</small></span>
+      <div class="fit-dim-bar"><div class="fit-dim-fill" style="width:${d.score}%"></div></div>
+      <span class="fit-dim-val">${Math.round(d.score)}</span>
     </div>
-    <div style="font-size:0.72rem;color:var(--text-light);margin:-4px 0 4px 130px;">${esc(note)}</div>`).join('');
+    <div style="font-size:0.72rem;color:var(--text-light);margin:-4px 0 4px 130px;">${esc(d.note)}</div>`).join('');
   const addonHtml = renderAddonSection(c);
   document.getElementById('panel-overview').innerHTML = `
     <div class="detail-grid">
@@ -1780,7 +1854,7 @@ function renderOverview(c){
         <div class="info-row"><span class="k">CAE</span><span class="v">${esc(c.caeCode||'—')}${c.caeDescription?' · '+esc(c.caeDescription):''}</span></div>
         <div class="info-row"><span class="k">Ownership</span><span class="v">${OWNERSHIP_LABELS[c.ownershipType]||'—'}</span></div>
         <div class="info-row"><span class="k">Succession</span><span class="v">${SUCCESSION_LABELS[c.successionSit]||'—'}</span></div>
-        <div class="info-row"><span class="k">Independence</span><span class="v">${esc(c.independenceIndicator||'—')}</span></div>
+        <div class="info-row"><span class="k">Independence</span>${independenceBadge(c.independenceIndicator)}</div>
         <div class="info-row"><span class="k">Ultimate owner (GUO)</span><span class="v">${esc(c.guoName||'—')}</span></div>
         <div class="info-row"><span class="k">Auditing firm</span><span class="v">${esc(c.auditingFirm||'—')}</span></div>
         <div class="info-row"><span class="k">BvD ID</span><span class="v">${esc(c.bvdId||'—')}</span></div>
@@ -1810,7 +1884,7 @@ function renderOverview(c){
     </div>
     ${['pass','on_hold'].includes(c.stage) && c.reasonExcluded ? `<div class="card" style="border-left:4px solid #B91C1C;"><div class="sec-title">Reason — ${STAGES[c.stage].label}</div><div style="font-size:0.88rem;">${esc((c.stage==='pass'?PASS_REASONS:HOLD_REASONS)[c.reasonExcluded]||c.reasonExcluded)}</div></div>`:''}
     ${c.description ? `<div class="card"><div class="sec-title">Description</div><div style="font-size:0.88rem;line-height:1.6;white-space:pre-wrap;">${esc(c.description)}</div></div>`:''}
-    <div class="card"><div class="sec-title">Fit Score Breakdown — ${(Number(c.fitScore)||0).toFixed(1)}/5</div><div class="fit-breakdown">${fb}</div></div>
+    <div class="card"><div class="sec-title">Fit Score Breakdown — ${Math.round(Number(c.fitScore)||0)}/100</div><div class="fit-breakdown">${fb}</div></div>
     ${addonHtml}`;
 }
 
@@ -1860,7 +1934,7 @@ function renderFinancials(c){
         <div class="summary-stat">Revenue (Y1) <strong>${fmtEur(c.computedRevenue)}</strong></div>
         <div class="summary-stat">EBITDA (Y1) <strong>${fmtEur(c.computedEBITDA)}</strong></div>
         <div class="summary-stat">EBITDA margin <strong>${c.computedEBITDAMargin!=null?fmtPct(c.computedEBITDAMargin):'—'}</strong></div>
-        <div class="summary-stat">CAGR 3y <strong>${c.computedCAGR3y!=null?fmtPct(c.computedCAGR3y):'—'}</strong></div>
+        <div class="summary-stat">Growth (Recent) <strong>${c.computedGrowthRecent!=null?fmtPct(c.computedGrowthRecent):'—'}</strong></div>
       </div>
     </div>`;
   document.getElementById('saveFinBtn').addEventListener('click', saveFinancials);
@@ -2105,7 +2179,9 @@ async function saveCompany(){
       await updateDoc(doc(db,'searchCompanies',editCoId), {
         ...data,
         computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
-        computedEBITDAMargin: merged.computedEBITDAMargin, computedCAGR3y: merged.computedCAGR3y,
+        computedEBITDAMargin: merged.computedEBITDAMargin,
+        computedEBITDAWeighted: merged.computedEBITDAWeighted, computedEBITDAMarginWeighted: merged.computedEBITDAMarginWeighted,
+        computedGrowthRecent: merged.computedGrowthRecent, computedGrowthSustained: merged.computedGrowthSustained, computedEBITDAStability: merged.computedEBITDAStability,
         computedEmployees: merged.computedEmployees, fitScore: merged.fitScore,
       });
       companies[idx] = merged;
@@ -2121,7 +2197,9 @@ async function saveCompany(){
       const full = {
         ...base,
         computedRevenue: computed.computedRevenue, computedEBITDA: computed.computedEBITDA,
-        computedEBITDAMargin: computed.computedEBITDAMargin, computedCAGR3y: computed.computedCAGR3y,
+        computedEBITDAMargin: computed.computedEBITDAMargin,
+        computedEBITDAWeighted: computed.computedEBITDAWeighted, computedEBITDAMarginWeighted: computed.computedEBITDAMarginWeighted,
+        computedGrowthRecent: computed.computedGrowthRecent, computedGrowthSustained: computed.computedGrowthSustained, computedEBITDAStability: computed.computedEBITDAStability,
         computedEmployees: computed.computedEmployees, fitScore: computed.fitScore,
       };
       const ref = await addDoc(collection(db,'searchCompanies'), full);
@@ -2163,7 +2241,12 @@ async function saveFinancials(){
   const btn = document.getElementById('saveFinBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
   try {
     c.financials = fin; computeFields(c);
-    await updateDoc(doc(db,'searchCompanies',c.id), { financials: fin, computedRevenue:c.computedRevenue, computedEBITDA:c.computedEBITDA, computedEBITDAMargin:c.computedEBITDAMargin, computedCAGR3y:c.computedCAGR3y, computedEmployees:c.computedEmployees, fitScore:c.fitScore, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db,'searchCompanies',c.id), {
+      financials: fin, computedRevenue:c.computedRevenue, computedEBITDA:c.computedEBITDA, computedEBITDAMargin:c.computedEBITDAMargin,
+      computedEBITDAWeighted:c.computedEBITDAWeighted, computedEBITDAMarginWeighted:c.computedEBITDAMarginWeighted,
+      computedGrowthRecent:c.computedGrowthRecent, computedGrowthSustained:c.computedGrowthSustained, computedEBITDAStability:c.computedEBITDAStability,
+      computedEmployees:c.computedEmployees, fitScore:c.fitScore, updatedAt: serverTimestamp(),
+    });
     await logAuto(c.id, 'financials_updated', `Financials updated — Y1 rev ${c.computedRevenue?fmtEurShort(c.computedRevenue):'—'}, EBITDA ${c.computedEBITDA?fmtEurShort(c.computedEBITDA):'—'}, fit ${c.fitScore!=null?Number(c.fitScore).toFixed(1):'—'}`);
     cacheCompanies();
     renderFinancials(c); renderDetail();
@@ -2568,16 +2651,31 @@ async function saveDeal(){
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 function openSettings(){
-  document.getElementById('setRevMin').value = fitCriteria.revMin;
-  document.getElementById('setRevMax').value = fitCriteria.revMax;
-  document.getElementById('setRevSweetMin').value = fitCriteria.revSweetMin;
-  document.getElementById('setRevSweetMax').value = fitCriteria.revSweetMax;
+  document.getElementById('setSizeFloor').value = fitCriteria.sizeFloor;
+  document.getElementById('setSizeCeiling').value = fitCriteria.sizeCeiling;
   document.getElementById('setMarginTarget').value = fitCriteria.marginTarget;
-  document.getElementById('setCagrTarget').value = fitCriteria.cagrTarget;
-  document.getElementById('setEbitdaMin').value = fitCriteria.ebitdaMin;
+  document.getElementById('setStabilityMaxVolatility').value = fitCriteria.stabilityMaxVolatility;
+  document.getElementById('setGrowthRecentTarget').value = fitCriteria.growthRecentTarget;
+  document.getElementById('setGrowthSustainedTarget').value = fitCriteria.growthSustainedTarget;
+  document.getElementById('setEmpFloor').value = fitCriteria.empFloor;
+  document.getElementById('setEmpSweetMin').value = fitCriteria.empSweetMin;
+  document.getElementById('setEmpSweetMax').value = fitCriteria.empSweetMax;
+  document.getElementById('setEmpCeiling').value = fitCriteria.empCeiling;
+  document.getElementById('setAgeFloor').value = fitCriteria.ageFloor;
+  document.getElementById('setAgeCeiling').value = fitCriteria.ageCeiling;
   renderBrokerList();
   document.getElementById('settingsErr').style.display='none';
   showEl('settingsModal', true);
+}
+function readFitCriteriaFromForm(){
+  const n = id => num(document.getElementById(id).value);
+  return {
+    sizeFloor:n('setSizeFloor'), sizeCeiling:n('setSizeCeiling'),
+    marginTarget:n('setMarginTarget'), stabilityMaxVolatility:n('setStabilityMaxVolatility'),
+    growthRecentTarget:n('setGrowthRecentTarget'), growthSustainedTarget:n('setGrowthSustainedTarget'),
+    empFloor:n('setEmpFloor'), empSweetMin:n('setEmpSweetMin'), empSweetMax:n('setEmpSweetMax'), empCeiling:n('setEmpCeiling'),
+    ageFloor:n('setAgeFloor'), ageCeiling:n('setAgeCeiling'),
+  };
 }
 function renderBrokerList(){
   document.getElementById('brokerList').innerHTML = brokers.length ? brokers.map(b => `
@@ -2601,8 +2699,7 @@ async function addBroker(){
   renderBrokerList();
 }
 async function saveSettings(){
-  const n = id => num(document.getElementById(id).value);
-  fitCriteria = { ...fitCriteria, revMin:n('setRevMin'), revMax:n('setRevMax'), revSweetMin:n('setRevSweetMin'), revSweetMax:n('setRevSweetMax'), marginTarget:n('setMarginTarget'), cagrTarget:n('setCagrTarget'), ebitdaMin:n('setEbitdaMin') };
+  fitCriteria = { ...fitCriteria, ...readFitCriteriaFromForm() };
   const btn = document.getElementById('settingsSaveBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
   try {
     await setDoc(doc(db,'searchConfig','fitCriteria'), fitCriteria);
@@ -2613,15 +2710,19 @@ async function saveSettings(){
 async function recalcAll(){
   const btn = document.getElementById('recalcBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm" style="border-top-color:var(--primary);"></span>Recalculating…';
   // First save current criteria
-  const n = id => num(document.getElementById(id).value);
-  fitCriteria = { ...fitCriteria, revMin:n('setRevMin'), revMax:n('setRevMax'), revSweetMin:n('setRevSweetMin'), revSweetMax:n('setRevSweetMax'), marginTarget:n('setMarginTarget'), cagrTarget:n('setCagrTarget'), ebitdaMin:n('setEbitdaMin') };
+  fitCriteria = { ...fitCriteria, ...readFitCriteriaFromForm() };
   await setDoc(doc(db,'searchConfig','fitCriteria'), fitCriteria);
   await ensureFullDataset(); // "Recalculate all" must mean all, not just the bounded default window
   try {
     for (const c of companies) {
       const old = c.fitScore;
       computeFields(c);
-      if (c.fitScore !== old) await updateDoc(doc(db,'searchCompanies',c.id), { fitScore: c.fitScore });
+      if (c.fitScore !== old) await updateDoc(doc(db,'searchCompanies',c.id), {
+        computedRevenue:c.computedRevenue, computedEBITDA:c.computedEBITDA, computedEBITDAMargin:c.computedEBITDAMargin,
+        computedEBITDAWeighted:c.computedEBITDAWeighted, computedEBITDAMarginWeighted:c.computedEBITDAMarginWeighted,
+        computedGrowthRecent:c.computedGrowthRecent, computedGrowthSustained:c.computedGrowthSustained, computedEBITDAStability:c.computedEBITDAStability,
+        computedEmployees:c.computedEmployees, fitScore: c.fitScore,
+      });
     }
     cacheCompanies(); renderSummary(); renderList();
     btn.innerHTML='✓ Done'; setTimeout(()=>{ btn.innerHTML='↻ Recalculate all fit scores'; btn.disabled=false; }, 1500);
@@ -2633,14 +2734,14 @@ async function exportCsv(){
   await ensureFullDataset();
   const list = sortList(getFiltered());
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
-  const headers = ['Name','Sector','Sub-sector','NACE','CAE','Stage','Priority','Fit','Owner','Source','Concelho','Postcode','NUTS2','NUTS3','Address','Primary Contact','Revenue Y1','EBITDA Y1','EBITDA%','CAGR 3y','Employees','Last Touch','Attempts','Reason'];
+  const headers = ['Name','Sector','Sub-sector','NACE','CAE','Stage','Priority','Fit','Owner','Source','Concelho','Postcode','NUTS2','NUTS3','Address','Primary Contact','Revenue Y1','EBITDA Y1','EBITDA%','Growth (Recent)','Employees','Last Touch','Attempts','Reason'];
   const rows = list.map(c => {
     const pc = (c.contacts||[]).find(x=>x.isPrimary) || (c.contacts||[])[0];
     return [
     c.name, c.sector, c.subSector, c.naceCode, c.caeCode, STAGES[c.stage]?.label||c.stage,
     PRIO_LABELS[c.priority]||'', (Number(c.fitScore)||0).toFixed(1), OWNER_LABELS[c.owner]||'', SOURCE_LABELS[c.sourceType]||'',
     c.concelho, c.postcode, c.nuts2, c.nuts3, c.hqAddress, pc?.name||'',
-    c.computedRevenue??'', c.computedEBITDA??'', c.computedEBITDAMargin!=null?(c.computedEBITDAMargin*100).toFixed(1):'', c.computedCAGR3y!=null?(c.computedCAGR3y*100).toFixed(1):'',
+    c.computedRevenue??'', c.computedEBITDA??'', c.computedEBITDAMargin!=null?(c.computedEBITDAMargin*100).toFixed(1):'', c.computedGrowthRecent!=null?(c.computedGrowthRecent*100).toFixed(1):'',
     c.computedEmployees??'', c.lastTouchAt?tsToDate(c.lastTouchAt).toLocaleDateString('en-GB'):'', c.outreachAttempts||0,
     c.reasonExcluded?((c.stage==='pass'?PASS_REASONS:HOLD_REASONS)[c.reasonExcluded]||''):'',
   ].map(esc2).join(',');
@@ -2905,7 +3006,9 @@ async function confirmBulk(){
         const local = computeFields({ ...co });
         batch.set(doc(col), { ...co,
           computedRevenue:local.computedRevenue, computedEBITDA:local.computedEBITDA, computedEBITDAMargin:local.computedEBITDAMargin,
-          computedCAGR3y:local.computedCAGR3y, computedEmployees:local.computedEmployees, fitScore:local.fitScore,
+          computedEBITDAWeighted:local.computedEBITDAWeighted, computedEBITDAMarginWeighted:local.computedEBITDAMarginWeighted,
+          computedGrowthRecent:local.computedGrowthRecent, computedGrowthSustained:local.computedGrowthSustained, computedEBITDAStability:local.computedEBITDAStability,
+          computedEmployees:local.computedEmployees, fitScore:local.fitScore,
           lastTouchAt:null, outreachAttempts:0,
           createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
       }
@@ -2924,7 +3027,12 @@ async function confirmBulk(){
         const { merged, changed } = mergeFinancials(ex.financials, r.co.financials);
         if (changed) {
           const t = computeFields({ ...ex, financials: merged });
-          batch.update(doc(col, r.matchId), { financials: merged, computedRevenue:t.computedRevenue, computedEBITDA:t.computedEBITDA, computedEBITDAMargin:t.computedEBITDAMargin, computedCAGR3y:t.computedCAGR3y, computedEmployees:t.computedEmployees, fitScore:t.fitScore, updatedAt: serverTimestamp() });
+          batch.update(doc(col, r.matchId), {
+            financials: merged, computedRevenue:t.computedRevenue, computedEBITDA:t.computedEBITDA, computedEBITDAMargin:t.computedEBITDAMargin,
+            computedEBITDAWeighted:t.computedEBITDAWeighted, computedEBITDAMarginWeighted:t.computedEBITDAMarginWeighted,
+            computedGrowthRecent:t.computedGrowthRecent, computedGrowthSustained:t.computedGrowthSustained, computedEBITDAStability:t.computedEBITDAStability,
+            computedEmployees:t.computedEmployees, fitScore:t.fitScore, updatedAt: serverTimestamp(),
+          });
           ex.financials = merged; computeFields(ex);
         }
         for (const [f,label] of ORBIS_FIRMOGRAPHIC) {
@@ -3086,14 +3194,14 @@ document.getElementById('mapExportBtn').addEventListener('click', exportMapCsv);
 
 // Filters — any real filter/search interaction needs the full dataset (the
 // bounded default window is "recently touched", not a representative sample).
-['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id => {
+['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id => {
   const el = document.getElementById(id);
   el.addEventListener('input', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
   el.addEventListener('change', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
 });
 document.getElementById('advFilterBtn').addEventListener('click', () => document.getElementById('advFilters').classList.toggle('open'));
 document.getElementById('clearFiltersBtn').addEventListener('click', () => {
-  ['searchInput','stageFilter','ownerFilter','priorityFilter','fitFilter','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id=>document.getElementById(id).value='');
+  ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('naceLabel').textContent=''; document.getElementById('caeLabel').textContent='';
   visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList();
 });
