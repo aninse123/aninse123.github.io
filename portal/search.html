@@ -2714,15 +2714,28 @@ async function recalcAll(){
   await setDoc(doc(db,'searchConfig','fitCriteria'), fitCriteria);
   await ensureFullDataset(); // "Recalculate all" must mean all, not just the bounded default window
   try {
-    for (const c of companies) {
-      const old = c.fitScore;
-      computeFields(c);
-      if (c.fitScore !== old) await updateDoc(doc(db,'searchCompanies',c.id), {
-        computedRevenue:c.computedRevenue, computedEBITDA:c.computedEBITDA, computedEBITDAMargin:c.computedEBITDAMargin,
-        computedEBITDAWeighted:c.computedEBITDAWeighted, computedEBITDAMarginWeighted:c.computedEBITDAMarginWeighted,
-        computedGrowthRecent:c.computedGrowthRecent, computedGrowthSustained:c.computedGrowthSustained, computedEBITDAStability:c.computedEBITDAStability,
-        computedEmployees:c.computedEmployees, fitScore: c.fitScore,
-      });
+    // Always write, unconditionally -- comparing against c.fitScore here would compare
+    // the new formula's output against itself (companies[] is already computeFields()'d
+    // at load time), never against what's actually persisted, so a diff-check silently
+    // no-ops the very first time this runs after a formula change. Batched (not one
+    // updateDoc per company) since this is a "recalculate all" ~20k-company op.
+    const CHUNK = 450;
+    let done = 0;
+    for (let i = 0; i < companies.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      const slice = companies.slice(i, i + CHUNK);
+      for (const c of slice) {
+        computeFields(c);
+        batch.update(doc(db,'searchCompanies',c.id), {
+          computedRevenue:c.computedRevenue, computedEBITDA:c.computedEBITDA, computedEBITDAMargin:c.computedEBITDAMargin,
+          computedEBITDAWeighted:c.computedEBITDAWeighted, computedEBITDAMarginWeighted:c.computedEBITDAMarginWeighted,
+          computedGrowthRecent:c.computedGrowthRecent, computedGrowthSustained:c.computedGrowthSustained, computedEBITDAStability:c.computedEBITDAStability,
+          computedEmployees:c.computedEmployees, fitScore: c.fitScore,
+        });
+      }
+      await batch.commit();
+      done += slice.length;
+      btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Recalculating… ${done}/${companies.length}`;
     }
     cacheCompanies(); renderSummary(); renderList();
     btn.innerHTML='✓ Done'; setTimeout(()=>{ btn.innerHTML='↻ Recalculate all fit scores'; btn.disabled=false; }, 1500);
