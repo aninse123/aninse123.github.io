@@ -3252,14 +3252,28 @@ async function renderNetworkGraph(container, focusType, focusId){
   const at = id => g.nodes.find(n => n.id === id);
   const CUR = 'var(--primary)', PREV = '#B9B2A6';
 
+  // Trim each end back to the node's edge so lines don't run under the shape —
+  // and further when the edge heads downward, so it clears that node's own
+  // caption instead of striking through it.
+  const trimAt = (from, to) => {
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const isCo = from.type === 'company' || from.entityType === 'entity';
+    const base = isCo ? 24 : 23;
+    const down = dy / d;                        // 1 = straight down
+    const clear = base + Math.max(0, down) * 26; // caption sits ~26px lower
+    return { x: from.x + dx / d * Math.min(clear, d * 0.45), y: from.y + dy / d * Math.min(clear, d * 0.45) };
+  };
+
   const edgeSvg = g.edges.map(e => {
-    const a = at(e.a), b = at(e.b);
-    if (!a || !b) return '';
+    const a0 = at(e.a), b0 = at(e.b);
+    if (!a0 || !b0) return '';
+    const a = trimAt(a0, b0), b = trimAt(b0, a0);
     const w = e.pct != null ? (1.2 + Math.min(e.pct, 100) / 100 * 2.2) : 1.4;
     return `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"
       stroke="${e.current ? CUR : PREV}" stroke-width="${w.toFixed(2)}" stroke-linecap="round"
       ${e.current ? '' : 'stroke-dasharray="5 4"'} opacity="${e.current ? 0.75 : 0.6}">
-      <title>${esc(a.label)} — ${esc(b.label)}: ${esc(e.label)}</title></line>`;
+      <title>${esc(a0.label)} — ${esc(b0.label)}: ${esc(e.label)}</title></line>`;
   }).join('');
 
   const nodeSvg = g.nodes.map(n => {
