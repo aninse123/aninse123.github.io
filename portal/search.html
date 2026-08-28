@@ -336,6 +336,7 @@
         <button class="btn btn--ghost" id="settingsBtn">⚙ Settings</button>
         <button class="btn btn--ghost" id="exportBtn">⬇ Export CSV</button>
         <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
+        <button class="btn btn--ghost" id="peopleImportBtn">🧑‍💼 Import People</button>
         <button class="btn btn--primary" id="newCompanyBtn">＋ New Company</button>
       </div>
     </div>
@@ -833,6 +834,37 @@
     <div class="modal-actions">
       <button class="btn btn--ghost" id="bulkCancelBtn">Cancel</button>
       <button class="btn btn--primary" id="bulkConfirmBtn" disabled>Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import People / Ownership (Orbis list export) -->
+<div class="overlay" id="peopleImportModal" style="display:none;">
+  <div class="modal modal--lg">
+    <div class="modal-title">Import People &amp; Ownership</div>
+    <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:6px;">Drop in an Orbis <strong>list export</strong> (.xlsx or .csv). One row = one company; the shareholders packed into each row are unpacked automatically. The file type is detected from its columns.</p>
+    <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:16px;">Include <strong>NIF</strong> (Identification numbers) so companies can be matched — BvD ID works too. People are keyed on Orbis <strong>UCI</strong> when present, so re-importing the same file never creates duplicates. Corporate shareholders become entity nodes and are linked to a CRM company when their NIF matches one.</p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px;">
+      <label class="btn btn--ghost btn--sm" style="cursor:pointer;margin:0;">📂 Choose file<input type="file" id="peopleFileInput" accept=".xlsx,.csv,text/csv" style="display:none;"></label>
+      <span id="peopleFileName" style="font-size:0.82rem;color:var(--text-light);"></span>
+    </div>
+    <div id="peopleImportOpts" style="display:none;margin-bottom:14px;padding:12px;background:#FAFAF8;border:1px solid var(--border);border-radius:var(--radius);">
+      <label class="check-item" style="font-weight:600;"><input type="checkbox" id="peopleCreateMissing"> Also create companies that aren't in the CRM</label>
+      <div style="font-size:0.76rem;color:var(--text-light);margin-top:8px;font-weight:400;text-transform:none;letter-spacing:0;">Off by default. When on, missing companies are created with just name + NIF and tagged <code>ownership_import</code> so you can find or remove them later.</div>
+    </div>
+    <div id="peopleImportPreview" style="display:none;">
+      <div style="font-size:0.83rem;font-weight:600;margin-bottom:10px;" id="peopleImportSummary"></div>
+      <div style="max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+        <table class="preview-table">
+          <thead><tr><th>Company</th><th>Person / Entity</th><th>Type</th><th>Direct %</th><th>Manager</th><th>Status</th></tr></thead>
+          <tbody id="peopleImportBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-err" id="peopleImportErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="peopleImportCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="peopleImportConfirmBtn" disabled>Import</button>
     </div>
   </div>
 </div>
@@ -2521,6 +2553,391 @@ async function renderPeople(){
     </tr>`).join('');
 }
 
+// ── Ownership / People importer (Orbis list export) ──────────────────────────
+// The Orbis *list* export is one row per COMPANY, with every shareholder packed
+// into single cells separated by newlines — parallel arrays across the `SH - *`
+// columns. Those arrays are NOT reliably equal length (verified against real
+// exports): Orbis drops the line entirely for a name with no salutation, uses a
+// bare space as a placeholder in some mixed corporate/individual rows, and
+// leaves UCI/First/Last empty for corporate-only rows. So we anchor on
+// `SH - Name` and only zip a column when its line count matches the anchor —
+// never by index alone, which would silently attach the wrong % to the wrong
+// person.
+let peopleImportRows = [];   // flat, one entry per person↔company edge
+let peopleImportStats = null;
+
+const PEOPLE_ALIAS = {
+  companyName: ['company name latin alphabet','company name','name'],
+  nif:         ['nif (vat/tax number)','nif(vat/tax number)','nif','vat/tax number','national id number','national number','tax number'],
+  bvd:         ['bvd id number','bvd id','bvd'],
+  shName:      ['sh - name'],
+  shUci:       ['sh - uci'],
+  shBvd:       ['sh - bvd id number'],
+  shCountry:   ['sh - country iso code'],
+  shType:      ['sh - type'],
+  shDirect:    ['sh - direct %'],
+  shTotal:     ['sh - total %'],
+  shDate:      ['sh - information date'],
+  shMgr:       ['sh - also a manager'],
+  // Directors & Managers export (second file type)
+  dmName:      ['dm - full name','dm - name','director/manager name'],
+  dmUci:       ['dm - uci'],
+  dmJob:       ['dm - job title','dm - position','dm - function'],
+  dmCurrent:   ['dm - current or previous','dm - current/previous','dm - status'],
+  dmType:      ['dm - type'],
+  dmCountry:   ['dm - country iso code'],
+};
+function peopleColIndex(headers, key){
+  const want = PEOPLE_ALIAS[key] || [];
+  for (const w of want){
+    const i = headers.findIndex(h => h === w);
+    if (i !== -1) return i;
+  }
+  return -1;
+}
+// Split a packed cell into lines, preserving position (placeholder blanks stay).
+function packedLines(v){
+  const s = String(v == null ? '' : v);
+  if (!s.trim()) return [];
+  return s.split(/\r?\n/);
+}
+// Orbis writes '-', 'n.a.', and qualifier codes like 'FC' (foreign control),
+// 'WO', 'MO', 'BR' where a percentage is unknown. pnum() would turn those into
+// 0 (it strips non-digits, and Number('') === 0), which would silently record
+// a 0% holding — so require at least one digit before trusting the value.
+function ownPct(v){
+  const s = String(v == null ? '' : v).trim();
+  if (!s || !/\d/.test(s) || /^(n\.?a\.?|-|–|—)$/i.test(s)) return null;
+  const n = pnum(s);
+  return (n != null && isFinite(n)) ? n : null;
+}
+function ownClean(v){
+  const s = String(v == null ? '' : v).trim();
+  return (!s || /^(n\.?a\.?|-|–|—)$/i.test(s)) ? '' : s;
+}
+// Portuguese BvD IDs are 'PT' + NIF (verified 51/51 against live CRM data),
+// so either identifier collapses to the same key.
+function nifFromAny(nif, bvd){
+  const a = onlyDigits(nif);
+  if (a) return a;
+  const b = String(bvd || '').trim().toUpperCase();
+  const m = b.match(/^[A-Z]{2}(\d{6,12})$/);
+  return m ? m[1] : '';
+}
+// Stable person id: Orbis UCI when present (removes homonym risk entirely),
+// else the corporate holder's NIF, else the normalised name.
+function personIdFrom({ uci, bvd, nameKey }){
+  const u = ownClean(uci);
+  if (u) return 'u_' + u.replace(/[^A-Za-z0-9_-]/g,'');
+  const nif = nifFromAny('', bvd);
+  if (nif) return 'e_' + nif;
+  return personDocId(nameKey);
+}
+
+function parsePeopleRows(rows){
+  if (!rows.length) throw new Error('The file appears to be empty.');
+  // Orbis puts a "Search summary" sheet first; the real grid may also have a
+  // couple of banner rows, so find the row that actually looks like headers.
+  let hi = rows.findIndex(r => r.some(c => /^(sh|dm)\s*-\s*name$|^company name/i.test(String(c).replace(/\n/g,' ').trim())));
+  if (hi === -1) hi = 0;
+  const headers = rows[hi].map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
+  const idx = {};
+  for (const k of Object.keys(PEOPLE_ALIAS)) idx[k] = peopleColIndex(headers, k);
+
+  const mode = idx.shName !== -1 ? 'shareholders' : (idx.dmName !== -1 ? 'management' : null);
+  if (!mode) throw new Error('No shareholder ("SH - Name") or director ("DM - Full name") column found. Is this an Orbis list export?');
+  if (idx.companyName === -1) throw new Error('No "Company name" column found.');
+
+  // Company lookup tables (ensureFullDataset() has already run).
+  const byNif = new Map(), byName = new Map();
+  for (const c of companies){
+    const n = onlyDigits(c.nif) || nifFromAny('', c.bvdId);
+    if (n) byNif.set(n, c);
+    const nn = normName(c.name); if (nn && !byName.has(nn)) byName.set(nn, c);
+  }
+
+  const out = [];
+  const unmatched = new Map();   // nif|name -> {name, nif}
+  let rowsSeen = 0, skippedNoPeople = 0;
+
+  for (let r = hi + 1; r < rows.length; r++){
+    const row = rows[r];
+    if (!row || !row.some(c => String(c || '').trim())) continue;
+    const get = k => (idx[k] !== -1 && idx[k] < row.length) ? row[idx[k]] : '';
+    const coName = ownClean(get('companyName'));
+    if (!coName) continue;
+    rowsSeen++;
+
+    const coNif = nifFromAny(get('nif'), get('bvd'));
+    let company = coNif ? byNif.get(coNif) : null;
+    let matchedBy = company ? (onlyDigits(get('nif')) ? 'nif' : 'bvd') : null;
+    if (!company){ const c = byName.get(normName(coName)); if (c){ company = c; matchedBy = 'name'; } }
+
+    const P = mode === 'shareholders'
+      ? { name:'shName', uci:'shUci', bvd:'shBvd', type:'shType', country:'shCountry' }
+      : { name:'dmName', uci:'dmUci', bvd:null,    type:'dmType', country:'dmCountry' };
+
+    const names = packedLines(get(P.name));
+    if (!names.length){ skippedNoPeople++; continue; }
+    const zip = (key) => { // only trust a column that lines up with the anchor
+      const lines = packedLines(get(key));
+      return lines.length === names.length ? lines : null;
+    };
+    const uciL   = P.uci ? zip(P.uci) : null;
+    const bvdL   = P.bvd ? zip(P.bvd) : null;
+    const typeL  = zip(P.type);
+    const ctryL  = zip(P.country);
+    const dirL   = mode === 'shareholders' ? zip('shDirect') : null;
+    const totL   = mode === 'shareholders' ? zip('shTotal')  : null;
+    const dateL  = mode === 'shareholders' ? zip('shDate')   : null;
+    const mgrL   = mode === 'shareholders' ? zip('shMgr')    : null;
+    const jobL   = mode === 'management'   ? zip('dmJob')    : null;
+    const curL   = mode === 'management'   ? zip('dmCurrent'): null;
+
+    for (let i = 0; i < names.length; i++){
+      const rawName = ownClean(names[i]);
+      if (!rawName) continue; // placeholder slot
+      const nameKey = personNameKey(rawName);
+      if (!nameKey) continue;
+      const typeStr = typeL ? ownClean(typeL[i]) : '';
+      const isCorp = /corporate|bank|insurance|fund|financial compan|industrial compan|public authorit|foundation|mutual|venture|private equity/i.test(typeStr);
+      const shBvd = bvdL ? ownClean(bvdL[i]) : '';
+      const pid = personIdFrom({ uci: uciL ? uciL[i] : '', bvd: shBvd, nameKey });
+      const holderNif = nifFromAny('', shBvd);
+      const mgrStr = mgrL ? ownClean(mgrL[i]) : '';
+      const curStr = curL ? ownClean(curL[i]) : '';
+
+      out.push({
+        mode, companyId: company?.id || null, companyName: company?.name || coName,
+        fileCompanyName: coName, companyNif: coNif, matchedBy, unmatched: !company,
+        personId: pid, personName: isCorp ? rawName : personDisplayName(rawName),
+        nameKey, uci: ownClean(uciL ? uciL[i] : ''), entityType: isCorp ? 'entity' : 'person',
+        holderNif, country: ctryL ? ownClean(ctryL[i]) : '',
+        shDirectPct: dirL ? ownPct(dirL[i]) : null,
+        shTotalPct:  totL ? ownPct(totL[i]) : null,
+        shDate:      dateL ? ownClean(dateL[i]) : '',
+        // Shareholders file: 'Current manager' also tells us they manage the company.
+        alsoManager: /current manager/i.test(mgrStr),
+        mgmtRoles:   jobL ? ownClean(jobL[i]).split(/;|\r?\n/).map(s=>s.trim()).filter(Boolean) : [],
+        mgmtCurrentFromFile: mode === 'management' ? !/previous|former/i.test(curStr) : (/current manager/i.test(mgrStr) ? true : null),
+      });
+      if (!company) unmatched.set(coNif || normName(coName), { name: coName, nif: coNif });
+    }
+  }
+
+  const people = new Set(out.map(o => o.personId));
+  const cos = new Set(out.filter(o => o.companyId).map(o => o.companyId));
+  peopleImportRows = out;
+  peopleImportStats = { mode, rowsSeen, links: out.length, people: people.size, companiesMatched: cos.size,
+    unmatched: [...unmatched.values()], skippedNoPeople,
+    matchedByName: out.filter(o => o.matchedBy === 'name').length,
+    withUci: out.filter(o => o.uci).length, entities: out.filter(o => o.entityType === 'entity').length };
+  return peopleImportStats;
+}
+
+function renderPeopleImportPreview(){
+  const s = peopleImportStats;
+  const bits = [
+    `<strong>${s.links}</strong> ${s.mode === 'management' ? 'management' : 'shareholder'} link${s.links===1?'':'s'}`,
+    `<strong>${s.people}</strong> unique ${s.people===1?'person/entity':'people/entities'}`,
+    `<strong>${s.companiesMatched}</strong> compan${s.companiesMatched===1?'y':'ies'} matched`,
+  ];
+  if (s.withUci) bits.push(`${s.withUci} keyed on Orbis UCI`);
+  if (s.entities) bits.push(`${s.entities} corporate holder${s.entities===1?'':'s'}`);
+  let warn = '';
+  if (s.unmatched.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.unmatched.length} compan${s.unmatched.length===1?'y':'ies'} not in the CRM — skipped unless you tick the box above: ${esc(s.unmatched.slice(0,4).map(u=>u.name).join(', '))}${s.unmatched.length>4?` +${s.unmatched.length-4} more`:''}</div>`;
+  if (s.matchedByName) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.matchedByName} link${s.matchedByName===1?'':'s'} matched by company <em>name</em> (no NIF/BvD in the file) — verify before importing.</div>`;
+  document.getElementById('peopleImportSummary').innerHTML = bits.join(' · ') + warn;
+
+  document.getElementById('peopleImportBody').innerHTML = peopleImportRows.slice(0, 200).map(r => `
+    <tr${r.unmatched ? ' style="opacity:.55;"' : ''}>
+      <td>${esc(r.fileCompanyName)}</td>
+      <td>${esc(r.personName)}</td>
+      <td>${r.entityType === 'entity' ? '🏢 Entity' : '🧑 Person'}</td>
+      <td>${r.shDirectPct != null ? r.shDirectPct + '%' : '—'}</td>
+      <td>${r.alsoManager || r.mgmtRoles.length ? '✓' : '—'}</td>
+      <td>${r.unmatched ? '<span class="badge badge-warn">company not in CRM</span>' : '<span class="badge badge-green">ready</span>'}</td>
+    </tr>`).join('');
+  showEl('peopleImportOpts', true);
+  showEl('peopleImportPreview', true);
+  updatePeopleImportBtn();
+}
+function updatePeopleImportBtn(){
+  const create = document.getElementById('peopleCreateMissing').checked;
+  const n = peopleImportRows.filter(r => create || !r.unmatched).length;
+  const btn = document.getElementById('peopleImportConfirmBtn');
+  btn.disabled = n === 0;
+  btn.textContent = n ? `Import ${n} link${n===1?'':'s'}` : 'Nothing to import';
+}
+
+async function confirmPeopleImport(){
+  const btn = document.getElementById('peopleImportConfirmBtn');
+  const errEl = document.getElementById('peopleImportErr'); errEl.style.display = 'none';
+  const createMissing = document.getElementById('peopleCreateMissing').checked;
+  const rows = peopleImportRows.filter(r => createMissing || !r.unmatched);
+  if (!rows.length) return;
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
+  try {
+    // 1) Create missing companies first (opt-in), so links have a target.
+    if (createMissing){
+      const need = new Map();
+      for (const r of rows) if (r.unmatched) need.set(r.companyNif || normName(r.fileCompanyName), r);
+      if (need.size){
+        const col = collection(db,'searchCompanies');
+        let batch = writeBatch(db), n = 0;
+        for (const r of need.values()){
+          const ref = doc(col);
+          batch.set(ref, { name: r.fileCompanyName, nif: r.companyNif || null, stage:'universe',
+            sourceType:'ownership_import', financials:{}, contacts:[], addOnTo:[], addOns:[],
+            lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
+          for (const rr of rows) if (rr.unmatched && (rr.companyNif || normName(rr.fileCompanyName)) === (r.companyNif || normName(r.fileCompanyName))){
+            rr.companyId = ref.id; rr.unmatched = false;
+          }
+          if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
+        }
+        await batch.commit();
+        fullyLoaded = false; await ensureFullDataset(); // pull the new docs into memory
+      }
+    }
+
+    // 2) Upsert people. Deterministic ids ⇒ re-importing the same file is a no-op.
+    const byPerson = new Map();
+    for (const r of rows) if (!byPerson.has(r.personId)) byPerson.set(r.personId, r);
+    // Corporate holders that are themselves CRM companies → matchedCompanyId.
+    const nifToCo = new Map();
+    for (const c of companies){ const n = onlyDigits(c.nif) || nifFromAny('', c.bvdId); if (n) nifToCo.set(n, c.id); }
+    let batch = writeBatch(db), n = 0, done = 0;
+    for (const r of byPerson.values()){
+      batch.set(doc(db,'searchPeople', r.personId), {
+        name: r.personName, nameKey: r.nameKey, nameTokens: personNameTokens(r.nameKey),
+        entityType: r.entityType, uci: r.uci || null,
+        nif: r.holderNif || null,
+        matchedCompanyId: r.holderNif ? (nifToCo.get(r.holderNif) || null) : null,
+        country: r.country && r.country.length <= 3 ? r.country : null,
+        source: 'orbis', updatedAt: serverTimestamp(),
+      }, { merge: true });
+      if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); done += 450; btn.innerHTML = `<span class="spin-sm"></span>People… ${done}/${byPerson.size}`; }
+    }
+    await batch.commit();
+
+    // 3) Upsert links — write only the facet this file actually carries, so a
+    //    shareholders import never clears roles from a management import.
+    batch = writeBatch(db); n = 0; done = 0;
+    for (const r of rows){
+      if (!r.companyId) continue;
+      const payload = {
+        personId: r.personId, companyId: r.companyId,
+        personName: r.personName, companyName: r.companyName,
+        personEntityType: r.entityType, personMatchedCompanyId: r.holderNif ? (nifToCo.get(r.holderNif) || null) : null,
+        source: 'orbis', updatedAt: serverTimestamp(),
+      };
+      if (r.mode === 'shareholders'){
+        payload.shDirectPct = r.shDirectPct; payload.shTotalPct = r.shTotalPct;
+        payload.shCurrent = true; payload.shDate = r.shDate || null;
+        payload.shType = r.entityType === 'entity' ? 'C' : 'I';
+        payload.alsoManager = r.alsoManager;
+        if (r.mgmtCurrentFromFile === true) payload.mgmtCurrent = true; // "Current manager", role unknown
+      } else {
+        payload.mgmtRoles = r.mgmtRoles; payload.mgmtCurrent = r.mgmtCurrentFromFile !== false;
+      }
+      batch.set(doc(db,'searchPersonLinks', `${r.personId}__${r.companyId}`), payload, { merge: true });
+      if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); done += 450; btn.innerHTML = `<span class="spin-sm"></span>Links… ${done}/${rows.length}`; }
+    }
+    await batch.commit();
+
+    // 4) Snapshot semantics: this file is the complete current picture for the
+    //    companies it covers, so anyone previously current for those companies
+    //    but absent from the file is demoted to "previous" (kept, greyed).
+    const touched = [...new Set(rows.map(r => r.companyId).filter(Boolean))];
+    const keep = new Set(rows.map(r => `${r.personId}__${r.companyId}`));
+    const facet = peopleImportStats.mode === 'shareholders' ? 'shCurrent' : 'mgmtCurrent';
+    let demoted = 0;
+    batch = writeBatch(db); n = 0;
+    for (const cid of touched){
+      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',cid)));
+      addReads(snap.docs.length || 1);
+      for (const d of snap.docs){
+        if (keep.has(d.id)) continue;
+        if (d.data()[facet] === true){
+          batch.update(d.ref, { [facet]: false, updatedAt: serverTimestamp() });
+          demoted++;
+          if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
+        }
+      }
+    }
+    await batch.commit();
+
+    // 5) Refresh denormalised counters.
+    invalidatePeopleCaches();
+    batch = writeBatch(db); n = 0;
+    for (const cid of touched){
+      const links = await fetchCompanyLinks(cid, true);
+      batch.update(doc(db,'searchCompanies',cid), { peopleCounts: peopleCountsFrom(links) });
+      const local = companies.find(c => c.id === cid); if (local) local.peopleCounts = peopleCountsFrom(links);
+      if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
+    }
+    await batch.commit();
+    batch = writeBatch(db); n = 0;
+    for (const pid of byPerson.keys()){
+      const links = await fetchPersonLinks(pid, true);
+      batch.update(doc(db,'searchPeople',pid), {
+        linkCount: links.length,
+        currentLinkCount: links.filter(l => l.shCurrent === true || l.mgmtCurrent === true).length,
+      });
+      if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
+    }
+    await batch.commit();
+
+    await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted });
+    invalidatePeopleCaches();
+    cacheCompanies();
+    showEl('peopleImportModal', false);
+    alert(`Imported ${rows.length} link${rows.length===1?'':'s'} across ${byPerson.size} people/entities and ${touched.length} companies.${demoted?`\n${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}`);
+    if (viewMode === 'people') renderPeople();
+    if (currentCoId) { const c = getCompany(); if (c) { renderOwnership(c); renderOverview(c); } }
+  } catch(e){
+    console.error(e);
+    errEl.textContent = e.message; errEl.style.display = 'block';
+  } finally { btn.disabled = false; updatePeopleImportBtn(); }
+}
+
+async function openPeopleImport(){
+  peopleImportRows = []; peopleImportStats = null;
+  document.getElementById('peopleFileName').textContent = '';
+  document.getElementById('peopleFileInput').value = '';
+  document.getElementById('peopleCreateMissing').checked = false;
+  document.getElementById('peopleImportErr').style.display = 'none';
+  showEl('peopleImportOpts', false); showEl('peopleImportPreview', false);
+  const btn = document.getElementById('peopleImportConfirmBtn'); btn.disabled = true; btn.textContent = 'Import';
+  showEl('peopleImportModal', true);
+}
+async function handlePeopleFile(file){
+  const errEl = document.getElementById('peopleImportErr'); errEl.style.display = 'none';
+  document.getElementById('peopleFileName').textContent = file.name + ' — reading…';
+  try {
+    let rows;
+    if (/\.xlsx$/i.test(file.name)){
+      const { readXlsx } = await import('./vendor/xlsx-lite.js');
+      const wb = await readXlsx(file);
+      // Orbis puts the data in "Results"; fall back to the widest sheet.
+      const name = wb.sheetNames.includes('Results') ? 'Results'
+        : wb.sheetNames.reduce((a,b) => (wb.sheets[b].length > (wb.sheets[a]?.length||0) ? b : a), wb.sheetNames[0]);
+      rows = wb.sheets[name];
+    } else {
+      rows = parseCSV(await file.text());
+    }
+    const s = parsePeopleRows(rows);
+    document.getElementById('peopleFileName').textContent = `${file.name} — ${s.mode} file, ${s.rowsSeen} compan${s.rowsSeen===1?'y':'ies'}`;
+    renderPeopleImportPreview();
+  } catch(e){
+    console.error(e);
+    document.getElementById('peopleFileName').textContent = file.name;
+    errEl.textContent = e.message; errEl.style.display = 'block';
+    showEl('peopleImportPreview', false); showEl('peopleImportOpts', false);
+    document.getElementById('peopleImportConfirmBtn').disabled = true;
+  }
+}
+
 // Placeholder until the graph phase lands — keeps both call sites stable.
 function renderNetworkGraph(container, focusType, focusId){
   if (!container) return;
@@ -3632,6 +4049,14 @@ document.getElementById('bulkFileInput').addEventListener('change', e => {
   const rd = new FileReader(); rd.onload = ev => parseBulkFile(ev.target.result); rd.readAsText(f, 'UTF-8');
 });
 document.querySelectorAll('input[name=bulkMode]').forEach(r => r.addEventListener('change', updateBulkConfirmLabel));
+// People / Ownership importer
+document.getElementById('peopleImportBtn').addEventListener('click', async () => { await ensureFullDataset(); openPeopleImport(); });
+document.getElementById('peopleImportCancelBtn').addEventListener('click', () => showEl('peopleImportModal', false));
+document.getElementById('peopleImportConfirmBtn').addEventListener('click', confirmPeopleImport);
+document.getElementById('peopleCreateMissing').addEventListener('change', updatePeopleImportBtn);
+document.getElementById('peopleFileInput').addEventListener('change', e => {
+  const f = e.target.files[0]; if (f) handlePeopleFile(f);
+});
 document.getElementById('reportApplyBtn').addEventListener('click', applyReportChanges);
 document.getElementById('reportCloseBtn').addEventListener('click', () => showEl('reportModal', false));
 document.getElementById('reportDownloadBtn').addEventListener('click', downloadReportCsv);
@@ -3759,7 +4184,7 @@ document.getElementById('cNaceCode').addEventListener('blur', () => {
 });
 
 // Overlay click-to-close
-['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal','reportModal','mapListsModal','miniMapModal'].forEach(id => {
+['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal','peopleImportModal','reportModal','mapListsModal','miniMapModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id, false); });
 });
 </script>
