@@ -215,6 +215,19 @@
     .contact-detail { font-size: 0.78rem; color: var(--text-light); margin-top: 3px; }
     .contact-foot { display: flex; gap: 6px; margin-top: 8px; }
 
+    /* People & Ownership */
+    .own-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    .own-table th { text-align: left; padding: 7px 8px; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-light); border-bottom: 1.5px solid var(--border); white-space: nowrap; }
+    .own-table td { padding: 8px; border-bottom: 1px solid #F4F1EA; vertical-align: top; }
+    .own-table td.num { text-align: right; white-space: nowrap; }
+    .own-table th.num { text-align: right; }
+    .own-table tr.prev td, .own-table tr.prev .person-link { color: var(--text-light); }
+    .person-link { color: var(--primary); cursor: pointer; font-weight: 600; }
+    .person-link:hover { text-decoration: underline; }
+    .own-legend { display: flex; gap: 16px; font-size: 0.72rem; color: var(--text-light); margin-top: 10px; }
+    .own-legend .cur::before { content: '—'; color: var(--primary); font-weight: 700; margin-right: 5px; }
+    .own-legend .prv::before { content: '—'; color: #B9B2A6; font-weight: 700; margin-right: 5px; }
+
     /* Add-on links */
     .addon-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 6px; font-size: 0.82rem; }
     .addon-link { color: var(--primary); font-weight: 600; cursor: pointer; }
@@ -344,6 +357,7 @@
         <button id="viewListBtn" class="active">List</button>
         <button id="viewGroupedBtn">Grouped</button>
         <button id="viewMapBtn">Map</button>
+        <button id="viewPeopleBtn">People</button>
       </div>
       <input type="text" class="search-input" id="searchInput" placeholder="Search by name or NIF…">
       <select class="filter-sel" id="stageFilter"><option value="">All Stages</option></select>
@@ -420,6 +434,21 @@
         <div id="mapContainer" style="height:640px;border-radius:var(--radius);"></div>
       </div>
     </div>
+
+    <!-- People mode -->
+    <div id="peopleCard" style="display:none;">
+      <div class="table-card" style="padding:16px;">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+          <input type="text" class="search-input" id="peopleSearchInput" placeholder="Search people by name…" style="max-width:340px;">
+          <span class="results-count" id="peopleResultsCount"></span>
+        </div>
+        <div style="overflow-x:auto;"><table class="own-table">
+          <thead><tr><th>Name</th><th>Type</th><th class="num">Positions</th><th class="num">Current</th><th>Country</th></tr></thead>
+          <tbody id="peopleBody"></tbody>
+        </table></div>
+        <div class="hint" style="margin-top:10px;">People are created by the Ownership importer or by adding a person on a company's Ownership tab. Search matches any name word.</div>
+      </div>
+    </div>
   </div>
 
   <!-- ══════════ DETAIL VIEW ══════════ -->
@@ -440,6 +469,7 @@
     <div class="tabs" id="detailTabs">
       <button class="tab active" data-tab="overview">Overview</button>
       <button class="tab" data-tab="financials">Financials</button>
+      <button class="tab" data-tab="ownership">Ownership</button>
       <button class="tab" data-tab="contacts">Contacts</button>
       <button class="tab" data-tab="activities">Activities</button>
       <button class="tab" data-tab="deal">Deal</button>
@@ -447,9 +477,22 @@
 
     <div class="tab-panel active" id="panel-overview"></div>
     <div class="tab-panel" id="panel-financials"></div>
+    <div class="tab-panel" id="panel-ownership"></div>
     <div class="tab-panel" id="panel-contacts"></div>
     <div class="tab-panel" id="panel-activities"></div>
     <div class="tab-panel" id="panel-deal"></div>
+  </div>
+
+  <!-- ══════════ PERSON VIEW ══════════ -->
+  <div id="personView" style="display:none;">
+    <button class="detail-back" id="personBackBtn">← Back</button>
+    <div class="detail-header">
+      <div>
+        <div class="detail-name" id="pName">—</div>
+        <div class="detail-meta" id="pMeta"></div>
+      </div>
+    </div>
+    <div id="personBody"></div>
   </div>
 </div>
 
@@ -567,6 +610,34 @@
     <div class="modal-actions">
       <button class="btn btn--ghost" id="contactCancelBtn">Cancel</button>
       <button class="btn btn--primary" id="contactSaveBtn">Save Contact</button>
+    </div>
+  </div>
+</div>
+
+<!-- Person link modal (Ownership tab: link a person/manager/shareholder to a company) -->
+<div class="overlay" id="personLinkModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title" id="personLinkModalTitle">Add Person</div>
+    <div class="form-row">
+      <div class="form-group"><label>Full name *</label><input type="text" class="field" id="plName"></div>
+      <div class="form-group"><label>Country <span class="opt">(optional)</span></label><input type="text" class="field" id="plCountry" placeholder="PT"></div>
+    </div>
+    <div class="modal-section-title">Management</div>
+    <div class="form-row">
+      <div class="form-group"><label>Role(s) <span class="opt">(comma-separated)</span></label><input type="text" class="field" id="plRoles" placeholder="Manager-Partner, Sócio Gerente"></div>
+      <div class="form-group" style="align-self:end;"><label class="check-item"><input type="checkbox" id="plMgmtCurrent" checked> Current manager</label></div>
+    </div>
+    <div class="modal-section-title">Shareholding</div>
+    <div class="form-row-3">
+      <div class="form-group"><label>Direct %</label><input type="number" step="0.01" class="field" id="plDirectPct"></div>
+      <div class="form-group"><label>Total %</label><input type="number" step="0.01" class="field" id="plTotalPct"></div>
+      <div class="form-group"><label>As of <span class="opt">(MM/YYYY)</span></label><input type="text" class="field" id="plDate" placeholder="06/2026"></div>
+    </div>
+    <div class="form-group"><label class="check-item"><input type="checkbox" id="plShCurrent" checked> Current shareholder</label></div>
+    <div class="modal-err" id="personLinkErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="personLinkCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="personLinkSaveBtn">Save</button>
     </div>
   </div>
 </div>
@@ -867,6 +938,9 @@ const ACT = {
   contact_added:    { label:'Contact added',     icon:'👤', outreach:false },
   contact_edited:   { label:'Contact updated',   icon:'👤', outreach:false },
   contact_removed:  { label:'Contact removed',   icon:'👤', outreach:false },
+  person_linked:    { label:'Person linked',     icon:'🧑‍💼', outreach:false },
+  person_updated:   { label:'Person link updated', icon:'🧑‍💼', outreach:false },
+  person_unlinked:  { label:'Person unlinked',   icon:'🧑‍💼', outreach:false },
 };
 const MANUAL_ACT_TYPES = ['note','letter','call_attempted','call_connected','email','linkedin','warm_intro','leverage_network','meeting_scheduled','meeting_done','in_person','observation','other'];
 
@@ -954,6 +1028,13 @@ let currentCoId = null;
 let editCoId = null;
 let editCtIdx = null;
 let sendCtIdx = null;
+// People & Ownership state
+let currentPersonId = null;
+let personBackTarget = null;      // {type:'company', id} | {type:'list'} — where "← Back" returns to
+let editLinkId = null;            // searchPersonLinks doc id being edited in the person modal, null = add mode
+const companyLinksCache = new Map(); // companyId -> links[] (session cache, invalidated on writes)
+const personLinksCache  = new Map(); // personId  -> links[]
+const personDocCache    = new Map(); // personId  -> person doc (or null if missing)
 let closeActId = null;
 let activityType = 'note';
 let sortCol = 'lastTouchAt';
@@ -1534,7 +1615,8 @@ function sortList(list){
 function renderList(){
   if (viewMode === 'grouped') return renderGrouped();
   if (viewMode === 'map') return renderMap();
-  showEl('tableCard', true); showEl('groupedCard', false); showEl('mapCard', false);
+  if (viewMode === 'people') return renderPeople();
+  showEl('tableCard', true); showEl('groupedCard', false); showEl('mapCard', false); showEl('peopleCard', false);
   const list = sortList(getFiltered());
   document.getElementById('resultsCount').textContent = `${list.length} of ${companies.length}`;
   const tbody = document.getElementById('companyBody');
@@ -1569,7 +1651,7 @@ function rowHtml(c){
 
 // ── Grouped view ─────────────────────────────────────────────────────────────
 function renderGrouped(){
-  showEl('tableCard', false); showEl('groupedCard', true); showEl('mapCard', false); showEl('pagination', false);
+  showEl('tableCard', false); showEl('groupedCard', true); showEl('mapCard', false); showEl('peopleCard', false); showEl('pagination', false);
   const list = sortList(getFiltered());
   document.getElementById('resultsCount').textContent = `${list.length} of ${companies.length}`;
   const groups = {};
@@ -1667,7 +1749,7 @@ function ensureLeafletMap(){
   leafletMap.addLayer(markerClusterGroup);
 }
 function renderMap(){
-  showEl('tableCard', false); showEl('groupedCard', false); showEl('mapCard', true); showEl('pagination', false);
+  showEl('tableCard', false); showEl('groupedCard', false); showEl('mapCard', true); showEl('peopleCard', false); showEl('pagination', false);
   ensureLeafletMap();
   const base = sortList(getFiltered());
   document.getElementById('resultsCount').textContent = `${base.length} of ${companies.length}`;
@@ -1796,13 +1878,14 @@ async function saveMapList(){
 // ── Detail view ──────────────────────────────────────────────────────────────
 async function openDetail(id){
   currentCoId = id;
-  showEl('listView', false); showEl('detailView', true);
+  currentPersonId = null;
+  showEl('listView', false); showEl('personView', false); showEl('detailView', true);
   window.scrollTo(0,0);
   setActiveTab('overview');
   try { await loadActivities(id); } catch(e){ console.error(e); activities = []; }
   renderDetail();
 }
-function backToList(){ showEl('detailView', false); showEl('listView', true); currentCoId = null; renderSummary(); renderList(); }
+function backToList(){ showEl('detailView', false); showEl('personView', false); showEl('listView', true); currentCoId = null; currentPersonId = null; renderSummary(); renderList(); }
 
 async function loadActivities(companyId){
   const snap = await getDocs(query(collection(db,'searchActivities'), where('companyId','==',companyId)));
@@ -1830,7 +1913,7 @@ function renderDetail(){
   document.addEventListener('click', () => menu.classList.remove('open'), { once:true });
   menu.querySelectorAll('.stage-opt').forEach(o => o.addEventListener('click', () => changeStage(o.dataset.stage)));
 
-  renderOverview(c); renderFinancials(c); renderContacts(c); renderActivityLog(); renderDeal(c);
+  renderOverview(c); renderFinancials(c); renderOwnership(c); renderContacts(c); renderActivityLog(); renderDeal(c);
 }
 
 function renderOverview(c){
@@ -1855,6 +1938,7 @@ function renderOverview(c){
         <div class="info-row"><span class="k">Ownership</span><span class="v">${OWNERSHIP_LABELS[c.ownershipType]||'—'}</span></div>
         <div class="info-row"><span class="k">Succession</span><span class="v">${SUCCESSION_LABELS[c.successionSit]||'—'}</span></div>
         <div class="info-row"><span class="k">Independence</span>${independenceBadge(c.independenceIndicator)}</div>
+        <div class="info-row"><span class="k">People</span><span class="v">${c.peopleCounts ? `${c.peopleCounts.sh||0} shareholder${(c.peopleCounts.sh||0)===1?'':'s'} · ${c.peopleCounts.mgmt||0} manager${(c.peopleCounts.mgmt||0)===1?'':'s'}` : '—'}</span></div>
         <div class="info-row"><span class="k">Ultimate owner (GUO)</span><span class="v">${esc(c.guoName||'—')}</span></div>
         <div class="info-row"><span class="k">Auditing firm</span><span class="v">${esc(c.auditingFirm||'—')}</span></div>
         <div class="info-row"><span class="k">BvD ID</span><span class="v">${esc(c.bvdId||'—')}</span></div>
@@ -2080,6 +2164,367 @@ function renderDeal(c){
     ${c.loiTerms?`<div class="card"><div class="sec-title">LOI Terms</div><div style="font-size:0.88rem;white-space:pre-wrap;">${esc(c.loiTerms)}</div></div>`:''}
     ${c.dealNotes?`<div class="card"><div class="sec-title">Deal Notes</div><div style="font-size:0.88rem;white-space:pre-wrap;">${esc(c.dealNotes)}</div></div>`:''}`;
   document.getElementById('editDealBtn').addEventListener('click', openDealModal);
+}
+
+// ── People & Ownership ───────────────────────────────────────────────────────
+// Data model: `searchPeople` (one doc per unique person/entity, deterministic
+// id from personNameKey) + `searchPersonLinks` (one doc per person↔company
+// edge, id `${personId}__${companyId}`). Links carry two independent facets —
+// management (mgmtRoles/mgmtCurrent) and shareholding (shDirectPct/shTotalPct/
+// shCurrent/shDate/shType) — plus denormalised names so tables and graphs
+// render without N extra reads. Never full-loaded: each profile fetches only
+// its own links (auto-indexed single-field equality queries).
+
+async function fetchCompanyLinks(companyId, force=false){
+  if (!force && companyLinksCache.has(companyId)) return companyLinksCache.get(companyId);
+  const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',companyId)));
+  addReads(snap.docs.length || 1);
+  const links = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+  companyLinksCache.set(companyId, links);
+  return links;
+}
+async function fetchPersonLinks(personId, force=false){
+  if (!force && personLinksCache.has(personId)) return personLinksCache.get(personId);
+  const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','==',personId)));
+  addReads(snap.docs.length || 1);
+  const links = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+  personLinksCache.set(personId, links);
+  return links;
+}
+async function fetchPerson(personId, force=false){
+  if (!force && personDocCache.has(personId)) return personDocCache.get(personId);
+  const snap = await getDoc(doc(db,'searchPeople',personId));
+  addReads(1);
+  const p = snap.exists() ? { id:snap.id, ...snap.data() } : null;
+  personDocCache.set(personId, p);
+  return p;
+}
+function invalidatePeopleCaches({ companyId, personId } = {}){
+  if (companyId) companyLinksCache.delete(companyId); else companyLinksCache.clear();
+  if (personId) { personLinksCache.delete(personId); personDocCache.delete(personId); }
+  else { personLinksCache.clear(); personDocCache.clear(); }
+}
+
+// Recompute + persist the denormalised counters after any link write.
+function peopleCountsFrom(links){
+  return {
+    sh:       links.filter(l => l.shCurrent === true).length,
+    mgmt:     links.filter(l => l.mgmtCurrent === true).length,
+    prevSh:   links.filter(l => l.shCurrent === false).length,
+    prevMgmt: links.filter(l => l.mgmtCurrent === false).length,
+  };
+}
+async function recountCompanyPeople(companyId){
+  const links = await fetchCompanyLinks(companyId, true);
+  const counts = peopleCountsFrom(links);
+  await updateDoc(doc(db,'searchCompanies',companyId), { peopleCounts: counts });
+  const local = companies.find(c => c.id === companyId);
+  if (local) local.peopleCounts = counts;
+  return links;
+}
+async function recountPerson(personId){
+  const links = await fetchPersonLinks(personId, true);
+  await updateDoc(doc(db,'searchPeople',personId), {
+    linkCount: links.length,
+    currentLinkCount: links.filter(l => l.shCurrent === true || l.mgmtCurrent === true).length,
+    updatedAt: serverTimestamp(),
+  });
+  personDocCache.delete(personId);
+}
+
+const linkIsShareholder = l => l.shDirectPct != null || l.shTotalPct != null || l.shCurrent != null;
+const linkIsManager     = l => (l.mgmtRoles || []).length > 0 || l.mgmtCurrent != null;
+const fmtPctOwn = v => v == null ? '—' : (Math.round(v * 100) / 100) + '%';
+
+// ── Ownership tab ────────────────────────────────────────────────────────────
+async function renderOwnership(c){
+  const el = document.getElementById('panel-ownership');
+  el.innerHTML = '<div class="card"><div class="sec-title">Ownership & People</div><div style="font-size:0.85rem;color:var(--text-light);">Loading…</div></div>';
+  let links;
+  try { links = await fetchCompanyLinks(c.id); }
+  catch(e){ console.error(e); el.innerHTML = '<div class="card"><div class="sec-title">Ownership & People</div><div class="modal-err" style="display:block;">Failed to load: '+esc(e.message)+'</div></div>'; return; }
+  if (currentCoId !== c.id) return; // user navigated away while we were fetching
+
+  const byStatus = (a, b, cur) => (cur(b) === true) - (cur(a) === true);
+  const sh = links.filter(linkIsShareholder).sort((a,b) => byStatus(a,b,l=>l.shCurrent) || (b.shDirectPct||0) - (a.shDirectPct||0));
+  const mg = links.filter(linkIsManager).sort((a,b) => byStatus(a,b,l=>l.mgmtCurrent) || String(a.personName).localeCompare(String(b.personName)));
+
+  const nameCell = l => `<span class="person-link" data-person="${esc(l.personId)}">${esc(l.personName || '—')}</span>${l.personEntityType === 'entity' ? ' <span class="badge badge-grey" title="Corporate entity">🏢</span>' : ''}`;
+  const rowActions = l => `<button class="btn btn--icon btn--ghost" data-editlink="${esc(l.id)}" title="Edit">✎</button><button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove link">✕</button>`;
+
+  const shRows = sh.map(l => `
+    <tr class="${l.shCurrent === false ? 'prev' : ''}">
+      <td>${nameCell(l)}</td>
+      <td class="num">${fmtPctOwn(l.shDirectPct)}</td>
+      <td class="num">${fmtPctOwn(l.shTotalPct)}</td>
+      <td>${l.alsoManager || linkIsManager(l) ? '✓' : '—'}</td>
+      <td>${esc(l.shDate || '—')}</td>
+      <td>${l.shCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
+      <td style="white-space:nowrap;">${rowActions(l)}</td>
+    </tr>`).join('');
+  const mgRows = mg.map(l => `
+    <tr class="${l.mgmtCurrent === false ? 'prev' : ''}">
+      <td>${nameCell(l)}</td>
+      <td>${esc((l.mgmtRoles || []).join(' · ') || '—')}</td>
+      <td>${linkIsShareholder(l) ? '✓' : '—'}</td>
+      <td>${l.mgmtCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
+      <td style="white-space:nowrap;">${l.mgmtCurrent !== false ? `<button class="btn btn--icon btn--ghost" data-tocontact="${esc(l.id)}" title="Copy to Contacts">👤+</button>` : ''}${rowActions(l)}</td>
+    </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="sec-title" style="margin-bottom:0;">Shareholders</div>
+        <button class="btn btn--ghost btn--sm" id="addPersonBtn">＋ Add Person</button>
+      </div>
+      ${sh.length ? `<div style="overflow-x:auto;"><table class="own-table">
+        <thead><tr><th>Name</th><th class="num">Direct %</th><th class="num">Total %</th><th>Also mgr</th><th>As of</th><th>Status</th><th></th></tr></thead>
+        <tbody>${shRows}</tbody></table></div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No shareholder data yet — import people or add manually.</div>'}
+    </div>
+    <div class="card">
+      <div class="sec-title">Management</div>
+      ${mg.length ? `<div style="overflow-x:auto;"><table class="own-table">
+        <thead><tr><th>Name</th><th>Role(s)</th><th>Also shareholder</th><th>Status</th><th></th></tr></thead>
+        <tbody>${mgRows}</tbody></table></div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No management data yet.</div>'}
+      <div class="own-legend"><span class="cur">currently</span><span class="prv">previously</span></div>
+    </div>
+    <div class="card" id="ownGraphCard"><div class="sec-title">Network</div><div id="ownGraph"></div></div>`;
+  renderNetworkGraph(document.getElementById('ownGraph'), 'company', c.id);
+}
+
+// ── Person link modal (manual add/edit) ──────────────────────────────────────
+function openPersonLink(linkId){
+  const c = getCompany(); if (!c) return;
+  editLinkId = linkId || null;
+  const link = linkId ? (companyLinksCache.get(c.id) || []).find(l => l.id === linkId) : null;
+  document.getElementById('personLinkModalTitle').textContent = link ? 'Edit Person Link' : 'Add Person';
+  document.getElementById('plName').value = link ? (link.personName || '') : '';
+  document.getElementById('plName').readOnly = !!link; // renaming would re-key the person doc — edit via a fresh add instead
+  document.getElementById('plCountry').value = '';
+  document.getElementById('plRoles').value = link ? (link.mgmtRoles || []).join(', ') : '';
+  document.getElementById('plMgmtCurrent').checked = link ? link.mgmtCurrent !== false : true;
+  document.getElementById('plDirectPct').value = link && link.shDirectPct != null ? link.shDirectPct : '';
+  document.getElementById('plTotalPct').value = link && link.shTotalPct != null ? link.shTotalPct : '';
+  document.getElementById('plDate').value = link ? (link.shDate || '') : '';
+  document.getElementById('plShCurrent').checked = link ? link.shCurrent !== false : true;
+  document.getElementById('personLinkErr').style.display = 'none';
+  showEl('personLinkModal', true);
+}
+async function savePersonLink(){
+  const c = getCompany(); if (!c) return;
+  const nameRaw = document.getElementById('plName').value.trim();
+  const errEl = document.getElementById('personLinkErr');
+  if (!nameRaw){ errEl.textContent = 'Name is required.'; errEl.style.display = 'block'; return; }
+  const btn = document.getElementById('personLinkSaveBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Saving…';
+  try {
+    const nameKey = personNameKey(nameRaw);
+    const pid = editLinkId ? editLinkId.split('__')[0] : personDocId(nameKey);
+    const roles = document.getElementById('plRoles').value.split(',').map(s => s.trim()).filter(Boolean);
+    const directPct = pnum(document.getElementById('plDirectPct').value);
+    const totalPct = pnum(document.getElementById('plTotalPct').value);
+    const isSh = directPct != null || totalPct != null;
+    const country = document.getElementById('plCountry').value.trim() || null;
+
+    if (!editLinkId){
+      const existing = await fetchPerson(pid);
+      const personData = {
+        name: personDisplayName(nameRaw), nameKey, nameTokens: personNameTokens(nameKey),
+        entityType: 'person', updatedAt: serverTimestamp(),
+      };
+      if (country) personData.country = country;
+      if (!existing){ personData.createdAt = serverTimestamp(); personData.linkCount = 0; personData.currentLinkCount = 0; personData.notes = null; personData.uci = null; personData.matchedCompanyId = null; }
+      await setDoc(doc(db,'searchPeople',pid), personData, { merge: true });
+      personDocCache.delete(pid);
+    }
+    const linkId = editLinkId || `${pid}__${c.id}`;
+    const person = await fetchPerson(pid);
+    await setDoc(doc(db,'searchPersonLinks',linkId), {
+      personId: pid, companyId: c.id,
+      personName: person?.name || personDisplayName(nameRaw), companyName: c.name || '',
+      personEntityType: person?.entityType || 'person',
+      personMatchedCompanyId: person?.matchedCompanyId || null,
+      mgmtRoles: roles, mgmtCurrent: roles.length ? document.getElementById('plMgmtCurrent').checked : null,
+      shDirectPct: directPct, shTotalPct: totalPct,
+      shCurrent: isSh ? document.getElementById('plShCurrent').checked : null,
+      shDate: document.getElementById('plDate').value.trim() || null,
+      shType: isSh ? 'I' : null,
+      alsoManager: roles.length > 0,
+      source: 'manual', updatedAt: serverTimestamp(),
+    }, { merge: true });
+    invalidatePeopleCaches({ companyId: c.id, personId: pid });
+    await recountCompanyPeople(c.id);
+    await recountPerson(pid);
+    await logAuto(c.id, editLinkId ? 'person_updated' : 'person_linked', `${editLinkId ? 'Updated' : 'Linked'} person: ${personDisplayName(nameRaw)}`);
+    showEl('personLinkModal', false);
+    renderOwnership(c); renderOverview(c);
+  } catch(e){ console.error(e); errEl.textContent = e.message; errEl.style.display = 'block'; }
+  finally { btn.disabled = false; btn.innerHTML = 'Save'; }
+}
+async function removePersonLink(linkId){
+  const c = getCompany(); if (!c) return;
+  const link = (companyLinksCache.get(c.id) || []).find(l => l.id === linkId);
+  if (!confirm(`Remove ${link?.personName || 'this person'} from ${c.name}? The person stays in the People database.`)) return;
+  try {
+    await deleteDoc(doc(db,'searchPersonLinks',linkId));
+    invalidatePeopleCaches({ companyId: c.id, personId: link?.personId });
+    await recountCompanyPeople(c.id);
+    if (link?.personId) await recountPerson(link.personId);
+    await logAuto(c.id, 'person_unlinked', `Unlinked person: ${link?.personName || linkId}`);
+    renderOwnership(c); renderOverview(c);
+  } catch(e){ alert('Error: ' + e.message); }
+}
+// Bridge governance → outreach: copy a manager into the company's Contacts array.
+async function copyLinkToContacts(linkId){
+  const c = getCompany(); if (!c) return;
+  const link = (companyLinksCache.get(c.id) || []).find(l => l.id === linkId);
+  if (!link) return;
+  const contacts = [...(c.contacts || [])];
+  if (contacts.some(ct => personNameKey(ct.name) === personNameKey(link.personName))){ alert(`${link.personName} is already in Contacts.`); return; }
+  contacts.push({ name: link.personName, role: (link.mgmtRoles || [])[0] || 'Management Team', email:'', phone:'', linkedin:'', source:'online_research', notes:'From Orbis ownership data', isPrimary: contacts.length === 0 });
+  try {
+    await updateDoc(doc(db,'searchCompanies',c.id), { contacts, updatedAt: serverTimestamp() });
+    c.contacts = contacts; cacheCompanies();
+    await logAuto(c.id, 'contact_added', `Added contact from Ownership: ${link.personName}`);
+    renderContacts(c);
+    alert(`${link.personName} copied to Contacts.`);
+  } catch(e){ alert('Error: ' + e.message); }
+}
+
+// ── Person profile view ──────────────────────────────────────────────────────
+async function openPerson(personId, backTarget){
+  personBackTarget = backTarget || (currentCoId ? { type:'company', id: currentCoId } : { type:'list' });
+  currentPersonId = personId;
+  showEl('listView', false); showEl('detailView', false); showEl('personView', true);
+  window.scrollTo(0,0);
+  document.getElementById('pName').textContent = '…';
+  document.getElementById('pMeta').innerHTML = '';
+  document.getElementById('personBody').innerHTML = '<div class="card" style="font-size:0.85rem;color:var(--text-light);">Loading…</div>';
+  let p, links;
+  try { [p, links] = await Promise.all([fetchPerson(personId), fetchPersonLinks(personId)]); }
+  catch(e){ console.error(e); document.getElementById('personBody').innerHTML = '<div class="card"><div class="modal-err" style="display:block;">Failed to load: '+esc(e.message)+'</div></div>'; return; }
+  if (currentPersonId !== personId) return;
+  if (!p){ document.getElementById('pName').textContent = 'Person not found'; document.getElementById('personBody').innerHTML = ''; return; }
+  renderPersonView(p, links);
+}
+function backFromPerson(){
+  const target = personBackTarget; currentPersonId = null; personBackTarget = null;
+  showEl('personView', false);
+  if (target?.type === 'company' && target.id) openDetail(target.id);
+  else { showEl('listView', true); renderList(); }
+}
+function renderPersonView(p, links){
+  document.getElementById('pName').textContent = p.name || '—';
+  const current = links.filter(l => l.shCurrent === true || l.mgmtCurrent === true).length;
+  document.getElementById('pMeta').innerHTML = `
+    ${p.entityType === 'entity' ? '<span class="badge badge-grey">🏢 Corporate entity</span>' : '<span class="badge badge-blue">🧑 Person</span>'}
+    ${p.country ? `<span class="badge badge-grey">${esc(p.country)}</span>` : ''}
+    <span class="badge badge-grey">${links.length} position${links.length === 1 ? '' : 's'} · ${current} current</span>`;
+  const rows = [...links].sort((a,b) => ((b.shCurrent === true || b.mgmtCurrent === true) - (a.shCurrent === true || a.mgmtCurrent === true)) || String(a.companyName).localeCompare(String(b.companyName)))
+    .map(l => {
+      const isPrev = !(l.shCurrent === true || l.mgmtCurrent === true);
+      const roleBits = [];
+      if (linkIsManager(l)) roleBits.push(esc((l.mgmtRoles || []).join(' · ') || 'Manager'));
+      if (linkIsShareholder(l)) roleBits.push('Shareholder');
+      return `
+      <tr class="${isPrev ? 'prev' : ''}">
+        <td><span class="person-link" data-gotoco="${esc(l.companyId)}">${esc(l.companyName || '—')}</span></td>
+        <td>${roleBits.join(' · ') || '—'}</td>
+        <td class="num">${fmtPctOwn(l.shDirectPct)}</td>
+        <td class="num">${fmtPctOwn(l.shTotalPct)}</td>
+        <td>${esc(l.shDate || '—')}</td>
+        <td>${isPrev ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
+      </tr>`;
+    }).join('');
+  document.getElementById('personBody').innerHTML = `
+    <div class="card">
+      <div class="sec-title">Positions</div>
+      ${links.length ? `<div style="overflow-x:auto;"><table class="own-table">
+        <thead><tr><th>Company</th><th>Role</th><th class="num">Direct %</th><th class="num">Total %</th><th>As of</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No known positions.</div>'}
+      <div class="own-legend"><span class="cur">currently</span><span class="prv">previously</span></div>
+    </div>
+    <div class="card">
+      <div class="sec-title">Notes</div>
+      <textarea class="field" id="personNotes" rows="3" placeholder="Private notes about this person…">${esc(p.notes || '')}</textarea>
+      <div style="margin-top:8px;"><button class="btn btn--ghost btn--sm" id="savePersonNotesBtn">Save Notes</button></div>
+    </div>
+    <div class="card"><div class="sec-title">Network</div><div id="personGraph"></div></div>`;
+  document.getElementById('savePersonNotesBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('savePersonNotesBtn'); btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      await updateDoc(doc(db,'searchPeople',p.id), { notes: document.getElementById('personNotes').value.trim() || null, updatedAt: serverTimestamp() });
+      personDocCache.delete(p.id);
+      btn.textContent = '✓ Saved'; setTimeout(() => { btn.textContent = 'Save Notes'; btn.disabled = false; }, 1200);
+    } catch(e){ alert('Error: ' + e.message); btn.textContent = 'Save Notes'; btn.disabled = false; }
+  });
+  renderNetworkGraph(document.getElementById('personGraph'), 'person', p.id);
+}
+
+// ── People view (4th view mode) ──────────────────────────────────────────────
+// Search-driven, never full-loaded: the people collection is designed to reach
+// ~60-100k docs at full-universe scale, so this queries by name token
+// (array-contains, auto-indexed) or lists the most recent, always capped.
+let peopleSearchSeq = 0;
+async function renderPeople(){
+  showEl('tableCard', false); showEl('groupedCard', false); showEl('mapCard', false); showEl('peopleCard', true); showEl('pagination', false);
+  const term = document.getElementById('peopleSearchInput').value.trim();
+  const tbody = document.getElementById('peopleBody');
+  const countEl = document.getElementById('peopleResultsCount');
+  const seq = ++peopleSearchSeq;
+  countEl.textContent = 'Searching…';
+  let docs = [];
+  try {
+    const col = collection(db,'searchPeople');
+    if (term){
+      const key = personNameKey(term);
+      const tokens = personNameTokens(key);
+      // Whole-word token match first (handles "silva", "luis silva" in any order);
+      // fall back to a prefix range scan for partial words ("silv").
+      if (tokens.length){
+        const snap = await getDocs(query(col, where('nameTokens','array-contains',tokens[0]), limit(200)));
+        addReads(snap.docs.length || 1);
+        docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+      }
+      if (!docs.length){
+        const snap = await getDocs(query(col, orderBy('nameKey'), where('nameKey','>=',key), where('nameKey','<=',key+''), limit(200)));
+        addReads(snap.docs.length || 1);
+        docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+      }
+      // Refine client-side so multi-word searches require every token to match.
+      if (tokens.length > 1) docs = docs.filter(p => tokens.every(t => (p.nameTokens||[]).includes(t) || String(p.nameKey||'').includes(t)));
+    } else {
+      const snap = await getDocs(query(col, orderBy('updatedAt','desc'), limit(100)));
+      addReads(snap.docs.length || 1);
+      docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    }
+  } catch(e){
+    console.error(e);
+    if (seq !== peopleSearchSeq) return;
+    countEl.textContent = '';
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty__title">Search failed</div><div>${esc(e.message)}</div></div></td></tr>`;
+    return;
+  }
+  if (seq !== peopleSearchSeq) return; // a newer keystroke already superseded this query
+  docs.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
+  countEl.textContent = `${docs.length} ${docs.length === 1 ? 'person' : 'people'}${docs.length >= 200 ? ' (showing first 200 — refine search)' : ''}`;
+  if (!docs.length){
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty__icon">🧑‍💼</div><div class="empty__title">${term ? 'No people found' : 'No people yet'}</div><div>${term ? 'Try a different name.' : 'Import ownership data, or add a person from a company Ownership tab.'}</div></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = docs.map(p => `
+    <tr class="row-clickable" data-person="${esc(p.id)}" style="cursor:pointer;">
+      <td><span class="person-link">${esc(p.name || '—')}</span></td>
+      <td>${p.entityType === 'entity' ? '<span class="badge badge-grey">🏢 Entity</span>' : '<span class="badge badge-blue">🧑 Person</span>'}</td>
+      <td class="num">${p.linkCount ?? 0}</td>
+      <td class="num">${p.currentLinkCount ?? 0}</td>
+      <td>${esc(p.country || '—')}</td>
+    </tr>`).join('');
+}
+
+// Placeholder until the graph phase lands — keeps both call sites stable.
+function renderNetworkGraph(container, focusType, focusId){
+  if (!container) return;
+  container.innerHTML = '<div style="font-size:0.82rem;color:var(--text-light);">Network graph — coming in the next development phase.</div>';
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
@@ -2816,6 +3261,30 @@ function deburr(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
 function onlyDigits(s){ return String(s||'').replace(/\D/g,''); }
 // Normalised company name for soft duplicate warnings (strips accents, punctuation, legal forms).
 function normName(s){ return deburr(String(s||'').replace(/[.,\-–—&/]/g,' ')).replace(/\b(lda|sa|unipessoal|limitada|sgps|eireli|ltda|s a)\b/g,' ').replace(/\s+/g,' ').trim(); }
+
+// ── People helpers ───────────────────────────────────────────────────────────
+// Orbis person rows carry no stable ID in list exports and salutations are
+// inconsistent between sections ("MR RUI PAULO…" vs "RUI PAULO…", "MS" vs
+// "MRS" for the same person — verified against real profile exports). The
+// normalised name is therefore the dedup key. Known limitation: two distinct
+// people with the exact same full name merge into one node (rare with
+// Portuguese 4-5 word full names; documented in the spec).
+const PERSON_SALUT = /^(mr|mrs|ms|miss|dr|dra|eng|engo|enga|prof|sr|sra|d)\s+/;
+function personNameKey(name){
+  let s = deburr(String(name||'')).replace(/[.,\-–—&/()']/g,' ').replace(/\s+/g,' ').trim();
+  let prev; do { prev = s; s = s.replace(PERSON_SALUT,''); } while (s !== prev); // strip stacked salutations
+  return s.toUpperCase();
+}
+// Deterministic doc id from the name key — idempotent imports, no read-before-write.
+function personDocId(nameKey){ return 'n_' + nameKey.replace(/\s+/g,'_').slice(0,140); }
+const PERSON_STOPWORDS = new Set(['DE','DA','DO','DOS','DAS','E']);
+function personNameTokens(nameKey){ return [...new Set(nameKey.split(' ').filter(w => w.length > 1 && !PERSON_STOPWORDS.has(w)))]; }
+// Display prettifier: "MR LUIS CARLOS DA SILVA SA" -> "Luis Carlos da Silva Sa"
+function personDisplayName(raw){
+  let s = String(raw||'').replace(/\s+/g,' ').trim();
+  let prev; do { prev = s; s = s.replace(/^(MR|MRS|MS|MISS|DR|DRA|ENG|PROF|SR|SRA)\.?\s+/i,''); } while (s !== prev);
+  return s.toLowerCase().split(' ').map(w => PERSON_STOPWORDS.has(w.toUpperCase()) ? w : w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+}
 const NUTS2_MAP = { 'norte':'norte','centro':'centro','lisboa':'lisboa','área metropolitana de lisboa':'lisboa','area metropolitana de lisboa':'lisboa','grande lisboa':'lisboa','alentejo':'alentejo','algarve':'algarve','açores':'acores','acores':'acores','r. a. açores':'acores','região autónoma dos açores':'acores','madeira':'madeira','r. a. madeira':'madeira','região autónoma da madeira':'madeira' };
 function mapRegions(s){
   if(!s) return [];
@@ -3118,6 +3587,26 @@ document.getElementById('deleteConfirmBtn').addEventListener('click', confirmDel
 document.getElementById('backBtn').addEventListener('click', backToList);
 document.getElementById('contactCancelBtn').addEventListener('click', () => showEl('contactModal', false));
 document.getElementById('contactSaveBtn').addEventListener('click', saveContact);
+// People & Ownership
+document.getElementById('personBackBtn').addEventListener('click', backFromPerson);
+document.getElementById('personLinkCancelBtn').addEventListener('click', () => showEl('personLinkModal', false));
+document.getElementById('personLinkSaveBtn').addEventListener('click', savePersonLink);
+document.getElementById('panel-ownership').addEventListener('click', e => {
+  const t = e.target.closest('[data-person],[data-gotoco],[data-editlink],[data-rmlink],[data-tocontact],#addPersonBtn');
+  if (!t) return;
+  if (t.id === 'addPersonBtn') openPersonLink(null);
+  else if (t.dataset.person) openPerson(t.dataset.person, { type:'company', id: currentCoId });
+  else if (t.dataset.gotoco) openDetail(t.dataset.gotoco);
+  else if (t.dataset.editlink) openPersonLink(t.dataset.editlink);
+  else if (t.dataset.rmlink) removePersonLink(t.dataset.rmlink);
+  else if (t.dataset.tocontact) copyLinkToContacts(t.dataset.tocontact);
+});
+document.getElementById('personBody').addEventListener('click', e => {
+  const t = e.target.closest('[data-gotoco],[data-person]');
+  if (!t) return;
+  if (t.dataset.gotoco) openDetail(t.dataset.gotoco);
+  else if (t.dataset.person && t.dataset.person !== currentPersonId) openPerson(t.dataset.person, personBackTarget);
+});
 document.getElementById('semCancelBtn').addEventListener('click', () => showEl('sendEmailModal', false));
 document.getElementById('semSendBtn').addEventListener('click', sendCompanyEmail);
 document.getElementById('semFrom').addEventListener('change', updateCcHint);
@@ -3174,11 +3663,12 @@ function openMiniMap(c){
 
 // View toggle — Grouped and Map are inherently full-dataset views (sector
 // aggregates, national coverage), so switching to either needs the full load.
-const viewBtns = { list:'viewListBtn', grouped:'viewGroupedBtn', map:'viewMapBtn' };
+const viewBtns = { list:'viewListBtn', grouped:'viewGroupedBtn', map:'viewMapBtn', people:'viewPeopleBtn' };
 async function setViewMode(mode){
   viewMode = mode;
   Object.values(viewBtns).forEach(id => document.getElementById(id).classList.remove('active'));
   document.getElementById(viewBtns[mode]).classList.add('active');
+  // People view queries its own collection — it needs no company dataset at all.
   if (mode === 'grouped' || mode === 'map') await ensureFullDataset();
   if (mode === 'map') mapSidebarVisibleCount = MAP_SIDEBAR_PAGE;
   renderList();
@@ -3186,6 +3676,18 @@ async function setViewMode(mode){
 document.getElementById('viewListBtn').addEventListener('click', () => setViewMode('list'));
 document.getElementById('viewGroupedBtn').addEventListener('click', () => setViewMode('grouped'));
 document.getElementById('viewMapBtn').addEventListener('click', () => setViewMode('map'));
+document.getElementById('viewPeopleBtn').addEventListener('click', () => setViewMode('people'));
+{ // People view: debounced search + row click-through
+  let peopleDebounce = null;
+  document.getElementById('peopleSearchInput').addEventListener('input', () => {
+    clearTimeout(peopleDebounce);
+    peopleDebounce = setTimeout(() => { if (viewMode === 'people') renderPeople(); }, 300);
+  });
+  document.getElementById('peopleBody').addEventListener('click', e => {
+    const row = e.target.closest('[data-person]');
+    if (row) openPerson(row.dataset.person, { type:'list' });
+  });
+}
 
 document.getElementById('mapModeFilteredBtn').addEventListener('click', () => {
   mapMode = 'filtered';
@@ -3257,7 +3759,7 @@ document.getElementById('cNaceCode').addEventListener('blur', () => {
 });
 
 // Overlay click-to-close
-['companyModal','contactModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal','reportModal','mapListsModal','miniMapModal'].forEach(id => {
+['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal','reportModal','mapListsModal','miniMapModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id, false); });
 });
 </script>
