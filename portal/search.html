@@ -851,6 +851,10 @@
     <div id="peopleImportOpts" style="display:none;margin-bottom:14px;padding:12px;background:#FAFAF8;border:1px solid var(--border);border-radius:var(--radius);">
       <label class="check-item" style="font-weight:600;"><input type="checkbox" id="peopleCreateMissing"> Also create companies that aren't in the CRM</label>
       <div style="font-size:0.76rem;color:var(--text-light);margin-top:8px;font-weight:400;text-transform:none;letter-spacing:0;">Off by default. When on, missing companies are created with just name + NIF and tagged <code>ownership_import</code> so you can find or remove them later.</div>
+      <div id="peoplePrevRow" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+        <label class="check-item" style="font-weight:600;"><input type="checkbox" id="peopleAllPrevious"> This file lists <em>previous</em> directors / managers</label>
+        <div style="font-size:0.76rem;color:var(--text-light);margin-top:8px;font-weight:400;text-transform:none;letter-spacing:0;">Shown because the file has no current/previous column. Leave off for a current-management export; tick it for a "Previous directors &amp; managers" export so they're recorded as past roles instead of current ones.</div>
+      </div>
     </div>
     <div id="peopleImportPreview" style="display:none;">
       <div style="font-size:0.83rem;font-weight:600;margin-bottom:10px;" id="peopleImportSummary"></div>
@@ -2579,18 +2583,32 @@ const PEOPLE_ALIAS = {
   shTotal:     ['sh - total %'],
   shDate:      ['sh - information date'],
   shMgr:       ['sh - also a manager'],
-  // Directors & Managers export (second file type)
-  dmName:      ['dm - full name','dm - name','director/manager name'],
-  dmUci:       ['dm - uci'],
-  dmJob:       ['dm - job title','dm - position','dm - function'],
-  dmCurrent:   ['dm - current or previous','dm - current/previous','dm - status'],
-  dmType:      ['dm - type'],
-  dmCountry:   ['dm - country iso code'],
+  // Directors & Managers export. Note Orbis prefixes these with a bare "DM"
+  // and NO separator ("DMFull name", not "DM - Full name"), and sometimes
+  // appends a stray field number ("DMCurrent or previous 66") — hence the
+  // prefix-match fallback in peopleColIndex() rather than exact names only.
+  dmName:      ['dmfull name','dm - full name','dm name','director/manager name'],
+  dmUci:       ['dmuci (unique contact identifier)','dmuci','dm - uci'],
+  dmJob:       ['dmjob title (in english)','dmjob title in english','dm - job title'],
+  dmJobOrig:   ['dmjob title'],
+  dmCurrent:   ['dmcurrent or previous','dm - current or previous','dmstatus'],
+  dmType:      ['dmindividual or company','dm - type'],
+  dmCountry:   ['dmcountry iso code','dm - country iso code'],
+  dmAlsoSh:    ['dmalso a shareholder'],
+  dmRoleCount: ['dmno of cos in which a current role is held'],
+  dmLevel:     ['dmlevel of responsibility'],
 };
 function peopleColIndex(headers, key){
   const want = PEOPLE_ALIAS[key] || [];
   for (const w of want){
     const i = headers.findIndex(h => h === w);
+    if (i !== -1) return i;
+  }
+  // Orbis appends a stray field number to some headers ("DMCurrent or previous 66"),
+  // so fall back to a prefix match — longest alias first so "DMJob title (in
+  // English)" can't be swallowed by the shorter "DMJob title".
+  for (const w of [...want].sort((a,b) => b.length - a.length)){
+    const i = headers.findIndex(h => h.startsWith(w));
     if (i !== -1) return i;
   }
   return -1;
@@ -2659,6 +2677,11 @@ function parsePeopleRows(rows){
   const out = [];
   const unmatched = new Map();   // nif|name -> {name, nif}
   let rowsSeen = 0, skippedNoPeople = 0;
+  // Whether the file actually carried a usable current/previous column. Without
+  // it every director would silently default to "current" — which would be
+  // actively wrong for a *Previous directors* export, so the preview says so
+  // and offers an explicit override rather than guessing.
+  let sawStatusCol = false;
 
   for (let r = hi + 1; r < rows.length; r++){
     const row = rows[r];
@@ -2692,7 +2715,12 @@ function parsePeopleRows(rows){
     const dateL  = mode === 'shareholders' ? zip('shDate')   : null;
     const mgrL   = mode === 'shareholders' ? zip('shMgr')    : null;
     const jobL   = mode === 'management'   ? zip('dmJob')    : null;
+    const jobOrigL = mode === 'management' ? zip('dmJobOrig'): null;  // Portuguese title, e.g. "Sócio Gerente"
     const curL   = mode === 'management'   ? zip('dmCurrent'): null;
+    const alsoShL= mode === 'management'   ? zip('dmAlsoSh') : null;
+    const rcL    = mode === 'management'   ? zip('dmRoleCount') : null;
+    const lvlL   = mode === 'management'   ? zip('dmLevel')  : null;
+    if (mode === 'management' && curL) sawStatusCol = true;
 
     for (let i = 0; i < names.length; i++){
       const rawName = ownClean(names[i]);
@@ -2717,13 +2745,54 @@ function parsePeopleRows(rows){
         shTotalPct:  totL ? ownPct(totL[i]) : null,
         shDate:      dateL ? ownClean(dateL[i]) : '',
         // Shareholders file: 'Current manager' also tells us they manage the company.
+        // Management file: "DMAlso a shareholder" = Yes tells us the reverse.
         alsoManager: /current manager/i.test(mgrStr),
-        mgmtRoles:   jobL ? ownClean(jobL[i]).split(/;|\r?\n/).map(s=>s.trim()).filter(Boolean) : [],
-        mgmtCurrentFromFile: mode === 'management' ? !/previous|former/i.test(curStr) : (/current manager/i.test(mgrStr) ? true : null),
+        alsoShareholder: alsoShL ? /^y/i.test(ownClean(alsoShL[i])) : false,
+        // Keep both the English and the original-language title ("Manager-Partner;
+        // Shareholder (Minority)" + "Sócio Gerente"), de-duplicated.
+        mgmtRoles: [...new Set([
+          ...(jobL ? ownClean(jobL[i]).split(/;|\r?\n/) : []),
+          ...(jobOrigL ? ownClean(jobOrigL[i]).split(/;|\r?\n/) : []),
+        ].map(s => s.trim()).filter(Boolean))],
+        mgmtLevel: lvlL ? ownClean(lvlL[i]) : '',
+        // How many companies Orbis knows this person currently holds a role in —
+        // a hint that more of their network exists beyond what's been imported.
+        orbisRoleCount: rcL ? (parseInt(ownClean(rcL[i]), 10) || null) : null,
+        // null = "file didn't say"; resolved at import time from the explicit
+        // toggle, so a missing status column can never silently mean "current".
+        mgmtCurrentFromFile: mode === 'management'
+          ? (curStr ? !/previous|former|resigned|ceased/i.test(curStr) : null)
+          : (/current manager/i.test(mgrStr) ? true : null),
       });
       if (!company) unmatched.set(coNif || normName(coName), { name: coName, nif: coNif });
     }
   }
+
+  // A person can appear MORE THAN ONCE for the same company — Orbis lists one
+  // row per role, so e.g. Henrique Lisboa Pereira shows twice at HIDROMARINHA
+  // ("Director General" and "Manager-Partner; Shareholder (Minority)"). Since a
+  // link's doc id is `${personId}__${companyId}`, writing them separately would
+  // make the second silently overwrite the first and lose a role. Merge here:
+  // union the roles, OR the flags, and keep "current" if any row says current.
+  const merged = new Map();
+  let mergedDupes = 0;
+  for (const o of out){
+    const k = `${o.personId}__${o.companyId || o.fileCompanyName}`;
+    const prev = merged.get(k);
+    if (!prev){ merged.set(k, o); continue; }
+    mergedDupes++;
+    prev.mgmtRoles = [...new Set([...prev.mgmtRoles, ...o.mgmtRoles])];
+    prev.alsoManager = prev.alsoManager || o.alsoManager;
+    prev.alsoShareholder = prev.alsoShareholder || o.alsoShareholder;
+    if (prev.mgmtCurrentFromFile !== true && o.mgmtCurrentFromFile === true) prev.mgmtCurrentFromFile = true;
+    if (prev.shDirectPct == null) prev.shDirectPct = o.shDirectPct;
+    if (prev.shTotalPct == null) prev.shTotalPct = o.shTotalPct;
+    if (!prev.shDate) prev.shDate = o.shDate;
+    if (!prev.orbisRoleCount) prev.orbisRoleCount = o.orbisRoleCount;
+    // "Highest executive" beats "Unspecified executive" as a description.
+    if (/highest/i.test(o.mgmtLevel || '')) prev.mgmtLevel = o.mgmtLevel;
+  }
+  out.length = 0; out.push(...merged.values());
 
   const people = new Set(out.map(o => o.personId));
   const cos = new Set(out.filter(o => o.companyId).map(o => o.companyId));
@@ -2731,7 +2800,9 @@ function parsePeopleRows(rows){
   peopleImportStats = { mode, rowsSeen, links: out.length, people: people.size, companiesMatched: cos.size,
     unmatched: [...unmatched.values()], skippedNoPeople,
     matchedByName: out.filter(o => o.matchedBy === 'name').length,
-    withUci: out.filter(o => o.uci).length, entities: out.filter(o => o.entityType === 'entity').length };
+    withUci: out.filter(o => o.uci).length, entities: out.filter(o => o.entityType === 'entity').length,
+    sawStatusCol, mergedDupes,
+    unknownStatus: out.filter(o => o.mode === 'management' && o.mgmtCurrentFromFile === null).length };
   return peopleImportStats;
 }
 
@@ -2744,10 +2815,13 @@ function renderPeopleImportPreview(){
   ];
   if (s.withUci) bits.push(`${s.withUci} keyed on Orbis UCI`);
   if (s.entities) bits.push(`${s.entities} corporate holder${s.entities===1?'':'s'}`);
+  if (s.mergedDupes) bits.push(`${s.mergedDupes} extra role row${s.mergedDupes===1?'':'s'} merged`);
   let warn = '';
   if (s.unmatched.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.unmatched.length} compan${s.unmatched.length===1?'y':'ies'} not in the CRM — skipped unless you tick the box above: ${esc(s.unmatched.slice(0,4).map(u=>u.name).join(', '))}${s.unmatched.length>4?` +${s.unmatched.length-4} more`:''}</div>`;
   if (s.matchedByName) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.matchedByName} link${s.matchedByName===1?'':'s'} matched by company <em>name</em> (no NIF/BvD in the file) — verify before importing.</div>`;
+  if (s.mode === 'management' && !s.sawStatusCol) warn += `<div style="margin-top:6px;color:#B45309;">⚠ No current/previous column found — use the checkbox above to say which kind of export this is.</div>`;
   document.getElementById('peopleImportSummary').innerHTML = bits.join(' · ') + warn;
+  showEl('peoplePrevRow', s.mode === 'management' && !s.sawStatusCol);
 
   document.getElementById('peopleImportBody').innerHTML = peopleImportRows.slice(0, 200).map(r => `
     <tr${r.unmatched ? ' style="opacity:.55;"' : ''}>
@@ -2755,7 +2829,7 @@ function renderPeopleImportPreview(){
       <td>${esc(r.personName)}</td>
       <td>${r.entityType === 'entity' ? '🏢 Entity' : '🧑 Person'}</td>
       <td>${r.shDirectPct != null ? r.shDirectPct + '%' : '—'}</td>
-      <td>${r.alsoManager || r.mgmtRoles.length ? '✓' : '—'}</td>
+      <td>${r.mgmtRoles.length ? esc(r.mgmtRoles.join(' · ')) : (r.alsoManager ? '✓' : '—')}</td>
       <td>${r.unmatched ? '<span class="badge badge-warn">company not in CRM</span>' : '<span class="badge badge-green">ready</span>'}</td>
     </tr>`).join('');
   showEl('peopleImportOpts', true);
@@ -2774,6 +2848,7 @@ async function confirmPeopleImport(){
   const btn = document.getElementById('peopleImportConfirmBtn');
   const errEl = document.getElementById('peopleImportErr'); errEl.style.display = 'none';
   const createMissing = document.getElementById('peopleCreateMissing').checked;
+  const allPrevious = document.getElementById('peopleAllPrevious').checked;
   const rows = peopleImportRows.filter(r => createMissing || !r.unmatched);
   if (!rows.length) return;
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
@@ -2814,6 +2889,7 @@ async function confirmPeopleImport(){
         nif: r.holderNif || null,
         matchedCompanyId: r.holderNif ? (nifToCo.get(r.holderNif) || null) : null,
         country: r.country && r.country.length <= 3 ? r.country : null,
+        ...(r.orbisRoleCount ? { orbisRoleCount: r.orbisRoleCount } : {}),
         source: 'orbis', updatedAt: serverTimestamp(),
       }, { merge: true });
       if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); done += 450; btn.innerHTML = `<span class="spin-sm"></span>People… ${done}/${byPerson.size}`; }
@@ -2838,7 +2914,12 @@ async function confirmPeopleImport(){
         payload.alsoManager = r.alsoManager;
         if (r.mgmtCurrentFromFile === true) payload.mgmtCurrent = true; // "Current manager", role unknown
       } else {
-        payload.mgmtRoles = r.mgmtRoles; payload.mgmtCurrent = r.mgmtCurrentFromFile !== false;
+        payload.mgmtRoles = r.mgmtRoles;
+        // File said so; otherwise fall back to the explicit "previous export"
+        // toggle rather than assuming current.
+        payload.mgmtCurrent = r.mgmtCurrentFromFile !== null ? r.mgmtCurrentFromFile : !allPrevious;
+        if (r.mgmtLevel) payload.mgmtLevel = r.mgmtLevel;
+        if (r.alsoShareholder) payload.alsoShareholder = true;
       }
       batch.set(doc(db,'searchPersonLinks', `${r.personId}__${r.companyId}`), payload, { merge: true });
       if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); done += 450; btn.innerHTML = `<span class="spin-sm"></span>Links… ${done}/${rows.length}`; }
@@ -2906,8 +2987,9 @@ async function openPeopleImport(){
   document.getElementById('peopleFileName').textContent = '';
   document.getElementById('peopleFileInput').value = '';
   document.getElementById('peopleCreateMissing').checked = false;
+  document.getElementById('peopleAllPrevious').checked = false;
   document.getElementById('peopleImportErr').style.display = 'none';
-  showEl('peopleImportOpts', false); showEl('peopleImportPreview', false);
+  showEl('peopleImportOpts', false); showEl('peopleImportPreview', false); showEl('peoplePrevRow', false);
   const btn = document.getElementById('peopleImportConfirmBtn'); btn.disabled = true; btn.textContent = 'Import';
   showEl('peopleImportModal', true);
 }
