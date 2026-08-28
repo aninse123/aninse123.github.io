@@ -2268,6 +2268,47 @@ async function recountPerson(personId){
   personDocCache.delete(personId);
 }
 
+// Who counts as "the owner"? Orbis answers this itself via GUO (ultimate owner)
+// and CSH (controlling shareholders), and deliberately leaves both empty for an
+// independent company — H-TUBO's three equal 33.33% partners genuinely have no
+// controlling owner, and asserting one would be inventing a fact. So: use
+// Orbis's verdict when the export carried it, otherwise fall back to computing
+// the largest holding (marking every tied holder, not an arbitrary winner) and
+// label it clearly as computed.
+function resolveOwnership(company, links){
+  const om = company?.ownershipMeta || null;
+  const current = links.filter(l => l.shCurrent === true);
+  const out = { source:null, ownerIds:new Set(), guoName:om?.guoName || null, independent:false, note:'' };
+
+  if (om && om.cshKeys && om.cshKeys.length){
+    out.source = 'orbis';
+    for (const l of current){
+      const nameKey = personNameKey(l.personName || '');
+      if (om.cshKeys.includes(l.personId) || om.cshKeys.includes(nameKey)) out.ownerIds.add(l.personId);
+    }
+    out.note = out.ownerIds.size
+      ? 'Controlling shareholder per Orbis'
+      : `Controlling shareholder per Orbis: ${om.cshNames?.join(', ') || '—'} (not a direct shareholder)`;
+    return out;
+  }
+  if (om && /independent/i.test(om.entityType || '')){
+    out.source = 'orbis'; out.independent = true;
+    out.note = 'Independent company — Orbis records no controlling shareholder';
+    return out;
+  }
+  // No Orbis control data: compute the largest current holding, ties included.
+  const withPct = current.filter(l => l.shDirectPct != null);
+  if (!withPct.length) return out;
+  const max = Math.max(...withPct.map(l => l.shDirectPct));
+  if (max <= 0) return out;
+  withPct.filter(l => l.shDirectPct === max).forEach(l => out.ownerIds.add(l.personId));
+  out.source = 'computed';
+  out.note = out.ownerIds.size > 1
+    ? `Largest holding (${out.ownerIds.size}-way tie at ${max}%) — computed, not stated by Orbis`
+    : `Largest holding (${max}%) — computed, not stated by Orbis`;
+  return out;
+}
+
 const linkIsShareholder = l => l.shDirectPct != null || l.shTotalPct != null || l.shCurrent != null;
 const linkIsManager     = l => (l.mgmtRoles || []).length > 0 || l.mgmtCurrent != null;
 const fmtPctOwn = v => v == null ? '—' : (Math.round(v * 100) / 100) + '%';
@@ -2288,16 +2329,26 @@ async function renderOwnership(c){
   const nameCell = l => `<span class="person-link" data-person="${esc(l.personId)}">${esc(l.personName || '—')}</span>${l.personEntityType === 'entity' ? ' <span class="badge badge-grey" title="Corporate entity">🏢</span>' : ''}`;
   const rowActions = l => `<button class="btn btn--icon btn--ghost" data-editlink="${esc(l.id)}" title="Edit">✎</button><button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove link">✕</button>`;
 
-  const shRows = sh.map(l => `
+  const own = resolveOwnership(c, links);
+  const ownerBadge = l => {
+    if (!own.ownerIds.has(l.personId)) return '';
+    return own.source === 'orbis'
+      ? ' <span class="badge badge-green" title="Controlling shareholder per Orbis">👑 Controlling</span>'
+      : ' <span class="badge badge-warn" title="Computed as the largest holding — not stated by Orbis">👑 Largest</span>';
+  };
+  const shRows = sh.map(l => {
+    const tier = l.shCurrent === false ? null : controlTier(l.shDirectPct);
+    return `
     <tr class="${l.shCurrent === false ? 'prev' : ''}">
-      <td>${nameCell(l)}</td>
-      <td class="num">${fmtPctOwn(l.shDirectPct)}</td>
+      <td>${nameCell(l)}${ownerBadge(l)}</td>
+      <td class="num">${fmtPctOwn(l.shDirectPct)}${tier ? ` <span class="badge ${tier.cls}" style="margin-left:4px;">${tier.label}</span>` : ''}</td>
       <td class="num">${fmtPctOwn(l.shTotalPct)}</td>
       <td>${l.alsoManager || linkIsManager(l) ? '✓' : '—'}</td>
       <td>${esc(l.shDate || '—')}</td>
       <td>${l.shCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
       <td style="white-space:nowrap;">${rowActions(l)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
   const mgRows = mg.map(l => `
     <tr class="${l.mgmtCurrent === false ? 'prev' : ''}">
       <td>${nameCell(l)}</td>
@@ -2313,9 +2364,18 @@ async function renderOwnership(c){
         <div class="sec-title" style="margin-bottom:0;">Shareholders</div>
         <button class="btn btn--ghost btn--sm" id="addPersonBtn">＋ Add Person</button>
       </div>
+      ${own.note ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
+        ${own.independent ? '🏛' : '👑'} ${esc(own.note)}${own.guoName ? ` · Ultimate owner: <strong>${esc(own.guoName)}</strong>` : ''}
+      </div>` : ''}
       ${sh.length ? `<div style="overflow-x:auto;"><table class="own-table">
         <thead><tr><th>Name</th><th class="num">Direct %</th><th class="num">Total %</th><th>Also mgr</th><th>As of</th><th>Status</th><th></th></tr></thead>
-        <tbody>${shRows}</tbody></table></div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No shareholder data yet — import people or add manually.</div>'}
+        <tbody>${shRows}</tbody></table></div>
+      <div class="own-legend" style="flex-wrap:wrap;gap:12px;">
+        <span>👑 controlling owner</span>
+        <span>Control &gt; 50%</span>
+        <span>Significant 25–50%</span>
+        <span>Minority &lt; 25%</span>
+      </div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No shareholder data yet — import people or add manually.</div>'}
     </div>
     <div class="card">
       <div class="sec-title">Management</div>
@@ -2465,7 +2525,13 @@ function renderPersonView(p, links){
       <tr class="${isPrev ? 'prev' : ''}">
         <td><span class="person-link" data-gotoco="${esc(l.companyId)}">${esc(l.companyName || '—')}</span></td>
         <td>${roleBits.join(' · ') || '—'}</td>
-        <td class="num">${fmtPctOwn(l.shDirectPct)}</td>
+        <td class="num">${fmtPctOwn(l.shDirectPct)}${(() => {
+          // Tier is derived from the % alone, so it needs no extra reads here.
+          // The "controlling owner" crown stays on the company's Ownership tab,
+          // which is the only place the whole cap table is loaded.
+          const t = isPrev ? null : controlTier(l.shDirectPct);
+          return t ? ` <span class="badge ${t.cls}" style="margin-left:4px;">${t.label}</span>` : '';
+        })()}</td>
         <td class="num">${fmtPctOwn(l.shTotalPct)}</td>
         <td>${esc(l.shDate || '—')}</td>
         <td>${isPrev ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
@@ -2597,7 +2663,26 @@ const PEOPLE_ALIAS = {
   dmAlsoSh:    ['dmalso a shareholder'],
   dmRoleCount: ['dmno of cos in which a current role is held'],
   dmLevel:     ['dmlevel of responsibility'],
+  // Company-level ownership control. Orbis fills these only when a controlling
+  // owner actually exists — they're deliberately empty for an independent
+  // company like H-TUBO (three equal 33.33% partners), which is a fact about
+  // the company, not missing data.
+  coEntityType:['entity type'],
+  guoName:     ['guo - name'],
+  guoUci:      ['guo - uci'],
+  cshName:     ['csh - name'],
+  cshUci:      ['csh - uci'],
+  cshBvd:      ['csh - bvd id number'],
 };
+
+// Percentage → control tier. 25% is the EU beneficial-ownership threshold.
+function controlTier(pct){
+  if (pct == null) return null;
+  if (pct > 50) return { key:'control',     label:'Control',     cls:'badge-green' };
+  if (pct >= 25) return { key:'significant', label:'Significant', cls:'badge-blue'  };
+  if (pct > 0)  return { key:'minority',    label:'Minority',    cls:'badge-grey'  };
+  return null;
+}
 function peopleColIndex(headers, key){
   const want = PEOPLE_ALIAS[key] || [];
   for (const w of want){
@@ -2682,6 +2767,7 @@ function parsePeopleRows(rows){
   // actively wrong for a *Previous directors* export, so the preview says so
   // and offers an explicit override rather than guessing.
   let sawStatusCol = false;
+  const ownershipMeta = new Map();   // companyId -> { entityType, guoName, cshKeys[] }
 
   for (let r = hi + 1; r < rows.length; r++){
     const row = rows[r];
@@ -2695,6 +2781,33 @@ function parsePeopleRows(rows){
     let company = coNif ? byNif.get(coNif) : null;
     let matchedBy = company ? (onlyDigits(get('nif')) ? 'nif' : 'bvd') : null;
     if (!company){ const c = byName.get(normName(coName)); if (c){ company = c; matchedBy = 'name'; } }
+
+    // Company-level ownership control (shareholders files only).
+    if (mode === 'shareholders' && company){
+      const cshNames = packedLines(get('cshName')).map(ownClean).filter(Boolean);
+      const cshUcis  = packedLines(get('cshUci')).map(ownClean).filter(Boolean);
+      const cshBvds  = packedLines(get('cshBvd')).map(ownClean).filter(Boolean);
+      // Keys we can match a direct shareholder against. All three ID spaces are
+      // collected because Orbis populates different ones per case: controlling
+      // shareholders are usually corporate, so `CSH - UCI` comes back empty and
+      // `CSH - BvD ID number` (PT + NIF) is the only stable key — verified
+      // against the real exports. Name is the last resort.
+      // Orbis lists the whole control chain here (`CSH - Level` 1..n); the
+      // up-chain levels simply never match a *direct* shareholder, so there is
+      // no need to filter by level.
+      const meta = {
+        entityType: ownClean(get('coEntityType')) || null,
+        guoName: ownClean(get('guoName')) || null,
+        guoUci: ownClean(get('guoUci')) || null,
+        cshKeys: [...new Set([
+          ...cshUcis.map(u => 'u_' + u.replace(/[^A-Za-z0-9_-]/g,'')),
+          ...cshBvds.map(b => nifFromAny('', b)).filter(Boolean).map(n => 'e_' + n),
+          ...cshNames.map(n => personNameKey(n)),
+        ])],
+        cshNames,
+      };
+      if (meta.entityType || meta.guoName || meta.cshKeys.length) ownershipMeta.set(company.id, meta);
+    }
 
     const P = mode === 'shareholders'
       ? { name:'shName', uci:'shUci', bvd:'shBvd', type:'shType', country:'shCountry' }
@@ -2801,7 +2914,8 @@ function parsePeopleRows(rows){
     unmatched: [...unmatched.values()], skippedNoPeople,
     matchedByName: out.filter(o => o.matchedBy === 'name').length,
     withUci: out.filter(o => o.uci).length, entities: out.filter(o => o.entityType === 'entity').length,
-    sawStatusCol, mergedDupes,
+    sawStatusCol, mergedDupes, ownershipMeta,
+    withControlData: [...ownershipMeta.values()].filter(m => m.cshKeys.length || m.guoName).length,
     unknownStatus: out.filter(o => o.mode === 'management' && o.mgmtCurrentFromFile === null).length };
   return peopleImportStats;
 }
@@ -2816,6 +2930,11 @@ function renderPeopleImportPreview(){
   if (s.withUci) bits.push(`${s.withUci} keyed on Orbis UCI`);
   if (s.entities) bits.push(`${s.entities} corporate holder${s.entities===1?'':'s'}`);
   if (s.mergedDupes) bits.push(`${s.mergedDupes} extra role row${s.mergedDupes===1?'':'s'} merged`);
+  // Say up front whether Orbis stated who controls each company, because that
+  // decides whether the owner badge is sourced or computed from the % column.
+  if (s.mode === 'shareholders') bits.push(s.withControlData
+    ? `<strong>${s.withControlData}</strong> with Orbis control data (GUO/CSH)`
+    : `no Orbis control data — owner computed as largest holding`);
   let warn = '';
   if (s.unmatched.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.unmatched.length} compan${s.unmatched.length===1?'y':'ies'} not in the CRM — skipped unless you tick the box above: ${esc(s.unmatched.slice(0,4).map(u=>u.name).join(', '))}${s.unmatched.length>4?` +${s.unmatched.length-4} more`:''}</div>`;
   if (s.matchedByName) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.matchedByName} link${s.matchedByName===1?'':'s'} matched by company <em>name</em> (no NIF/BvD in the file) — verify before importing.</div>`;
@@ -2951,10 +3070,15 @@ async function confirmPeopleImport(){
     // 5) Refresh denormalised counters.
     invalidatePeopleCaches();
     batch = writeBatch(db); n = 0;
+    const meta = peopleImportStats.ownershipMeta || new Map();
     for (const cid of touched){
       const links = await fetchCompanyLinks(cid, true);
-      batch.update(doc(db,'searchCompanies',cid), { peopleCounts: peopleCountsFrom(links) });
-      const local = companies.find(c => c.id === cid); if (local) local.peopleCounts = peopleCountsFrom(links);
+      const payload = { peopleCounts: peopleCountsFrom(links) };
+      const om = meta.get(cid);
+      if (om) payload.ownershipMeta = om;                 // Orbis GUO / controlling shareholders
+      batch.update(doc(db,'searchCompanies',cid), payload);
+      const local = companies.find(c => c.id === cid);
+      if (local){ local.peopleCounts = payload.peopleCounts; if (om) local.ownershipMeta = om; }
       if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
     }
     await batch.commit();
