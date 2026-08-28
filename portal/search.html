@@ -3115,7 +3115,11 @@ async function buildGraph(focusType, focusId, depth = 1){
 // overlap and it reads organically rather than mechanically.
 function layoutGraph(g, W, H){
   const cx = W / 2, cy = H / 2;
-  const R1 = Math.min(W, H) * 0.27, R2 = Math.min(W, H) * 0.46;
+  // Elliptical rings: the canvas is much wider than it is tall, so spreading
+  // horizontally uses the space instead of clustering everything mid-canvas.
+  const rx1 = W * 0.21, ry1 = H * 0.27;
+  const rx2 = W * 0.38, ry2 = H * 0.44;
+  const R1 = (rx1 + ry1) / 2, R2 = (rx2 + ry2) / 2;   // spring targets
   const ring1 = g.nodes.filter(n => n.ring === 1);
   const ring2 = g.nodes.filter(n => n.ring === 2);
   const focus = g.nodes.find(n => n.focus);
@@ -3123,7 +3127,7 @@ function layoutGraph(g, W, H){
 
   ring1.forEach((n, i) => {
     const a = (i / Math.max(1, ring1.length)) * Math.PI * 2 - Math.PI / 2;
-    n.x = cx + Math.cos(a) * R1; n.y = cy + Math.sin(a) * R1; n.seedAngle = a;
+    n.x = cx + Math.cos(a) * rx1; n.y = cy + Math.sin(a) * ry1; n.seedAngle = a;
   });
   // Seed each ring-2 node in a fan around whichever ring-1 node introduced it.
   const parentOf = new Map();
@@ -3141,23 +3145,33 @@ function layoutGraph(g, W, H){
     const k = (perParent.get(p?.id || 'x') || 0); perParent.set(p?.id || 'x', k + 1);
     const spread = 0.55;
     const a = base + (k - 1) * spread * 0.5 + (k % 2 ? spread * 0.28 : -spread * 0.28);
-    n.x = cx + Math.cos(a) * R2; n.y = cy + Math.sin(a) * R2;
+    n.x = cx + Math.cos(a) * rx2; n.y = cy + Math.sin(a) * ry2;
   });
 
-  // Relaxation: repel everything, pull linked pairs to a target length.
+  // Relaxation: separate nodes, pull linked pairs to a target length.
+  // Each node occupies a BOX, not a circle — the caption underneath is much
+  // wider than the node itself and hangs below it, so radial repulsion leaves
+  // captions sitting on top of neighbouring nodes. Boxes are pushed apart
+  // along whichever axis they overlap least.
   const all = g.nodes;
-  for (let it = 0; it < 90; it++){
+  const halfW = n => Math.min(74, Math.max(30, String(n.label).slice(0, n.focus ? 30 : 22).length * 2.9));
+  const TOP = 26, BOT = 46;   // node top edge → caption baseline + descender
+  for (let it = 0; it < 140; it++){
     for (let i = 0; i < all.length; i++){
       for (let j = i + 1; j < all.length; j++){
         const a = all[i], b = all[j];
-        let dx = b.x - a.x, dy = b.y - a.y;
-        let d = Math.hypot(dx, dy) || 0.01;
-        const min = 86;
-        if (d < min){
-          const push = (min - d) / d * 0.5;
-          dx *= push; dy *= push;
-          if (!a.fixed){ a.x -= dx; a.y -= dy; }
-          if (!b.fixed){ b.x += dx; b.y += dy; }
+        const needX = halfW(a) + halfW(b) + 12;
+        const needY = (TOP + BOT) / 2 * 2 + 8;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const ox = needX - Math.abs(dx), oy = needY - Math.abs(dy);
+        if (ox <= 0 || oy <= 0) continue;             // already clear on one axis
+        // Resolve along the cheaper axis.
+        if (ox / needX < oy / needY){
+          const push = (dx >= 0 ? ox : -ox) * 0.25;
+          if (!a.fixed) a.x -= push; if (!b.fixed) b.x += push;
+        } else {
+          const push = (dy >= 0 ? oy : -oy) * 0.25;
+          if (!a.fixed) a.y -= push; if (!b.fixed) b.y += push;
         }
       }
     }
@@ -3202,7 +3216,9 @@ async function renderNetworkGraph(container, focusType, focusId){
     return;
   }
 
-  const W = 760, H = Math.min(560, 320 + g.nodes.length * 12);
+  // Taller canvas as the graph grows, so the relaxation has room to separate
+  // nodes instead of clamping them all against the edges.
+  const W = 760, H = Math.max(400, Math.min(620, 300 + g.nodes.length * 22));
   layoutGraph(g, W, H);
   const at = id => g.nodes.find(n => n.id === id);
   const CUR = 'var(--primary)', PREV = '#B9B2A6';
@@ -3236,8 +3252,10 @@ async function renderNetworkGraph(container, focusType, focusId){
         data-gmatched="${esc(n.matchedCompanyId || '')}" style="cursor:pointer;opacity:${dim}">
       <title>${esc(n.label)}${n.focus ? ' (current view)' : ' — click to centre on this'}</title>
       ${shape}
-      <text x="${n.x.toFixed(1)}" y="${(n.y + (isCo ? 33 : 36)).toFixed(1)}" text-anchor="middle"
-        font-size="10.5" fill="var(--text-light)">${esc(label)}</text>
+      <text x="${n.x.toFixed(1)}" y="${(n.y + (isCo ? 34 : 37)).toFixed(1)}" text-anchor="middle"
+        font-size="10.5" fill="var(--text-light)"
+        stroke="#FFFFFF" stroke-width="3.5" paint-order="stroke"
+        style="font-weight:${n.focus ? 600 : 400};">${esc(label)}</text>
     </g>`;
   }).join('');
 
