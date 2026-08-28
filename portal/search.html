@@ -3186,6 +3186,35 @@ function layoutGraph(g, W, H){
       if (!a.fixed){ a.x += dx; a.y += dy; }
       if (!b.fixed){ b.x -= dx; b.y -= dy; }
     }
+    // Node-edge repulsion: a node sitting on top of an unrelated edge makes its
+    // caption's halo cut a visible gap in that line. Push such nodes clear,
+    // perpendicular to the edge. Measured at the caption's centre, which is
+    // what actually overlaps (it hangs ~30px below the node).
+    for (const n of all){
+      if (n.fixed) continue;
+      // Sample across the caption's width — it's a wide box, so an edge can
+      // clear its centre and still cut through the text at either end.
+      const hw = halfW(n) * 0.8;
+      const pts = [[n.x - hw, n.y + 32], [n.x, n.y + 32], [n.x + hw, n.y + 32], [n.x, n.y]];
+      for (const e of g.edges){
+        if (e.a === n.id || e.b === n.id) continue;
+        const a = all.find(q => q.id === e.a), b = all.find(q => q.id === e.b);
+        if (!a || !b) continue;
+        const vx = b.x - a.x, vy = b.y - a.y;
+        const len2 = vx * vx + vy * vy || 0.01;
+        for (const [px, py] of pts){
+          let t = ((px - a.x) * vx + (py - a.y) * vy) / len2;
+          t = Math.max(0, Math.min(1, t));
+          const ox = px - (a.x + t * vx), oy = py - (a.y + t * vy);
+          const dist = Math.hypot(ox, oy) || 0.01;
+          const clear = 22;
+          if (dist < clear){
+            const push = (clear - dist) / dist * 0.4;
+            n.x += ox * push; n.y += oy * push;
+          }
+        }
+      }
+    }
   }
   // Keep everything inside the viewBox.
   const pad = 58;
