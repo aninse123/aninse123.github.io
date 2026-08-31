@@ -224,6 +224,10 @@
     .own-table tr.prev td, .own-table tr.prev .person-link { color: var(--text-light); }
     .person-link { color: var(--primary); cursor: pointer; font-weight: 600; }
     .person-link:hover { text-decoration: underline; }
+    .contact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .contact-grid label { display: flex; flex-direction: column; gap: 4px; }
+    .contact-grid label > span { font-size: 0.72rem; color: var(--text-light); font-weight: 600; }
+    .contact-grid label > em { font-size: 0.68rem; color: var(--text-light); font-style: normal; opacity: .8; }
     .own-legend { display: flex; gap: 16px; font-size: 0.72rem; color: var(--text-light); margin-top: 10px; }
     .own-legend .cur::before { content: '—'; color: var(--primary); font-weight: 700; margin-right: 5px; }
     .own-legend .prv::before { content: '—'; color: #B9B2A6; font-weight: 700; margin-right: 5px; }
@@ -2562,11 +2566,39 @@ function renderPersonView(p, links){
       <div class="own-legend"><span class="cur">currently</span><span class="prv">previously</span></div>
     </div>
     <div class="card">
+      <div class="sec-title">Contact</div>
+      <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
+        Orbis rarely holds contact details for individuals, so these are yours to fill in as you find them.
+        Anything Orbis did provide is shown greyed as a placeholder and is never overwritten by what you type.
+      </div>
+      <div class="contact-grid">
+        ${PERSON_CONTACT_FIELDS.map(f => `
+          <label>
+            <span>${f.label}</span>
+            <input class="field" id="pc_${f.key}" type="${f.type}" value="${esc(p[f.key] || '')}"
+                   placeholder="${esc(p[f.orbis] || f.hint)}">
+            ${p[f.orbis] ? `<em>Orbis: ${esc(p[f.orbis])}</em>` : ''}
+          </label>`).join('')}
+      </div>
+      <div style="margin-top:10px;"><button class="btn btn--ghost btn--sm" id="savePersonContactBtn">Save Contact</button></div>
+    </div>
+    <div class="card">
       <div class="sec-title">Notes</div>
       <textarea class="field" id="personNotes" rows="3" placeholder="Private notes about this person…">${esc(p.notes || '')}</textarea>
       <div style="margin-top:8px;"><button class="btn btn--ghost btn--sm" id="savePersonNotesBtn">Save Notes</button></div>
     </div>
     <div class="card"><div class="sec-title">Network</div><div id="personGraph"></div></div>`;
+  document.getElementById('savePersonContactBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('savePersonContactBtn'); btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const patch = { updatedAt: serverTimestamp() };
+      for (const f of PERSON_CONTACT_FIELDS) patch[f.key] = document.getElementById('pc_' + f.key).value.trim() || null;
+      await updateDoc(doc(db,'searchPeople',p.id), patch);
+      personDocCache.delete(p.id);
+      logPortal('person_contact_edit', { personId: p.id, name: p.name });
+      btn.textContent = '✓ Saved'; setTimeout(() => { btn.textContent = 'Save Contact'; btn.disabled = false; }, 1200);
+    } catch(e){ alert('Error: ' + e.message); btn.textContent = 'Save Contact'; btn.disabled = false; }
+  });
   document.getElementById('savePersonNotesBtn').addEventListener('click', async () => {
     const btn = document.getElementById('savePersonNotesBtn'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
@@ -2665,6 +2697,15 @@ const PEOPLE_ALIAS = {
   shTotal:     ['sh - total %'],
   shDate:      ['sh - information date'],
   shMgr:       ['sh - also a manager'],
+  // Contact details. Orbis populates these for corporate holders and leaves
+  // them blank for individuals, but we import whatever is there for either —
+  // a holding company's registered address is often the only address we get
+  // for the people behind it.
+  shStreet:    ['sh - street, no., building etc, line 1'],
+  shPostcode:  ['sh - postal code'],
+  shCity:      ['sh - city'],
+  shPhone:     ['sh - telephone number'],
+  shWeb:       ['sh - website address'],
   // Directors & Managers export. Note Orbis prefixes these with a bare "DM"
   // and NO separator ("DMFull name", not "DM - Full name"), and sometimes
   // appends a stray field number ("DMCurrent or previous 66") — hence the
@@ -2675,8 +2716,10 @@ const PEOPLE_ALIAS = {
   dmJobOrig:   ['dmjob title'],
   dmCurrent:   ['dmcurrent or previous','dm - current or previous','dmstatus'],
   dmType:      ['dmindividual or company','dm - type'],
-  dmCountry:   ['dmcountry iso code','dm - country iso code'],
+  dmCountry:   ['dmcountry iso code','dm - country iso code','dmcountry'],
   dmAlsoSh:    ['dmalso a shareholder'],
+  dmAddress:   ['dmaddress'],
+  dmEmail:     ['dme-mail address','dmemail address'],
   // "when applicable" means: filled only when the director IS a company. That
   // makes it both the corporate-director flag and the ID we need to link that
   // company — better than 'DMIndividual or company', which Orbis did not even
@@ -2704,6 +2747,28 @@ const PEOPLE_ALIAS = {
   coNoSh:      ['no of shareholders'],
   coNoDm:      ['number of directors & managers'],
 };
+
+// One cell of a zipped contact column, or '' when the column is absent or
+// the value is one of Orbis's placeholders.
+// User-owned contact fields. Each names the Orbis field it falls back to for
+// display; the import only ever writes the `orbis*` half, so these survive
+// every re-import. LinkedIn has no Orbis equivalent — Orbis does not carry it.
+const PERSON_CONTACT_FIELDS = [
+  { key:'phone',    orbis:'orbisPhone',    label:'Phone',    type:'tel',  hint:'+351 …' },
+  { key:'email',    orbis:'orbisEmail',    label:'Email',    type:'email',hint:'name@company.pt' },
+  { key:'linkedin', orbis:'',              label:'LinkedIn', type:'url',  hint:'linkedin.com/in/…' },
+  { key:'address',  orbis:'orbisAddress',  label:'Address',  type:'text', hint:'Street, postcode city' },
+];
+
+// Street / postcode / city as one line, skipping the parts Orbis omitted.
+function orbisAddress(r){
+  return [r.street, [r.postcode, r.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+}
+
+function orbisText(lines, i){
+  const v = lines ? ownClean(lines[i]) : '';
+  return (!v || /^(-|n\.a\.|n\/a|\.)$/i.test(v)) ? '' : v;
+}
 
 // Age is the succession signal, so prefer the birth date (still true next
 // year) over the imported age (only true as of the year it was imported).
@@ -2896,6 +2961,13 @@ function parsePeopleRows(rows){
     const lvlL   = mode === 'management'   ? zip('dmLevel')  : null;
     const dobL   = mode === 'management'   ? zip('dmBirth')  : null;
     const ageL   = mode === 'management'   ? zip('dmAge')    : null;
+    // Contact columns, whichever side of the export we are on.
+    const stL    = mode === 'shareholders' ? zip('shStreet')   : zip('dmAddress');
+    const pcL    = mode === 'shareholders' ? zip('shPostcode') : null;
+    const cityL  = mode === 'shareholders' ? zip('shCity')     : null;
+    const phoneL = mode === 'shareholders' ? zip('shPhone')    : null;
+    const webL   = mode === 'shareholders' ? zip('shWeb')      : null;
+    const emailL = mode === 'management'   ? zip('dmEmail')    : null;
     if (mode === 'management' && curL) sawStatusCol = true;
 
     for (let i = 0; i < names.length; i++){
@@ -2943,6 +3015,10 @@ function parsePeopleRows(rows){
         // it later; a bare age is only true as of this import, hence both.
         birthDate: dobL ? ownClean(dobL[i]) : '',
         orbisAge: ageL ? ((/^\d{1,3}$/.test(ownClean(ageL[i]))) ? parseInt(ownClean(ageL[i]), 10) : null) : null,
+        // Whatever contact detail the file carries. Orbis writes '-' and 'n.a.'
+        // for "nothing here", which must not be stored as if it were data.
+        street:   orbisText(stL, i), postcode: orbisText(pcL, i), city: orbisText(cityL, i),
+        phone:    orbisText(phoneL, i), website: orbisText(webL, i), email: orbisText(emailL, i),
         // null = "file didn't say"; resolved at import time from the explicit
         // toggle, so a missing status column can never silently mean "current".
         mgmtCurrentFromFile: mode === 'management'
@@ -2975,6 +3051,7 @@ function parsePeopleRows(rows){
     if (!prev.shDate) prev.shDate = o.shDate;
     if (!prev.orbisRoleCount) prev.orbisRoleCount = o.orbisRoleCount;
     if (!prev.birthDate) prev.birthDate = o.birthDate;
+    for (const f of ['street','postcode','city','phone','website','email']) if (!prev[f]) prev[f] = o[f];
     if (prev.orbisAge == null) prev.orbisAge = o.orbisAge;
     // "Highest executive" beats "Unspecified executive" as a description.
     if (/highest/i.test(o.mgmtLevel || '')) prev.mgmtLevel = o.mgmtLevel;
@@ -2991,6 +3068,7 @@ function parsePeopleRows(rows){
     sawStatusCol, mergedDupes, ownershipMeta, countCheck,
     misaligned: [...misaligned.entries()].map(([k, n]) => ({ key: k, companies: n })),
     withDob: out.filter(o => o.birthDate || o.orbisAge != null).length,
+    withContact: out.filter(o => o.phone || o.email || o.website || orbisAddress(o)).length,
     corpDirectors: out.filter(o => o.mode === 'management' && o.entityType === 'entity').length,
     withControlData: [...ownershipMeta.values()].filter(m => m.cshKeys.length || m.guoName).length,
     unknownStatus: out.filter(o => o.mode === 'management' && o.mgmtCurrentFromFile === null).length };
@@ -3010,6 +3088,7 @@ function renderPeopleImportPreview(){
   // Say up front whether Orbis stated who controls each company, because that
   // decides whether the owner badge is sourced or computed from the % column.
   if (s.withDob) bits.push(`${s.withDob} with a birth date/age`);
+  if (s.withContact) bits.push(`${s.withContact} with contact details`);
   if (s.corpDirectors) bits.push(`${s.corpDirectors} corporate director${s.corpDirectors===1?'':'s'}`);
   if (s.mode === 'shareholders') bits.push(s.withControlData
     ? `<strong>${s.withControlData}</strong> with Orbis control data (GUO/CSH)`
@@ -3091,6 +3170,14 @@ async function confirmPeopleImport(){
         country: r.country && r.country.length <= 3 ? r.country : null,
         ...(r.orbisRoleCount ? { orbisRoleCount: r.orbisRoleCount } : {}),
         ...(r.birthDate ? { birthDate: r.birthDate } : {}),
+        // Orbis-sourced contact details live in their own namespace so a
+        // re-import can never overwrite a number or address you found
+        // yourself. Only written when non-empty, so a blank Orbis column
+        // never blanks a value an earlier import did find.
+        ...(r.phone    ? { orbisPhone: r.phone }     : {}),
+        ...(r.email    ? { orbisEmail: r.email }     : {}),
+        ...(r.website  ? { orbisWebsite: r.website } : {}),
+        ...(orbisAddress(r) ? { orbisAddress: orbisAddress(r) } : {}),
         ...(r.orbisAge != null ? { orbisAge: r.orbisAge, orbisAgeAsOf: new Date().getFullYear() } : {}),
         source: 'orbis', updatedAt: serverTimestamp(),
       }, { merge: true });
