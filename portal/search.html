@@ -2278,7 +2278,8 @@ async function recountPerson(personId){
 function resolveOwnership(company, links){
   const om = company?.ownershipMeta || null;
   const current = links.filter(l => l.shCurrent === true);
-  const out = { source:null, ownerIds:new Set(), guoName:om?.guoName || null, independent:false, note:'' };
+  const out = { source:null, ownerIds:new Set(), guoName:om?.guoName || null,
+                guoNif:om?.guoNif || null, independent:false, note:'' };
 
   if (om && om.cshKeys && om.cshKeys.length){
     out.source = 'orbis';
@@ -2351,7 +2352,7 @@ async function renderOwnership(c){
   }).join('');
   const mgRows = mg.map(l => `
     <tr class="${l.mgmtCurrent === false ? 'prev' : ''}">
-      <td>${nameCell(l)}</td>
+      <td>${nameCell(l)}${/highest/i.test(l.mgmtLevel || '') ? ' <span class="badge badge-blue" title="Highest level of responsibility per Orbis">★ Highest exec</span>' : ''}</td>
       <td>${esc((l.mgmtRoles || []).join(' · ') || '—')}</td>
       <td>${linkIsShareholder(l) ? '✓' : '—'}</td>
       <td>${l.mgmtCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
@@ -2365,7 +2366,14 @@ async function renderOwnership(c){
         <button class="btn btn--ghost btn--sm" id="addPersonBtn">＋ Add Person</button>
       </div>
       ${own.note ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
-        ${own.independent ? '🏛' : '👑'} ${esc(own.note)}${own.guoName ? ` · Ultimate owner: <strong>${esc(own.guoName)}</strong>` : ''}
+        ${own.independent ? '🏛' : '👑'} ${esc(own.note)}${own.guoName ? ` · Ultimate owner: ${(() => {
+          // When the ultimate owner is itself a company in the pipeline, say so
+          // and make it clickable — that's a second angle on the same group.
+          const gc = own.guoNif ? companies.find(x => (onlyDigits(x.nif) || nifFromAny('', x.bvdId)) === own.guoNif) : null;
+          return gc
+            ? `<span class="person-link" data-gotoco="${esc(gc.id)}"><strong>${esc(own.guoName)}</strong></span> <span class="badge badge-green">in your pipeline</span>`
+            : `<strong>${esc(own.guoName)}</strong>`;
+        })()}` : ''}
       </div>` : ''}
       ${sh.length ? `<div style="overflow-x:auto;"><table class="own-table">
         <thead><tr><th>Name</th><th class="num">Direct %</th><th class="num">Total %</th><th>Also mgr</th><th>As of</th><th>Status</th><th></th></tr></thead>
@@ -2514,7 +2522,15 @@ function renderPersonView(p, links){
   document.getElementById('pMeta').innerHTML = `
     ${p.entityType === 'entity' ? '<span class="badge badge-grey">🏢 Corporate entity</span>' : '<span class="badge badge-blue">🧑 Person</span>'}
     ${p.country ? `<span class="badge badge-grey">${esc(p.country)}</span>` : ''}
-    <span class="badge badge-grey">${links.length} position${links.length === 1 ? '' : 's'} · ${current} current</span>`;
+    <span class="badge badge-grey">${links.length} position${links.length === 1 ? '' : 's'} · ${current} current</span>
+    ${(() => {
+      const a = personAge(p);
+      if (!a) return '';
+      // 60+ is where succession pressure starts to be worth a call.
+      const cls = a.age >= 60 ? 'badge-warn' : 'badge-grey';
+      return `<span class="badge ${cls}" title="${a.exact ? 'From Orbis birth date' : 'From the age Orbis gave at import, carried forward'}">🎂 ${a.age}${a.exact ? '' : ' approx.'}</span>`;
+    })()}
+    ${p.orbisRoleCount > links.length ? `<span class="badge badge-blue" title="Orbis knows of more roles than have been imported — export those companies to see the rest of the network">Orbis: ${p.orbisRoleCount} current roles</span>` : ''}`;
   const rows = [...links].sort((a,b) => ((b.shCurrent === true || b.mgmtCurrent === true) - (a.shCurrent === true || a.mgmtCurrent === true)) || String(a.companyName).localeCompare(String(b.companyName)))
     .map(l => {
       const isPrev = !(l.shCurrent === true || l.mgmtCurrent === true);
@@ -2661,6 +2677,15 @@ const PEOPLE_ALIAS = {
   dmType:      ['dmindividual or company','dm - type'],
   dmCountry:   ['dmcountry iso code','dm - country iso code'],
   dmAlsoSh:    ['dmalso a shareholder'],
+  // "when applicable" means: filled only when the director IS a company. That
+  // makes it both the corporate-director flag and the ID we need to link that
+  // company — better than 'DMIndividual or company', which Orbis did not even
+  // include in the export we tested.
+  dmBvd:       ['dmcorresponding bvdid (when applicable)','dmcorresponding bvdid'],
+  dmBirth:     ['dmbirth date'],
+  // Exact-match only: the prefix fallback would otherwise let "DMAge bracket"
+  // ("Between 50 and 60") stand in for a real age.
+  dmAge:       ['dmage'],
   dmRoleCount: ['dmno of cos in which a current role is held'],
   dmLevel:     ['dmlevel of responsibility'],
   // Company-level ownership control. Orbis fills these only when a controlling
@@ -2670,10 +2695,32 @@ const PEOPLE_ALIAS = {
   coEntityType:['entity type'],
   guoName:     ['guo - name'],
   guoUci:      ['guo - uci'],
+  guoBvd:      ['guo - bvd id number'],
   cshName:     ['csh - name'],
   cshUci:      ['csh - uci'],
   cshBvd:      ['csh - bvd id number'],
+  // Orbis's own counts. We never store them — they exist purely so the import
+  // preview can prove the packed cells were unpacked completely.
+  coNoSh:      ['no of shareholders'],
+  coNoDm:      ['number of directors & managers'],
 };
+
+// Age is the succession signal, so prefer the birth date (still true next
+// year) over the imported age (only true as of the year it was imported).
+// Accepts Orbis's dd/mm/yyyy and a bare year.
+function personAge(p){
+  const b = String(p?.birthDate || '').trim();
+  const y = b.match(/(\d{4})/);
+  if (y){
+    const yr = +y[1];
+    if (yr > 1900 && yr <= new Date().getFullYear()) return { age: new Date().getFullYear() - yr, exact: true };
+  }
+  if (p?.orbisAge != null){
+    const drift = new Date().getFullYear() - (p.orbisAgeAsOf || new Date().getFullYear());
+    return { age: p.orbisAge + drift, exact: false };
+  }
+  return null;
+}
 
 // Percentage → control tier. 25% is the EU beneficial-ownership threshold.
 function controlTier(pct){
@@ -2768,6 +2815,11 @@ function parsePeopleRows(rows){
   // and offers an explicit override rather than guessing.
   let sawStatusCol = false;
   const ownershipMeta = new Map();   // companyId -> { entityType, guoName, cshKeys[] }
+  // Orbis states its own headcount per company. Comparing it against the number
+  // of names we unpacked is the cheapest possible guard against a silently
+  // truncated or misaligned packed cell.
+  const countCheck = [];             // { company, stated, parsed }
+  const misaligned = new Map();      // alias key -> how many companies it was dropped for
 
   for (let r = hi + 1; r < rows.length; r++){
     const row = rows[r];
@@ -2799,6 +2851,7 @@ function parsePeopleRows(rows){
         entityType: ownClean(get('coEntityType')) || null,
         guoName: ownClean(get('guoName')) || null,
         guoUci: ownClean(get('guoUci')) || null,
+        guoNif: nifFromAny('', get('guoBvd')) || null,
         cshKeys: [...new Set([
           ...cshUcis.map(u => 'u_' + u.replace(/[^A-Za-z0-9_-]/g,'')),
           ...cshBvds.map(b => nifFromAny('', b)).filter(Boolean).map(n => 'e_' + n),
@@ -2811,13 +2864,21 @@ function parsePeopleRows(rows){
 
     const P = mode === 'shareholders'
       ? { name:'shName', uci:'shUci', bvd:'shBvd', type:'shType', country:'shCountry' }
-      : { name:'dmName', uci:'dmUci', bvd:null,    type:'dmType', country:'dmCountry' };
+      : { name:'dmName', uci:'dmUci', bvd:'dmBvd', type:'dmType', country:'dmCountry' };
 
     const names = packedLines(get(P.name));
+    const statedRaw = ownClean(get(mode === 'shareholders' ? 'coNoSh' : 'coNoDm'));
+    const stated = /^\d+$/.test(statedRaw) ? parseInt(statedRaw, 10) : null;
+    const parsedCount = names.filter(x => ownClean(x)).length;
+    if (stated != null && stated !== parsedCount) countCheck.push({ company: coName, stated, parsed: parsedCount });
     if (!names.length){ skippedNoPeople++; continue; }
     const zip = (key) => { // only trust a column that lines up with the anchor
       const lines = packedLines(get(key));
-      return lines.length === names.length ? lines : null;
+      if (lines.length === names.length) return lines;
+      // Non-empty but misaligned: Orbis dropped blank lines, so we cannot tell
+      // which value belongs to which name. Skipping is right; hiding it is not.
+      if (lines.some(l => ownClean(l))) misaligned.set(key, (misaligned.get(key) || 0) + 1);
+      return null;
     };
     const uciL   = P.uci ? zip(P.uci) : null;
     const bvdL   = P.bvd ? zip(P.bvd) : null;
@@ -2833,6 +2894,8 @@ function parsePeopleRows(rows){
     const alsoShL= mode === 'management'   ? zip('dmAlsoSh') : null;
     const rcL    = mode === 'management'   ? zip('dmRoleCount') : null;
     const lvlL   = mode === 'management'   ? zip('dmLevel')  : null;
+    const dobL   = mode === 'management'   ? zip('dmBirth')  : null;
+    const ageL   = mode === 'management'   ? zip('dmAge')    : null;
     if (mode === 'management' && curL) sawStatusCol = true;
 
     for (let i = 0; i < names.length; i++){
@@ -2841,10 +2904,15 @@ function parsePeopleRows(rows){
       const nameKey = personNameKey(rawName);
       if (!nameKey) continue;
       const typeStr = typeL ? ownClean(typeL[i]) : '';
-      const isCorp = /corporate|bank|insurance|fund|financial compan|industrial compan|public authorit|foundation|mutual|venture|private equity/i.test(typeStr);
+      const isCorpType = /corporate|bank|insurance|fund|financial compan|industrial compan|public authorit|foundation|mutual|venture|private equity|^compan/i.test(typeStr);
       const shBvd = bvdL ? ownClean(bvdL[i]) : '';
-      const pid = personIdFrom({ uci: uciL ? uciL[i] : '', bvd: shBvd, nameKey });
       const holderNif = nifFromAny('', shBvd);
+      // A director carrying a company-shaped BvD ID (PT+NIF) is a company, not
+      // a person — common in Portugal, where an SGPS is often the gerente.
+      // Individuals get a different BvD shape ("WWCLS000000142..."), which
+      // nifFromAny rejects, so this cannot misclassify a person.
+      const isCorp = isCorpType || (mode === 'management' && !!holderNif);
+      const pid = personIdFrom({ uci: uciL ? uciL[i] : '', bvd: shBvd, nameKey });
       const mgrStr = mgrL ? ownClean(mgrL[i]) : '';
       const curStr = curL ? ownClean(curL[i]) : '';
 
@@ -2871,6 +2939,10 @@ function parsePeopleRows(rows){
         // How many companies Orbis knows this person currently holds a role in —
         // a hint that more of their network exists beyond what's been imported.
         orbisRoleCount: rcL ? (parseInt(ownClean(rcL[i]), 10) || null) : null,
+        // Succession signal. Birth date is stable so age can be recomputed from
+        // it later; a bare age is only true as of this import, hence both.
+        birthDate: dobL ? ownClean(dobL[i]) : '',
+        orbisAge: ageL ? ((/^\d{1,3}$/.test(ownClean(ageL[i]))) ? parseInt(ownClean(ageL[i]), 10) : null) : null,
         // null = "file didn't say"; resolved at import time from the explicit
         // toggle, so a missing status column can never silently mean "current".
         mgmtCurrentFromFile: mode === 'management'
@@ -2902,6 +2974,8 @@ function parsePeopleRows(rows){
     if (prev.shTotalPct == null) prev.shTotalPct = o.shTotalPct;
     if (!prev.shDate) prev.shDate = o.shDate;
     if (!prev.orbisRoleCount) prev.orbisRoleCount = o.orbisRoleCount;
+    if (!prev.birthDate) prev.birthDate = o.birthDate;
+    if (prev.orbisAge == null) prev.orbisAge = o.orbisAge;
     // "Highest executive" beats "Unspecified executive" as a description.
     if (/highest/i.test(o.mgmtLevel || '')) prev.mgmtLevel = o.mgmtLevel;
   }
@@ -2914,7 +2988,10 @@ function parsePeopleRows(rows){
     unmatched: [...unmatched.values()], skippedNoPeople,
     matchedByName: out.filter(o => o.matchedBy === 'name').length,
     withUci: out.filter(o => o.uci).length, entities: out.filter(o => o.entityType === 'entity').length,
-    sawStatusCol, mergedDupes, ownershipMeta,
+    sawStatusCol, mergedDupes, ownershipMeta, countCheck,
+    misaligned: [...misaligned.entries()].map(([k, n]) => ({ key: k, companies: n })),
+    withDob: out.filter(o => o.birthDate || o.orbisAge != null).length,
+    corpDirectors: out.filter(o => o.mode === 'management' && o.entityType === 'entity').length,
     withControlData: [...ownershipMeta.values()].filter(m => m.cshKeys.length || m.guoName).length,
     unknownStatus: out.filter(o => o.mode === 'management' && o.mgmtCurrentFromFile === null).length };
   return peopleImportStats;
@@ -2932,12 +3009,16 @@ function renderPeopleImportPreview(){
   if (s.mergedDupes) bits.push(`${s.mergedDupes} extra role row${s.mergedDupes===1?'':'s'} merged`);
   // Say up front whether Orbis stated who controls each company, because that
   // decides whether the owner badge is sourced or computed from the % column.
+  if (s.withDob) bits.push(`${s.withDob} with a birth date/age`);
+  if (s.corpDirectors) bits.push(`${s.corpDirectors} corporate director${s.corpDirectors===1?'':'s'}`);
   if (s.mode === 'shareholders') bits.push(s.withControlData
     ? `<strong>${s.withControlData}</strong> with Orbis control data (GUO/CSH)`
     : `no Orbis control data — owner computed as largest holding`);
   let warn = '';
   if (s.unmatched.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.unmatched.length} compan${s.unmatched.length===1?'y':'ies'} not in the CRM — skipped unless you tick the box above: ${esc(s.unmatched.slice(0,4).map(u=>u.name).join(', '))}${s.unmatched.length>4?` +${s.unmatched.length-4} more`:''}</div>`;
   if (s.matchedByName) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.matchedByName} link${s.matchedByName===1?'':'s'} matched by company <em>name</em> (no NIF/BvD in the file) — verify before importing.</div>`;
+  if (s.misaligned?.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.misaligned.map(m => `<code>${esc(PEOPLE_ALIAS[m.key]?.[0] || m.key)}</code> (${m.companies})`).join(', ')} had values that did not line up with the name column, so they were skipped — Orbis omits the line for a blank value, which shifts the rest.</div>`;
+  if (s.countCheck?.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.countCheck.length} compan${s.countCheck.length===1?'y':'ies'} where Orbis's own count differs from what was read — a packed cell may be truncated: ${esc(s.countCheck.slice(0,3).map(c=>`${c.company} (Orbis ${c.stated}, read ${c.parsed})`).join('; '))}${s.countCheck.length>3?` +${s.countCheck.length-3} more`:''}</div>`;
   if (s.mode === 'management' && !s.sawStatusCol) warn += `<div style="margin-top:6px;color:#B45309;">⚠ No current/previous column found — use the checkbox above to say which kind of export this is.</div>`;
   document.getElementById('peopleImportSummary').innerHTML = bits.join(' · ') + warn;
   showEl('peoplePrevRow', s.mode === 'management' && !s.sawStatusCol);
@@ -3009,6 +3090,8 @@ async function confirmPeopleImport(){
         matchedCompanyId: r.holderNif ? (nifToCo.get(r.holderNif) || null) : null,
         country: r.country && r.country.length <= 3 ? r.country : null,
         ...(r.orbisRoleCount ? { orbisRoleCount: r.orbisRoleCount } : {}),
+        ...(r.birthDate ? { birthDate: r.birthDate } : {}),
+        ...(r.orbisAge != null ? { orbisAge: r.orbisAge, orbisAgeAsOf: new Date().getFullYear() } : {}),
         source: 'orbis', updatedAt: serverTimestamp(),
       }, { merge: true });
       if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); done += 450; btn.innerHTML = `<span class="spin-sm"></span>People… ${done}/${byPerson.size}`; }
