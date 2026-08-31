@@ -2307,7 +2307,8 @@ function resolveOwnership(company, links){
   const om = company?.ownershipMeta || null;
   const current = links.filter(l => l.shCurrent === true);
   const out = { source:null, ownerIds:new Set(), guoName:om?.guoName || null,
-                guoNif:om?.guoNif || null, independent:false, note:'' };
+                guoNif:om?.guoNif || null, treasuryPct:om?.treasuryPct ?? null,
+                independent:false, note:'' };
 
   if (om && om.cshKeys && om.cshKeys.length){
     out.source = 'orbis';
@@ -2325,16 +2326,30 @@ function resolveOwnership(company, links){
     out.note = 'Independent company — Orbis records no controlling shareholder';
     return out;
   }
-  // No Orbis control data: compute the largest current holding, ties included.
+  // No Orbis control data: fall back to the largest current holding — but only
+  // where that is actually evidence of control.
   const withPct = current.filter(l => l.shDirectPct != null);
   if (!withPct.length) return out;
   const max = Math.max(...withPct.map(l => l.shDirectPct));
   if (max <= 0) return out;
+
+  // Shares the company holds in itself outrank every disclosed holder: at
+  // MASTER FERRO 97.69% sits in treasury and the largest real holder has 2.3%,
+  // so crowning them would be plainly wrong.
+  if (out.treasuryPct != null && out.treasuryPct > max){
+    out.note = `${out.treasuryPct}% is held by the company in itself, more than any disclosed holder (largest ${max}%) — no controlling owner computed`;
+    return out;
+  }
+
   withPct.filter(l => l.shDirectPct === max).forEach(l => out.ownerIds.add(l.personId));
   out.source = 'computed';
+  // When most of the register is undisclosed, "largest" says much less than it
+  // appears to, so the note names the base it was computed over.
+  const disclosed = withPct.reduce((a, l) => a + l.shDirectPct, 0) + (out.treasuryPct || 0);
+  const base = disclosed < 50 ? ` of the ${Math.round(disclosed * 100) / 100}% disclosed` : '';
   out.note = out.ownerIds.size > 1
-    ? `Largest holding (${out.ownerIds.size}-way tie at ${max}%) — computed, not stated by Orbis`
-    : `Largest holding (${max}%) — computed, not stated by Orbis`;
+    ? `Largest holding${base} (${out.ownerIds.size}-way tie at ${max}%) — computed, not stated by Orbis`
+    : `Largest holding${base} (${max}%) — computed, not stated by Orbis`;
   return out;
 }
 
@@ -2393,8 +2408,8 @@ async function renderOwnership(c){
         <div class="sec-title" style="margin-bottom:0;">Shareholders</div>
         <button class="btn btn--ghost btn--sm" id="addPersonBtn">＋ Add Person</button>
       </div>
-      ${own.note ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
-        ${own.independent ? '🏛' : '👑'} ${esc(own.note)}${own.guoName ? ` · Ultimate owner: ${(() => {
+      ${(own.note || own.treasuryPct != null) ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
+        ${own.independent ? '🏛' : (own.ownerIds.size ? '👑' : 'ℹ️')} ${esc(own.note)}${own.treasuryPct != null ? ` · <strong>${own.treasuryPct}%</strong> held by the company in itself (treasury)` : ''}${own.guoName ? ` · Ultimate owner: ${(() => {
           // When the ultimate owner is itself a company in the pipeline, say so
           // and make it clickable — that's a second angle on the same group.
           const gc = own.guoNif ? companies.find(x => (onlyDigits(x.nif) || nifFromAny('', x.bvdId)) === own.guoNif) : null;
@@ -3054,6 +3069,7 @@ function parsePeopleRows(rows){
   const countCheck = [];             // { company, stated, parsed }
   const misaligned = new Map();      // alias key -> how many companies it was dropped for
   let aggregateRows = 0;             // "Self Owned" and friends: a % with no holder
+  const treasuryByCo = new Map();    // companyId -> % the company holds in itself
 
   for (let r = hi + 1; r < rows.length; r++){
     const row = rows[r];
@@ -3122,6 +3138,7 @@ function parsePeopleRows(rows){
       // 2,572 of 2,572 companies.
       const seenPeople = new Set();
       const aggBefore = aggregateRows;
+      let treasuryHere = 0;
       sawPeopleHere = true;
 
       // Orbis trims *trailing* blank lines from a packed cell and nothing else:
@@ -3175,7 +3192,17 @@ function parsePeopleRows(rows){
       for (let i = 0; i < names.length; i++){
         const rawName = ownClean(names[i]);
         if (!rawName) continue; // empty slot
-        if (PLACEHOLDER_HOLDERS.test(rawName)){ aggregateRows++; continue; }
+        if (PLACEHOLDER_HOLDERS.test(rawName)){
+          // The holder is fictitious but the percentage is real: 9.28% in
+          // treasury means only 90.72% is in outside hands, which changes who
+          // actually controls the company. Keep the number on the company.
+          aggregateRows++;
+          if (isShF && dirL){
+            const v = ownPct(dirL[i]);
+            if (v != null) treasuryHere += v;
+          }
+          continue;
+        }
         const nameKey = personNameKey(rawName);
         if (!nameKey) continue;
         const typeStr = typeL ? ownClean(typeL[i]) : '';
@@ -3237,6 +3264,7 @@ function parsePeopleRows(rows){
       // Orbis counts its aggregate labels as holders, so add them back before
       // comparing — otherwise every company with treasury stock looks broken.
       const aggregateHere = aggregateRows - aggBefore;
+      if (isShF && treasuryHere > 0 && company) treasuryByCo.set(company.id, treasuryHere);
       if (stated != null && stated !== seenPeople.size + aggregateHere)
         countCheck.push({ company: coName, facet, stated, parsed: seenPeople.size + aggregateHere });
     }
@@ -3282,6 +3310,14 @@ function parsePeopleRows(rows){
     if (/highest/i.test(o.mgmtLevel || '')) prev.mgmtLevel = o.mgmtLevel;
   }
   out.length = 0; out.push(...merged.values());
+
+  // Treasury is discovered in the person loop, after the meta was built, so
+  // fold it in here rather than duplicating the scan.
+  for (const [cid, pct] of treasuryByCo){
+    const m = ownershipMeta.get(cid) || { entityType:null, guoName:null, guoUci:null, guoNif:null, cshKeys:[], cshNames:[] };
+    m.treasuryPct = Math.round(pct * 100) / 100;
+    ownershipMeta.set(cid, m);
+  }
 
   const people = new Set(out.map(o => o.personId));
   const cos = new Set(out.filter(o => o.companyId).map(o => o.companyId));
