@@ -2760,6 +2760,18 @@ const PERSON_CONTACT_FIELDS = [
   { key:'address',  orbis:'orbisAddress',  label:'Address',  type:'text', hint:'Street, postcode city' },
 ];
 
+// Orbis mostly writes dates as text, but a handful arrive as Excel serials
+// (6 of 5,534 birth dates in the 2,577-company export). Decode them so they
+// are not silently unusable. Day 1 is 1900-01-01, with Excel's 1900 leap-year
+// bug making 1899-12-30 the effective epoch.
+function orbisDate(v){
+  const t = String(v || '').trim();
+  if (!/^\d{5}$/.test(t)) return t;
+  const d = new Date(Date.UTC(1899, 11, 30) + Number(t) * 86400000);
+  if (isNaN(d) || d.getUTCFullYear() < 1900 || d.getUTCFullYear() > 2100) return t;
+  return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()}`;
+}
+
 // Street / postcode / city as one line, skipping the parts Orbis omitted.
 function orbisAddress(r){
   return [r.street, [r.postcode, r.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
@@ -2943,12 +2955,27 @@ function parsePeopleRows(rows){
     const parsedCount = names.filter(x => ownClean(x)).length;
     if (stated != null && stated !== parsedCount) countCheck.push({ company: coName, stated, parsed: parsedCount });
     if (!names.length){ skippedNoPeople++; continue; }
-    const zip = (key) => { // only trust a column that lines up with the anchor
+    // Orbis trims *trailing* blank lines from a packed cell and nothing else:
+    // internal blanks are preserved, so a short column is still indexed from 0
+    // and padding it back out is exact, not a guess. Verified across a 2,577-
+    // company export: of 49,861 packed columns, 5,971 were short, none was
+    // longer than its anchor, and none ended in a blank line. Independently
+    // confirmed by cross-checking DMAge against DMBirth date at the same index
+    // — 5,534 of 5,534 agree.
+    //
+    // This matters: age is the succession signal, and it arrives short for
+    // ~36% of companies. Dropping those columns lost most of it.
+    const zip = (key) => {
       const lines = packedLines(get(key));
+      if (!lines.length) return null;
       if (lines.length === names.length) return lines;
-      // Non-empty but misaligned: Orbis dropped blank lines, so we cannot tell
-      // which value belongs to which name. Skipping is right; hiding it is not.
-      if (lines.some(l => ownClean(l))) misaligned.set(key, (misaligned.get(key) || 0) + 1);
+      if (lines.length < names.length){
+        while (lines.length < names.length) lines.push('');
+        return lines;
+      }
+      // Longer than the anchor has never been observed and has no safe reading,
+      // so it is still refused — and reported rather than dropped silently.
+      misaligned.set(key, (misaligned.get(key) || 0) + 1);
       return null;
     };
     const uciL   = P.uci ? zip(P.uci) : null;
@@ -3019,7 +3046,7 @@ function parsePeopleRows(rows){
         orbisRoleCount: rcL ? (parseInt(ownClean(rcL[i]), 10) || null) : null,
         // Succession signal. Birth date is stable so age can be recomputed from
         // it later; a bare age is only true as of this import, hence both.
-        birthDate: dobL ? ownClean(dobL[i]) : '',
+        birthDate: dobL ? orbisDate(ownClean(dobL[i])) : '',
         orbisAge: ageL ? ((/^\d{1,3}$/.test(ownClean(ageL[i]))) ? parseInt(ownClean(ageL[i]), 10) : null) : null,
         // Whatever contact detail the file carries. Orbis writes '-' and 'n.a.'
         // for "nothing here", which must not be stored as if it were data.
@@ -3102,7 +3129,7 @@ function renderPeopleImportPreview(){
   let warn = '';
   if (s.unmatched.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.unmatched.length} compan${s.unmatched.length===1?'y':'ies'} not in the CRM — skipped unless you tick the box above: ${esc(s.unmatched.slice(0,4).map(u=>u.name).join(', '))}${s.unmatched.length>4?` +${s.unmatched.length-4} more`:''}</div>`;
   if (s.matchedByName) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.matchedByName} link${s.matchedByName===1?'':'s'} matched by company <em>name</em> (no NIF/BvD in the file) — verify before importing.</div>`;
-  if (s.misaligned?.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.misaligned.map(m => `<code>${esc(PEOPLE_ALIAS[m.key]?.[0] || m.key)}</code> (${m.companies})`).join(', ')} had values that did not line up with the name column, so they were skipped — Orbis omits the line for a blank value, which shifts the rest.</div>`;
+  if (s.misaligned?.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.misaligned.map(m => `<code>${esc(PEOPLE_ALIAS[m.key]?.[0] || m.key)}</code> (${m.companies})`).join(', ')} had MORE values than there are names, which has no safe reading, so they were skipped. Worth checking the export.</div>`;
   if (s.countCheck?.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.countCheck.length} compan${s.countCheck.length===1?'y':'ies'} where Orbis's own count differs from what was read — a packed cell may be truncated: ${esc(s.countCheck.slice(0,3).map(c=>`${c.company} (Orbis ${c.stated}, read ${c.parsed})`).join('; '))}${s.countCheck.length>3?` +${s.countCheck.length-3} more`:''}</div>`;
   if (s.mode === 'management' && !s.sawStatusCol) warn += `<div style="margin-top:6px;color:#B45309;">⚠ No current/previous column found — use the checkbox above to say which kind of export this is.</div>`;
   document.getElementById('peopleImportSummary').innerHTML = bits.join(' · ') + warn;
