@@ -224,6 +224,24 @@
     .own-table tr.prev td, .own-table tr.prev .person-link { color: var(--text-light); }
     .person-link { color: var(--primary); cursor: pointer; font-weight: 600; }
     .person-link:hover { text-decoration: underline; }
+    .fm-group { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px; }
+    .fm-group-off { opacity: .6; }
+    .fm-head { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; margin-bottom: 6px; }
+    .fm-count { margin-left: auto; font-size: 0.72rem; color: var(--text-light); font-variant-numeric: tabular-nums; }
+    .fm-tag { font-size: 0.64rem; letter-spacing: .04em; text-transform: uppercase; padding: 1px 6px; border-radius: 3px; }
+    .fm-tag-ok { background: #E3F2E8; color: #1B6B3A; }
+    .fm-tag-warn { background: #FDF0DC; color: #B45309; }
+    .fm-tag-off { background: #EEEDEA; color: #7A736A; }
+    .fm-note { font-size: 0.73rem; color: var(--text-light); margin-bottom: 7px; }
+    .fm-note-warn { color: #B45309; }
+    .fm-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 2px 12px; }
+    .fm-field { display: flex; align-items: baseline; gap: 6px; font-size: 0.76rem; }
+    .fm-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fm-pct { margin-left: auto; color: var(--text-light); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+    .fm-dot { font-size: 0.7rem; line-height: 1; }
+    .fm-ok { color: #2E7D4F; }
+    .fm-empty { color: #B45309; }
+    .fm-miss { color: #B9B2A6; }
     .contact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
     .contact-grid label { display: flex; flex-direction: column; gap: 4px; }
     .contact-grid label > span { font-size: 0.72rem; color: var(--text-light); font-weight: 600; }
@@ -852,6 +870,12 @@
       <label class="btn btn--ghost btn--sm" style="cursor:pointer;margin:0;">📂 Choose file<input type="file" id="peopleFileInput" accept=".xlsx,.csv,text/csv" style="display:none;"></label>
       <span id="peopleFileName" style="font-size:0.82rem;color:var(--text-light);"></span>
     </div>
+    <details id="peopleFieldMapWrap" style="display:none;margin-bottom:14px;" open>
+      <summary style="cursor:pointer;font-size:0.83rem;font-weight:600;">
+        Fields found in this file <span id="peopleFieldMapCount" style="font-weight:400;color:var(--text-light);"></span>
+      </summary>
+      <div id="peopleFieldMap" style="margin-top:10px;"></div>
+    </details>
     <div id="peopleImportOpts" style="display:none;margin-bottom:14px;padding:12px;background:#FAFAF8;border:1px solid var(--border);border-radius:var(--radius);">
       <label class="check-item" style="font-weight:600;"><input type="checkbox" id="peopleCreateMissing"> Also create companies that aren't in the CRM</label>
       <div style="font-size:0.76rem;color:var(--text-light);margin-top:8px;font-weight:400;text-transform:none;letter-spacing:0;">Off by default. When on, missing companies are created with just name + NIF and tagged <code>ownership_import</code> so you can find or remove them later.</div>
@@ -2760,6 +2784,88 @@ const PERSON_CONTACT_FIELDS = [
   { key:'address',  orbis:'orbisAddress',  label:'Address',  type:'text', hint:'Street, postcode city' },
 ];
 
+// What the importer looks for, grouped by the feature each group powers, so a
+// gap reads as "ownership control won't import" rather than as a list of
+// orphan column names. `anchor` is the column without which the whole group is
+// simply absent from the file (not an error — a shareholders-only export has no
+// director columns). `critical` fields are ones whose absence silently degrades
+// a group that IS present.
+const IMPORT_FIELD_GROUPS = [
+  { title:'Company matching', powers:'Attaching every row to a company in the CRM',
+    critical:['nif'],
+    degraded:'rows fall back to matching on company name alone, which can attach people to the wrong company',
+    fields:['nif','bvd','companyName'] },
+  { title:'Shareholders', powers:'The cap table, % held and control tiers',
+    anchor:'shName',
+    fields:['shName','shUci','shBvd','shType','shDirect','shTotal','shMgr','shDate','shCountry'] },
+  { title:'Ownership control', powers:'Who owns the company, and the 👑 badge',
+    needs:'shName', critical:['coEntityType'],
+    degraded:'a company with no controlling shareholder cannot be told apart from one Orbis has no data for, so the owner falls back to the largest holding',
+    fields:['coEntityType','cshName','cshBvd','cshUci','guoName','guoBvd','guoUci'] },
+  { title:'Directors & managers', powers:'Roles, the org side of the network',
+    anchor:'dmName',
+    fields:['dmName','dmUci','dmJob','dmJobOrig','dmCurrent','dmLevel','dmAlsoSh','dmRoleCount','dmBvd','dmType','dmCountry'] },
+  { title:'Succession', powers:'The 🎂 age badge — who is near retirement',
+    needs:'dmName',
+    fields:['dmBirth','dmAge'] },
+  { title:'Contact details', powers:'Phone and address on person and entity profiles',
+    fields:['shStreet','shPostcode','shCity','shPhone','shWeb','dmAddress','dmEmail'] },
+  { title:'Integrity checks', powers:'Catching a company whose people did not all arrive',
+    fields:['coNoSh','coNoDm'] },
+];
+
+// Human labels for the alias keys. The Orbis column name itself is shown
+// alongside, since that is what has to be ticked in the export dialog.
+const FIELD_LABELS = {
+  nif:'Company NIF', bvd:'Company BvD ID', companyName:'Company name',
+  shName:'Shareholder name', shUci:'Shareholder UCI', shBvd:'Shareholder BvD ID',
+  shType:'Shareholder type', shDirect:'Direct %', shTotal:'Total %',
+  shMgr:'Also a manager', shDate:'As-of date', shCountry:'Country',
+  coEntityType:'Entity type', cshName:'Controlling shareholder', cshBvd:'Controlling sh. BvD ID',
+  cshUci:'Controlling sh. UCI', guoName:'Ultimate owner', guoBvd:'Ultimate owner BvD ID',
+  guoUci:'Ultimate owner UCI',
+  dmName:'Director name', dmUci:'Director UCI', dmJob:'Job title (English)',
+  dmJobOrig:'Job title (original)', dmCurrent:'Current or previous',
+  dmLevel:'Level of responsibility', dmAlsoSh:'Also a shareholder',
+  dmRoleCount:'Roles held elsewhere', dmBvd:'Corporate director ID',
+  dmType:'Individual or company', dmCountry:'Country',
+  dmBirth:'Birth date', dmAge:'Age',
+  shStreet:'Street', shPostcode:'Postcode', shCity:'City', shPhone:'Phone',
+  shWeb:'Website', dmAddress:'Director address', dmEmail:'Director e-mail',
+  coNoSh:'Orbis shareholder count', coNoDm:'Orbis director count',
+};
+
+// For each field: is the column there, and does it actually carry anything?
+// "Present but empty" is worth its own state — it is the difference between
+// "you forgot to tick it" and "Orbis has no data for these companies".
+function buildFieldReport(rows, headers, idx, hi){
+  const data = rows.slice(hi + 1);
+  const fill = key => {
+    const i = idx[key];
+    if (i === -1) return null;
+    let filled = 0;
+    for (const row of data){
+      const v = String((row && row[i]) ?? '');
+      if (v.trim() && packedLines(v).some(l => ownClean(l))) filled++;
+    }
+    return data.length ? Math.round(100 * filled / data.length) : 0;
+  };
+  return IMPORT_FIELD_GROUPS.map(g => {
+    const fields = g.fields.map(key => ({
+      key, label: FIELD_LABELS[key] || key,
+      column: idx[key] !== -1 ? headers[idx[key]] : (PEOPLE_ALIAS[key]?.[0] || key),
+      found: idx[key] !== -1, pct: fill(key),
+    }));
+    // A group whose anchor is missing is not in this file at all — normal, not
+    // a problem. A group that IS present but missing a critical field is.
+    const gate = g.anchor || g.needs || null;
+    const absent = gate !== null && idx[gate] === -1;
+    const missingCritical = absent ? [] : (g.critical || []).filter(k => idx[k] === -1);
+    return { ...g, fields, absent, missingCritical,
+             foundCount: fields.filter(f => f.found).length };
+  });
+}
+
 // The import finishes with three loops that need one Firestore query per
 // company or per person. Run sequentially that is ~31,800 round-trips for a
 // 2,577-company file — 30-45 minutes in a tab that cannot be closed. Firestore
@@ -2897,7 +3003,8 @@ function parsePeopleRows(rows){
   // couple of banner rows, so find the row that actually looks like headers.
   let hi = rows.findIndex(r => r.some(c => /^(sh|dm)\s*-\s*name$|^company name/i.test(String(c).replace(/\n/g,' ').trim())));
   if (hi === -1) hi = 0;
-  const headers = rows[hi].map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
+  const rawHeaders = rows[hi].map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim());
+  const headers = rawHeaders.map(h => h.toLowerCase());
   const idx = {};
   for (const k of Object.keys(PEOPLE_ALIAS)) idx[k] = peopleColIndex(headers, k);
 
@@ -3165,6 +3272,7 @@ function parsePeopleRows(rows){
     matchedByName: out.filter(o => o.matchedBy === 'name').length,
     withUci: out.filter(o => o.uci).length, entities: out.filter(o => o.entityType === 'entity').length,
     sawStatusCol, mergedDupes, ownershipMeta, countCheck, facets,
+    fieldReport: buildFieldReport(rows, rawHeaders, idx, hi),
     shLinks: out.filter(o => o.isSh).length,
     mgmtLinks: out.filter(o => o.isMgmt).length,
     bothFacets: out.filter(o => o.isSh && o.isMgmt).length,
@@ -3175,6 +3283,48 @@ function parsePeopleRows(rows){
     withControlData: [...ownershipMeta.values()].filter(m => m.cshKeys.length || m.guoName).length,
     unknownStatus: out.filter(o => o.isMgmt && o.mgmtCurrentFromFile === null).length };
   return peopleImportStats;
+}
+
+function renderFieldReport(){
+  const groups = peopleImportStats?.fieldReport;
+  const el = document.getElementById('peopleFieldMap');
+  if (!groups){ showEl('peopleFieldMapWrap', false); return; }
+  showEl('peopleFieldMapWrap', true);
+
+  const dot = f => {
+    if (!f.found)   return '<span class="fm-dot fm-miss" title="Column not in this file">✕</span>';
+    if (f.pct === 0) return '<span class="fm-dot fm-empty" title="Column is present but Orbis left it blank for every company">○</span>';
+    return `<span class="fm-dot fm-ok" title="Present, ${f.pct}% of companies have a value">●</span>`;
+  };
+  document.getElementById('peopleFieldMapCount').textContent =
+    groups.filter(g => !g.absent && !g.missingCritical.length).length + ' of ' +
+    groups.filter(g => !g.absent).length + ' sections complete';
+
+  el.innerHTML = groups.map(g => {
+    // A missing anchor means the file simply does not cover this section —
+    // normal for a one-sided export, so it reads as information, not a fault.
+    const head = g.absent
+      ? `<span class="fm-tag fm-tag-off">not in this file</span>`
+      : g.missingCritical.length
+        ? `<span class="fm-tag fm-tag-warn">incomplete</span>`
+        : `<span class="fm-tag fm-tag-ok">ready</span>`;
+    const note = g.absent
+      ? `<div class="fm-note">${esc(g.powers)} — nothing here to import, which is fine if that was not the point of this export.</div>`
+      : g.missingCritical.length
+        ? `<div class="fm-note fm-note-warn">⚠ ${g.missingCritical.map(k => `<strong>${esc(FIELD_LABELS[k] || k)}</strong>`).join(', ')} not in this file. Everything else still imports, but ${esc(g.degraded || 'this section will be incomplete')}. Add the column in Orbis and re-import to fix it.</div>`
+        : '';
+    return `
+      <div class="fm-group${g.absent ? ' fm-group-off' : ''}">
+        <div class="fm-head"><strong>${esc(g.title)}</strong>${head}
+          <span class="fm-count">${g.foundCount}/${g.fields.length}</span></div>
+        ${note}
+        <div class="fm-fields">${g.fields.map(f => `
+          <div class="fm-field" title="Orbis column: ${esc(f.column)}">
+            ${dot(f)}<span class="fm-label">${esc(f.label)}</span>
+            <span class="fm-pct">${f.found ? (f.pct === 0 ? 'empty' : f.pct + '%') : '—'}</span>
+          </div>`).join('')}</div>
+      </div>`;
+  }).join('');
 }
 
 function renderPeopleImportPreview(){
@@ -3445,13 +3595,15 @@ async function handlePeopleFile(file){
       rows = parseCSV(await file.text());
     }
     const s = parsePeopleRows(rows);
-    document.getElementById('peopleFileName').textContent = `${file.name} — ${s.mode} file, ${s.rowsSeen} compan${s.rowsSeen===1?'y':'ies'}`;
+    const what = s.mode === 'both' ? 'shareholders + directors' : s.mode;
+    document.getElementById('peopleFileName').textContent = `${file.name} — ${what}, ${s.rowsSeen} compan${s.rowsSeen===1?'y':'ies'}`;
+    renderFieldReport();
     renderPeopleImportPreview();
   } catch(e){
     console.error(e);
     document.getElementById('peopleFileName').textContent = file.name;
     errEl.textContent = e.message; errEl.style.display = 'block';
-    showEl('peopleImportPreview', false); showEl('peopleImportOpts', false);
+    showEl('peopleImportPreview', false); showEl('peopleImportOpts', false); showEl('peopleFieldMapWrap', false);
     document.getElementById('peopleImportConfirmBtn').disabled = true;
   }
 }
