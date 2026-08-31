@@ -864,7 +864,7 @@
       <div style="font-size:0.83rem;font-weight:600;margin-bottom:10px;" id="peopleImportSummary"></div>
       <div style="max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
         <table class="preview-table">
-          <thead><tr><th>Company</th><th>Person / Entity</th><th>Type</th><th>Direct %</th><th>Manager</th><th>Status</th></tr></thead>
+          <thead><tr><th>Company</th><th>Person / Entity</th><th>Type</th><th>Role in file</th><th>Direct %</th><th>Manager</th><th>Status</th></tr></thead>
           <tbody id="peopleImportBody"></tbody>
         </table>
       </div>
@@ -2760,6 +2760,30 @@ const PERSON_CONTACT_FIELDS = [
   { key:'address',  orbis:'orbisAddress',  label:'Address',  type:'text', hint:'Street, postcode city' },
 ];
 
+// The import finishes with three loops that need one Firestore query per
+// company or per person. Run sequentially that is ~31,800 round-trips for a
+// 2,577-company file — 30-45 minutes in a tab that cannot be closed. Firestore
+// happily serves these in parallel, so run a bounded number at a time: the
+// work is identical, the wall clock drops to a couple of minutes.
+//
+// Bounded rather than unbounded because Promise.all over 26,000 queries opens
+// far more in-flight requests than the browser or the SDK will service well.
+const READ_CONCURRENCY = 20;
+async function mapPool(items, fn, limit = READ_CONCURRENCY, onProgress){
+  const results = new Array(items.length);
+  let next = 0, done = 0;
+  const worker = async () => {
+    while (next < items.length){
+      const i = next++;
+      results[i] = await fn(items[i], i);
+      if (onProgress && ++done % 50 === 0) onProgress(done);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (onProgress && items.length) onProgress(items.length);
+  return results;
+}
+
 // Orbis mostly writes dates as text, but a handful arrive as Excel serials
 // (6 of 5,534 birth dates in the 2,577-company export). Decode them so they
 // are not silently unusable. Day 1 is 1900-01-01, with Excel's 1900 leap-year
@@ -2877,8 +2901,14 @@ function parsePeopleRows(rows){
   const idx = {};
   for (const k of Object.keys(PEOPLE_ALIAS)) idx[k] = peopleColIndex(headers, k);
 
-  const mode = idx.shName !== -1 ? 'shareholders' : (idx.dmName !== -1 ? 'management' : null);
-  if (!mode) throw new Error('No shareholder ("SH - Name") or director ("DM - Full name") column found. Is this an Orbis list export?');
+  // Orbis exports shareholders and directors as separate column families, and
+  // a single list export can contain both. Read whichever are present rather
+  // than picking one and silently discarding the other half of the file.
+  const facets = [];
+  if (idx.shName !== -1) facets.push('shareholders');
+  if (idx.dmName !== -1) facets.push('management');
+  if (!facets.length) throw new Error('No shareholder ("SH - Name") or director ("DM - Full name") column found. Is this an Orbis list export?');
+  const mode = facets.length === 2 ? 'both' : facets[0];
   if (idx.companyName === -1) throw new Error('No "Company name" column found.');
 
   // Company lookup tables (ensureFullDataset() has already run).
@@ -2918,7 +2948,7 @@ function parsePeopleRows(rows){
     if (!company){ const c = byName.get(normName(coName)); if (c){ company = c; matchedBy = 'name'; } }
 
     // Company-level ownership control (shareholders files only).
-    if (mode === 'shareholders' && company){
+    if (facets.includes('shareholders') && company){
       const cshNames = packedLines(get('cshName')).map(ownClean).filter(Boolean);
       const cshUcis  = packedLines(get('cshUci')).map(ownClean).filter(Boolean);
       const cshBvds  = packedLines(get('cshBvd')).map(ownClean).filter(Boolean);
@@ -2945,121 +2975,146 @@ function parsePeopleRows(rows){
       if (meta.entityType || meta.guoName || meta.cshKeys.length) ownershipMeta.set(company.id, meta);
     }
 
-    const P = mode === 'shareholders'
-      ? { name:'shName', uci:'shUci', bvd:'shBvd', type:'shType', country:'shCountry' }
-      : { name:'dmName', uci:'dmUci', bvd:'dmBvd', type:'dmType', country:'dmCountry' };
+    // A file may carry BOTH facets — Orbis will happily export shareholders and
+    // directors in one list. Each is extracted independently against its own
+    // anchor column, then merged below by person+company, so someone who is
+    // both a shareholder and a gerente becomes ONE link carrying both facets.
+    let sawPeopleHere = false;
+    for (const facet of facets){
+      const isShF = facet === 'shareholders';
+      const P = isShF
+        ? { name:'shName', uci:'shUci', bvd:'shBvd', type:'shType', country:'shCountry' }
+        : { name:'dmName', uci:'dmUci', bvd:'dmBvd', type:'dmType', country:'dmCountry' };
 
-    const names = packedLines(get(P.name));
-    const statedRaw = ownClean(get(mode === 'shareholders' ? 'coNoSh' : 'coNoDm'));
-    const stated = /^\d+$/.test(statedRaw) ? parseInt(statedRaw, 10) : null;
-    const parsedCount = names.filter(x => ownClean(x)).length;
-    if (stated != null && stated !== parsedCount) countCheck.push({ company: coName, stated, parsed: parsedCount });
-    if (!names.length){ skippedNoPeople++; continue; }
-    // Orbis trims *trailing* blank lines from a packed cell and nothing else:
-    // internal blanks are preserved, so a short column is still indexed from 0
-    // and padding it back out is exact, not a guess. Verified across a 2,577-
-    // company export: of 49,861 packed columns, 5,971 were short, none was
-    // longer than its anchor, and none ended in a blank line. Independently
-    // confirmed by cross-checking DMAge against DMBirth date at the same index
-    // — 5,534 of 5,534 agree.
-    //
-    // This matters: age is the succession signal, and it arrives short for
-    // ~36% of companies. Dropping those columns lost most of it.
-    const zip = (key) => {
-      const lines = packedLines(get(key));
-      if (!lines.length) return null;
-      if (lines.length === names.length) return lines;
-      if (lines.length < names.length){
-        while (lines.length < names.length) lines.push('');
-        return lines;
+      const names = packedLines(get(P.name));
+      const statedRaw = ownClean(get(isShF ? 'coNoSh' : 'coNoDm'));
+      const stated = /^\d+$/.test(statedRaw) ? parseInt(statedRaw, 10) : null;
+      if (!names.length){
+        if (stated) countCheck.push({ company: coName, facet, stated, parsed: 0 });
+        continue;
       }
-      // Longer than the anchor has never been observed and has no safe reading,
-      // so it is still refused — and reported rather than dropped silently.
-      misaligned.set(key, (misaligned.get(key) || 0) + 1);
-      return null;
-    };
-    const uciL   = P.uci ? zip(P.uci) : null;
-    const bvdL   = P.bvd ? zip(P.bvd) : null;
-    const typeL  = zip(P.type);
-    const ctryL  = zip(P.country);
-    const dirL   = mode === 'shareholders' ? zip('shDirect') : null;
-    const totL   = mode === 'shareholders' ? zip('shTotal')  : null;
-    const dateL  = mode === 'shareholders' ? zip('shDate')   : null;
-    const mgrL   = mode === 'shareholders' ? zip('shMgr')    : null;
-    const jobL   = mode === 'management'   ? zip('dmJob')    : null;
-    const jobOrigL = mode === 'management' ? zip('dmJobOrig'): null;  // Portuguese title, e.g. "Sócio Gerente"
-    const curL   = mode === 'management'   ? zip('dmCurrent'): null;
-    const alsoShL= mode === 'management'   ? zip('dmAlsoSh') : null;
-    const rcL    = mode === 'management'   ? zip('dmRoleCount') : null;
-    const lvlL   = mode === 'management'   ? zip('dmLevel')  : null;
-    const dobL   = mode === 'management'   ? zip('dmBirth')  : null;
-    const ageL   = mode === 'management'   ? zip('dmAge')    : null;
-    // Contact columns, whichever side of the export we are on.
-    const stL    = mode === 'shareholders' ? zip('shStreet')   : zip('dmAddress');
-    const pcL    = mode === 'shareholders' ? zip('shPostcode') : null;
-    const cityL  = mode === 'shareholders' ? zip('shCity')     : null;
-    const phoneL = mode === 'shareholders' ? zip('shPhone')    : null;
-    const webL   = mode === 'shareholders' ? zip('shWeb')      : null;
-    const emailL = mode === 'management'   ? zip('dmEmail')    : null;
-    if (mode === 'management' && curL) sawStatusCol = true;
+      // Orbis's headcount counts PEOPLE, while the packed cell holds one line
+      // per ROLE — a director with two titles occupies two lines. Comparing
+      // lines to the headcount would flag 2,081 of 2,572 companies as broken
+      // when nothing is wrong, so compare distinct people instead. Verified:
+      // "Number of directors & managers" equals the distinct-person count for
+      // 2,572 of 2,572 companies.
+      const seenPeople = new Set();
+      sawPeopleHere = true;
 
-    for (let i = 0; i < names.length; i++){
-      const rawName = ownClean(names[i]);
-      if (!rawName) continue; // placeholder slot
-      const nameKey = personNameKey(rawName);
-      if (!nameKey) continue;
-      const typeStr = typeL ? ownClean(typeL[i]) : '';
-      const isCorpType = /corporate|bank|insurance|fund|financial compan|industrial compan|public authorit|foundation|mutual|venture|private equity|^compan/i.test(typeStr);
-      const shBvd = bvdL ? ownClean(bvdL[i]) : '';
-      const holderNif = nifFromAny('', shBvd);
-      // A director carrying a company-shaped BvD ID (PT+NIF) is a company, not
-      // a person — common in Portugal, where an SGPS is often the gerente.
-      // Individuals get a different BvD shape ("WWCLS000000142..."), which
-      // nifFromAny rejects, so this cannot misclassify a person.
-      const isCorp = isCorpType || (mode === 'management' && !!holderNif);
-      const pid = personIdFrom({ uci: uciL ? uciL[i] : '', bvd: shBvd, nameKey });
-      const mgrStr = mgrL ? ownClean(mgrL[i]) : '';
-      const curStr = curL ? ownClean(curL[i]) : '';
+      // Orbis trims *trailing* blank lines from a packed cell and nothing else:
+      // internal blanks are preserved, so a short column is still indexed from 0
+      // and padding it back out is exact, not a guess. Verified across a 2,577-
+      // company export: of 49,861 packed columns, 5,971 were short, none was
+      // longer than its anchor, and none ended in a blank line. Independently
+      // confirmed by cross-checking DMAge against DMBirth date at the same index
+      // — 5,534 of 5,534 agree.
+      //
+      // This matters: age is the succession signal, and it arrives short for
+      // ~36% of companies. Dropping those columns lost most of it.
+      const zip = (key) => {
+        const lines = packedLines(get(key));
+        if (!lines.length) return null;
+        if (lines.length === names.length) return lines;
+        if (lines.length < names.length){
+          while (lines.length < names.length) lines.push('');
+          return lines;
+        }
+        // Longer than the anchor has never been observed and has no safe reading,
+        // so it is still refused — and reported rather than dropped silently.
+        misaligned.set(key, (misaligned.get(key) || 0) + 1);
+        return null;
+      };
+      const uciL   = P.uci ? zip(P.uci) : null;
+      const bvdL   = P.bvd ? zip(P.bvd) : null;
+      const typeL  = zip(P.type);
+      const ctryL  = zip(P.country);
+      const dirL   = isShF ? zip('shDirect') : null;
+      const totL   = isShF ? zip('shTotal')  : null;
+      const dateL  = isShF ? zip('shDate')   : null;
+      const mgrL   = isShF ? zip('shMgr')    : null;
+      const jobL     = isShF ? null : zip('dmJob');
+      const jobOrigL = isShF ? null : zip('dmJobOrig');  // Portuguese title, e.g. "Sócio Gerente"
+      const curL     = isShF ? null : zip('dmCurrent');
+      const alsoShL  = isShF ? null : zip('dmAlsoSh');
+      const rcL      = isShF ? null : zip('dmRoleCount');
+      const lvlL     = isShF ? null : zip('dmLevel');
+      const dobL     = isShF ? null : zip('dmBirth');
+      const ageL     = isShF ? null : zip('dmAge');
+      // Contact columns, whichever side of the export we are on.
+      const stL    = isShF ? zip('shStreet')   : zip('dmAddress');
+      const pcL    = isShF ? zip('shPostcode') : null;
+      const cityL  = isShF ? zip('shCity')     : null;
+      const phoneL = isShF ? zip('shPhone')    : null;
+      const webL   = isShF ? zip('shWeb')      : null;
+      const emailL = isShF ? null : zip('dmEmail');
+      if (!isShF && curL) sawStatusCol = true;
 
-      out.push({
-        mode, companyId: company?.id || null, companyName: company?.name || coName,
-        fileCompanyName: coName, companyNif: coNif, matchedBy, unmatched: !company,
-        personId: pid, personName: isCorp ? rawName : personDisplayName(rawName),
-        nameKey, uci: ownClean(uciL ? uciL[i] : ''), entityType: isCorp ? 'entity' : 'person',
-        holderNif, country: ctryL ? ownClean(ctryL[i]) : '',
-        shDirectPct: dirL ? ownPct(dirL[i]) : null,
-        shTotalPct:  totL ? ownPct(totL[i]) : null,
-        shDate:      dateL ? ownClean(dateL[i]) : '',
-        // Shareholders file: 'Current manager' also tells us they manage the company.
-        // Management file: "DMAlso a shareholder" = Yes tells us the reverse.
-        alsoManager: /current manager/i.test(mgrStr),
-        alsoShareholder: alsoShL ? /^y/i.test(ownClean(alsoShL[i])) : false,
-        // Keep both the English and the original-language title ("Manager-Partner;
-        // Shareholder (Minority)" + "Sócio Gerente"), de-duplicated.
-        mgmtRoles: [...new Set([
-          ...(jobL ? ownClean(jobL[i]).split(/;|\r?\n/) : []),
-          ...(jobOrigL ? ownClean(jobOrigL[i]).split(/;|\r?\n/) : []),
-        ].map(s => s.trim()).filter(Boolean))],
-        mgmtLevel: lvlL ? ownClean(lvlL[i]) : '',
-        // How many companies Orbis knows this person currently holds a role in —
-        // a hint that more of their network exists beyond what's been imported.
-        orbisRoleCount: rcL ? (parseInt(ownClean(rcL[i]), 10) || null) : null,
-        // Succession signal. Birth date is stable so age can be recomputed from
-        // it later; a bare age is only true as of this import, hence both.
-        birthDate: dobL ? orbisDate(ownClean(dobL[i])) : '',
-        orbisAge: ageL ? ((/^\d{1,3}$/.test(ownClean(ageL[i]))) ? parseInt(ownClean(ageL[i]), 10) : null) : null,
-        // Whatever contact detail the file carries. Orbis writes '-' and 'n.a.'
-        // for "nothing here", which must not be stored as if it were data.
-        street:   orbisText(stL, i), postcode: orbisText(pcL, i), city: orbisText(cityL, i),
-        phone:    orbisText(phoneL, i), website: orbisText(webL, i), email: orbisText(emailL, i),
-        // null = "file didn't say"; resolved at import time from the explicit
-        // toggle, so a missing status column can never silently mean "current".
-        mgmtCurrentFromFile: mode === 'management'
-          ? (curStr ? !/previous|former|resigned|ceased/i.test(curStr) : null)
-          : (/current manager/i.test(mgrStr) ? true : null),
-      });
-      if (!company) unmatched.set(coNif || normName(coName), { name: coName, nif: coNif });
+      for (let i = 0; i < names.length; i++){
+        const rawName = ownClean(names[i]);
+        if (!rawName) continue; // placeholder slot
+        const nameKey = personNameKey(rawName);
+        if (!nameKey) continue;
+        const typeStr = typeL ? ownClean(typeL[i]) : '';
+        const isCorpType = /corporate|bank|insurance|fund|financial compan|industrial compan|public authorit|foundation|mutual|venture|private equity|^compan/i.test(typeStr);
+        const shBvd = bvdL ? ownClean(bvdL[i]) : '';
+        const holderNif = nifFromAny('', shBvd);
+        // A director carrying a company-shaped BvD ID (PT+NIF) is a company, not
+        // a person — common in Portugal, where an SGPS is often the gerente.
+        // Individuals get a different BvD shape ("WWCLS000000142..."), which
+        // nifFromAny rejects, so this cannot misclassify a person.
+        const isCorp = isCorpType || (!isShF && !!holderNif);
+        const pid = personIdFrom({ uci: uciL ? uciL[i] : '', bvd: shBvd, nameKey });
+        const mgrStr = mgrL ? ownClean(mgrL[i]) : '';
+        const curStr = curL ? ownClean(curL[i]) : '';
+
+        out.push({
+          // Which facet this row carries. A file with both anchors emits one row
+          // per facet for the same person; the merge below ORs these together.
+          isSh: isShF, isMgmt: !isShF,
+          companyId: company?.id || null, companyName: company?.name || coName,
+          fileCompanyName: coName, companyNif: coNif, matchedBy, unmatched: !company,
+          personId: pid, personName: isCorp ? rawName : personDisplayName(rawName),
+          nameKey, uci: ownClean(uciL ? uciL[i] : ''), entityType: isCorp ? 'entity' : 'person',
+          holderNif, country: ctryL ? ownClean(ctryL[i]) : '',
+          shDirectPct: dirL ? ownPct(dirL[i]) : null,
+          shTotalPct:  totL ? ownPct(totL[i]) : null,
+          shDate:      dateL ? ownClean(dateL[i]) : '',
+          // Shareholders file: 'Current manager' also tells us they manage the company.
+          // Management file: "DMAlso a shareholder" = Yes tells us the reverse.
+          alsoManager: /current manager/i.test(mgrStr),
+          alsoShareholder: alsoShL ? /^y/i.test(ownClean(alsoShL[i])) : false,
+          // Keep both the English and the original-language title ("Manager-Partner;
+          // Shareholder (Minority)" + "Sócio Gerente"), de-duplicated.
+          mgmtRoles: [...new Set([
+            ...(jobL ? ownClean(jobL[i]).split(/;|\r?\n/) : []),
+            ...(jobOrigL ? ownClean(jobOrigL[i]).split(/;|\r?\n/) : []),
+          ].map(s => s.trim()).filter(Boolean))],
+          mgmtLevel: lvlL ? ownClean(lvlL[i]) : '',
+          // How many companies Orbis knows this person currently holds a role in —
+          // a hint that more of their network exists beyond what's been imported.
+          orbisRoleCount: rcL ? (parseInt(ownClean(rcL[i]), 10) || null) : null,
+          // Succession signal. Birth date is stable so age can be recomputed from
+          // it later; a bare age is only true as of this import, hence both.
+          birthDate: dobL ? orbisDate(ownClean(dobL[i])) : '',
+          orbisAge: ageL ? ((/^\d{1,3}$/.test(ownClean(ageL[i]))) ? parseInt(ownClean(ageL[i]), 10) : null) : null,
+          // Whatever contact detail the file carries. Orbis writes '-' and 'n.a.'
+          // for "nothing here", which must not be stored as if it were data.
+          street:   orbisText(stL, i), postcode: orbisText(pcL, i), city: orbisText(cityL, i),
+          phone:    orbisText(phoneL, i), website: orbisText(webL, i), email: orbisText(emailL, i),
+          // null = "file didn't say"; resolved at import time from the explicit
+          // toggle, so a missing status column can never silently mean "current".
+          mgmtCurrentFromFile: !isShF
+            ? (curStr ? !/previous|former|resigned|ceased/i.test(curStr) : null)
+            : (/current manager/i.test(mgrStr) ? true : null),
+        });
+        seenPeople.add(pid);
+        if (!company) unmatched.set(coNif || normName(coName), { name: coName, nif: coNif });
+      }
+      if (stated != null && stated !== seenPeople.size)
+        countCheck.push({ company: coName, facet, stated, parsed: seenPeople.size });
     }
+    if (!sawPeopleHere) skippedNoPeople++;
   }
 
   // A person can appear MORE THAN ONCE for the same company — Orbis lists one
@@ -3075,6 +3130,10 @@ function parsePeopleRows(rows){
     const prev = merged.get(k);
     if (!prev){ merged.set(k, o); continue; }
     mergedDupes++;
+    // A combined file emits one row per facet for the same person+company;
+    // this is where the shareholding and the directorship become one link.
+    prev.isSh = prev.isSh || o.isSh;
+    prev.isMgmt = prev.isMgmt || o.isMgmt;
     prev.mgmtRoles = [...new Set([...prev.mgmtRoles, ...o.mgmtRoles])];
     prev.alsoManager = prev.alsoManager || o.alsoManager;
     prev.alsoShareholder = prev.alsoShareholder || o.alsoShareholder;
@@ -3083,6 +3142,13 @@ function parsePeopleRows(rows){
     if (prev.shTotalPct == null) prev.shTotalPct = o.shTotalPct;
     if (!prev.shDate) prev.shDate = o.shDate;
     if (!prev.orbisRoleCount) prev.orbisRoleCount = o.orbisRoleCount;
+    if (!prev.mgmtLevel) prev.mgmtLevel = o.mgmtLevel;
+    if (!prev.uci) prev.uci = o.uci;
+    if (!prev.country) prev.country = o.country;
+    if (!prev.holderNif) prev.holderNif = o.holderNif;
+    // 'entity' is the more specific classification, so let it win: the
+    // shareholder side names the type, the director side often does not.
+    if (o.entityType === 'entity') prev.entityType = 'entity';
     if (!prev.birthDate) prev.birthDate = o.birthDate;
     for (const f of ['street','postcode','city','phone','website','email']) if (!prev[f]) prev[f] = o[f];
     if (prev.orbisAge == null) prev.orbisAge = o.orbisAge;
@@ -3098,20 +3164,28 @@ function parsePeopleRows(rows){
     unmatched: [...unmatched.values()], skippedNoPeople,
     matchedByName: out.filter(o => o.matchedBy === 'name').length,
     withUci: out.filter(o => o.uci).length, entities: out.filter(o => o.entityType === 'entity').length,
-    sawStatusCol, mergedDupes, ownershipMeta, countCheck,
+    sawStatusCol, mergedDupes, ownershipMeta, countCheck, facets,
+    shLinks: out.filter(o => o.isSh).length,
+    mgmtLinks: out.filter(o => o.isMgmt).length,
+    bothFacets: out.filter(o => o.isSh && o.isMgmt).length,
     misaligned: [...misaligned.entries()].map(([k, n]) => ({ key: k, companies: n })),
     withDob: out.filter(o => o.birthDate || o.orbisAge != null).length,
     withContact: out.filter(o => o.phone || o.email || o.website || orbisAddress(o)).length,
-    corpDirectors: out.filter(o => o.mode === 'management' && o.entityType === 'entity').length,
+    corpDirectors: out.filter(o => o.isMgmt && o.entityType === 'entity').length,
     withControlData: [...ownershipMeta.values()].filter(m => m.cshKeys.length || m.guoName).length,
-    unknownStatus: out.filter(o => o.mode === 'management' && o.mgmtCurrentFromFile === null).length };
+    unknownStatus: out.filter(o => o.isMgmt && o.mgmtCurrentFromFile === null).length };
   return peopleImportStats;
 }
 
 function renderPeopleImportPreview(){
   const s = peopleImportStats;
   const bits = [
-    `<strong>${s.links}</strong> ${s.mode === 'management' ? 'management' : 'shareholder'} link${s.links===1?'':'s'}`,
+    // A combined file has two counts worth showing separately, plus the
+    // overlap — the people who are both an owner and a manager, which is the
+    // whole point of merging the two facets into one link.
+    s.mode === 'both'
+      ? `<strong>${s.links}</strong> links <span style="color:var(--text-light);">(${s.shLinks} shareholder · ${s.mgmtLinks} management · ${s.bothFacets} both)</span>`
+      : `<strong>${s.links}</strong> ${s.mode === 'management' ? 'management' : 'shareholder'} link${s.links===1?'':'s'}`,
     `<strong>${s.people}</strong> unique ${s.people===1?'person/entity':'people/entities'}`,
     `<strong>${s.companiesMatched}</strong> compan${s.companiesMatched===1?'y':'ies'} matched`,
   ];
@@ -3123,23 +3197,25 @@ function renderPeopleImportPreview(){
   if (s.withDob) bits.push(`${s.withDob} with a birth date/age`);
   if (s.withContact) bits.push(`${s.withContact} with contact details`);
   if (s.corpDirectors) bits.push(`${s.corpDirectors} corporate director${s.corpDirectors===1?'':'s'}`);
-  if (s.mode === 'shareholders') bits.push(s.withControlData
+  if (s.facets.includes('shareholders')) bits.push(s.withControlData
     ? `<strong>${s.withControlData}</strong> with Orbis control data (GUO/CSH)`
     : `no Orbis control data — owner computed as largest holding`);
   let warn = '';
   if (s.unmatched.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.unmatched.length} compan${s.unmatched.length===1?'y':'ies'} not in the CRM — skipped unless you tick the box above: ${esc(s.unmatched.slice(0,4).map(u=>u.name).join(', '))}${s.unmatched.length>4?` +${s.unmatched.length-4} more`:''}</div>`;
   if (s.matchedByName) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.matchedByName} link${s.matchedByName===1?'':'s'} matched by company <em>name</em> (no NIF/BvD in the file) — verify before importing.</div>`;
   if (s.misaligned?.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.misaligned.map(m => `<code>${esc(PEOPLE_ALIAS[m.key]?.[0] || m.key)}</code> (${m.companies})`).join(', ')} had MORE values than there are names, which has no safe reading, so they were skipped. Worth checking the export.</div>`;
-  if (s.countCheck?.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.countCheck.length} compan${s.countCheck.length===1?'y':'ies'} where Orbis's own count differs from what was read — a packed cell may be truncated: ${esc(s.countCheck.slice(0,3).map(c=>`${c.company} (Orbis ${c.stated}, read ${c.parsed})`).join('; '))}${s.countCheck.length>3?` +${s.countCheck.length-3} more`:''}</div>`;
-  if (s.mode === 'management' && !s.sawStatusCol) warn += `<div style="margin-top:6px;color:#B45309;">⚠ No current/previous column found — use the checkbox above to say which kind of export this is.</div>`;
+  if (s.countCheck?.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.countCheck.length} compan${s.countCheck.length===1?'y':'ies'} where Orbis's own headcount differs from the people read. Usually an Orbis defect rather than a lost column — most often two different people sharing one UCI, which merges them into one: ${esc(s.countCheck.slice(0,3).map(c=>`${c.company} — ${c.facet === 'management' ? 'directors' : 'shareholders'} (Orbis ${c.stated}, read ${c.parsed})`).join('; '))}${s.countCheck.length>3?` +${s.countCheck.length-3} more`:''}</div>`;
+  const needsPrevToggle = s.facets.includes('management') && !s.sawStatusCol;
+  if (needsPrevToggle) warn += `<div style="margin-top:6px;color:#B45309;">⚠ No current/previous column found for directors — use the checkbox above to say which kind of export this is.</div>`;
   document.getElementById('peopleImportSummary').innerHTML = bits.join(' · ') + warn;
-  showEl('peoplePrevRow', s.mode === 'management' && !s.sawStatusCol);
+  showEl('peoplePrevRow', needsPrevToggle);
 
   document.getElementById('peopleImportBody').innerHTML = peopleImportRows.slice(0, 200).map(r => `
     <tr${r.unmatched ? ' style="opacity:.55;"' : ''}>
       <td>${esc(r.fileCompanyName)}</td>
       <td>${esc(r.personName)}</td>
       <td>${r.entityType === 'entity' ? '🏢 Entity' : '🧑 Person'}</td>
+      <td style="white-space:nowrap;">${[r.isSh ? 'Shareholder' : '', r.isMgmt ? 'Manager' : ''].filter(Boolean).join(' + ') || '—'}</td>
       <td>${r.shDirectPct != null ? r.shDirectPct + '%' : '—'}</td>
       <td>${r.mgmtRoles.length ? esc(r.mgmtRoles.join(' · ')) : (r.alsoManager ? '✓' : '—')}</td>
       <td>${r.unmatched ? '<span class="badge badge-warn">company not in CRM</span>' : '<span class="badge badge-green">ready</span>'}</td>
@@ -3229,19 +3305,23 @@ async function confirmPeopleImport(){
         personEntityType: r.entityType, personMatchedCompanyId: r.holderNif ? (nifToCo.get(r.holderNif) || null) : null,
         source: 'orbis', updatedAt: serverTimestamp(),
       };
-      if (r.mode === 'shareholders'){
+      if (r.isSh){
         payload.shDirectPct = r.shDirectPct; payload.shTotalPct = r.shTotalPct;
         payload.shCurrent = true; payload.shDate = r.shDate || null;
         payload.shType = r.entityType === 'entity' ? 'C' : 'I';
         payload.alsoManager = r.alsoManager;
-        if (r.mgmtCurrentFromFile === true) payload.mgmtCurrent = true; // "Current manager", role unknown
-      } else {
+      }
+      if (r.isMgmt){
         payload.mgmtRoles = r.mgmtRoles;
         // File said so; otherwise fall back to the explicit "previous export"
         // toggle rather than assuming current.
         payload.mgmtCurrent = r.mgmtCurrentFromFile !== null ? r.mgmtCurrentFromFile : !allPrevious;
         if (r.mgmtLevel) payload.mgmtLevel = r.mgmtLevel;
         if (r.alsoShareholder) payload.alsoShareholder = true;
+      } else if (r.isSh && r.mgmtCurrentFromFile === true){
+        // A shareholders-only file still says "Current manager" — record the
+        // relationship even though the file carries no job title.
+        payload.mgmtCurrent = true;
       }
       batch.set(doc(db,'searchPersonLinks', `${r.personId}__${r.companyId}`), payload, { merge: true });
       if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); done += 450; btn.innerHTML = `<span class="spin-sm"></span>Links… ${done}/${rows.length}`; }
@@ -3252,19 +3332,42 @@ async function confirmPeopleImport(){
     //    companies it covers, so anyone previously current for those companies
     //    but absent from the file is demoted to "previous" (kept, greyed).
     const touched = [...new Set(rows.map(r => r.companyId).filter(Boolean))];
-    const keep = new Set(rows.map(r => `${r.personId}__${r.companyId}`));
-    const facet = peopleImportStats.mode === 'shareholders' ? 'shCurrent' : 'mgmtCurrent';
+    // Demotion is per facet. A combined file is a snapshot of BOTH facets, but
+    // a company may appear in only one of them — and a shareholder who is not a
+    // director must not keep a stale mgmtCurrent just because the file mentions
+    // them. So each facet gets its own "companies covered" and "links seen"
+    // sets, and only demotes within its own scope.
+    const facetScope = {
+      shCurrent:   { touched: new Set(), keep: new Set() },
+      mgmtCurrent: { touched: new Set(), keep: new Set() },
+    };
+    for (const r of rows){
+      if (!r.companyId) continue;
+      const id = `${r.personId}__${r.companyId}`;
+      if (r.isSh){   facetScope.shCurrent.touched.add(r.companyId);   facetScope.shCurrent.keep.add(id); }
+      if (r.isMgmt){ facetScope.mgmtCurrent.touched.add(r.companyId); facetScope.mgmtCurrent.keep.add(id); }
+    }
     let demoted = 0;
     batch = writeBatch(db); n = 0;
-    for (const cid of touched){
-      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',cid)));
-      addReads(snap.docs.length || 1);
-      for (const d of snap.docs){
-        if (keep.has(d.id)) continue;
-        if (d.data()[facet] === true){
-          batch.update(d.ref, { [facet]: false, updatedAt: serverTimestamp() });
-          demoted++;
-          if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
+    // One query per company, run concurrently — see mapPool.
+    const perCompany = await mapPool(touched, cid =>
+      getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',cid)))
+        .then(snap => { addReads(snap.docs.length || 1); return { cid, docs: snap.docs }; }),
+      READ_CONCURRENCY,
+      done => { btn.innerHTML = `<span class="spin-sm"></span>Checking… ${done}/${touched.length}`; });
+    for (const { cid, docs } of perCompany){
+      for (const d of docs){
+        for (const facet of ['shCurrent','mgmtCurrent']){
+          const scope = facetScope[facet];
+          // Only demote inside the facet's own scope: a company the file did not
+          // cover for this facet is left completely alone.
+          if (!scope.touched.has(cid)) continue;
+          if (scope.keep.has(d.id)) continue;
+          if (d.data()[facet] === true){
+            batch.update(d.ref, { [facet]: false, updatedAt: serverTimestamp() });
+            demoted++;
+            if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
+          }
         }
       }
     }
@@ -3274,8 +3377,11 @@ async function confirmPeopleImport(){
     invalidatePeopleCaches();
     batch = writeBatch(db); n = 0;
     const meta = peopleImportStats.ownershipMeta || new Map();
-    for (const cid of touched){
-      const links = await fetchCompanyLinks(cid, true);
+    const coLinks = await mapPool(touched, cid => fetchCompanyLinks(cid, true), READ_CONCURRENCY,
+      d => { btn.innerHTML = `<span class="spin-sm"></span>Companies… ${d}/${touched.length}`; });
+    for (let ci = 0; ci < touched.length; ci++){
+      const cid = touched[ci];
+      const links = coLinks[ci];
       const payload = { peopleCounts: peopleCountsFrom(links) };
       const om = meta.get(cid);
       if (om) payload.ownershipMeta = om;                 // Orbis GUO / controlling shareholders
@@ -3286,9 +3392,12 @@ async function confirmPeopleImport(){
     }
     await batch.commit();
     batch = writeBatch(db); n = 0;
-    for (const pid of byPerson.keys()){
-      const links = await fetchPersonLinks(pid, true);
-      batch.update(doc(db,'searchPeople',pid), {
+    const pids = [...byPerson.keys()];
+    const peLinks = await mapPool(pids, pid => fetchPersonLinks(pid, true), READ_CONCURRENCY,
+      d => { btn.innerHTML = `<span class="spin-sm"></span>People… ${d}/${pids.length}`; });
+    for (let pi = 0; pi < pids.length; pi++){
+      const links = peLinks[pi];
+      batch.update(doc(db,'searchPeople',pids[pi]), {
         linkCount: links.length,
         currentLinkCount: links.filter(l => l.shCurrent === true || l.mgmtCurrent === true).length,
       });
