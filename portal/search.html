@@ -2307,7 +2307,8 @@ function resolveOwnership(company, links){
   const om = company?.ownershipMeta || null;
   const current = links.filter(l => l.shCurrent === true);
   const out = { source:null, ownerIds:new Set(), guoName:om?.guoName || null,
-                guoNif:om?.guoNif || null, treasuryPct:om?.treasuryPct ?? null,
+                guoNif:om?.guoNif || null, guoType:om?.guoType || null,
+                treasuryPct:om?.treasuryPct ?? null,
                 independent:false, note:'' };
 
   if (om && om.cshKeys && om.cshKeys.length){
@@ -2321,9 +2322,18 @@ function resolveOwnership(company, links){
       : `Controlling shareholder per Orbis: ${om.cshNames?.join(', ') || '—'} (not a direct shareholder)`;
     return out;
   }
+  // Orbis names no controlling shareholder AND places the company at the top of
+  // its own chain: "Independent co" (nobody controls it) or "GUO" (it is itself
+  // a group's ultimate owner, so nothing owns it from above). Both are findings,
+  // not gaps, and computing a "largest holder" over them would invent a fact.
   if (om && /independent/i.test(om.entityType || '')){
     out.source = 'orbis'; out.independent = true;
     out.note = 'Independent company — Orbis records no controlling shareholder';
+    return out;
+  }
+  if (om && /^guo$/i.test((om.entityType || '').trim())){
+    out.source = 'orbis'; out.independent = true;
+    out.note = 'Ultimate owner of its own group — Orbis records no controlling shareholder above it';
     return out;
   }
   // No Orbis control data: fall back to the largest current holding — but only
@@ -2409,7 +2419,7 @@ async function renderOwnership(c){
         <button class="btn btn--ghost btn--sm" id="addPersonBtn">＋ Add Person</button>
       </div>
       ${(own.note || own.treasuryPct != null) ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
-        ${own.independent ? '🏛' : (own.ownerIds.size ? '👑' : 'ℹ️')} ${esc(own.note)}${own.treasuryPct != null ? ` · <strong>${own.treasuryPct}%</strong> held by the company in itself (treasury)` : ''}${own.guoName ? ` · Ultimate owner: ${(() => {
+        ${own.independent ? '🏛' : (own.ownerIds.size ? '👑' : 'ℹ️')} ${esc(own.note)}${own.treasuryPct != null ? ` · <strong>${own.treasuryPct}%</strong> held by the company in itself (treasury)` : ''}${own.guoType ? ` · <span class="badge ${/individual|families/i.test(own.guoType) ? 'badge-green' : 'badge-grey'}" title="What kind of owner sits at the top">${esc(own.guoType)}</span>` : ''}${own.guoName ? ` · Ultimate owner: ${(() => {
           // When the ultimate owner is itself a company in the pipeline, say so
           // and make it clickable — that's a second angle on the same group.
           const gc = own.guoNif ? companies.find(x => (onlyDigits(x.nif) || nifFromAny('', x.bvdId)) === own.guoNif) : null;
@@ -2762,7 +2772,6 @@ const PEOPLE_ALIAS = {
   dmJob:       ['dmjob title (in english)','dmjob title in english','dm - job title'],
   dmJobOrig:   ['dmjob title'],
   dmCurrent:   ['dmcurrent or previous','dm - current or previous','dmstatus'],
-  dmType:      ['dmindividual or company','dm - type'],
   dmCountry:   ['dmcountry iso code','dm - country iso code','dmcountry'],
   dmNationality: ['dmcountry/ies of nationality'],
   // Which body or department, as opposed to how senior — "Board of Directors"
@@ -2773,11 +2782,6 @@ const PEOPLE_ALIAS = {
   dmAlsoSh:    ['dmalso a shareholder'],
   dmAddress:   ['dmaddress'],
   dmEmail:     ['dme-mail address','dmemail address'],
-  // "when applicable" means: filled only when the director IS a company. That
-  // makes it both the corporate-director flag and the ID we need to link that
-  // company — better than 'DMIndividual or company', which Orbis did not even
-  // include in the export we tested.
-  dmBvd:       ['dmcorresponding bvdid (when applicable)','dmcorresponding bvdid'],
   dmBirth:     ['dmbirth date'],
   // Exact-match only: the prefix fallback would otherwise let "DMAge bracket"
   // ("Between 50 and 60") stand in for a real age.
@@ -2792,6 +2796,10 @@ const PEOPLE_ALIAS = {
   guoName:     ['guo - name'],
   guoUci:      ['guo - uci'],
   guoBvd:      ['guo - bvd id number'],
+  // What kind of thing the ultimate owner is. The strongest sourcing signal in
+  // the export: "One or more named individuals or families" is a family-owned
+  // target, "Private equity firm" is already sponsor-owned.
+  guoType:     ['guo - type'],
   cshName:     ['csh - name'],
   cshUci:      ['csh - uci'],
   cshBvd:      ['csh - bvd id number'],
@@ -2831,10 +2839,10 @@ const IMPORT_FIELD_GROUPS = [
   { title:'Ownership control', powers:'Who owns the company, and the 👑 badge',
     needs:'shName', critical:['coEntityType'],
     degraded:'a company with no controlling shareholder cannot be told apart from one Orbis has no data for, so the owner falls back to the largest holding',
-    fields:['coEntityType','cshName','cshBvd','cshUci','guoName','guoBvd','guoUci'] },
+    fields:['coEntityType','cshName','cshBvd','cshUci','guoName','guoBvd','guoUci','guoType'] },
   { title:'Directors & managers', powers:'Roles, the org side of the network',
     anchor:'dmName',
-    fields:['dmName','dmUci','dmJob','dmJobOrig','dmCurrent','dmLevel','dmBoard','dmAlsoSh','dmRoleCount','dmBvd','dmType','dmCountry','dmNationality'] },
+    fields:['dmName','dmUci','dmJob','dmJobOrig','dmCurrent','dmLevel','dmBoard','dmAlsoSh','dmRoleCount','dmCountry','dmNationality'] },
   { title:'Succession', powers:'The 🎂 age badge — who is near retirement',
     needs:'dmName',
     fields:['dmBirth','dmAge'] },
@@ -2857,11 +2865,11 @@ const FIELD_LABELS = {
   dmName:'Director name', dmUci:'Director UCI', dmJob:'Job title (English)',
   dmJobOrig:'Job title (original)', dmCurrent:'Current or previous',
   dmLevel:'Level of responsibility', dmAlsoSh:'Also a shareholder',
-  dmRoleCount:'Roles held elsewhere', dmBvd:'Corporate director ID',
-  dmType:'Individual or company', dmCountry:'Country',
+  dmRoleCount:'Roles held elsewhere', dmCountry:'Country',
   dmBirth:'Birth date', dmAge:'Age',
   shStreet:'Street', shPostcode:'Postcode', shCity:'City', shPhone:'Phone', shFax:'Fax',
   shNatId:'National ID', dmNationality:'Nationality', dmBoard:'Board / department',
+  guoType:'Ultimate owner type',
   shWeb:'Website', dmAddress:'Director address', dmEmail:'Director e-mail',
   coNoSh:'Orbis shareholder count', coNoDm:'Orbis director count',
 };
@@ -3118,6 +3126,7 @@ function parsePeopleRows(rows){
         guoName: ownClean(get('guoName')) || null,
         guoUci: ownClean(get('guoUci')) || null,
         guoNif: nifFromAny('', get('guoBvd')) || null,
+        guoType: ownClean(get('guoType')) || null,
         cshKeys: [...new Set([
           ...cshUcis.map(u => 'u_' + u.replace(/[^A-Za-z0-9_-]/g,'')),
           ...cshBvds.map(b => nifFromAny('', b)).filter(Boolean).map(n => 'e_' + n),
@@ -3137,7 +3146,11 @@ function parsePeopleRows(rows){
       const isShF = facet === 'shareholders';
       const P = isShF
         ? { name:'shName', uci:'shUci', bvd:'shBvd', type:'shType', country:'shCountry' }
-        : { name:'dmName', uci:'dmUci', bvd:'dmBvd', type:'dmType', country:'dmCountry' };
+        // Orbis offers no way to tell a corporate director from a person: it has
+      // no "individual or company" column for directors, and
+      // "DMCorresponding BvDID" came back empty across every export tested.
+      // Directors are therefore always people.
+      : { name:'dmName', uci:'dmUci', bvd:null, type:null, country:'dmCountry' };
 
       const names = packedLines(get(P.name));
       const statedRaw = ownClean(get(isShF ? 'coNoSh' : 'coNoDm'));
@@ -3153,6 +3166,13 @@ function parsePeopleRows(rows){
       // "Number of directors & managers" equals the distinct-person count for
       // 2,572 of 2,572 companies.
       const seenPeople = new Set();
+      // Orbis occasionally gives one UCI to two genuinely different people —
+      // near-identical family names, or a joint holding pointed at one of its
+      // co-owners. Both rows would key to the same doc and the second would
+      // overwrite the first, losing a shareholding. 6 of 2,577 companies are
+      // affected. Real spelling variants of one person normalise to the same
+      // nameKey, so only true collisions split.
+      const uciNames = new Map();   // personId -> the nameKey first seen for it
       const aggBefore = aggregateRows;
       let treasuryHere = 0;
       sawPeopleHere = true;
@@ -3182,7 +3202,7 @@ function parsePeopleRows(rows){
       };
       const uciL   = P.uci ? zip(P.uci) : null;
       const bvdL   = P.bvd ? zip(P.bvd) : null;
-      const typeL  = zip(P.type);
+      const typeL  = P.type ? zip(P.type) : null;
       const ctryL  = zip(P.country);
       const dirL   = isShF ? zip('shDirect') : null;
       const totL   = isShF ? zip('shTotal')  : null;
@@ -3233,9 +3253,12 @@ function parsePeopleRows(rows){
         // a person — common in Portugal, where an SGPS is often the gerente.
         // Individuals get a different BvD shape ("WWCLS000000142..."), which
         // nifFromAny rejects, so this cannot misclassify a person.
-        const isCorp = isCorpType || (!isShF && !!holderNif);
+        const isCorp = isCorpType;
         const natId = natL ? ownClean(natL[i]) : '';
-        const pid = personIdFrom({ uci: uciL ? uciL[i] : '', bvd: shBvd, nameKey });
+        let pid = personIdFrom({ uci: uciL ? uciL[i] : '', bvd: shBvd, nameKey });
+        const firstName = uciNames.get(pid);
+        if (firstName === undefined) uciNames.set(pid, nameKey);
+        else if (firstName !== nameKey) pid = personDocId(nameKey);   // different person
         const mgrStr = mgrL ? ownClean(mgrL[i]) : '';
         const curStr = curL ? ownClean(curL[i]) : '';
 
