@@ -2396,7 +2396,7 @@ async function renderOwnership(c){
   const mgRows = mg.map(l => `
     <tr class="${l.mgmtCurrent === false ? 'prev' : ''}">
       <td>${nameCell(l)}${/highest/i.test(l.mgmtLevel || '') ? ' <span class="badge badge-blue" title="Highest level of responsibility per Orbis">★ Highest exec</span>' : ''}</td>
-      <td>${esc((l.mgmtRoles || []).join(' · ') || '—')}</td>
+      <td>${esc((l.mgmtRoles || []).join(' · ') || '—')}${l.mgmtBoard ? `<div style="font-size:0.72rem;color:var(--text-light);">${esc(l.mgmtBoard)}</div>` : ''}</td>
       <td>${linkIsShareholder(l) ? '✓' : '—'}</td>
       <td>${l.mgmtCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
       <td style="white-space:nowrap;">${l.mgmtCurrent !== false ? `<button class="btn btn--icon btn--ghost" data-tocontact="${esc(l.id)}" title="Copy to Contacts">👤+</button>` : ''}${rowActions(l)}</td>
@@ -2564,7 +2564,9 @@ function renderPersonView(p, links){
   const current = links.filter(l => l.shCurrent === true || l.mgmtCurrent === true).length;
   document.getElementById('pMeta').innerHTML = `
     ${p.entityType === 'entity' ? '<span class="badge badge-grey">🏢 Corporate entity</span>' : '<span class="badge badge-blue">🧑 Person</span>'}
-    ${p.country ? `<span class="badge badge-grey">${esc(p.country)}</span>` : ''}
+    ${p.country ? `<span class="badge badge-grey" title="Country of residence">${esc(p.country)}</span>` : ''}
+    ${p.nationality && p.nationality !== p.country ? `<span class="badge badge-grey" title="Nationality">🌐 ${esc(p.nationality)}</span>` : ''}
+    ${p.nationalId ? `<span class="badge badge-grey" title="National registration number — the identifier other providers (Sabi, Informa) share">ID ${esc(p.nationalId)}</span>` : ''}
     <span class="badge badge-grey">${links.length} position${links.length === 1 ? '' : 's'} · ${current} current</span>
     ${(() => {
       const a = personAge(p);
@@ -2745,6 +2747,12 @@ const PEOPLE_ALIAS = {
   shCity:      ['sh - city'],
   shPhone:     ['sh - telephone number'],
   shWeb:       ['sh - website address'],
+  shFax:       ['sh - fax number'],
+  // The registration number without the provider's country prefix. Orbis's own
+  // BvD ID is proprietary; this is the number Sabi, Informa and the Portuguese
+  // registry all use, so it is what a future import from any of them can match
+  // on. Stored on the record for exactly that reason.
+  shNatId:     ['sh - national number'],
   // Directors & Managers export. Note Orbis prefixes these with a bare "DM"
   // and NO separator ("DMFull name", not "DM - Full name"), and sometimes
   // appends a stray field number ("DMCurrent or previous 66") — hence the
@@ -2756,6 +2764,12 @@ const PEOPLE_ALIAS = {
   dmCurrent:   ['dmcurrent or previous','dm - current or previous','dmstatus'],
   dmType:      ['dmindividual or company','dm - type'],
   dmCountry:   ['dmcountry iso code','dm - country iso code','dmcountry'],
+  dmNationality: ['dmcountry/ies of nationality'],
+  // Which body or department, as opposed to how senior — "Board of Directors"
+  // vs "Finance & Accounting". Distinct from dmLevel ("President / Chairman",
+  // "Member"), and the pair together is what says whether someone is on the
+  // board or runs a department.
+  dmBoard:     ['dmboard, committee or department'],
   dmAlsoSh:    ['dmalso a shareholder'],
   dmAddress:   ['dmaddress'],
   dmEmail:     ['dme-mail address','dmemail address'],
@@ -2796,6 +2810,7 @@ const PERSON_CONTACT_FIELDS = [
   { key:'phone',    orbis:'orbisPhone',    label:'Phone',    type:'tel',  hint:'+351 …' },
   { key:'email',    orbis:'orbisEmail',    label:'Email',    type:'email',hint:'name@company.pt' },
   { key:'linkedin', orbis:'',              label:'LinkedIn', type:'url',  hint:'linkedin.com/in/…' },
+  { key:'fax',      orbis:'orbisFax',      label:'Fax',      type:'tel',  hint:'+351 …' },
   { key:'address',  orbis:'orbisAddress',  label:'Address',  type:'text', hint:'Street, postcode city' },
 ];
 
@@ -2812,19 +2827,19 @@ const IMPORT_FIELD_GROUPS = [
     fields:['nif','bvd','companyName'] },
   { title:'Shareholders', powers:'The cap table, % held and control tiers',
     anchor:'shName',
-    fields:['shName','shUci','shBvd','shType','shDirect','shTotal','shMgr','shDate','shCountry'] },
+    fields:['shName','shUci','shBvd','shNatId','shType','shDirect','shTotal','shMgr','shDate','shCountry'] },
   { title:'Ownership control', powers:'Who owns the company, and the 👑 badge',
     needs:'shName', critical:['coEntityType'],
     degraded:'a company with no controlling shareholder cannot be told apart from one Orbis has no data for, so the owner falls back to the largest holding',
     fields:['coEntityType','cshName','cshBvd','cshUci','guoName','guoBvd','guoUci'] },
   { title:'Directors & managers', powers:'Roles, the org side of the network',
     anchor:'dmName',
-    fields:['dmName','dmUci','dmJob','dmJobOrig','dmCurrent','dmLevel','dmAlsoSh','dmRoleCount','dmBvd','dmType','dmCountry'] },
+    fields:['dmName','dmUci','dmJob','dmJobOrig','dmCurrent','dmLevel','dmBoard','dmAlsoSh','dmRoleCount','dmBvd','dmType','dmCountry','dmNationality'] },
   { title:'Succession', powers:'The 🎂 age badge — who is near retirement',
     needs:'dmName',
     fields:['dmBirth','dmAge'] },
   { title:'Contact details', powers:'Phone and address on person and entity profiles',
-    fields:['shStreet','shPostcode','shCity','shPhone','shWeb','dmAddress','dmEmail'] },
+    fields:['shStreet','shPostcode','shCity','shPhone','shFax','shWeb','dmAddress','dmEmail'] },
   { title:'Integrity checks', powers:'Catching a company whose people did not all arrive',
     fields:['coNoSh','coNoDm'] },
 ];
@@ -2845,7 +2860,8 @@ const FIELD_LABELS = {
   dmRoleCount:'Roles held elsewhere', dmBvd:'Corporate director ID',
   dmType:'Individual or company', dmCountry:'Country',
   dmBirth:'Birth date', dmAge:'Age',
-  shStreet:'Street', shPostcode:'Postcode', shCity:'City', shPhone:'Phone',
+  shStreet:'Street', shPostcode:'Postcode', shCity:'City', shPhone:'Phone', shFax:'Fax',
+  shNatId:'National ID', dmNationality:'Nationality', dmBoard:'Board / department',
   shWeb:'Website', dmAddress:'Director address', dmEmail:'Director e-mail',
   coNoSh:'Orbis shareholder count', coNoDm:'Orbis director count',
 };
@@ -3186,6 +3202,10 @@ function parsePeopleRows(rows){
       const cityL  = isShF ? zip('shCity')     : null;
       const phoneL = isShF ? zip('shPhone')    : null;
       const webL   = isShF ? zip('shWeb')      : null;
+      const faxL   = isShF ? zip('shFax')      : null;
+      const natL   = isShF ? zip('shNatId')    : null;
+      const boardL = isShF ? null : zip('dmBoard');
+      const natlL  = isShF ? null : zip('dmNationality');
       const emailL = isShF ? null : zip('dmEmail');
       if (!isShF && curL) sawStatusCol = true;
 
@@ -3214,6 +3234,7 @@ function parsePeopleRows(rows){
         // Individuals get a different BvD shape ("WWCLS000000142..."), which
         // nifFromAny rejects, so this cannot misclassify a person.
         const isCorp = isCorpType || (!isShF && !!holderNif);
+        const natId = natL ? ownClean(natL[i]) : '';
         const pid = personIdFrom({ uci: uciL ? uciL[i] : '', bvd: shBvd, nameKey });
         const mgrStr = mgrL ? ownClean(mgrL[i]) : '';
         const curStr = curL ? ownClean(curL[i]) : '';
@@ -3252,6 +3273,11 @@ function parsePeopleRows(rows){
           // for "nothing here", which must not be stored as if it were data.
           street:   orbisText(stL, i), postcode: orbisText(pcL, i), city: orbisText(cityL, i),
           phone:    orbisText(phoneL, i), website: orbisText(webL, i), email: orbisText(emailL, i),
+          fax:      orbisText(faxL, i),
+          // Portable identifier — see the alias comment.
+          nationalId: natId || '',
+          nationality: orbisText(natlL, i),
+          mgmtBoard:   orbisText(boardL, i),
           // null = "file didn't say"; resolved at import time from the explicit
           // toggle, so a missing status column can never silently mean "current".
           mgmtCurrentFromFile: !isShF
@@ -3304,7 +3330,8 @@ function parsePeopleRows(rows){
     // shareholder side names the type, the director side often does not.
     if (o.entityType === 'entity') prev.entityType = 'entity';
     if (!prev.birthDate) prev.birthDate = o.birthDate;
-    for (const f of ['street','postcode','city','phone','website','email']) if (!prev[f]) prev[f] = o[f];
+    for (const f of ['street','postcode','city','phone','website','email','fax',
+                     'nationalId','nationality','mgmtBoard']) if (!prev[f]) prev[f] = o[f];
     if (prev.orbisAge == null) prev.orbisAge = o.orbisAge;
     // "Highest executive" beats "Unspecified executive" as a description.
     if (/highest/i.test(o.mgmtLevel || '')) prev.mgmtLevel = o.mgmtLevel;
@@ -3489,7 +3516,10 @@ async function confirmPeopleImport(){
         // re-import can never overwrite a number or address you found
         // yourself. Only written when non-empty, so a blank Orbis column
         // never blanks a value an earlier import did find.
+        ...(r.nationalId ? { nationalId: r.nationalId } : {}),
+        ...(r.nationality ? { nationality: r.nationality } : {}),
         ...(r.phone    ? { orbisPhone: r.phone }     : {}),
+        ...(r.fax      ? { orbisFax: r.fax }         : {}),
         ...(r.email    ? { orbisEmail: r.email }     : {}),
         ...(r.website  ? { orbisWebsite: r.website } : {}),
         ...(orbisAddress(r) ? { orbisAddress: orbisAddress(r) } : {}),
@@ -3523,6 +3553,7 @@ async function confirmPeopleImport(){
         // toggle rather than assuming current.
         payload.mgmtCurrent = r.mgmtCurrentFromFile !== null ? r.mgmtCurrentFromFile : !allPrevious;
         if (r.mgmtLevel) payload.mgmtLevel = r.mgmtLevel;
+        if (r.mgmtBoard) payload.mgmtBoard = r.mgmtBoard;
         if (r.alsoShareholder) payload.alsoShareholder = true;
       } else if (r.isSh && r.mgmtCurrentFromFile === true){
         // A shareholders-only file still says "Current manager" — record the
