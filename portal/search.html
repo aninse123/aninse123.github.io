@@ -2804,8 +2804,14 @@ function peopleColIndex(headers, key){
   // Orbis appends a stray field number to some headers ("DMCurrent or previous 66"),
   // so fall back to a prefix match — longest alias first so "DMJob title (in
   // English)" can't be swallowed by the shorter "DMJob title".
+  //
+  // Only a trailing field number may follow the alias. Without that guard the
+  // fallback matches a genuinely different column: "bvd id" would resolve to
+  // "BvD Id with common directors and managers", which holds the BvD IDs of
+  // OTHER companies sharing a director — matching rows on it would attach
+  // people to the wrong company.
   for (const w of [...want].sort((a,b) => b.length - a.length)){
-    const i = headers.findIndex(h => h.startsWith(w));
+    const i = headers.findIndex(h => h.startsWith(w) && /^\s*\d*$/.test(h.slice(w.length)));
     if (i !== -1) return i;
   }
   return -1;
