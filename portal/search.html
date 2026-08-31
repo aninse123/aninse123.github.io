@@ -2890,6 +2890,19 @@ async function mapPool(items, fn, limit = READ_CONCURRENCY, onProgress){
   return results;
 }
 
+// Orbis puts aggregate labels in the shareholder name column alongside real
+// holders. "Self Owned" is treasury stock — the company holding its own shares
+// — not a person or a company, and it appeared for 86 of 2,577 companies. Since
+// it carries no UCI and no BvD ID it would be keyed on its name, collapsing
+// into ONE node linked to all 86, and the network graph would then show 86
+// unrelated companies joined through a shareholder that does not exist.
+//
+// Deliberately narrow: matched against the whole cleaned name, never a
+// substring, so a real company called e.g. "Public Storage" is unaffected. The
+// percentage itself is still counted — it is the holder that is fictitious, so
+// dropping the row keeps the cap table honest about who the CRM can act on.
+const PLACEHOLDER_HOLDERS = /^(self[\s-]*owned?|self[\s-]*ownership|public|other shareholders?|unnamed (?:private )?shareholders?(?:, aggregated)?|employees?(?:\/managers?\/directors?)?|anonymous|free float|dispersed)$/i;
+
 // Orbis mostly writes dates as text, but a handful arrive as Excel serials
 // (6 of 5,534 birth dates in the 2,577-company export). Decode them so they
 // are not silently unusable. Day 1 is 1900-01-01, with Excel's 1900 leap-year
@@ -3040,6 +3053,7 @@ function parsePeopleRows(rows){
   // truncated or misaligned packed cell.
   const countCheck = [];             // { company, stated, parsed }
   const misaligned = new Map();      // alias key -> how many companies it was dropped for
+  let aggregateRows = 0;             // "Self Owned" and friends: a % with no holder
 
   for (let r = hi + 1; r < rows.length; r++){
     const row = rows[r];
@@ -3107,6 +3121,7 @@ function parsePeopleRows(rows){
       // "Number of directors & managers" equals the distinct-person count for
       // 2,572 of 2,572 companies.
       const seenPeople = new Set();
+      const aggBefore = aggregateRows;
       sawPeopleHere = true;
 
       // Orbis trims *trailing* blank lines from a packed cell and nothing else:
@@ -3159,7 +3174,8 @@ function parsePeopleRows(rows){
 
       for (let i = 0; i < names.length; i++){
         const rawName = ownClean(names[i]);
-        if (!rawName) continue; // placeholder slot
+        if (!rawName) continue; // empty slot
+        if (PLACEHOLDER_HOLDERS.test(rawName)){ aggregateRows++; continue; }
         const nameKey = personNameKey(rawName);
         if (!nameKey) continue;
         const typeStr = typeL ? ownClean(typeL[i]) : '';
@@ -3218,8 +3234,11 @@ function parsePeopleRows(rows){
         seenPeople.add(pid);
         if (!company) unmatched.set(coNif || normName(coName), { name: coName, nif: coNif });
       }
-      if (stated != null && stated !== seenPeople.size)
-        countCheck.push({ company: coName, facet, stated, parsed: seenPeople.size });
+      // Orbis counts its aggregate labels as holders, so add them back before
+      // comparing — otherwise every company with treasury stock looks broken.
+      const aggregateHere = aggregateRows - aggBefore;
+      if (stated != null && stated !== seenPeople.size + aggregateHere)
+        countCheck.push({ company: coName, facet, stated, parsed: seenPeople.size + aggregateHere });
     }
     if (!sawPeopleHere) skippedNoPeople++;
   }
@@ -3271,7 +3290,7 @@ function parsePeopleRows(rows){
     unmatched: [...unmatched.values()], skippedNoPeople,
     matchedByName: out.filter(o => o.matchedBy === 'name').length,
     withUci: out.filter(o => o.uci).length, entities: out.filter(o => o.entityType === 'entity').length,
-    sawStatusCol, mergedDupes, ownershipMeta, countCheck, facets,
+    sawStatusCol, mergedDupes, ownershipMeta, countCheck, facets, aggregateRows,
     fieldReport: buildFieldReport(rows, rawHeaders, idx, hi),
     shLinks: out.filter(o => o.isSh).length,
     mgmtLinks: out.filter(o => o.isMgmt).length,
@@ -3346,6 +3365,7 @@ function renderPeopleImportPreview(){
   // decides whether the owner badge is sourced or computed from the % column.
   if (s.withDob) bits.push(`${s.withDob} with a birth date/age`);
   if (s.withContact) bits.push(`${s.withContact} with contact details`);
+  if (s.aggregateRows) bits.push(`${s.aggregateRows} aggregate holding${s.aggregateRows===1?'':'s'} skipped (&ldquo;Self Owned&rdquo;, &ldquo;Public&rdquo;)`);
   if (s.corpDirectors) bits.push(`${s.corpDirectors} corporate director${s.corpDirectors===1?'':'s'}`);
   if (s.facets.includes('shareholders')) bits.push(s.withControlData
     ? `<strong>${s.withControlData}</strong> with Orbis control data (GUO/CSH)`
