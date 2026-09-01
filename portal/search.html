@@ -2620,16 +2620,19 @@ function renderPersonView(p, links){
       <div class="sec-title">Contact</div>
       <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
         Orbis rarely holds contact details for individuals, so these are yours to fill in as you find them.
-        Anything Orbis did provide is shown greyed as a placeholder and is never overwritten by what you type.
+        What Orbis has given is listed underneath and never overwritten by what you type — and nothing is
+        dropped when a later import brings a different number, so an old one stays reachable.
       </div>
       <div class="contact-grid">
-        ${PERSON_CONTACT_FIELDS.map(f => `
+        ${PERSON_CONTACT_FIELDS.map(f => {
+          const seen = orbisValues(p, f.orbis);
+          return `
           <label>
             <span>${f.label}</span>
             <input class="field" id="pc_${f.key}" type="${f.type}" value="${esc(p[f.key] || '')}"
-                   placeholder="${esc(p[f.orbis] || f.hint)}">
-            ${p[f.orbis] ? `<em>Orbis: ${esc(p[f.orbis])}</em>` : ''}
-          </label>`).join('')}
+                   placeholder="${esc(seen[seen.length-1] || f.hint)}">
+            ${seen.length ? `<em>Orbis: ${seen.map(v => esc(v)).join(' · ')}${seen.length > 1 ? ' <span title="Orbis has given more than one over time; the most recent is last">(all kept)</span>' : ''}</em>` : ''}
+          </label>`; }).join('')}
       </div>
       <div style="margin-top:10px;"><button class="btn btn--ghost btn--sm" id="savePersonContactBtn">Save Contact</button></div>
     </div>
@@ -2815,12 +2818,30 @@ const PEOPLE_ALIAS = {
 // display; the import only ever writes the `orbis*` half, so these survive
 // every re-import. LinkedIn has no Orbis equivalent — Orbis does not carry it.
 const PERSON_CONTACT_FIELDS = [
-  { key:'phone',    orbis:'orbisPhone',    label:'Phone',    type:'tel',  hint:'+351 …' },
-  { key:'email',    orbis:'orbisEmail',    label:'Email',    type:'email',hint:'name@company.pt' },
-  { key:'linkedin', orbis:'',              label:'LinkedIn', type:'url',  hint:'linkedin.com/in/…' },
-  { key:'fax',      orbis:'orbisFax',      label:'Fax',      type:'tel',  hint:'+351 …' },
-  { key:'address',  orbis:'orbisAddress',  label:'Address',  type:'text', hint:'Street, postcode city' },
+  { key:'phone',    orbis:'orbisPhones',    label:'Phone',    type:'tel',  hint:'+351 …' },
+  { key:'email',    orbis:'orbisEmails',    label:'Email',    type:'email',hint:'name@company.pt' },
+  { key:'linkedin', orbis:'',               label:'LinkedIn', type:'url',  hint:'linkedin.com/in/…' },
+  { key:'fax',      orbis:'orbisFaxes',     label:'Fax',      type:'tel',  hint:'+351 …' },
+  { key:'address',  orbis:'orbisAddresses', label:'Address',  type:'text', hint:'Street, postcode city' },
 ];
+
+// The singular field each list replaced. Spelled out rather than derived: a
+// rule like strip-the-plural turns "orbisPhones" into "orbisPhon".
+const LEGACY_ORBIS_FIELD = {
+  orbisPhones:'orbisPhone', orbisFaxes:'orbisFax', orbisEmails:'orbisEmail',
+  orbisWebsites:'orbisWebsite', orbisAddresses:'orbisAddress',
+};
+
+// Everything Orbis has ever given for one field, newest last. Tolerates the
+// singular string written before these became lists.
+function orbisValues(person, field){
+  if (!field) return [];
+  const v = person?.[field];
+  if (Array.isArray(v)) return v.filter(Boolean);
+  if (v) return [v];
+  const legacy = person?.[LEGACY_ORBIS_FIELD[field]];
+  return legacy ? [legacy] : [];
+}
 
 // What the importer looks for, grouped by the feature each group powers, so a
 // gap reads as "ownership control won't import" rather than as a list of
@@ -3552,11 +3573,15 @@ async function confirmPeopleImport(){
         // never blanks a value an earlier import did find.
         ...(r.nationalId ? { nationalId: r.nationalId } : {}),
         ...(r.nationality ? { nationality: r.nationality } : {}),
-        ...(r.phone    ? { orbisPhone: r.phone }     : {}),
-        ...(r.fax      ? { orbisFax: r.fax }         : {}),
-        ...(r.email    ? { orbisEmail: r.email }     : {}),
-        ...(r.website  ? { orbisWebsite: r.website } : {}),
-        ...(orbisAddress(r) ? { orbisAddress: orbisAddress(r) } : {}),
+        // arrayUnion appends without reading the document first, so keeping the
+        // history costs nothing at import time and de-duplicates itself. A
+        // switchboard number that changes between imports keeps both: the old
+        // one may still reach someone, and the change is itself a signal.
+        ...(r.phone    ? { orbisPhones: arrayUnion(r.phone) }        : {}),
+        ...(r.fax      ? { orbisFaxes: arrayUnion(r.fax) }           : {}),
+        ...(r.email    ? { orbisEmails: arrayUnion(r.email) }        : {}),
+        ...(r.website  ? { orbisWebsites: arrayUnion(r.website) }    : {}),
+        ...(orbisAddress(r) ? { orbisAddresses: arrayUnion(orbisAddress(r)) } : {}),
         ...(r.orbisAge != null ? { orbisAge: r.orbisAge, orbisAgeAsOf: new Date().getFullYear() } : {}),
         source: 'orbis', updatedAt: serverTimestamp(),
       }, { merge: true });
