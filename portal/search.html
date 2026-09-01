@@ -3253,7 +3253,11 @@ function parsePeopleRows(rows){
         // a person — common in Portugal, where an SGPS is often the gerente.
         // Individuals get a different BvD shape ("WWCLS000000142..."), which
         // nifFromAny rejects, so this cannot misclassify a person.
-        const isCorp = isCorpType;
+        // SH - Type is the primary signal, but a holder carrying a
+        // company-shaped registration number is a company regardless — so
+        // dropping that column from an export cannot silently turn 4,541
+        // corporate holders into people.
+        const isCorp = isCorpType || (isShF && !!holderNif);
         const natId = natL ? ownClean(natL[i]) : '';
         let pid = personIdFrom({ uci: uciL ? uciL[i] : '', bvd: shBvd, nameKey });
         const firstName = uciNames.get(pid);
@@ -3527,12 +3531,19 @@ async function confirmPeopleImport(){
     for (const c of companies){ const n = onlyDigits(c.nif) || nifFromAny('', c.bvdId); if (n) nifToCo.set(n, c.id); }
     let batch = writeBatch(db), n = 0, done = 0;
     for (const r of byPerson.values()){
+      const co3 = r.country && r.country.length <= 3 ? r.country : '';
       batch.set(doc(db,'searchPeople', r.personId), {
         name: r.personName, nameKey: r.nameKey, nameTokens: personNameTokens(r.nameKey),
-        entityType: r.entityType, uci: r.uci || null,
-        nif: r.holderNif || null,
-        matchedCompanyId: r.holderNif ? (nifToCo.get(r.holderNif) || null) : null,
-        country: r.country && r.country.length <= 3 ? r.country : null,
+        // Identifiers and stable attributes are written only when this file
+        // actually carries them. Writing them unconditionally meant an export
+        // with a narrower column set silently blanked the UCI, NIF or country
+        // that a previous import had found — losing the very keys that make
+        // re-imports idempotent.
+        ...(r.uci ? { uci: r.uci } : {}),
+        ...(r.holderNif ? { nif: r.holderNif,
+                            matchedCompanyId: nifToCo.get(r.holderNif) || null } : {}),
+        ...(co3 ? { country: co3 } : {}),
+        entityType: r.entityType,
         ...(r.orbisRoleCount ? { orbisRoleCount: r.orbisRoleCount } : {}),
         ...(r.birthDate ? { birthDate: r.birthDate } : {}),
         // Orbis-sourced contact details live in their own namespace so a
@@ -3561,8 +3572,10 @@ async function confirmPeopleImport(){
       const payload = {
         personId: r.personId, companyId: r.companyId,
         personName: r.personName, companyName: r.companyName,
-        personEntityType: r.entityType, personMatchedCompanyId: r.holderNif ? (nifToCo.get(r.holderNif) || null) : null,
         source: 'orbis', updatedAt: serverTimestamp(),
+        personEntityType: r.entityType,
+        // Only write what this file knows.
+        ...(r.holderNif ? { personMatchedCompanyId: nifToCo.get(r.holderNif) || null } : {}),
       };
       if (r.isSh){
         payload.shDirectPct = r.shDirectPct; payload.shTotalPct = r.shTotalPct;
@@ -3643,8 +3656,14 @@ async function confirmPeopleImport(){
       const cid = touched[ci];
       const links = coLinks[ci];
       const payload = { peopleCounts: peopleCountsFrom(links) };
+      // Merge field by field via dotted paths rather than replacing the whole
+      // map: an export carrying Entity type but no GUO columns would otherwise
+      // null out an ultimate owner recorded by an earlier import.
       const om = meta.get(cid);
-      if (om) payload.ownershipMeta = om;                 // Orbis GUO / controlling shareholders
+      if (om) for (const [k, v] of Object.entries(om)){
+        if (v == null || (Array.isArray(v) && !v.length)) continue;
+        payload[`ownershipMeta.${k}`] = v;
+      }
       batch.update(doc(db,'searchCompanies',cid), payload);
       const local = companies.find(c => c.id === cid);
       if (local){ local.peopleCounts = payload.peopleCounts; if (om) local.ownershipMeta = om; }
