@@ -1940,14 +1940,21 @@ async function saveMapList(){
 }
 
 // ── Detail view ──────────────────────────────────────────────────────────────
-async function openDetail(id){
+async function openDetail(id, tab){
   currentCoId = id;
   currentPersonId = null;
   showEl('listView', false); showEl('personView', false); showEl('detailView', true);
   window.scrollTo(0,0);
-  setActiveTab('overview');
-  try { await loadActivities(id); } catch(e){ console.error(e); activities = []; }
+  setActiveTab(tab || 'overview');
+  // Render from the company already in memory BEFORE waiting on anything.
+  // Awaiting the activity fetch first left every panel showing the PREVIOUS
+  // company for the length of a round-trip — most visibly the Ownership tab,
+  // which is the heaviest to repaint.
+  activities = [];
   renderDetail();
+  try { await loadActivities(id); } catch(e){ console.error(e); activities = []; }
+  if (currentCoId !== id) return;   // moved on while the activities were loading
+  renderActivityLog();
 }
 function backToList(){ showEl('detailView', false); showEl('personView', false); showEl('listView', true); currentCoId = null; currentPersonId = null; renderSummary(); renderList(); }
 
@@ -1955,6 +1962,25 @@ async function loadActivities(companyId){
   const snap = await getDocs(query(collection(db,'searchActivities'), where('companyId','==',companyId)));
   activities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   activities.sort((a,b) => (tsToDate(b.date)?.getTime()||0) - (tsToDate(a.date)?.getTime()||0));
+}
+
+// What the header says about who owns the company. Derived from the company
+// document alone, because renderDetail runs synchronously and the shareholder
+// links have not been fetched yet — so this covers the 2,440 of 2,577
+// companies where Orbis states an answer, and falls back to the primary
+// contact (clearly labelled as a contact, not an owner) for the rest. It used
+// to show contacts[0] unconditionally, which is an array index masquerading
+// as a finding.
+function headerOwner(c, primary){
+  const om = c.ownershipMeta || null;
+  const t = String(om?.entityType || '').trim();
+  if (om && (/independent/i.test(t) || /^guo$/i.test(t)))
+    return '<span class="badge badge-grey" title="Orbis records no controlling shareholder">🏛 No controlling owner</span>';
+  if (om?.cshNames?.length){
+    const who = om.cshNames.length > 1 ? `${om.cshNames[0]} +${om.cshNames.length - 1}` : om.cshNames[0];
+    return `<span class="badge badge-green" title="Controlling shareholder per Orbis">👑 ${esc(who)}</span>`;
+  }
+  return primary ? `<span class="badge badge-grey" title="Primary contact — not necessarily the owner">👤 ${esc(primary.name)}${primary.role ? ' · ' + esc(primary.role) : ''}</span>` : '';
 }
 
 function renderDetail(){
@@ -1969,7 +1995,7 @@ function renderDetail(){
     ${fitBadge(c.fitScore)}
     ${c.owner?`<span class="badge badge-grey">👤 ${OWNER_LABELS[c.owner]}</span>`:''}
     ${c.sourceType?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
-    ${primary?`<span class="badge badge-grey">${esc(primary.name)}${primary.role?' · '+esc(primary.role):''}</span>`:''}`;
+    ${headerOwner(c, primary)}`;
   const pill = document.getElementById('dMeta').querySelector('.stage-pill');
   const menu = document.getElementById('stageMenu');
   pill.style.cursor='pointer';
@@ -2380,6 +2406,17 @@ async function renderOwnership(c){
   const sh = links.filter(linkIsShareholder).sort((a,b) => byStatus(a,b,l=>l.shCurrent) || (b.shDirectPct||0) - (a.shDirectPct||0));
   const mg = links.filter(linkIsManager).sort((a,b) => byStatus(a,b,l=>l.mgmtCurrent) || String(a.personName).localeCompare(String(b.personName)));
 
+  // The shareholder IS often the person to write to — more often than a
+  // director, for a family business — so the bridge belongs on both tables.
+  // The role stored on the contact says which hat they are wearing.
+  const contactBtn = (l, role) =>
+    `<button class="btn btn--icon btn--ghost" data-tocontact="${esc(l.id)}" data-crole="${esc(role)}" title="Copy to Contacts">👤+</button>`;
+  const shareholderRole = (l, own) => {
+    const pct = l.shDirectPct != null ? ` (${l.shDirectPct}%)` : '';
+    if (l.personEntityType === 'entity') return `Corporate shareholder${pct}`;
+    if (own.ownerIds.has(l.personId)) return `Controlling shareholder${pct}`;
+    return `Shareholder${pct}`;
+  };
   const nameCell = l => `<span class="person-link" data-person="${esc(l.personId)}">${esc(l.personName || '—')}</span>${l.personEntityType === 'entity' ? ' <span class="badge badge-grey" title="Corporate entity">🏢</span>' : ''}`;
   const rowActions = l => `<button class="btn btn--icon btn--ghost" data-editlink="${esc(l.id)}" title="Edit">✎</button><button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove link">✕</button>`;
 
@@ -2400,7 +2437,7 @@ async function renderOwnership(c){
       <td>${l.alsoManager || linkIsManager(l) ? '✓' : '—'}</td>
       <td>${esc(l.shDate || '—')}</td>
       <td>${l.shCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
-      <td style="white-space:nowrap;">${rowActions(l)}</td>
+      <td style="white-space:nowrap;">${l.shCurrent !== false ? contactBtn(l, shareholderRole(l, own)) : ''}${rowActions(l)}</td>
     </tr>`;
   }).join('');
   const mgRows = mg.map(l => `
@@ -2409,7 +2446,7 @@ async function renderOwnership(c){
       <td>${esc((l.mgmtRoles || []).join(' · ') || '—')}${l.mgmtBoard ? `<div style="font-size:0.72rem;color:var(--text-light);">${esc(l.mgmtBoard)}</div>` : ''}</td>
       <td>${linkIsShareholder(l) ? '✓' : '—'}</td>
       <td>${l.mgmtCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
-      <td style="white-space:nowrap;">${l.mgmtCurrent !== false ? `<button class="btn btn--icon btn--ghost" data-tocontact="${esc(l.id)}" title="Copy to Contacts">👤+</button>` : ''}${rowActions(l)}</td>
+      <td style="white-space:nowrap;">${l.mgmtCurrent !== false ? contactBtn(l, (l.mgmtRoles || [])[0] || 'Management Team') : ''}${rowActions(l)}</td>
     </tr>`).join('');
 
   el.innerHTML = `
@@ -2419,14 +2456,16 @@ async function renderOwnership(c){
         <button class="btn btn--ghost btn--sm" id="addPersonBtn">＋ Add Person</button>
       </div>
       ${(own.note || own.treasuryPct != null) ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
-        ${own.independent ? '🏛' : (own.ownerIds.size ? '👑' : 'ℹ️')} ${esc(own.note)}${own.treasuryPct != null ? ` · <strong>${own.treasuryPct}%</strong> held by the company in itself (treasury)` : ''}${own.guoType ? ` · <span class="badge ${/individual|families/i.test(own.guoType) ? 'badge-green' : 'badge-grey'}" title="What kind of owner sits at the top">${esc(own.guoType)}</span>` : ''}${own.guoName ? ` · Ultimate owner: ${(() => {
+        ${own.independent ? '🏛' : (own.ownerIds.size ? '👑' : 'ℹ️')} ${esc(own.note)}${own.treasuryPct != null ? ` · <strong>${own.treasuryPct}%</strong> held by the company in itself (treasury)` : ''}${own.guoType ? ` · <span class="badge ${/individual|families/i.test(own.guoType) ? 'badge-green' : 'badge-grey'}" title="What kind of owner sits at the top">${esc(own.guoType)}</span>` : ''}${own.guoName ? (own.guoNif && own.guoNif === (onlyDigits(c.nif) || nifFromAny('', c.bvdId))
+        ? ' · It is its own ultimate owner'
+        : ` · Ultimate owner: ${(() => {
           // When the ultimate owner is itself a company in the pipeline, say so
           // and make it clickable — that's a second angle on the same group.
           const gc = own.guoNif ? companies.find(x => (onlyDigits(x.nif) || nifFromAny('', x.bvdId)) === own.guoNif) : null;
           return gc
             ? `<span class="person-link" data-gotoco="${esc(gc.id)}"><strong>${esc(own.guoName)}</strong></span> <span class="badge badge-green">in your pipeline</span>`
             : `<strong>${esc(own.guoName)}</strong>`;
-        })()}` : ''}
+        })()}`) : ''}
       </div>` : ''}
       ${sh.length ? `<div style="overflow-x:auto;"><table class="own-table">
         <thead><tr><th>Name</th><th class="num">Direct %</th><th class="num">Total %</th><th>Also mgr</th><th>As of</th><th>Status</th><th></th></tr></thead>
@@ -2434,6 +2473,7 @@ async function renderOwnership(c){
       <div class="own-legend" style="flex-wrap:wrap;gap:12px;">
         <span>👑 controlling owner</span>
         <span>Control &gt; 50%</span>
+        <span>Joint control = 50%</span>
         <span>Significant 25–50%</span>
         <span>Minority &lt; 25%</span>
       </div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No shareholder data yet — import people or add manually.</div>'}
@@ -2486,6 +2526,7 @@ async function savePersonLink(){
       const existing = await fetchPerson(pid);
       const personData = {
         name: personDisplayName(nameRaw), nameKey, nameTokens: personNameTokens(nameKey),
+        namePrefixes: namePrefixes(nameKey),
         entityType: 'person', updatedAt: serverTimestamp(),
       };
       if (country) personData.country = country;
@@ -2531,13 +2572,13 @@ async function removePersonLink(linkId){
   } catch(e){ alert('Error: ' + e.message); }
 }
 // Bridge governance → outreach: copy a manager into the company's Contacts array.
-async function copyLinkToContacts(linkId){
+async function copyLinkToContacts(linkId, role){
   const c = getCompany(); if (!c) return;
   const link = (companyLinksCache.get(c.id) || []).find(l => l.id === linkId);
   if (!link) return;
   const contacts = [...(c.contacts || [])];
   if (contacts.some(ct => personNameKey(ct.name) === personNameKey(link.personName))){ alert(`${link.personName} is already in Contacts.`); return; }
-  contacts.push({ name: link.personName, role: (link.mgmtRoles || [])[0] || 'Management Team', email:'', phone:'', linkedin:'', source:'online_research', notes:'From Orbis ownership data', isPrimary: contacts.length === 0 });
+  contacts.push({ name: link.personName, role: role || (link.mgmtRoles || [])[0] || 'Management Team', email:'', phone:'', linkedin:'', source:'online_research', notes:'From Orbis ownership data', isPrimary: contacts.length === 0 });
   try {
     await updateDoc(doc(db,'searchCompanies',c.id), { contacts, updatedAt: serverTimestamp() });
     c.contacts = contacts; cacheCompanies();
@@ -2556,9 +2597,21 @@ async function openPerson(personId, backTarget){
   document.getElementById('pName').textContent = '…';
   document.getElementById('pMeta').innerHTML = '';
   document.getElementById('personBody').innerHTML = '<div class="card" style="font-size:0.85rem;color:var(--text-light);">Loading…</div>';
+  // A silent return here used to leave "Loading…" on screen for ever, with no
+  // error and no way forward. Anything that does not resolve now says so and
+  // offers a retry.
+  const slow = setTimeout(() => {
+    if (currentPersonId !== personId) return;
+    const el = document.getElementById('personBody');
+    if (el && /Loading/.test(el.textContent)) el.innerHTML =
+      '<div class="card"><div style="font-size:0.85rem;color:var(--text-light);">Still loading — the connection may be stalled. '
+      + '<button class="btn btn--ghost btn--sm" id="personRetryBtn" style="margin-left:8px;">Retry</button></div></div>';
+    document.getElementById('personRetryBtn')?.addEventListener('click', () => openPerson(personId, personBackTarget));
+  }, 8000);
   let p, links;
   try { [p, links] = await Promise.all([fetchPerson(personId), fetchPersonLinks(personId)]); }
-  catch(e){ console.error(e); document.getElementById('personBody').innerHTML = '<div class="card"><div class="modal-err" style="display:block;">Failed to load: '+esc(e.message)+'</div></div>'; return; }
+  catch(e){ clearTimeout(slow); console.error(e); document.getElementById('personBody').innerHTML = '<div class="card"><div class="modal-err" style="display:block;">Failed to load: '+esc(e.message)+'</div></div>'; return; }
+  clearTimeout(slow);
   if (currentPersonId !== personId) return;
   if (!p){ document.getElementById('pName').textContent = 'Person not found'; document.getElementById('personBody').innerHTML = ''; return; }
   renderPersonView(p, links);
@@ -2566,7 +2619,7 @@ async function openPerson(personId, backTarget){
 function backFromPerson(){
   const target = personBackTarget; currentPersonId = null; personBackTarget = null;
   showEl('personView', false);
-  if (target?.type === 'company' && target.id) openDetail(target.id);
+  if (target?.type === 'company' && target.id) openDetail(target.id, target.tab);
   else { showEl('listView', true); renderList(); }
 }
 function renderPersonView(p, links){
@@ -2575,7 +2628,7 @@ function renderPersonView(p, links){
   document.getElementById('pMeta').innerHTML = `
     ${p.entityType === 'entity' ? '<span class="badge badge-grey">🏢 Corporate entity</span>' : '<span class="badge badge-blue">🧑 Person</span>'}
     ${p.country ? `<span class="badge badge-grey" title="Country of residence">${esc(p.country)}</span>` : ''}
-    ${p.nationality && p.nationality !== p.country ? `<span class="badge badge-grey" title="Nationality">🌐 ${esc(p.nationality)}</span>` : ''}
+    ${p.nationality && p.nationality !== p.country ? `<span class="badge badge-grey" title="Nationality">🌐 ${esc(String(p.nationality).split(';').map(x=>x.trim()).filter(Boolean).join(' · '))}</span>` : ''}
     ${p.nationalId ? `<span class="badge badge-grey" title="National registration number — the identifier other providers (Sabi, Informa) share">ID ${esc(p.nationalId)}</span>` : ''}
     <span class="badge badge-grey">${links.length} position${links.length === 1 ? '' : 's'} · ${current} current</span>
     ${(() => {
@@ -2630,7 +2683,7 @@ function renderPersonView(p, links){
           <label>
             <span>${f.label}</span>
             <input class="field" id="pc_${f.key}" type="${f.type}" value="${esc(p[f.key] || '')}"
-                   placeholder="${esc(seen[seen.length-1] || f.hint)}">
+                   placeholder="${esc(f.hint)}">
             ${seen.length ? `<em>Orbis: ${seen.map(v => esc(v)).join(' · ')}${seen.length > 1 ? ' <span title="Orbis has given more than one over time; the most recent is last">(all kept)</span>' : ''}</em>` : ''}
           </label>`; }).join('')}
       </div>
@@ -2685,7 +2738,9 @@ async function renderPeople(){
       // Whole-word token match first (handles "silva", "luis silva" in any order);
       // fall back to a prefix range scan for partial words ("silv").
       if (tokens.length){
-        const snap = await getDocs(query(col, where('nameTokens','array-contains',tokens[0]), limit(200)));
+        let snap = await getDocs(query(col, where('namePrefixes','array-contains',tokens[0]), limit(200)));
+        // People imported before namePrefixes existed have only whole tokens.
+        if (snap.empty) snap = await getDocs(query(col, where('nameTokens','array-contains',tokens[0]), limit(200)));
         addReads(snap.docs.length || 1);
         docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
       }
@@ -2935,6 +2990,8 @@ function buildFieldReport(rows, headers, idx, hi){
 // Bounded rather than unbounded because Promise.all over 26,000 queries opens
 // far more in-flight requests than the browser or the SDK will service well.
 const READ_CONCURRENCY = 20;
+// Firestore's `in` operator accepts at most 30 values per query.
+const PERSON_IN_CHUNK = 30;
 async function mapPool(items, fn, limit = READ_CONCURRENCY, onProgress){
   const results = new Array(items.length);
   let next = 0, done = 0;
@@ -3002,10 +3059,31 @@ function personAge(p){
   return null;
 }
 
+// Every prefix of every name token, so the People search can match a partial
+// surname. `array-contains` matches a WHOLE element, so without this "morai"
+// finds nothing while "morais" works — and the nameKey prefix fallback only
+// helps when the search matches the start of the full name.
+//
+// Two characters, not three: Portuguese surnames get short (Sá, Pó), and the
+// particles that would flood a 2-char index (de, da, do, dos, e) are already
+// dropped as stopwords. ~24 entries per person, far inside Firestore's limit.
+const NAME_PREFIX_MIN = 2;
+function namePrefixes(nameKey){
+  const out = new Set();
+  for (const t of personNameTokens(nameKey)){
+    for (let i = NAME_PREFIX_MIN; i <= t.length; i++) out.add(t.slice(0, i));
+  }
+  return [...out];
+}
+
 // Percentage → control tier. 25% is the EU beneficial-ownership threshold.
 function controlTier(pct){
   if (pct == null) return null;
   if (pct > 50) return { key:'control',     label:'Control',     cls:'badge-green' };
+  // Exactly half is a deadlock, not a majority: neither holder can pass a
+  // resolution alone. Lumping it in with a 25% minority understates what you
+  // would be walking into.
+  if (pct === 50) return { key:'joint',     label:'Joint control', cls:'badge-warn' };
   if (pct >= 25) return { key:'significant', label:'Significant', cls:'badge-blue'  };
   if (pct > 0)  return { key:'minority',    label:'Minority',    cls:'badge-grey'  };
   return null;
@@ -3555,6 +3633,7 @@ async function confirmPeopleImport(){
       const co3 = r.country && r.country.length <= 3 ? r.country : '';
       batch.set(doc(db,'searchPeople', r.personId), {
         name: r.personName, nameKey: r.nameKey, nameTokens: personNameTokens(r.nameKey),
+        namePrefixes: namePrefixes(r.nameKey),
         // Identifiers and stable attributes are written only when this file
         // actually carries them. Writing them unconditionally meant an export
         // with a narrower column set silently blanked the UCI, NIF or country
@@ -3646,6 +3725,10 @@ async function confirmPeopleImport(){
       if (r.isMgmt){ facetScope.mgmtCurrent.touched.add(r.companyId); facetScope.mgmtCurrent.keep.add(id); }
     }
     let demoted = 0;
+    // What the demotion scan read, kept so step 5 does not re-fetch the same
+    // links a second time. Demotions we make below are applied in memory, so
+    // the counts computed from it match what is actually stored.
+    const linksByCo = new Map();
     batch = writeBatch(db); n = 0;
     // One query per company, run concurrently — see mapPool.
     const perCompany = await mapPool(touched, cid =>
@@ -3654,6 +3737,7 @@ async function confirmPeopleImport(){
       READ_CONCURRENCY,
       done => { btn.innerHTML = `<span class="spin-sm"></span>Checking… ${done}/${touched.length}`; });
     for (const { cid, docs } of perCompany){
+      linksByCo.set(cid, docs.map(d => ({ id: d.id, ...d.data() })));
       for (const d of docs){
         for (const facet of ['shCurrent','mgmtCurrent']){
           const scope = facetScope[facet];
@@ -3663,6 +3747,8 @@ async function confirmPeopleImport(){
           if (scope.keep.has(d.id)) continue;
           if (d.data()[facet] === true){
             batch.update(d.ref, { [facet]: false, updatedAt: serverTimestamp() });
+            const local = linksByCo.get(cid).find(x => x.id === d.id);
+            if (local) local[facet] = false;
             demoted++;
             if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
           }
@@ -3675,11 +3761,11 @@ async function confirmPeopleImport(){
     invalidatePeopleCaches();
     batch = writeBatch(db); n = 0;
     const meta = peopleImportStats.ownershipMeta || new Map();
-    const coLinks = await mapPool(touched, cid => fetchCompanyLinks(cid, true), READ_CONCURRENCY,
-      d => { btn.innerHTML = `<span class="spin-sm"></span>Companies… ${d}/${touched.length}`; });
+    // No second read: the demotion scan already fetched every link for every
+    // touched company, and its copy has our demotions applied.
     for (let ci = 0; ci < touched.length; ci++){
       const cid = touched[ci];
-      const links = coLinks[ci];
+      const links = linksByCo.get(cid) || [];
       const payload = { peopleCounts: peopleCountsFrom(links) };
       // Merge field by field via dotted paths rather than replacing the whole
       // map: an export carrying Entity type but no GUO columns would otherwise
@@ -3696,15 +3782,28 @@ async function confirmPeopleImport(){
     }
     await batch.commit();
     batch = writeBatch(db); n = 0;
+    // A person's totals span every company, including ones this file never
+    // mentioned, so they have to come from the database. But they do not need
+    // one query each: `in` takes 30 values, which is the difference between
+    // ~26,700 round-trips and ~890.
     const pids = [...byPerson.keys()];
-    const peLinks = await mapPool(pids, pid => fetchPersonLinks(pid, true), READ_CONCURRENCY,
-      d => { btn.innerHTML = `<span class="spin-sm"></span>People… ${d}/${pids.length}`; });
-    for (let pi = 0; pi < pids.length; pi++){
-      const links = peLinks[pi];
-      batch.update(doc(db,'searchPeople',pids[pi]), {
-        linkCount: links.length,
-        currentLinkCount: links.filter(l => l.shCurrent === true || l.mgmtCurrent === true).length,
-      });
+    const chunks = [];
+    for (let i = 0; i < pids.length; i += PERSON_IN_CHUNK) chunks.push(pids.slice(i, i + PERSON_IN_CHUNK));
+    const counts = new Map(pids.map(id => [id, { total: 0, current: 0 }]));
+    await mapPool(chunks, async ch => {
+      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in',ch)));
+      addReads(snap.docs.length || 1);
+      for (const d of snap.docs){
+        const l = d.data();
+        const c = counts.get(l.personId);
+        if (!c) continue;                       // a link whose person is not in this import
+        c.total++;
+        if (l.shCurrent === true || l.mgmtCurrent === true) c.current++;
+      }
+    }, READ_CONCURRENCY, d => { btn.innerHTML = `<span class="spin-sm"></span>People… ${d}/${chunks.length}`; });
+    for (const pid of pids){
+      const c = counts.get(pid);
+      batch.update(doc(db,'searchPeople',pid), { linkCount: c.total, currentLinkCount: c.current });
       if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
     }
     await batch.commit();
@@ -3730,6 +3829,7 @@ async function openPeopleImport(){
   document.getElementById('peopleAllPrevious').checked = false;
   document.getElementById('peopleImportErr').style.display = 'none';
   showEl('peopleImportOpts', false); showEl('peopleImportPreview', false); showEl('peoplePrevRow', false);
+  showEl('peopleFieldMapWrap', false);   // otherwise the last file's report is still on screen
   const btn = document.getElementById('peopleImportConfirmBtn'); btn.disabled = true; btn.textContent = 'Import';
   showEl('peopleImportModal', true);
 }
@@ -3880,13 +3980,25 @@ function layoutGraph(g, W, H){
       if (B.ring === 1 && A.ring === 2 && !parentOf.has(A.id)) parentOf.set(A.id, B);
     }
   }
-  const perParent = new Map();
+  // Fan each parent's children out evenly and symmetrically around it. The
+  // previous formula advanced by spread/2 per child but alternated by ±0.28 x
+  // spread, a swing wider than the step — so consecutive children landed ~2°
+  // apart, effectively on top of each other, and the relaxation pass could not
+  // separate them because the push direction between coincident nodes is
+  // degenerate. It only showed on person-focused graphs, where every colleague
+  // hangs off a single company.
+  const childCount = new Map();
+  ring2.forEach(n => { const k = parentOf.get(n.id)?.id || 'x'; childCount.set(k, (childCount.get(k) || 0) + 1); });
+  const placed = new Map();
   ring2.forEach(n => {
     const p = parentOf.get(n.id);
+    const key = p?.id || 'x';
     const base = p ? p.seedAngle : Math.random() * Math.PI * 2;
-    const k = (perParent.get(p?.id || 'x') || 0); perParent.set(p?.id || 'x', k + 1);
-    const spread = 0.55;
-    const a = base + (k - 1) * spread * 0.5 + (k % 2 ? spread * 0.28 : -spread * 0.28);
+    const total = childCount.get(key) || 1;
+    const k = placed.get(key) || 0; placed.set(key, k + 1);
+    // Widen the fan as the count grows, but never past a half-turn.
+    const spread = Math.min(Math.PI, 0.55 * Math.max(1, total - 1));
+    const a = total === 1 ? base : base - spread / 2 + (k / (total - 1)) * spread;
     n.x = cx + Math.cos(a) * rx2; n.y = cy + Math.sin(a) * ry2;
   });
 
@@ -4050,14 +4162,14 @@ async function renderNetworkGraph(container, focusType, focusId){
     </svg>
     <div class="own-legend" style="justify-content:space-between;">
       <span><span class="cur">currently</span> <span class="prv" style="margin-left:14px;">previously</span></span>
-      <span>${g.overflow ? `+${g.overflow} more connection${g.overflow===1?'':'s'} not shown · ` : ''}click a node to centre on it</span>
+      <span>${g.overflow ? `<strong>showing ${g.nodes.length - 1} of ${g.nodes.length - 1 + g.overflow}</strong> connections · ` : ''}click a node to centre on it</span>
     </div>`;
 
   container.querySelectorAll('.gnode').forEach(el => el.addEventListener('click', () => {
     const t = el.dataset.gtype, id = el.dataset.gid, matched = el.dataset.gmatched;
     if (t === 'company') openDetail(id);
     else if (matched) openDetail(matched);          // corporate holder that IS a CRM company
-    else openPerson(id, currentCoId ? { type:'company', id: currentCoId } : { type:'list' });
+    else openPerson(id, currentCoId ? { type:'company', id: currentCoId, tab:'ownership' } : { type:'list' });
   }));
 }
 
@@ -5129,11 +5241,11 @@ document.getElementById('panel-ownership').addEventListener('click', e => {
   const t = e.target.closest('[data-person],[data-gotoco],[data-editlink],[data-rmlink],[data-tocontact],#addPersonBtn');
   if (!t) return;
   if (t.id === 'addPersonBtn') openPersonLink(null);
-  else if (t.dataset.person) openPerson(t.dataset.person, { type:'company', id: currentCoId });
+  else if (t.dataset.person) openPerson(t.dataset.person, { type:'company', id: currentCoId, tab:'ownership' });
   else if (t.dataset.gotoco) openDetail(t.dataset.gotoco);
   else if (t.dataset.editlink) openPersonLink(t.dataset.editlink);
   else if (t.dataset.rmlink) removePersonLink(t.dataset.rmlink);
-  else if (t.dataset.tocontact) copyLinkToContacts(t.dataset.tocontact);
+  else if (t.dataset.tocontact) copyLinkToContacts(t.dataset.tocontact, t.dataset.crole);
 });
 document.getElementById('personBody').addEventListener('click', e => {
   const t = e.target.closest('[data-gotoco],[data-person]');

@@ -64,9 +64,40 @@ export const FREE_TIER_DAILY_READS = 50000;
 // one real total instead of two separate personal ones. Best-effort — never
 // throws, since the localStorage count above is always shown first/instead
 // if this write or read fails (offline, permission hiccup, etc).
+// Buffered on purpose. This used to write once per Firestore *query*, and
+// every write landed on the SAME document — Firestore sustains roughly one
+// write per second per document, so a bulk import's ~31,800 queries queued
+// ~31,800 increments behind a 1/sec ceiling. The SDK does not drop them: it
+// persists them in IndexedDB and retries, so the backlog competed with the
+// import's own writes, survived reloads, and made ordinary navigation hang.
+//
+// Accumulating in memory and flushing on a timer keeps the counter just as
+// accurate — it is a daily total, so a few seconds' lag is immaterial — while
+// turning tens of thousands of writes into a few dozen.
+const SHARED_READS_FLUSH_MS = 5000;
+let pendingSharedReads = 0;
+let sharedReadsTimer = null;
+
+export function flushSharedReads(){
+  if (sharedReadsTimer){ clearTimeout(sharedReadsTimer); sharedReadsTimer = null; }
+  const n = pendingSharedReads;
+  if (!n) return Promise.resolve();
+  pendingSharedReads = 0;   // clear first, so a failed write cannot double-count on retry
+  return setDoc(doc(db, 'dailyReadCounters', todayDateStr()), { count: increment(n) }, { merge: true })
+    .catch(e => { console.warn('Shared read counter write failed:', e?.message || e); });
+}
+
 export function addSharedReads(n){
   if (!n) return;
-  setDoc(doc(db, 'dailyReadCounters', todayDateStr()), { count: increment(n) }, { merge: true }).catch(() => {});
+  pendingSharedReads += n;
+  if (!sharedReadsTimer) sharedReadsTimer = setTimeout(flushSharedReads, SHARED_READS_FLUSH_MS);
+}
+
+// Never lose the tail: a closing tab, a backgrounded phone, or a navigation
+// away would otherwise drop whatever is still buffered.
+if (typeof document !== 'undefined'){
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSharedReads(); });
+  window.addEventListener('pagehide', flushSharedReads);
 }
 export function watchSharedReads(callback){
   return onSnapshot(
