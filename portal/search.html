@@ -369,6 +369,15 @@
         <div class="summary-header-left">
           <h2>Pipeline Overview <span id="dataFreshness" class="freshness-badge"></span></h2>
           <div class="summary-stats" id="summaryStats">—</div>
+          <div id="loadAllRow" style="margin-top:6px;display:flex;align-items:center;gap:10px;">
+            <button class="btn btn--ghost btn--sm" id="loadAllBtn">⬇ Load all companies</button>
+            <div id="loadAllProgress" style="display:none;flex:1;max-width:240px;align-items:center;gap:8px;">
+              <div style="flex:1;height:5px;border-radius:3px;overflow:hidden;background:var(--border);">
+                <div id="loadAllFill" style="height:100%;width:0%;background:var(--primary);border-radius:3px;transition:width .2s ease;"></div>
+              </div>
+              <span id="loadAllLabel" style="font-size:0.74rem;color:var(--text-light);white-space:nowrap;"></span>
+            </div>
+          </div>
         </div>
       </div>
       <div class="pipeline-pills" id="pipelinePills"></div>
@@ -936,13 +945,13 @@
 <script src="./vendor/leaflet/leaflet.markercluster.js"></script>
 <script src="./vendor/pt-postcodes.js?v=cp7-nominatim-1"></script>
 <script type="module">
-import { auth, db, ADMIN_EMAILS, addReads } from './firebase-config.js';
+import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch } from './firebase-config.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
-  collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
+  collection, doc,
   getDocs, getDoc, query, where, orderBy, limit, serverTimestamp, Timestamp,
-  onSnapshot, arrayUnion, arrayRemove, writeBatch, getCountFromServer
+  onSnapshot, arrayUnion, arrayRemove, getCountFromServer, documentId, startAfter
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -1559,6 +1568,92 @@ function ensureFullDataset(){
   })();
   return fullDatasetPromise;
 }
+// "Load all companies" button — same end state as ensureFullDataset()'s live
+// path, but reached by a paginated getDocs() walk instead of one opaque
+// onSnapshot, so progress is real ("7,000 of 20,682") rather than a spinner
+// with nothing to report until the whole thing lands. Same total read cost
+// either way (~20,682 reads chunked into ~21 requests of 1,000 instead of
+// one unscoped listener). Deliberately a separate function rather than a
+// rewrite of ensureFullDataset() -- that function was only just hardened
+// against the fromCache bug, and touching it again for an unrelated UI
+// affordance is exactly how a regression like that comes back.
+const LOAD_ALL_PAGE_SIZE = 1000;
+async function loadAllWithProgress(){
+  const btn = document.getElementById('loadAllBtn');
+  const progressWrap = document.getElementById('loadAllProgress');
+  const fill = document.getElementById('loadAllFill');
+  const label = document.getElementById('loadAllLabel');
+  if (fullyLoaded){ label.textContent = 'Already loaded'; return; }
+  btn.disabled = true;
+  progressWrap.style.display = 'flex';
+  fill.style.width = '0%';
+  label.textContent = 'Starting…';
+  // Someone else (search, a filter, Grouped/Map, ...) may already be mid-load
+  // -- await that instead of starting a redundant second full walk. No real
+  // progress to show for that path (a single onSnapshot gives none), so this
+  // stays an indeterminate "Loading…" rather than a fake percentage.
+  if (fullDatasetPromise){
+    label.textContent = 'Loading…';
+    await fullDatasetPromise;
+    fill.style.width = '100%';
+    label.textContent = `${companies.length.toLocaleString('en')} loaded`;
+    btn.disabled = false;
+    setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
+    return;
+  }
+  fullDatasetPromise = (async () => {
+    const cached = await readFullDatasetCache();
+    if (cached){
+      label.textContent = `${cached.docs.length.toLocaleString('en')} loaded from cache`;
+      fill.style.width = '100%';
+      const have = new Set(companies.map(c => c.id));
+      cached.docs.forEach(raw => { if (!have.has(raw.id)) companies.push(computeFields({ ...raw })); });
+      fullyLoaded = true;
+      dataAsOf = new Date(cached.cachedAt);
+      if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
+      refreshSectorOptions(); renderSummary(); renderReadsAndFreshness();
+      if (document.getElementById('listView').style.display !== 'none') renderList();
+      await runBackfillsOnce();
+      return;
+    }
+    const total = cachedTotalCount || 0;
+    const raw = [];
+    let lastDoc = null;
+    while (true){
+      let q = query(collection(db, 'searchCompanies'), orderBy(documentId()), limit(LOAD_ALL_PAGE_SIZE));
+      if (lastDoc) q = query(collection(db, 'searchCompanies'), orderBy(documentId()), startAfter(lastDoc), limit(LOAD_ALL_PAGE_SIZE));
+      const snap = await getDocs(q);
+      addReads(snap.docs.length || 1);
+      snap.docs.forEach(d => raw.push({ id: d.id, ...d.data() }));
+      const pct = total ? Math.min(100, Math.round((raw.length / total) * 100)) : 0;
+      fill.style.width = pct + '%';
+      label.textContent = `${raw.length.toLocaleString('en')}${total ? ' of ' + total.toLocaleString('en') : ''} companies`;
+      if (snap.docs.length < LOAD_ALL_PAGE_SIZE) break; // last page
+      lastDoc = snap.docs[snap.docs.length - 1];
+    }
+    companies = raw.map(r => computeFields({ ...r }));
+    fullyLoaded = true;
+    // A paginated getDocs walk is a snapshot at the moment it finished, not
+    // an ongoing subscription -- mark it as such (same as the cache path),
+    // not "live" (null), which is reserved for the onSnapshot path that
+    // actually keeps receiving updates.
+    dataAsOf = new Date();
+    if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
+    writeFullDatasetCache(raw);
+    refreshSectorOptions(); renderSummary(); renderReadsAndFreshness();
+    if (document.getElementById('listView').style.display !== 'none') renderList();
+    await runBackfillsOnce();
+  })();
+  try {
+    await fullDatasetPromise;
+  } catch(e){
+    console.error(e);
+    label.textContent = 'Failed — see console';
+  }
+  btn.disabled = false;
+  setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
+}
+
 // Cached total company count, shown while only the bounded default window is
 // loaded (companies.length would otherwise read as ~300, not the real total).
 let cachedTotalCount = null;
@@ -5575,6 +5670,7 @@ document.getElementById('mapExportBtn').addEventListener('click', exportMapCsv);
   el.addEventListener('input', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
   el.addEventListener('change', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
 });
+document.getElementById('loadAllBtn').addEventListener('click', loadAllWithProgress);
 document.getElementById('advFilterBtn').addEventListener('click', () => document.getElementById('advFilters').classList.toggle('open'));
 document.getElementById('clearFiltersBtn').addEventListener('click', () => {
   ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'].forEach(id=>document.getElementById(id).value='');

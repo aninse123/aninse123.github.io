@@ -42,10 +42,14 @@
 }
 .nav__dropdown[hidden] { display: none; }
 .nav__email { font-size: 0.8rem; color: rgba(255,255,255,0.75); word-break: break-all; }
-.nav__reads {
+.nav__reads, .nav__writes {
   align-self: flex-start; font-size: 0.72rem; font-weight: 500; color: rgba(255,255,255,0.55);
   cursor: default; white-space: nowrap; background: rgba(255,255,255,0.08);
   padding: 4px 10px; border-radius: 10px;
+}
+.nav__deletes {
+  align-self: flex-start; font-size: 0.68rem; color: rgba(255,255,255,0.4);
+  cursor: default; white-space: nowrap;
 }
 .nav__quota-bar {
   width: 100%; height: 5px; border-radius: 3px; overflow: hidden;

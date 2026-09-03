@@ -5,7 +5,11 @@
 // duplication that caused real drift (spacing fixed on one page but not
 // another, an overlap bug, container widths desyncing from body width).
 import { signOut } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-import { auth, getTodayReads, FREE_TIER_DAILY_READS, watchSharedReads } from './firebase-config.js';
+import {
+  auth, getTodayReads, FREE_TIER_DAILY_READS, watchSharedReads,
+  getTodayWrites, getTodayDeletes, FREE_TIER_DAILY_WRITES, FREE_TIER_DAILY_DELETES,
+  watchSharedWriteCounters
+} from './firebase-config.js';
 
 const PAGES = [
   { key: 'investor', href: '/portal/investor.html', label: 'Investor view' },
@@ -18,12 +22,17 @@ const PAGES = [
 ];
 
 let sharedReads = null;
+let sharedWrites = null;
+let sharedDeletes = null;
 
 // Firestore Blaze pricing beyond the free tier: $0.06 per 100,000 document
-// reads (publicly documented rate, not project-specific). USD_TO_EUR is a
-// fixed rough conversion, not a live rate — the resulting €/day figure is a
-// ballpark, same spirit as the rest of this counter ("not billing-exact").
+// reads, $0.18 per 100,000 writes, $0.02 per 100,000 deletes (publicly
+// documented rates, not project-specific). USD_TO_EUR is a fixed rough
+// conversion, not a live rate — the resulting €/day figures are a ballpark,
+// same spirit as the rest of these counters ("not billing-exact").
 const USD_PER_100K_EXTRA_READS = 0.06;
+const USD_PER_100K_EXTRA_WRITES = 0.18;
+const USD_PER_100K_EXTRA_DELETES = 0.02;
 const USD_TO_EUR = 0.92;
 
 // activeKey: which PAGES entry is the current page.
@@ -52,7 +61,10 @@ export function initNav(activeKey, opts = {}) {
             <span class="nav__email" id="navEmail"></span>
             <span class="nav__reads" id="navReads" title="Rough estimate of Firestore reads today — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
             <div class="nav__quota-bar"><div class="nav__quota-fill" id="navQuotaFill"></div></div>
-            <span class="nav__cost" id="navCost" title="Very rough estimate: $0.06/100k reads beyond the free tier, converted to EUR at a fixed approximate rate. Not billing-exact — check the Firebase Console for the real number."></span>
+            <span class="nav__writes" id="navWrites" title="Rough estimate of Firestore writes today — resets at midnight, not billing-exact. Firestore free tier: 20.000 writes/day."></span>
+            <div class="nav__quota-bar"><div class="nav__quota-fill" id="navWriteQuotaFill"></div></div>
+            <span class="nav__deletes" id="navDeletes" title="Rough estimate of Firestore deletes today — a separate quota from writes. Firestore free tier: 20.000 deletes/day."></span>
+            <span class="nav__cost" id="navCost" title="Very rough estimate: $0.06/100k reads, $0.18/100k writes and $0.02/100k deletes beyond the free tier, converted to EUR at a fixed approximate rate. Not billing-exact — check the Firebase Console for the real number."></span>
             <button class="nav__signout" id="signOutBtn" type="button">Sign out</button>
           </div>
         </div>
@@ -96,6 +108,7 @@ export function initNav(activeKey, opts = {}) {
   });
 
   refreshReads();
+  refreshWrites();
 }
 
 // Two letters from the email's local part (e.g. "andre.rocha" → "AR"),
@@ -115,6 +128,31 @@ export function setNavEmail(email) {
   if (btn) btn.textContent = initials(email);
 }
 
+// Shared quota-bar fill logic (amber → red at 100%), used for both the read
+// bar and the write bar.
+function fillBar(elId, shown, limit) {
+  const pct = Math.min(100, (shown / limit) * 100);
+  const isFull = shown >= limit;
+  const fill = document.getElementById(elId);
+  if (fill) {
+    fill.style.width = pct + '%';
+    fill.classList.toggle('nav__quota-fill--full', isFull);
+  }
+  return { pct, isFull };
+}
+
+function refreshCost() {
+  const extraReads = Math.max(0, (sharedReads != null ? sharedReads : getTodayReads()) - FREE_TIER_DAILY_READS);
+  const extraWrites = Math.max(0, (sharedWrites != null ? sharedWrites : getTodayWrites()) - FREE_TIER_DAILY_WRITES);
+  const extraDeletes = Math.max(0, (sharedDeletes != null ? sharedDeletes : getTodayDeletes()) - FREE_TIER_DAILY_DELETES);
+  const estEur =
+    (extraReads / 100000) * USD_PER_100K_EXTRA_READS * USD_TO_EUR +
+    (extraWrites / 100000) * USD_PER_100K_EXTRA_WRITES * USD_TO_EUR +
+    (extraDeletes / 100000) * USD_PER_100K_EXTRA_DELETES * USD_TO_EUR;
+  const cost = document.getElementById('navCost');
+  if (cost) cost.textContent = `${estEur.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ est. today`;
+}
+
 // Call after any addReads() to refresh the local-estimate figure shown until
 // the shared cross-browser total (see startSharedReadsWatch) reports in.
 export function refreshReads() {
@@ -125,15 +163,8 @@ export function refreshReads() {
   el.textContent = `${shown.toLocaleString('de-DE')} est./${FREE_TIER_DAILY_READS.toLocaleString('de-DE')} free reads`;
   el.title = `Rough estimate of Firestore reads today — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day. This browser: ${local.toLocaleString('de-DE')}.`;
 
-  const pct = Math.min(100, (shown / FREE_TIER_DAILY_READS) * 100);
-  const isFull = shown >= FREE_TIER_DAILY_READS;
+  const { pct, isFull } = fillBar('navQuotaFill', shown, FREE_TIER_DAILY_READS);
   const fillColor = isFull ? '#B33A3A' : '#F59E0B';
-
-  const fill = document.getElementById('navQuotaFill');
-  if (fill) {
-    fill.style.width = pct + '%';
-    fill.classList.toggle('nav__quota-fill--full', isFull);
-  }
 
   // Same amber→red fill as the bar above, radially, so the avatar doubles as
   // a compact at-a-glance echo of the same quota signal shown in the dropdown.
@@ -158,14 +189,42 @@ export function refreshReads() {
     }
   }
 
-  const extraReads = Math.max(0, shown - FREE_TIER_DAILY_READS);
-  const estEur = (extraReads / 100000) * USD_PER_100K_EXTRA_READS * USD_TO_EUR;
-  const cost = document.getElementById('navCost');
-  if (cost) cost.textContent = `${estEur.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}€ est. today`;
+  refreshCost();
+}
+
+// Call after any addWrites()/addDeletes() to refresh the local-estimate
+// figures shown until the shared cross-browser totals (see
+// startSharedReadsWatch) report in. Writes get a bar (same amber→red pattern
+// as reads, since 20k/day is tight enough to matter for a bulk import);
+// deletes get a compact text line only — no page in this portal deletes in
+// volume, so a second full bar would be space spent on a number that never
+// moves much.
+export function refreshWrites() {
+  const wEl = document.getElementById('navWrites');
+  const dEl = document.getElementById('navDeletes');
+  if (!wEl && !dEl) return;
+  const localW = getTodayWrites();
+  const localD = getTodayDeletes();
+  const shownW = sharedWrites != null ? sharedWrites : localW;
+  const shownD = sharedDeletes != null ? sharedDeletes : localD;
+
+  if (wEl) {
+    wEl.textContent = `${shownW.toLocaleString('de-DE')} est./${FREE_TIER_DAILY_WRITES.toLocaleString('de-DE')} free writes`;
+    wEl.title = `Rough estimate of Firestore writes today — resets at midnight, not billing-exact. Firestore free tier: 20.000 writes/day. This browser: ${localW.toLocaleString('de-DE')}.`;
+  }
+  fillBar('navWriteQuotaFill', shownW, FREE_TIER_DAILY_WRITES);
+
+  if (dEl) {
+    dEl.textContent = `${shownD.toLocaleString('de-DE')} deletes today`;
+    dEl.title = `Rough estimate of Firestore deletes today — a separate quota from writes. Firestore free tier: 20.000 deletes/day. This browser: ${localD.toLocaleString('de-DE')}.`;
+  }
+
+  refreshCost();
 }
 
 // Call once, after auth confirms the user is an admin (the shared counter
-// doc is admin-only, matching the rest of adminConfig/*).
+// docs are admin-only, matching the rest of adminConfig/*).
 export function startSharedReadsWatch() {
   watchSharedReads(n => { sharedReads = n; refreshReads(); });
+  watchSharedWriteCounters(({ writes, deletes }) => { sharedWrites = writes; sharedDeletes = deletes; refreshWrites(); });
 }

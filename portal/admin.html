@@ -733,14 +733,14 @@
   </div>
 
   <script type="module">
-    import { auth, db, storage, ADMIN_EMAILS, addReads } from './firebase-config.js';
+    import { auth, db, storage, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
     import {
       onAuthStateChanged
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
-      collection, getDocs, addDoc, updateDoc, deleteDoc,
-      doc, getDoc, setDoc, serverTimestamp, arrayUnion, arrayRemove,
+      collection, getDocs,
+      doc, getDoc, serverTimestamp, arrayUnion, arrayRemove,
       query, orderBy, limit
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import {
