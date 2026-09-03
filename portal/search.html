@@ -3723,6 +3723,14 @@ async function confirmPeopleImport(){
       const id = `${r.personId}__${r.companyId}`;
       if (r.isSh){   facetScope.shCurrent.touched.add(r.companyId);   facetScope.shCurrent.keep.add(id); }
       if (r.isMgmt){ facetScope.mgmtCurrent.touched.add(r.companyId); facetScope.mgmtCurrent.keep.add(id); }
+      // A shareholder Orbis flags as "Current manager" gets mgmtCurrent:true
+      // from the link write above even though the file carries no DM row for
+      // them. Without this they are absent from the keep set and the scan
+      // below undoes that write inside the same import — 7 people in the full
+      // export, and one of them (Mariana Morais e Almeida at EUROSPUMA) made
+      // every re-import report a phantom demotion. Not `touched`: a
+      // shareholders-only file must still never demote real managers.
+      else if (r.isSh && r.mgmtCurrentFromFile === true) facetScope.mgmtCurrent.keep.add(id);
     }
     let demoted = 0;
     // What the demotion scan read, kept so step 5 does not re-fetch the same
