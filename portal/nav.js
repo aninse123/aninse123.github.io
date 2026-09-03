@@ -8,8 +8,14 @@ import { signOut } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-aut
 import {
   auth, getTodayReads, FREE_TIER_DAILY_READS, watchSharedReads,
   getTodayWrites, getTodayDeletes, FREE_TIER_DAILY_WRITES, FREE_TIER_DAILY_DELETES,
-  watchSharedWriteCounters
+  watchSharedWriteCounters, onWriteCountChange
 } from './firebase-config.js';
+
+// Registered once, module-load time (not per initNav() call, since initNav()
+// can re-render the dropdown's DOM but this listener must survive that) —
+// every addWrites()/addDeletes() anywhere in the app, on any of the six
+// pages, calls this automatically. No page/handler has to remember to.
+onWriteCountChange(() => refreshWrites());
 
 const PAGES = [
   { key: 'investor', href: '/portal/investor.html', label: 'Investor view' },

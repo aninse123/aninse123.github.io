@@ -79,12 +79,28 @@ export const FREE_TIER_DAILY_DELETES = 20000;
 // a call site being missed the way a hand-placed counter would risk.
 function todayWritesKey(){ return 'dp_writes_' + todayDateStr(); }
 function todayDeletesKey(){ return 'dp_deletes_' + todayDateStr(); }
+// The read counter's display only ever refreshes where a page happens to
+// call refreshReads() by hand (nav.js) -- fine for reads, since those mostly
+// happen inside render functions that already call it. Writes and deletes
+// happen inside dozens of small, scattered handlers (saveContact,
+// changeStage, saveActivity, removeContact, ...) across six pages, and none
+// of them call anything write-counter-related -- retrofitting every one by
+// hand is exactly the per-call-site risk the counting wrappers above were
+// built to avoid, just moved from counting to display. So the count and the
+// display refresh happen together, from here: nav.js registers itself once
+// via onWriteCountChange(), and every addWrites()/addDeletes() call notifies
+// it automatically, no matter which of the six pages or which handler made
+// the write.
+const writeCountListeners = [];
+export function onWriteCountChange(cb){ writeCountListeners.push(cb); }
+function notifyWriteCountChange(){ writeCountListeners.forEach(cb => { try { cb(); } catch(e){} }); }
 export function addWrites(n){
   if (!n) return getTodayWrites();
   const key = todayWritesKey();
   const total = (Number(localStorage.getItem(key)) || 0) + n;
   localStorage.setItem(key, total);
   addSharedWrites(n);
+  notifyWriteCountChange();
   return total;
 }
 export function getTodayWrites(){
@@ -96,6 +112,7 @@ export function addDeletes(n){
   const total = (Number(localStorage.getItem(key)) || 0) + n;
   localStorage.setItem(key, total);
   addSharedDeletes(n);
+  notifyWriteCountChange();
   return total;
 }
 export function getTodayDeletes(){
