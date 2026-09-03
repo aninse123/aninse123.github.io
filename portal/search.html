@@ -1486,12 +1486,46 @@ function ensureFullDataset(){
     }
     await new Promise(resolve => {
       let done = false;
+      // Firestore's local persistence cache can deliver this listener's
+      // FIRST snapshot from disk (metadata.fromCache:true) before the server
+      // round-trip lands — and that cache can hold an arbitrary partial
+      // subset (the bounded 300-window, whichever company detail pages were
+      // opened this session, ...), not "everything". Treating it as complete
+      // showed a wrong pipeline total (307 instead of 20,682) for the second
+      // or so until the real snapshot arrived. So a from-cache snapshot is
+      // never rendered, cached, or used to resolve this promise — only a
+      // server-confirmed one (metadata.fromCache:false) sets fullyLoaded.
+      // Everything waiting on ensureFullDataset() (search, filters, sort,
+      // Grouped/Map, export, bulk import) keeps waiting for data we can
+      // vouch for. A short fallback timer still resolves with whatever the
+      // cache last held if we're genuinely offline, so the app doesn't hang
+      // forever with no server to confirm against.
+      let cacheTimeout = null;
+      let lastCacheDocs = null;
       fullDatasetUnsub = onSnapshot(
         collection(db, 'searchCompanies'),
         async snap => {
-          // This query is unscoped, so every snapshot IS the complete set —
-          // no merge/eviction logic needed, unlike the bounded listener above.
           addReads(done ? snap.docChanges().length : snap.docs.length);
+          if (snap.metadata.fromCache){
+            lastCacheDocs = snap.docs;
+            if (!done && !cacheTimeout){
+              cacheTimeout = setTimeout(() => {
+                if (done) return;
+                const raw = lastCacheDocs.map(d => ({ id: d.id, ...d.data() }));
+                companies = raw.map(r => computeFields({ ...r }));
+                fullyLoaded = true;
+                dataAsOf = null;
+                if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
+                refreshSectorOptions();
+                renderSummary();
+                renderReadsAndFreshness();
+                if (document.getElementById('listView').style.display !== 'none') renderList();
+                done = true; resolve();
+              }, 8000);
+            }
+            return;
+          }
+          if (cacheTimeout){ clearTimeout(cacheTimeout); cacheTimeout = null; }
           const raw = snap.docs.map(d => ({ id: d.id, ...d.data() }));
           companies = raw.map(r => computeFields({ ...r }));
           fullyLoaded = true;
