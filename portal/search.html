@@ -405,6 +405,7 @@
       <div class="filter-group">EBITDA% <input type="number" class="num-filter" id="marginMin" placeholder="min"> – <input type="number" class="num-filter" id="marginMax" placeholder="max"></div>
       <div class="filter-group">CAGR% <input type="number" class="num-filter" id="cagrMin" placeholder="min"> – <input type="number" class="num-filter" id="cagrMax" placeholder="max"></div>
       <select class="filter-sel" id="lastTouchFilter"><option value="">Any time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="never">Never contacted</option></select>
+      <select class="filter-sel" id="websiteFilter"><option value="">Website: Any</option><option value="yes">Has website</option><option value="no">No website</option></select>
       <button class="btn btn--ghost btn--sm" id="clearFiltersBtn">Clear all</button>
     </div>
 
@@ -426,6 +427,7 @@
               <th data-col="computedGrowthRecent" class="num">Growth (Recent)</th>
               <th data-col="lastTouchAt">Last Touch</th>
               <th data-col="outreachAttempts" class="num">Att.</th>
+              <th>Website</th>
             </tr>
           </thead>
           <tbody id="companyBody"></tbody>
@@ -466,7 +468,7 @@
           <span class="results-count" id="peopleResultsCount"></span>
         </div>
         <div style="overflow-x:auto;"><table class="own-table">
-          <thead><tr><th>Name</th><th>Type</th><th class="num">Positions</th><th class="num">Current</th><th>Country</th></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th class="num">Age</th><th class="num">Positions</th><th class="num">Current</th><th>Country</th></tr></thead>
           <tbody id="peopleBody"></tbody>
         </table></div>
         <div class="hint" style="margin-top:10px;">People are created by the Ownership importer or by adding a person on a company's Ownership tab. Search matches any name word.</div>
@@ -892,6 +894,10 @@
           <tbody id="peopleImportBody"></tbody>
         </table>
       </div>
+    </div>
+    <div id="peopleDemotionCheck" style="display:none;margin-bottom:14px;">
+      <button class="btn btn--ghost btn--sm" id="peopleCheckDemotionsBtn">Check what this will demote</button>
+      <div id="peopleDemotionResult" style="margin-top:10px;font-size:0.82rem;"></div>
     </div>
     <div class="modal-err" id="peopleImportErr"></div>
     <div class="modal-actions">
@@ -1659,6 +1665,7 @@ function getFiltered(){
   const cgMin  = parseFloat(document.getElementById('cagrMin').value);
   const cgMax  = parseFloat(document.getElementById('cagrMax').value);
   const ltF    = document.getElementById('lastTouchFilter').value;
+  const webF   = document.getElementById('websiteFilter').value;
 
   return companies.filter(c => {
     if (search) {
@@ -1692,6 +1699,8 @@ function getFiltered(){
       if (!d) return false;
       if ((Date.now() - d.getTime()) > Number(ltF)*86400000) return false;
     }
+    if (webF === 'yes' && !c.website) return false;
+    if (webF === 'no' && c.website) return false;
     return true;
   });
 }
@@ -1710,7 +1719,22 @@ function sortList(list){
 }
 
 // ── Render list ────────────────────────────────────────────────────────────
+// The company search box and every filter live in the same toolbar as the
+// List/Grouped/Map/People toggle buttons, so hiding the toolbar to hide them
+// would also hide the way back out of People view. Toggle the company-only
+// controls individually instead -- People view has its own search box
+// (#peopleSearchInput) and needs none of these; leaving them live meant
+// typing in the company search box while on People triggered a full
+// 20,682-company load for a view that never reads the result.
+const COMPANY_ONLY_TOOLBAR_IDS = ['searchInput','stageFilter','ownerFilter','priorityFilter','sectorFilter','advFilterBtn','resultsCount'];
+function showCompanyToolbar(show){
+  COMPANY_ONLY_TOOLBAR_IDS.forEach(id => showEl(id, show));
+  const fitGroup = document.getElementById('fitMin')?.closest('.filter-group');
+  if (fitGroup) fitGroup.style.display = show ? '' : 'none';
+  if (!show) document.getElementById('advFilters').classList.remove('open');
+}
 function renderList(){
+  showCompanyToolbar(viewMode !== 'people');
   if (viewMode === 'grouped') return renderGrouped();
   if (viewMode === 'map') return renderMap();
   if (viewMode === 'people') return renderPeople();
@@ -1744,6 +1768,7 @@ function rowHtml(c){
     <td class="num">${c.computedGrowthRecent!=null?fmtPct(c.computedGrowthRecent):'—'}</td>
     <td style="color:var(--text-light);">${relTime(c.lastTouchAt)}</td>
     <td class="num">${c.outreachAttempts||0}</td>
+    <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
   </tr>`;
 }
 
@@ -2435,6 +2460,15 @@ async function renderOwnership(c){
   try { links = await fetchCompanyLinks(c.id); }
   catch(e){ console.error(e); el.innerHTML = '<div class="card"><div class="sec-title">Ownership & People</div><div class="modal-err" style="display:block;">Failed to load: '+esc(e.message)+'</div></div>'; return; }
   if (currentCoId !== c.id) return; // user navigated away while we were fetching
+  // Age lives on the person doc, not the link -- fetch each shown person's
+  // doc (fetchPerson caches per-id, so a second visit to this company, or a
+  // person who is both shareholder and manager, costs nothing extra).
+  const peopleById = new Map();
+  await Promise.all([...new Set(links.map(l => l.personId))].map(async id => {
+    peopleById.set(id, await fetchPerson(id).catch(() => null));
+  }));
+  if (currentCoId !== c.id) return;
+  const ageCell = l => { const a = personAge(peopleById.get(l.personId)); return a ? `${a.age}${a.exact ? '' : '~'}` : '—'; };
 
   const byStatus = (a, b, cur) => (cur(b) === true) - (cur(a) === true);
   const sh = links.filter(linkIsShareholder).sort((a,b) => byStatus(a,b,l=>l.shCurrent) || (b.shDirectPct||0) - (a.shDirectPct||0));
@@ -2466,6 +2500,7 @@ async function renderOwnership(c){
     return `
     <tr class="${l.shCurrent === false ? 'prev' : ''}">
       <td>${nameCell(l)}${ownerBadge(l)}</td>
+      <td class="num">${ageCell(l)}</td>
       <td class="num">${fmtPctOwn(l.shDirectPct)}${tier ? ` <span class="badge ${tier.cls}" style="margin-left:4px;">${tier.label}</span>` : ''}</td>
       <td class="num">${fmtPctOwn(l.shTotalPct)}</td>
       <td>${l.alsoManager || linkIsManager(l) ? '✓' : '—'}</td>
@@ -2477,6 +2512,7 @@ async function renderOwnership(c){
   const mgRows = mg.map(l => `
     <tr class="${l.mgmtCurrent === false ? 'prev' : ''}">
       <td>${nameCell(l)}${/highest/i.test(l.mgmtLevel || '') ? ' <span class="badge badge-blue" title="Highest level of responsibility per Orbis">★ Highest exec</span>' : ''}</td>
+      <td class="num">${ageCell(l)}</td>
       <td>${esc((l.mgmtRoles || []).join(' · ') || '—')}${l.mgmtBoard ? `<div style="font-size:0.72rem;color:var(--text-light);">${esc(l.mgmtBoard)}</div>` : ''}</td>
       <td>${linkIsShareholder(l) ? '✓' : '—'}</td>
       <td>${l.mgmtCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
@@ -2502,7 +2538,7 @@ async function renderOwnership(c){
         })()}`) : ''}
       </div>` : ''}
       ${sh.length ? `<div style="overflow-x:auto;"><table class="own-table">
-        <thead><tr><th>Name</th><th class="num">Direct %</th><th class="num">Total %</th><th>Also mgr</th><th>As of</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th class="num">Age</th><th class="num">Direct %</th><th class="num">Total %</th><th>Also mgr</th><th>As of</th><th>Status</th><th></th></tr></thead>
         <tbody>${shRows}</tbody></table></div>
       <div class="own-legend" style="flex-wrap:wrap;gap:12px;">
         <span>👑 controlling owner</span>
@@ -2515,7 +2551,7 @@ async function renderOwnership(c){
     <div class="card">
       <div class="sec-title">Management</div>
       ${mg.length ? `<div style="overflow-x:auto;"><table class="own-table">
-        <thead><tr><th>Name</th><th>Role(s)</th><th>Also shareholder</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th class="num">Age</th><th>Role(s)</th><th>Also shareholder</th><th>Status</th><th></th></tr></thead>
         <tbody>${mgRows}</tbody></table></div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No management data yet.</div>'}
       <div class="own-legend"><span class="cur">currently</span><span class="prv">previously</span></div>
     </div>
@@ -2624,7 +2660,9 @@ async function copyLinkToContacts(linkId, role){
 
 // ── Person profile view ──────────────────────────────────────────────────────
 async function openPerson(personId, backTarget){
-  personBackTarget = backTarget || (currentCoId ? { type:'company', id: currentCoId } : { type:'list' });
+  personBackTarget = backTarget || (currentCoId
+    ? { type:'company', id: currentCoId, tab: document.querySelector('#detailTabs .tab.active')?.dataset.tab }
+    : { type:'list' });
   currentPersonId = personId;
   showEl('listView', false); showEl('detailView', false); showEl('personView', true);
   window.scrollTo(0,0);
@@ -2794,20 +2832,50 @@ async function renderPeople(){
     console.error(e);
     if (seq !== peopleSearchSeq) return;
     countEl.textContent = '';
-    tbody.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty__title">Search failed</div><div>${esc(e.message)}</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty__title">Search failed</div><div>${esc(e.message)}</div></div></td></tr>`;
     return;
   }
   if (seq !== peopleSearchSeq) return; // a newer keystroke already superseded this query
   docs.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
   countEl.textContent = `${docs.length} ${docs.length === 1 ? 'person' : 'people'}${docs.length >= 200 ? ' (showing first 200 — refine search)' : ''}`;
   if (!docs.length){
-    tbody.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty__icon">🧑‍💼</div><div class="empty__title">${term ? 'No people found' : 'No people yet'}</div><div>${term ? 'Try a different name.' : 'Import ownership data, or add a person from a company Ownership tab.'}</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty__icon">🧑‍💼</div><div class="empty__title">${term ? 'No people found' : 'No people yet'}</div><div>${term ? 'Try a different name.' : 'Import ownership data, or add a person from a company Ownership tab.'}</div></div></td></tr>`;
     return;
   }
+  // A specific search ("AR4I", "Davide Saraiva") almost always means "what is
+  // this connected to", not just "does it exist" -- so for a narrow result
+  // (never for the default browse list, which is up to 100 rows) show each
+  // match's linked companies inline. fetchPersonLinks caches per-person, so
+  // revisiting the same search costs nothing the second time.
+  const PEOPLE_INLINE_LINKS_CAP = 3;
+  let linksById = new Map();
+  if (term && docs.length && docs.length <= PEOPLE_INLINE_LINKS_CAP){
+    const pairs = await Promise.all(docs.map(async p => [p.id, await fetchPersonLinks(p.id).catch(() => [])]));
+    if (seq !== peopleSearchSeq) return; // a newer keystroke raced ahead while we fetched
+    linksById = new Map(pairs);
+  }
+  const relatedCell = p => {
+    const links = linksById.get(p.id);
+    if (!links) return '';
+    if (!links.length) return '';
+    const desc = l => {
+      const bits = [];
+      if (l.shDirectPct != null) bits.push(`Shareholder (${l.shDirectPct}%)`);
+      else if (l.shCurrent != null) bits.push('Shareholder');
+      if ((l.mgmtRoles || []).length) bits.push((l.mgmtRoles[0]));
+      else if (l.mgmtCurrent != null) bits.push('Manager');
+      const prev = (l.shCurrent === false || l.mgmtCurrent === false) && !(l.shCurrent === true || l.mgmtCurrent === true);
+      return `${bits.join(' + ') || 'Linked'} at ${esc(l.companyName || '—')}${prev ? ' <span class="badge badge-grey" style="font-size:0.68rem;">Previous</span>' : ''}`;
+    };
+    const shown = links.slice(0, 4);
+    const rest = links.length - shown.length;
+    return `<div style="font-size:0.74rem;color:var(--text-light);margin-top:2px;">${shown.map(desc).join('<br>')}${rest > 0 ? `<br>+${rest} more` : ''}</div>`;
+  };
   tbody.innerHTML = docs.map(p => `
     <tr class="row-clickable" data-person="${esc(p.id)}" style="cursor:pointer;">
-      <td><span class="person-link">${esc(p.name || '—')}</span></td>
+      <td><span class="person-link">${esc(p.name || '—')}</span>${relatedCell(p)}</td>
       <td>${p.entityType === 'entity' ? '<span class="badge badge-grey">🏢 Entity</span>' : '<span class="badge badge-blue">🧑 Person</span>'}</td>
+      <td class="num">${(() => { const a = personAge(p); return a ? a.age + (a.exact ? '' : '~') : '—'; })()}</td>
       <td class="num">${p.linkCount ?? 0}</td>
       <td class="num">${p.currentLinkCount ?? 0}</td>
       <td>${esc(p.country || '—')}</td>
@@ -3615,6 +3683,8 @@ function renderPeopleImportPreview(){
     </tr>`).join('');
   showEl('peopleImportOpts', true);
   showEl('peopleImportPreview', true);
+  showEl('peopleDemotionCheck', true);
+  document.getElementById('peopleDemotionResult').innerHTML = '';
   updatePeopleImportBtn();
 }
 function updatePeopleImportBtn(){
@@ -3623,6 +3693,73 @@ function updatePeopleImportBtn(){
   const btn = document.getElementById('peopleImportConfirmBtn');
   btn.disabled = n === 0;
   btn.textContent = n ? `Import ${n} link${n===1?'':'s'}` : 'Nothing to import';
+}
+
+// Shared by confirmPeopleImport() and the "check what this will demote"
+// preview so the two can never compute a different answer from each other.
+function computeFacetScope(rows){
+  const facetScope = {
+    shCurrent:   { touched: new Set(), keep: new Set() },
+    mgmtCurrent: { touched: new Set(), keep: new Set() },
+  };
+  for (const r of rows){
+    if (!r.companyId) continue;
+    const id = `${r.personId}__${r.companyId}`;
+    if (r.isSh){   facetScope.shCurrent.touched.add(r.companyId);   facetScope.shCurrent.keep.add(id); }
+    if (r.isMgmt){ facetScope.mgmtCurrent.touched.add(r.companyId); facetScope.mgmtCurrent.keep.add(id); }
+    // A shareholder Orbis flags as "Current manager" gets mgmtCurrent:true
+    // from the link write above even though the file carries no DM row for
+    // them. Without this they are absent from the keep set and the scan
+    // below undoes that write inside the same import — 7 people in the full
+    // export, and one of them (Mariana Morais e Almeida at EUROSPUMA) made
+    // every re-import report a phantom demotion. Not `touched`: a
+    // shareholders-only file must still never demote real managers.
+    else if (r.isSh && r.mgmtCurrentFromFile === true) facetScope.mgmtCurrent.keep.add(id);
+  }
+  return facetScope;
+}
+
+// Read-only dry run of the same demotion scan confirmPeopleImport() runs at
+// write time -- same queries, same facet logic (computeFacetScope), nothing
+// written. Explicit button rather than automatic on file selection: for the
+// full 2,577-company file this reads every existing link for every touched
+// company, the same cost the real import already pays, just moved earlier --
+// fine to spend when about to commit for real, not fine to spend on every
+// file only being previewed (Phase 0 stays free).
+async function checkPeopleImportDemotions(){
+  const createMissing = document.getElementById('peopleCreateMissing').checked;
+  const rows = peopleImportRows.filter(r => createMissing || !r.unmatched);
+  const touched = [...new Set(rows.map(r => r.companyId).filter(Boolean))];
+  const resultEl = document.getElementById('peopleDemotionResult');
+  const btn = document.getElementById('peopleCheckDemotionsBtn');
+  if (!touched.length){ resultEl.textContent = 'No matched companies to check.'; return; }
+  btn.disabled = true;
+  const facetScope = computeFacetScope(rows);
+  const found = [];
+  try {
+    await mapPool(touched, async cid => {
+      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',cid)));
+      addReads(snap.docs.length || 1);
+      for (const d of snap.docs){
+        const l = d.data();
+        for (const facet of ['shCurrent','mgmtCurrent']){
+          const scope = facetScope[facet];
+          if (!scope.touched.has(cid) || scope.keep.has(d.id)) continue;
+          if (l[facet] === true) found.push({ name: l.personName, company: l.companyName, facet: facet === 'shCurrent' ? 'shareholder' : 'management' });
+        }
+      }
+    }, READ_CONCURRENCY, done => { resultEl.innerHTML = `<span class="spin-sm"></span> Checking ${done}/${touched.length} companies\u2026`; });
+  } catch(e){ console.error(e); resultEl.textContent = 'Check failed: ' + e.message; btn.disabled = false; return; }
+  if (!found.length){
+    resultEl.innerHTML = '<span style="color:var(--text-light);">No existing relationships will be demoted \u2014 this file agrees with everyone currently on record for these companies.</span>';
+  } else {
+    const shown = found.slice(0, 20);
+    resultEl.innerHTML = `<strong>${found.length} relationship${found.length===1?'':'s'} will be marked "no longer current":</strong>` +
+      '<ul style="margin:6px 0 0;padding-left:18px;">' +
+      shown.map(f => `<li>${esc(f.name)} \u2014 ${f.facet} at ${esc(f.company)}</li>`).join('') +
+      (found.length > shown.length ? `<li>+${found.length - shown.length} more</li>` : '') + '</ul>';
+  }
+  btn.disabled = false;
 }
 
 async function confirmPeopleImport(){
@@ -3748,24 +3885,7 @@ async function confirmPeopleImport(){
     // director must not keep a stale mgmtCurrent just because the file mentions
     // them. So each facet gets its own "companies covered" and "links seen"
     // sets, and only demotes within its own scope.
-    const facetScope = {
-      shCurrent:   { touched: new Set(), keep: new Set() },
-      mgmtCurrent: { touched: new Set(), keep: new Set() },
-    };
-    for (const r of rows){
-      if (!r.companyId) continue;
-      const id = `${r.personId}__${r.companyId}`;
-      if (r.isSh){   facetScope.shCurrent.touched.add(r.companyId);   facetScope.shCurrent.keep.add(id); }
-      if (r.isMgmt){ facetScope.mgmtCurrent.touched.add(r.companyId); facetScope.mgmtCurrent.keep.add(id); }
-      // A shareholder Orbis flags as "Current manager" gets mgmtCurrent:true
-      // from the link write above even though the file carries no DM row for
-      // them. Without this they are absent from the keep set and the scan
-      // below undoes that write inside the same import — 7 people in the full
-      // export, and one of them (Mariana Morais e Almeida at EUROSPUMA) made
-      // every re-import report a phantom demotion. Not `touched`: a
-      // shareholders-only file must still never demote real managers.
-      else if (r.isSh && r.mgmtCurrentFromFile === true) facetScope.mgmtCurrent.keep.add(id);
-    }
+    const facetScope = computeFacetScope(rows);
     let demoted = 0;
     // What the demotion scan read, kept so step 5 does not re-fetch the same
     // links a second time. Demotions we make below are applied in memory, so
@@ -3872,6 +3992,7 @@ async function openPeopleImport(){
   document.getElementById('peopleImportErr').style.display = 'none';
   showEl('peopleImportOpts', false); showEl('peopleImportPreview', false); showEl('peoplePrevRow', false);
   showEl('peopleFieldMapWrap', false);   // otherwise the last file's report is still on screen
+  showEl('peopleDemotionCheck', false); document.getElementById('peopleDemotionResult').innerHTML = '';
   const btn = document.getElementById('peopleImportConfirmBtn'); btn.disabled = true; btn.textContent = 'Import';
   showEl('peopleImportModal', true);
 }
@@ -5323,6 +5444,7 @@ document.querySelectorAll('input[name=bulkMode]').forEach(r => r.addEventListene
 // People / Ownership importer
 document.getElementById('peopleImportBtn').addEventListener('click', async () => { await ensureFullDataset(); openPeopleImport(); });
 document.getElementById('peopleImportCancelBtn').addEventListener('click', () => showEl('peopleImportModal', false));
+document.getElementById('peopleCheckDemotionsBtn').addEventListener('click', checkPeopleImportDemotions);
 document.getElementById('peopleImportConfirmBtn').addEventListener('click', confirmPeopleImport);
 document.getElementById('peopleCreateMissing').addEventListener('change', updatePeopleImportBtn);
 document.getElementById('peopleFileInput').addEventListener('change', e => {
@@ -5405,14 +5527,14 @@ document.getElementById('mapExportBtn').addEventListener('click', exportMapCsv);
 
 // Filters — any real filter/search interaction needs the full dataset (the
 // bounded default window is "recently touched", not a representative sample).
-['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id => {
+['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'].forEach(id => {
   const el = document.getElementById(id);
   el.addEventListener('input', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
   el.addEventListener('change', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
 });
 document.getElementById('advFilterBtn').addEventListener('click', () => document.getElementById('advFilters').classList.toggle('open'));
 document.getElementById('clearFiltersBtn').addEventListener('click', () => {
-  ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter'].forEach(id=>document.getElementById(id).value='');
+  ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('naceLabel').textContent=''; document.getElementById('caeLabel').textContent='';
   visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList();
 });
