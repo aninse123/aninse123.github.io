@@ -416,6 +416,7 @@
           <thead>
             <tr>
               <th data-col="name">Company</th>
+              <th>Website</th>
               <th data-col="sector">Sector</th>
               <th data-col="priority">Priority</th>
               <th data-col="fitScore">Fit</th>
@@ -427,7 +428,6 @@
               <th data-col="computedGrowthRecent" class="num">Growth (Recent)</th>
               <th data-col="lastTouchAt">Last Touch</th>
               <th data-col="outreachAttempts" class="num">Att.</th>
-              <th>Website</th>
             </tr>
           </thead>
           <tbody id="companyBody"></tbody>
@@ -468,7 +468,7 @@
           <span class="results-count" id="peopleResultsCount"></span>
         </div>
         <div style="overflow-x:auto;"><table class="own-table">
-          <thead><tr><th>Name</th><th>Type</th><th class="num">Age</th><th class="num">Positions</th><th class="num">Current</th><th>Country</th></tr></thead>
+          <thead><tr><th data-col="name">Name</th><th data-col="entityType">Type</th><th class="num" data-col="age">Age</th><th class="num" data-col="linkCount">Positions</th><th class="num" data-col="currentLinkCount">Current</th><th data-col="country">Country</th></tr></thead>
           <tbody id="peopleBody"></tbody>
         </table></div>
         <div class="hint" style="margin-top:10px;">People are created by the Ownership importer or by adding a person on a company's Ownership tab. Search matches any name word.</div>
@@ -1143,7 +1143,15 @@ function renderReadsAndFreshness(){
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 // Ensure an external URL is absolute (Orbis stores "www.x.pt" with no protocol →
 // without this the browser treats it as a relative path and 404s on our domain).
-function extUrl(u){ u = String(u==null?'':u).trim(); if(!u) return ''; return /^https?:\/\//i.test(u) ? u : 'https://' + u; }
+// Orbis (and manual entry) sometimes stores several domains in one field,
+// pipe-separated ("antoniosaraivaefilhos.pt | www.asf.pt") -- 37% of
+// companies with a website have more than one. Link to the first; the full
+// value stays visible as the link's title/text so nothing is hidden.
+function extUrl(u){
+  u = String(u==null?'':u).trim(); if(!u) return '';
+  u = (u.split('|').map(x => x.trim()).find(Boolean)) || ''; if(!u) return '';
+  return /^https?:\/\//i.test(u) ? u : 'https://' + u;
+}
 function showEl(id, show){ document.getElementById(id).style.display = show ? '' : 'none'; }
 function tsToDate(ts){ return ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
@@ -1757,6 +1765,7 @@ function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
   return `<tr class="row-clickable" data-id="${c.id}">
     <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}</td>
+    <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
     <td class="sector-cell" title="${esc(c.sector||'')}${c.subSector?' › '+esc(c.subSector):''}">${esc(c.sector||'—')}${c.subSector?'<br><span style="font-size:0.72rem;">'+esc(c.subSector)+'</span>':''}</td>
     <td>${prioPill(c.priority)}</td>
     <td>${fitBadge(c.fitScore)}</td>
@@ -1768,7 +1777,6 @@ function rowHtml(c){
     <td class="num">${c.computedGrowthRecent!=null?fmtPct(c.computedGrowthRecent):'—'}</td>
     <td style="color:var(--text-light);">${relTime(c.lastTouchAt)}</td>
     <td class="num">${c.outreachAttempts||0}</td>
-    <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
   </tr>`;
 }
 
@@ -2794,6 +2802,65 @@ function renderPersonView(p, links){
 // ~60-100k docs at full-universe scale, so this queries by name token
 // (array-contains, auto-indexed) or lists the most recent, always capped.
 let peopleSearchSeq = 0;
+let peopleSortCol = 'name';
+let peopleSortDir = 'asc';
+let peopleViewDocs = [];       // last-fetched result set, reused by sort clicks (no re-query)
+let peopleViewLinksById = new Map();
+let peopleViewTerm = '';
+function sortPeopleDocs(docs){
+  const val = (p, col) => {
+    if (col === 'name' || col === 'country') return String(p[col] || '').toLowerCase();
+    if (col === 'entityType') return p.entityType === 'entity' ? 1 : 0;
+    if (col === 'age') return personAge(p)?.age ?? -Infinity;
+    return p[col] ?? -Infinity; // linkCount, currentLinkCount
+  };
+  const list = [...docs];
+  list.sort((a, b) => {
+    const va = val(a, peopleSortCol), vb = val(b, peopleSortCol);
+    if (va < vb) return peopleSortDir === 'asc' ? -1 : 1;
+    if (va > vb) return peopleSortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+  return list;
+}
+function renderPeopleRows(){
+  const term = peopleViewTerm;
+  const linksById = peopleViewLinksById;
+  const docs = sortPeopleDocs(peopleViewDocs);
+  const tbody = document.getElementById('peopleBody');
+  const countEl = document.getElementById('peopleResultsCount');
+  countEl.textContent = `${docs.length} ${docs.length === 1 ? 'person' : 'people'}${docs.length >= 200 ? ' (showing first 200 — refine search)' : ''}`;
+  if (!docs.length){
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty__icon">🧑‍💼</div><div class="empty__title">${term ? 'No people found' : 'No people yet'}</div><div>${term ? 'Try a different name.' : 'Import ownership data, or add a person from a company Ownership tab.'}</div></div></td></tr>`;
+    return;
+  }
+  const relatedCell = p => {
+    const links = linksById.get(p.id);
+    if (!links) return '';
+    if (!links.length) return '';
+    const desc = l => {
+      const bits = [];
+      if (l.shDirectPct != null) bits.push(`Shareholder (${l.shDirectPct}%)`);
+      else if (l.shCurrent != null) bits.push('Shareholder');
+      if ((l.mgmtRoles || []).length) bits.push((l.mgmtRoles[0]));
+      else if (l.mgmtCurrent != null) bits.push('Manager');
+      const prev = (l.shCurrent === false || l.mgmtCurrent === false) && !(l.shCurrent === true || l.mgmtCurrent === true);
+      return `${bits.join(' + ') || 'Linked'} at ${esc(l.companyName || '—')}${prev ? ' <span class="badge badge-grey" style="font-size:0.68rem;">Previous</span>' : ''}`;
+    };
+    const shown = links.slice(0, 4);
+    const rest = links.length - shown.length;
+    return `<div style="font-size:0.74rem;color:var(--text-light);margin-top:2px;">${shown.map(desc).join('<br>')}${rest > 0 ? `<br>+${rest} more` : ''}</div>`;
+  };
+  tbody.innerHTML = docs.map(p => `
+    <tr class="row-clickable" data-person="${esc(p.id)}" style="cursor:pointer;">
+      <td><span class="person-link">${esc(p.name || '—')}</span>${relatedCell(p)}</td>
+      <td>${p.entityType === 'entity' ? '<span class="badge badge-grey">🏢 Entity</span>' : '<span class="badge badge-blue">🧑 Person</span>'}</td>
+      <td class="num">${(() => { const a = personAge(p); return a ? a.age + (a.exact ? '' : '~') : '—'; })()}</td>
+      <td class="num">${p.linkCount ?? 0}</td>
+      <td class="num">${p.currentLinkCount ?? 0}</td>
+      <td>${esc(p.country || '—')}</td>
+    </tr>`).join('');
+}
 async function renderPeople(){
   showEl('tableCard', false); showEl('groupedCard', false); showEl('mapCard', false); showEl('peopleCard', true); showEl('pagination', false);
   const term = document.getElementById('peopleSearchInput').value.trim();
@@ -2836,12 +2903,6 @@ async function renderPeople(){
     return;
   }
   if (seq !== peopleSearchSeq) return; // a newer keystroke already superseded this query
-  docs.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
-  countEl.textContent = `${docs.length} ${docs.length === 1 ? 'person' : 'people'}${docs.length >= 200 ? ' (showing first 200 — refine search)' : ''}`;
-  if (!docs.length){
-    tbody.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty__icon">🧑‍💼</div><div class="empty__title">${term ? 'No people found' : 'No people yet'}</div><div>${term ? 'Try a different name.' : 'Import ownership data, or add a person from a company Ownership tab.'}</div></div></td></tr>`;
-    return;
-  }
   // A specific search ("AR4I", "Davide Saraiva") almost always means "what is
   // this connected to", not just "does it exist" -- so for a narrow result
   // (never for the default browse list, which is up to 100 rows) show each
@@ -2854,32 +2915,8 @@ async function renderPeople(){
     if (seq !== peopleSearchSeq) return; // a newer keystroke raced ahead while we fetched
     linksById = new Map(pairs);
   }
-  const relatedCell = p => {
-    const links = linksById.get(p.id);
-    if (!links) return '';
-    if (!links.length) return '';
-    const desc = l => {
-      const bits = [];
-      if (l.shDirectPct != null) bits.push(`Shareholder (${l.shDirectPct}%)`);
-      else if (l.shCurrent != null) bits.push('Shareholder');
-      if ((l.mgmtRoles || []).length) bits.push((l.mgmtRoles[0]));
-      else if (l.mgmtCurrent != null) bits.push('Manager');
-      const prev = (l.shCurrent === false || l.mgmtCurrent === false) && !(l.shCurrent === true || l.mgmtCurrent === true);
-      return `${bits.join(' + ') || 'Linked'} at ${esc(l.companyName || '—')}${prev ? ' <span class="badge badge-grey" style="font-size:0.68rem;">Previous</span>' : ''}`;
-    };
-    const shown = links.slice(0, 4);
-    const rest = links.length - shown.length;
-    return `<div style="font-size:0.74rem;color:var(--text-light);margin-top:2px;">${shown.map(desc).join('<br>')}${rest > 0 ? `<br>+${rest} more` : ''}</div>`;
-  };
-  tbody.innerHTML = docs.map(p => `
-    <tr class="row-clickable" data-person="${esc(p.id)}" style="cursor:pointer;">
-      <td><span class="person-link">${esc(p.name || '—')}</span>${relatedCell(p)}</td>
-      <td>${p.entityType === 'entity' ? '<span class="badge badge-grey">🏢 Entity</span>' : '<span class="badge badge-blue">🧑 Person</span>'}</td>
-      <td class="num">${(() => { const a = personAge(p); return a ? a.age + (a.exact ? '' : '~') : '—'; })()}</td>
-      <td class="num">${p.linkCount ?? 0}</td>
-      <td class="num">${p.currentLinkCount ?? 0}</td>
-      <td>${esc(p.country || '—')}</td>
-    </tr>`).join('');
+  peopleViewDocs = docs; peopleViewLinksById = linksById; peopleViewTerm = term;
+  renderPeopleRows();
 }
 
 // ── Ownership / People importer (Orbis list export) ──────────────────────────
@@ -5501,6 +5538,12 @@ document.getElementById('viewPeopleBtn').addEventListener('click', () => setView
     clearTimeout(peopleDebounce);
     peopleDebounce = setTimeout(() => { if (viewMode === 'people') renderPeople(); }, 300);
   });
+  document.querySelectorAll('#peopleCard th[data-col]').forEach(th => th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (peopleSortCol === col) peopleSortDir = peopleSortDir === 'asc' ? 'desc' : 'asc';
+    else { peopleSortCol = col; peopleSortDir = (col === 'name' || col === 'entityType' || col === 'country') ? 'asc' : 'desc'; }
+    renderPeopleRows();
+  }));
   document.getElementById('peopleBody').addEventListener('click', e => {
     const row = e.target.closest('[data-person]');
     if (row) openPerson(row.dataset.person, { type:'list' });
