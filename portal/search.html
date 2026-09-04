@@ -3497,6 +3497,36 @@ async function mapPool(items, fn, limit = READ_CONCURRENCY, onProgress){
   if (onProgress && items.length) onProgress(items.length);
   return results;
 }
+// Writes are heavier than reads (each touches a real document, and a bad
+// batch is more consequential than a bad query), so this stays well under
+// READ_CONCURRENCY even though Firestore's actual write throughput could
+// take more — a handful of batches in flight at once is already most of the
+// latency win over one-at-a-time, without pushing into territory that risks
+// surprising contention on a shared collection.
+const WRITE_CONCURRENCY = 6;
+// Commits N independent writeBatches with bounded concurrency instead of one
+// at a time. Each chunk touches disjoint documents (the caller partitions
+// `items` by index, so no document can land in two chunks), so there is no
+// correctness reason to serialise them — awaiting commit() one-by-one meant
+// paying full Firestore round-trip latency N times over, the dominant cost
+// on a slow connection. `build(batch, item)` stages a write and returns
+// true, or returns false to skip a no-op; a chunk where every item was
+// skipped never calls commit() at all — a real network round-trip saved,
+// not just a write. Returns how many items actually got a write staged.
+async function commitInChunks(items, chunkSize, build, { concurrency = WRITE_CONCURRENCY, onProgress } = {}){
+  const chunks = [];
+  for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
+  let processed = 0, written = 0;
+  await mapPool(chunks, async chunk => {
+    const batch = writeBatch(db);
+    let staged = 0;
+    for (const item of chunk) if (build(batch, item)) staged++;
+    if (staged) await batch.commit();
+    written += staged; processed += chunk.length;
+    onProgress?.(processed, items.length);
+  }, concurrency);
+  return written;
+}
 
 // Orbis puts aggregate labels in the shareholder name column alongside real
 // holders. "Self Owned" is treasury stock — the company holding its own shares
@@ -4151,6 +4181,49 @@ async function checkPeopleImportDemotions(){
   btn.disabled = false;
 }
 
+// Does re-writing this person actually change anything already stored?
+// Mirrors confirmPeopleImport()'s people-upsert payload field for field, so
+// the two can never drift apart — a field added to one without the other
+// would either force every re-import to write unconditionally again, or
+// silently stop persisting a field this function doesn't know about.
+// arrayUnion fields get their own check: the write is only real if the
+// incoming value is not already in the stored array, since arrayUnion(x) on
+// an array that already contains x still touches the document (Firestore
+// bills it as a write) even though nothing about the value changes.
+function personNeedsWrite(existing, r, co3, matchedCompanyId){
+  if (!existing) return true;
+  if (existing.name !== r.personName || existing.nameKey !== r.nameKey ||
+      existing.entityType !== r.entityType || existing.source !== 'orbis') return true;
+  if (r.uci && existing.uci !== r.uci) return true;
+  if (r.holderNif && (existing.nif !== r.holderNif || (existing.matchedCompanyId || null) !== (matchedCompanyId || null))) return true;
+  if (co3 && existing.country !== co3) return true;
+  if (r.orbisRoleCount && existing.orbisRoleCount !== r.orbisRoleCount) return true;
+  if (r.birthDate && existing.birthDate !== r.birthDate) return true;
+  if (r.nationalId && existing.nationalId !== r.nationalId) return true;
+  if (r.nationality && existing.nationality !== r.nationality) return true;
+  if (r.orbisAge != null && existing.orbisAge !== r.orbisAge) return true;
+  for (const [field, val] of [
+    ['orbisPhones', r.phone], ['orbisFaxes', r.fax], ['orbisEmails', r.email],
+    ['orbisWebsites', r.website], ['orbisAddresses', orbisAddress(r)],
+  ]) if (val && !(existing[field] || []).includes(val)) return true;
+  return false;
+}
+// Same idea for a searchPersonLinks doc: every key the payload actually sets
+// is compared against what's stored (a key the payload omits — the other
+// facet, say — is correctly left uncompared, since this write would not
+// touch it either). updatedAt is excluded on purpose: it's the one field
+// that's ALWAYS "different", and comparing it would defeat the entire point.
+function linkNeedsWrite(existing, payload){
+  if (!existing) return true;
+  for (const k in payload){
+    if (k === 'updatedAt') continue;
+    const a = existing[k] ?? null, b = payload[k] ?? null;
+    const eq = (Array.isArray(a) || Array.isArray(b)) ? JSON.stringify(a) === JSON.stringify(b) : a === b;
+    if (!eq) return true;
+  }
+  return false;
+}
+
 async function confirmPeopleImport(){
   const btn = document.getElementById('peopleImportConfirmBtn');
   const errEl = document.getElementById('peopleImportErr'); errEl.style.display = 'none';
@@ -4161,36 +4234,69 @@ async function confirmPeopleImport(){
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
   try {
     // 1) Create missing companies first (opt-in), so links have a target.
+    // Always-new docs — nothing to diff against, so every one is written —
+    // but parallel commits (commitInChunks) still cut wall-clock time when
+    // there are many.
     if (createMissing){
       const need = new Map();
       for (const r of rows) if (r.unmatched) need.set(r.companyNif || normName(r.fileCompanyName), r);
       if (need.size){
         const col = collection(db,'searchCompanies');
-        let batch = writeBatch(db), n = 0;
-        for (const r of need.values()){
-          const ref = doc(col);
+        const entries = [...need.values()].map(r => ({ r, ref: doc(col) }));
+        await commitInChunks(entries, 450, (batch, { r, ref }) => {
           batch.set(ref, { name: r.fileCompanyName, nif: r.companyNif || null, stage:'universe',
             sourceType:'ownership_import', financials:{}, contacts:[], addOnTo:[], addOns:[],
             lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
           for (const rr of rows) if (rr.unmatched && (rr.companyNif || normName(rr.fileCompanyName)) === (r.companyNif || normName(r.fileCompanyName))){
             rr.companyId = ref.id; rr.unmatched = false;
           }
-          if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
-        }
-        await batch.commit();
+          return true;
+        }, { onProgress: done => { btn.innerHTML = `<span class="spin-sm"></span>Adding companies… ${done}/${entries.length}`; } });
         fullyLoaded = false; await ensureFullDataset(); // pull the new docs into memory
       }
     }
 
-    // 2) Upsert people. Deterministic ids ⇒ re-importing the same file is a no-op.
     const byPerson = new Map();
     for (const r of rows) if (!byPerson.has(r.personId)) byPerson.set(r.personId, r);
     // Corporate holders that are themselves CRM companies → matchedCompanyId.
     const nifToCo = new Map();
     for (const c of companies){ const n = onlyDigits(c.nif) || nifFromAny('', c.bvdId); if (n) nifToCo.set(n, c.id); }
-    let batch = writeBatch(db), n = 0, done = 0;
-    for (const r of byPerson.values()){
+    const touched = [...new Set(rows.map(r => r.companyId).filter(Boolean))];
+    const personIds = [...byPerson.keys()];
+    const personIdChunks = [];
+    for (let i = 0; i < personIds.length; i += PERSON_IN_CHUNK) personIdChunks.push(personIds.slice(i, i + PERSON_IN_CHUNK));
+
+    // 2) Pre-fetch existing state ONCE, before any writes: every stored
+    //    searchPeople doc for the people in this file, and every stored
+    //    searchPersonLinks doc for the companies it touches. This drives the
+    //    no-op checks below AND the demotion scan and counter refresh
+    //    further down, which used to each re-fetch this same link data a
+    //    second (and third) time, after the writes had already happened.
+    btn.innerHTML = '<span class="spin-sm"></span>Checking what changed…';
+    const existingPeople = new Map();
+    await mapPool(personIdChunks, async ch => {
+      const snap = await getDocs(query(collection(db,'searchPeople'), where(documentId(),'in', ch)));
+      addReads(snap.docs.length || 1);
+      for (const d of snap.docs) existingPeople.set(d.id, d.data());
+    }, READ_CONCURRENCY);
+    // One query per company, run concurrently — see mapPool.
+    const linksByCo = new Map();
+    const perCompany = await mapPool(touched, cid =>
+      getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',cid)))
+        .then(snap => { addReads(snap.docs.length || 1); return { cid, docs: snap.docs }; }),
+      READ_CONCURRENCY,
+      done => { btn.innerHTML = `<span class="spin-sm"></span>Checking… ${done}/${touched.length}`; });
+    for (const { cid, docs } of perCompany) linksByCo.set(cid, docs.map(d => ({ id: d.id, ...d.data() })));
+    const existingLinkByKey = new Map();
+    for (const arr of linksByCo.values()) for (const l of arr) existingLinkByKey.set(l.id, l);
+
+    // 3) Upsert people — skip anyone re-imported with nothing actually
+    //    different from what's stored (see personNeedsWrite).
+    let peopleSkipped = 0;
+    const peopleWritten = await commitInChunks([...byPerson.values()], 450, (batch, r) => {
       const co3 = r.country && r.country.length <= 3 ? r.country : '';
+      const matchedCompanyId = r.holderNif ? (nifToCo.get(r.holderNif) || null) : null;
+      if (!personNeedsWrite(existingPeople.get(r.personId), r, co3, matchedCompanyId)){ peopleSkipped++; return false; }
       batch.set(doc(db,'searchPeople', r.personId), {
         name: r.personName, nameKey: r.nameKey, nameTokens: personNameTokens(r.nameKey),
         namePrefixes: namePrefixes(r.nameKey),
@@ -4200,8 +4306,7 @@ async function confirmPeopleImport(){
         // that a previous import had found — losing the very keys that make
         // re-imports idempotent.
         ...(r.uci ? { uci: r.uci } : {}),
-        ...(r.holderNif ? { nif: r.holderNif,
-                            matchedCompanyId: nifToCo.get(r.holderNif) || null } : {}),
+        ...(r.holderNif ? { nif: r.holderNif, matchedCompanyId } : {}),
         ...(co3 ? { country: co3 } : {}),
         entityType: r.entityType,
         ...(r.orbisRoleCount ? { orbisRoleCount: r.orbisRoleCount } : {}),
@@ -4224,15 +4329,16 @@ async function confirmPeopleImport(){
         ...(r.orbisAge != null ? { orbisAge: r.orbisAge, orbisAgeAsOf: new Date().getFullYear() } : {}),
         source: 'orbis', updatedAt: serverTimestamp(),
       }, { merge: true });
-      if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); done += 450; btn.innerHTML = `<span class="spin-sm"></span>People… ${done}/${byPerson.size}`; }
-    }
-    await batch.commit();
+      return true;
+    }, { onProgress: done => { btn.innerHTML = `<span class="spin-sm"></span>People… ${done}/${byPerson.size}`; } });
 
-    // 3) Upsert links — write only the facet this file actually carries, so a
+    // 4) Upsert links — write only the facet this file actually carries, so a
     //    shareholders import never clears roles from a management import.
-    batch = writeBatch(db); n = 0; done = 0;
-    for (const r of rows){
-      if (!r.companyId) continue;
+    //    Skip a link whose payload matches what's already stored.
+    const linkRows = rows.filter(r => r.companyId);
+    let linksSkipped = 0;
+    const linksWritten = await commitInChunks(linkRows, 450, (batch, r) => {
+      const key = `${r.personId}__${r.companyId}`;
       const payload = {
         personId: r.personId, companyId: r.companyId,
         personName: r.personName, companyName: r.companyName,
@@ -4260,15 +4366,25 @@ async function confirmPeopleImport(){
         // relationship even though the file carries no job title.
         payload.mgmtCurrent = true;
       }
-      batch.set(doc(db,'searchPersonLinks', `${r.personId}__${r.companyId}`), payload, { merge: true });
-      if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); done += 450; btn.innerHTML = `<span class="spin-sm"></span>Links… ${done}/${rows.length}`; }
-    }
-    await batch.commit();
+      const existing = existingLinkByKey.get(key);
+      if (!linkNeedsWrite(existing, payload)){ linksSkipped++; return false; }
+      batch.set(doc(db,'searchPersonLinks', key), payload, { merge: true });
+      // Keep the in-memory snapshot accurate for the demotion scan and
+      // counter refresh below — merge:true means the stored doc keeps any
+      // existing fields this payload doesn't touch.
+      const merged = { id: key, ...(existing || {}), ...payload };
+      existingLinkByKey.set(key, merged);
+      let arr = linksByCo.get(r.companyId);
+      if (!arr){ arr = []; linksByCo.set(r.companyId, arr); }
+      const idx = arr.findIndex(x => x.id === key);
+      if (idx >= 0) arr[idx] = merged; else arr.push(merged);
+      return true;
+    }, { onProgress: done => { btn.innerHTML = `<span class="spin-sm"></span>Links… ${done}/${linkRows.length}`; } });
 
-    // 4) Snapshot semantics: this file is the complete current picture for the
+    // 5) Snapshot semantics: this file is the complete current picture for the
     //    companies it covers, so anyone previously current for those companies
     //    but absent from the file is demoted to "previous" (kept, greyed).
-    const touched = [...new Set(rows.map(r => r.companyId).filter(Boolean))];
+    //    Reuses the links already fetched in step 2 — no second read.
     // Demotion is per facet. A combined file is a snapshot of BOTH facets, but
     // a company may appear in only one of them — and a shareholder who is not a
     // director must not keep a stale mgmtCurrent just because the file mentions
@@ -4276,72 +4392,65 @@ async function confirmPeopleImport(){
     // sets, and only demotes within its own scope.
     const facetScope = computeFacetScope(rows);
     let demoted = 0;
-    // What the demotion scan read, kept so step 5 does not re-fetch the same
-    // links a second time. Demotions we make below are applied in memory, so
-    // the counts computed from it match what is actually stored.
-    const linksByCo = new Map();
-    batch = writeBatch(db); n = 0;
-    // One query per company, run concurrently — see mapPool.
-    const perCompany = await mapPool(touched, cid =>
-      getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',cid)))
-        .then(snap => { addReads(snap.docs.length || 1); return { cid, docs: snap.docs }; }),
-      READ_CONCURRENCY,
-      done => { btn.innerHTML = `<span class="spin-sm"></span>Checking… ${done}/${touched.length}`; });
-    for (const { cid, docs } of perCompany){
-      linksByCo.set(cid, docs.map(d => ({ id: d.id, ...d.data() })));
-      for (const d of docs){
+    // link id -> patch fields, so a link demoted on BOTH facets in the same
+    // run gets one update() call, not two competing ones on the same doc.
+    const demotions = new Map();
+    for (const [cid, arr] of linksByCo){
+      for (const l of arr){
         for (const facet of ['shCurrent','mgmtCurrent']){
           const scope = facetScope[facet];
           // Only demote inside the facet's own scope: a company the file did not
           // cover for this facet is left completely alone.
           if (!scope.touched.has(cid)) continue;
-          if (scope.keep.has(d.id)) continue;
-          if (d.data()[facet] === true){
-            batch.update(d.ref, { [facet]: false, updatedAt: serverTimestamp() });
-            const local = linksByCo.get(cid).find(x => x.id === d.id);
-            if (local) local[facet] = false;
+          if (scope.keep.has(l.id)) continue;
+          if (l[facet] === true){
+            const patch = demotions.get(l.id) || {};
+            patch[facet] = false;
+            demotions.set(l.id, patch);
+            l[facet] = false;
             demoted++;
-            if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
           }
         }
       }
     }
-    await batch.commit();
+    await commitInChunks([...demotions.entries()], 450, (batch, [linkId, patch]) => {
+      batch.update(doc(db,'searchPersonLinks', linkId), { ...patch, updatedAt: serverTimestamp() });
+      return true;
+    });
 
-    // 5) Refresh denormalised counters.
+    // 6) Refresh denormalised counters — skip a company whose counts and
+    //    ownership metadata already match what's stored (companies is already
+    //    fully loaded in memory, so this comparison costs no extra reads).
     invalidatePeopleCaches();
-    batch = writeBatch(db); n = 0;
     const meta = peopleImportStats.ownershipMeta || new Map();
-    // No second read: the demotion scan already fetched every link for every
-    // touched company, and its copy has our demotions applied.
-    for (let ci = 0; ci < touched.length; ci++){
-      const cid = touched[ci];
+    await commitInChunks(touched, 450, (batch, cid) => {
       const links = linksByCo.get(cid) || [];
-      const payload = { peopleCounts: peopleCountsFrom(links) };
+      const newCounts = peopleCountsFrom(links);
+      const local = companies.find(c => c.id === cid);
+      const om = meta.get(cid);
+      const payload = { peopleCounts: newCounts };
+      let ownershipChanged = false;
       // Merge field by field via dotted paths rather than replacing the whole
       // map: an export carrying Entity type but no GUO columns would otherwise
       // null out an ultimate owner recorded by an earlier import.
-      const om = meta.get(cid);
       if (om) for (const [k, v] of Object.entries(om)){
         if (v == null || (Array.isArray(v) && !v.length)) continue;
+        if (JSON.stringify(local?.ownershipMeta?.[k] ?? null) !== JSON.stringify(v)) ownershipChanged = true;
         payload[`ownershipMeta.${k}`] = v;
       }
+      if (JSON.stringify(local?.peopleCounts || null) === JSON.stringify(newCounts) && !ownershipChanged) return false;
       batch.update(doc(db,'searchCompanies',cid), payload);
-      const local = companies.find(c => c.id === cid);
-      if (local){ local.peopleCounts = payload.peopleCounts; if (om) local.ownershipMeta = om; }
-      if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
-    }
-    await batch.commit();
-    batch = writeBatch(db); n = 0;
-    // A person's totals span every company, including ones this file never
-    // mentioned, so they have to come from the database. But they do not need
-    // one query each: `in` takes 30 values, which is the difference between
-    // ~26,700 round-trips and ~890.
-    const pids = [...byPerson.keys()];
-    const chunks = [];
-    for (let i = 0; i < pids.length; i += PERSON_IN_CHUNK) chunks.push(pids.slice(i, i + PERSON_IN_CHUNK));
-    const counts = new Map(pids.map(id => [id, { total: 0, current: 0 }]));
-    await mapPool(chunks, async ch => {
+      if (local){ local.peopleCounts = newCounts; if (om) local.ownershipMeta = { ...(local.ownershipMeta || {}), ...om }; }
+      return true;
+    });
+
+    // 7) A person's totals span every company, including ones this file never
+    // mentioned, so they have to come from the database — that read can't be
+    // skipped. But the WRITE can be, when nothing actually changed. They do
+    // not need one query each: `in` takes 30 values, which is the difference
+    // between ~26,700 round-trips and ~890.
+    const counts = new Map(personIds.map(id => [id, { total: 0, current: 0 }]));
+    await mapPool(personIdChunks, async ch => {
       const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in',ch)));
       addReads(snap.docs.length || 1);
       for (const d of snap.docs){
@@ -4351,19 +4460,22 @@ async function confirmPeopleImport(){
         c.total++;
         if (l.shCurrent === true || l.mgmtCurrent === true) c.current++;
       }
-    }, READ_CONCURRENCY, d => { btn.innerHTML = `<span class="spin-sm"></span>People… ${d}/${chunks.length}`; });
-    for (const pid of pids){
+    }, READ_CONCURRENCY, d => { btn.innerHTML = `<span class="spin-sm"></span>People… ${d}/${personIdChunks.length}`; });
+    await commitInChunks(personIds, 450, (batch, pid) => {
       const c = counts.get(pid);
+      const existing = existingPeople.get(pid);
+      if (existing && existing.linkCount === c.total && existing.currentLinkCount === c.current) return false;
       batch.update(doc(db,'searchPeople',pid), { linkCount: c.total, currentLinkCount: c.current });
-      if (++n % 450 === 0){ await batch.commit(); batch = writeBatch(db); }
-    }
-    await batch.commit();
+      return true;
+    });
 
-    await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted });
+    await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted, peopleWritten, peopleSkipped, linksWritten, linksSkipped });
     invalidatePeopleCaches();
     cacheCompanies();
     showEl('peopleImportModal', false);
-    alert(`Imported ${rows.length} link${rows.length===1?'':'s'} across ${byPerson.size} people/entities and ${touched.length} companies.${demoted?`\n${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}`);
+    const skipped = peopleSkipped + linksSkipped;
+    const skipNote = skipped ? `\n${skipped.toLocaleString('de-DE')} record${skipped===1?'':'s'} unchanged since last import — skipped, no write.` : '';
+    alert(`Imported ${rows.length} link${rows.length===1?'':'s'} across ${byPerson.size} people/entities and ${touched.length} companies.${demoted?`\n${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}${skipNote}`);
     if (viewMode === 'people') renderPeople();
     if (currentCoId) { const c = getCompany(); if (c) { renderOwnership(c); renderOverview(c); } }
   } catch(e){
@@ -6091,52 +6203,43 @@ async function confirmBulk(){
   const CHUNK = 450;
   const changes = [];
   try {
-    // 1) Create new companies (batched)
-    let done = 0;
-    for (let i=0; i<newRows.length; i+=CHUNK) {
-      const batch = writeBatch(db);
-      for (const { co } of newRows.slice(i, i+CHUNK)) {
-        const local = computeFields({ ...co });
-        batch.set(doc(col), { ...co,
-          computedRevenue:local.computedRevenue, computedEBITDA:local.computedEBITDA, computedEBITDAMargin:local.computedEBITDAMargin,
-          computedEBITDAWeighted:local.computedEBITDAWeighted, computedEBITDAMarginWeighted:local.computedEBITDAMarginWeighted,
-          computedGrowthRecent:local.computedGrowthRecent, computedGrowthSustained:local.computedGrowthSustained, computedEBITDAStability:local.computedEBITDAStability,
-          computedEmployees:local.computedEmployees, fitScore:local.fitScore,
-          lastTouchAt:null, outreachAttempts:0,
-          createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
+    // 1) Create new companies. Always-new docs — nothing to diff against, so
+    //    every one is written — but parallel commits (commitInChunks) still
+    //    cut wall-clock time when there are many.
+    await commitInChunks(newRows, CHUNK, (batch, { co }) => {
+      const local = computeFields({ ...co });
+      batch.set(doc(col), { ...co,
+        computedRevenue:local.computedRevenue, computedEBITDA:local.computedEBITDA, computedEBITDAMargin:local.computedEBITDAMargin,
+        computedEBITDAWeighted:local.computedEBITDAWeighted, computedEBITDAMarginWeighted:local.computedEBITDAMarginWeighted,
+        computedGrowthRecent:local.computedGrowthRecent, computedGrowthSustained:local.computedGrowthSustained, computedEBITDAStability:local.computedEBITDAStability,
+        computedEmployees:local.computedEmployees, fitScore:local.fitScore,
+        lastTouchAt:null, outreachAttempts:0,
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
+      return true;
+    }, { onProgress: done => { btn.innerHTML = `<span class="spin-sm"></span>Adding… ${done}/${newRows.length}`; } });
+    // 2) Update existing: auto-refresh financials (skipped when nothing
+    //    changed — mergeFinancials already reports that), collect
+    //    non-financial diffs for the report regardless of the write decision.
+    await commitInChunks(updRows, CHUNK, (batch, r) => {
+      const ex = companies.find(c => c.id === r.matchId);
+      if (!ex) return false;
+      const { merged, changed } = mergeFinancials(ex.financials, r.co.financials);
+      for (const [f,label] of ORBIS_FIRMOGRAPHIC) {
+        const inc = r.co[f];
+        if (inc==null || inc==='') continue;
+        if (String(inc) !== String(ex[f] ?? '')) changes.push({ companyId: r.matchId, name: ex.name, field: f, label, current: ex[f] ?? '', incoming: inc });
       }
-      await batch.commit();
-      done += Math.min(CHUNK, newRows.length - i);
-      btn.innerHTML = `<span class="spin-sm"></span>Adding… ${done}/${newRows.length}`;
-    }
-    // 2) Update existing: auto-refresh financials, collect non-financial diffs for the report
-    let u = 0;
-    while (u < updRows.length) {
-      const batch = writeBatch(db); let n = 0;
-      for (; u < updRows.length && n < CHUNK; u++, n++) {
-        const r = updRows[u];
-        const ex = companies.find(c => c.id === r.matchId);
-        if (!ex) continue;
-        const { merged, changed } = mergeFinancials(ex.financials, r.co.financials);
-        if (changed) {
-          const t = computeFields({ ...ex, financials: merged });
-          batch.update(doc(col, r.matchId), {
-            financials: merged, computedRevenue:t.computedRevenue, computedEBITDA:t.computedEBITDA, computedEBITDAMargin:t.computedEBITDAMargin,
-            computedEBITDAWeighted:t.computedEBITDAWeighted, computedEBITDAMarginWeighted:t.computedEBITDAMarginWeighted,
-            computedGrowthRecent:t.computedGrowthRecent, computedGrowthSustained:t.computedGrowthSustained, computedEBITDAStability:t.computedEBITDAStability,
-            computedEmployees:t.computedEmployees, fitScore:t.fitScore, updatedAt: serverTimestamp(),
-          });
-          ex.financials = merged; computeFields(ex);
-        }
-        for (const [f,label] of ORBIS_FIRMOGRAPHIC) {
-          const inc = r.co[f];
-          if (inc==null || inc==='') continue;
-          if (String(inc) !== String(ex[f] ?? '')) changes.push({ companyId: r.matchId, name: ex.name, field: f, label, current: ex[f] ?? '', incoming: inc });
-        }
-      }
-      await batch.commit();
-      btn.innerHTML = `<span class="spin-sm"></span>Updating… ${u}/${updRows.length}`;
-    }
+      if (!changed) return false;
+      const t = computeFields({ ...ex, financials: merged });
+      batch.update(doc(col, r.matchId), {
+        financials: merged, computedRevenue:t.computedRevenue, computedEBITDA:t.computedEBITDA, computedEBITDAMargin:t.computedEBITDAMargin,
+        computedEBITDAWeighted:t.computedEBITDAWeighted, computedEBITDAMarginWeighted:t.computedEBITDAMarginWeighted,
+        computedGrowthRecent:t.computedGrowthRecent, computedGrowthSustained:t.computedGrowthSustained, computedEBITDAStability:t.computedEBITDAStability,
+        computedEmployees:t.computedEmployees, fitScore:t.fitScore, updatedAt: serverTimestamp(),
+      });
+      ex.financials = merged; computeFields(ex);
+      return true;
+    }, { onProgress: done => { btn.innerHTML = `<span class="spin-sm"></span>Updating… ${done}/${updRows.length}`; } });
     if (newRows.length || updRows.length) await logPortal('search_import', { newCount: newRows.length, updateCount: updRows.length });
     showEl('bulkModal', false);
     btn.disabled=false; btn.textContent='Import';
@@ -6168,11 +6271,13 @@ async function applyReportChanges(){
   sel.forEach(ch => { (byCo[ch.companyId] = byCo[ch.companyId] || {})[ch.field] = ch.incoming; });
   const ids = Object.keys(byCo);
   try {
-    for (let i=0;i<ids.length;i+=450){
-      const batch = writeBatch(db);
-      ids.slice(i,i+450).forEach(id => { batch.update(doc(db,'searchCompanies',id), { ...byCo[id], updatedAt: serverTimestamp() }); const c=companies.find(x=>x.id===id); if(c) Object.assign(c, byCo[id]); });
-      await batch.commit();
-    }
+    // Every id here was explicitly ticked by the user, so there is nothing
+    // to diff-gate — just parallelise the commits.
+    await commitInChunks(ids, 450, (batch, id) => {
+      batch.update(doc(db,'searchCompanies',id), { ...byCo[id], updatedAt: serverTimestamp() });
+      const c = companies.find(x => x.id === id); if (c) Object.assign(c, byCo[id]);
+      return true;
+    });
     showEl('reportModal', false); renderSummary(); renderList();
   } catch(e){ alert('Error: '+e.message); }
   finally { btn.disabled=false; btn.textContent='Apply selected'; }
