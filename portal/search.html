@@ -214,6 +214,7 @@
     .contact-role { font-size: 0.75rem; color: var(--primary); font-weight: 500; }
     .contact-detail { font-size: 0.78rem; color: var(--text-light); margin-top: 3px; }
     .contact-foot { display: flex; gap: 6px; margin-top: 8px; }
+    .contact-item.prev { opacity: 0.65; }
 
     /* People & Ownership */
     .own-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
@@ -849,6 +850,23 @@
       <button class="btn btn--ghost btn--sm" id="reportDownloadBtn" style="margin-right:auto;">⬇ Download CSV</button>
       <button class="btn btn--ghost" id="reportCloseBtn">Close (skip all)</button>
       <button class="btn btn--primary" id="reportApplyBtn">Apply selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- Export CSV field picker -->
+<div class="overlay" id="exportFieldsModal" style="display:none;">
+  <div class="modal modal--lg">
+    <div class="modal-title">Export CSV</div>
+    <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:6px;">Choose which fields to include — everything else is left out of the file, not just hidden. <span id="exportFieldsCount" style="color:var(--text);font-weight:600;"></span></p>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button class="btn btn--ghost btn--sm" id="exportSelectAllBtn">Select all</button>
+      <button class="btn btn--ghost btn--sm" id="exportSelectNoneBtn">Select none</button>
+    </div>
+    <div id="exportFieldsBody" style="max-height:420px;overflow:auto;"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="exportFieldsCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="exportFieldsConfirmBtn">⬇ Export CSV</button>
     </div>
   </div>
 </div>
@@ -2816,61 +2834,66 @@ async function renderOwnership(c){
     peopleById.set(id, await fetchPerson(id).catch(() => null));
   }));
   if (currentCoId !== c.id) return;
-  const ageCell = l => { const a = personAge(peopleById.get(l.personId)); return a ? `${a.age}${a.exact ? '' : '~'}` : '—'; };
+  const ageOf = l => personAge(peopleById.get(l.personId));
 
-  const byStatus = (a, b, cur) => (cur(b) === true) - (cur(a) === true);
-  const sh = links.filter(linkIsShareholder).sort((a,b) => byStatus(a,b,l=>l.shCurrent) || (b.shDirectPct||0) - (a.shDirectPct||0));
-  const mg = links.filter(linkIsManager).sort((a,b) => byStatus(a,b,l=>l.mgmtCurrent) || String(a.personName).localeCompare(String(b.personName)));
+  // Each searchPersonLinks doc already carries BOTH facets when they apply —
+  // one card per person/link, not one row per facet split across two
+  // separate tables, which used to show the same person twice with "Also
+  // mgr"/"Also shareholder" columns existing purely to flag that split.
+  const own = resolveOwnership(c, links);
+  const rows = [...links].sort((a, b) => {
+    const curA = linkIsCurrent(a), curB = linkIsCurrent(b);
+    if (curA !== curB) return (curB ? 1 : 0) - (curA ? 1 : 0);
+    return (b.shDirectPct || 0) - (a.shDirectPct || 0) || String(a.personName || '').localeCompare(String(b.personName || ''));
+  });
 
   // The shareholder IS often the person to write to — more often than a
-  // director, for a family business — so the bridge belongs on both tables.
-  // The role stored on the contact says which hat they are wearing.
+  // director, for a family business — so the bridge covers both hats at once
+  // rather than needing a separate button per facet.
   const contactBtn = (l, role) =>
     `<button class="btn btn--icon btn--ghost" data-tocontact="${esc(l.id)}" data-crole="${esc(role)}" title="Copy to Contacts">👤+</button>`;
-  const shareholderRole = (l, own) => {
-    const pct = l.shDirectPct != null ? ` (${l.shDirectPct}%)` : '';
-    if (l.personEntityType === 'entity') return `Corporate shareholder${pct}`;
-    if (own.ownerIds.has(l.personId)) return `Controlling shareholder${pct}`;
-    return `Shareholder${pct}`;
-  };
-  const nameCell = l => `<span class="person-link" data-person="${esc(l.personId)}">${esc(l.personName || '—')}</span>${l.personEntityType === 'entity' ? ' <span class="badge badge-grey" title="Corporate entity">🏢</span>' : ''}`;
   const rowActions = l => `<button class="btn btn--icon btn--ghost" data-editlink="${esc(l.id)}" title="Edit">✎</button><button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove link">✕</button>`;
+  const statusBadge = cur => cur === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>';
 
-  const own = resolveOwnership(c, links);
-  const ownerBadge = l => {
-    if (!own.ownerIds.has(l.personId)) return '';
-    return own.source === 'orbis'
-      ? ' <span class="badge badge-green" title="Controlling shareholder per Orbis">👑 Controlling</span>'
-      : ' <span class="badge badge-warn" title="Computed as the largest holding — not stated by Orbis">👑 Largest</span>';
-  };
-  const shRows = sh.map(l => {
-    const tier = l.shCurrent === false ? null : controlTier(l.shDirectPct);
+  const cards = rows.map(l => {
+    const isSh = linkIsShareholder(l), isMg = linkIsManager(l);
+    const allPrev = (!isSh || l.shCurrent === false) && (!isMg || l.mgmtCurrent === false);
+    const age = ageOf(l);
+    const shTier = l.shCurrent === false ? null : controlTier(l.shDirectPct);
+    const shLine = isSh ? `<div class="contact-detail">
+      ${fmtPctOwn(l.shDirectPct)}${shTier ? ` <span class="badge ${shTier.cls}">${shTier.label}</span>` : ''}${l.shTotalPct != null && l.shTotalPct !== l.shDirectPct ? ` · ${fmtPctOwn(l.shTotalPct)} total` : ''}${l.shDate ? ` · as of ${esc(l.shDate)}` : ''} ${statusBadge(l.shCurrent)}
+    </div>` : '';
+    const mgLine = isMg ? `<div class="contact-detail">
+      ${esc((l.mgmtRoles || []).join(' · ') || 'Management')}${l.mgmtBoard ? ` · ${esc(l.mgmtBoard)}` : ''} ${statusBadge(l.mgmtCurrent)}
+    </div>` : '';
+    const roleForContact = [
+      isSh ? (l.personEntityType === 'entity' ? 'Corporate shareholder' : (own.ownerIds.has(l.personId) ? 'Controlling shareholder' : 'Shareholder')) + (l.shDirectPct != null ? ` (${l.shDirectPct}%)` : '') : null,
+      isMg ? ((l.mgmtRoles || [])[0] || 'Management Team') : null,
+    ].filter(Boolean).join(' · ');
+    const ownerBadge = own.ownerIds.has(l.personId)
+      ? (own.source === 'orbis' ? ' <span class="badge badge-green" title="Controlling shareholder per Orbis">👑 Controlling</span>' : ' <span class="badge badge-warn" title="Computed as the largest holding — not stated by Orbis">👑 Largest</span>')
+      : '';
+    const highestBadge = /highest/i.test(l.mgmtLevel || '') ? ' <span class="badge badge-blue" title="Highest level of responsibility per Orbis">★ Highest exec</span>' : '';
     return `
-    <tr class="${l.shCurrent === false ? 'prev' : ''}">
-      <td>${nameCell(l)}${ownerBadge(l)}</td>
-      <td class="num">${ageCell(l)}</td>
-      <td class="num">${fmtPctOwn(l.shDirectPct)}${tier ? ` <span class="badge ${tier.cls}" style="margin-left:4px;">${tier.label}</span>` : ''}</td>
-      <td class="num">${fmtPctOwn(l.shTotalPct)}</td>
-      <td>${l.alsoManager || linkIsManager(l) ? '✓' : '—'}</td>
-      <td>${esc(l.shDate || '—')}</td>
-      <td>${l.shCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
-      <td style="white-space:nowrap;">${l.shCurrent !== false ? contactBtn(l, shareholderRole(l, own)) : ''}${rowActions(l)}</td>
-    </tr>`;
+    <div class="contact-item${allPrev ? ' prev' : ''}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <div>
+          <span class="contact-name person-link" data-person="${esc(l.personId)}">${esc(l.personName || '—')}</span>
+          ${l.personEntityType === 'entity' ? ' <span class="badge badge-grey" title="Corporate entity">🏢</span>' : ''}${ownerBadge}${highestBadge}
+          ${age ? ` <span class="badge badge-grey" title="${age.exact ? 'From Orbis birth date' : 'From the age Orbis gave at import, carried forward'}">🎂 ${age.age}${age.exact ? '' : '~'}</span>` : ''}
+          ${shLine}${mgLine}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;">
+          ${!allPrev ? contactBtn(l, roleForContact) : ''}${rowActions(l)}
+        </div>
+      </div>
+    </div>`;
   }).join('');
-  const mgRows = mg.map(l => `
-    <tr class="${l.mgmtCurrent === false ? 'prev' : ''}">
-      <td>${nameCell(l)}${/highest/i.test(l.mgmtLevel || '') ? ' <span class="badge badge-blue" title="Highest level of responsibility per Orbis">★ Highest exec</span>' : ''}</td>
-      <td class="num">${ageCell(l)}</td>
-      <td>${esc((l.mgmtRoles || []).join(' · ') || '—')}${l.mgmtBoard ? `<div style="font-size:0.72rem;color:var(--text-light);">${esc(l.mgmtBoard)}</div>` : ''}</td>
-      <td>${linkIsShareholder(l) ? '✓' : '—'}</td>
-      <td>${l.mgmtCurrent === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
-      <td style="white-space:nowrap;">${l.mgmtCurrent !== false ? contactBtn(l, (l.mgmtRoles || [])[0] || 'Management Team') : ''}${rowActions(l)}</td>
-    </tr>`).join('');
 
   el.innerHTML = `
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div class="sec-title" style="margin-bottom:0;">Shareholders</div>
+        <div class="sec-title" style="margin-bottom:0;">People</div>
         <button class="btn btn--ghost btn--sm" id="addPersonBtn">＋ Add Person</button>
       </div>
       ${(own.note || own.treasuryPct != null) ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
@@ -2885,23 +2908,15 @@ async function renderOwnership(c){
             : `<strong>${esc(own.guoName)}</strong>`;
         })()}`) : ''}
       </div>` : ''}
-      ${sh.length ? `<div style="overflow-x:auto;"><table class="own-table">
-        <thead><tr><th>Name</th><th class="num">Age</th><th class="num">Direct %</th><th class="num">Total %</th><th>Also mgr</th><th>As of</th><th>Status</th><th></th></tr></thead>
-        <tbody>${shRows}</tbody></table></div>
-      <div class="own-legend" style="flex-wrap:wrap;gap:12px;">
+      ${cards || '<div style="font-size:0.85rem;color:var(--text-light);">No people yet — import ownership data or add manually.</div>'}
+      ${links.length ? `<div class="own-legend" style="flex-wrap:wrap;gap:12px;">
+        <span class="cur">currently</span><span class="prv">previously</span>
         <span>👑 controlling owner</span>
         <span>Control &gt; 50%</span>
         <span>Joint control = 50%</span>
         <span>Significant 25–50%</span>
         <span>Minority &lt; 25%</span>
-      </div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No shareholder data yet — import people or add manually.</div>'}
-    </div>
-    <div class="card">
-      <div class="sec-title">Management</div>
-      ${mg.length ? `<div style="overflow-x:auto;"><table class="own-table">
-        <thead><tr><th>Name</th><th class="num">Age</th><th>Role(s)</th><th>Also shareholder</th><th>Status</th><th></th></tr></thead>
-        <tbody>${mgRows}</tbody></table></div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No management data yet.</div>'}
-      <div class="own-legend"><span class="cur">currently</span><span class="prv">previously</span></div>
+      </div>` : ''}
     </div>
     <div class="card" id="ownGraphCard"><div class="sec-title">Network</div><div id="ownGraph"></div></div>`;
   renderNetworkGraph(document.getElementById('ownGraph'), 'company', c.id);
@@ -3065,29 +3080,26 @@ function renderPersonView(p, links){
       const roleBits = [];
       if (linkIsManager(l)) roleBits.push(esc((l.mgmtRoles || []).join(' · ') || 'Manager'));
       if (linkIsShareholder(l)) roleBits.push('Shareholder');
+      // Tier is derived from the % alone, so it needs no extra reads here.
+      // The "controlling owner" crown stays on the company's Ownership tab,
+      // which is the only place the whole cap table is loaded.
+      const t = isPrev ? null : controlTier(l.shDirectPct);
+      const pctLine = l.shDirectPct != null ? `<div class="contact-detail">
+        ${fmtPctOwn(l.shDirectPct)}${t ? ` <span class="badge ${t.cls}">${t.label}</span>` : ''}${l.shTotalPct != null && l.shTotalPct !== l.shDirectPct ? ` · ${fmtPctOwn(l.shTotalPct)} total` : ''}${l.shDate ? ` · as of ${esc(l.shDate)}` : ''}
+      </div>` : '';
       return `
-      <tr class="${isPrev ? 'prev' : ''}">
-        <td><span class="person-link" data-gotoco="${esc(l.companyId)}">${esc(l.companyName || '—')}</span></td>
-        <td>${roleBits.join(' · ') || '—'}</td>
-        <td class="num">${fmtPctOwn(l.shDirectPct)}${(() => {
-          // Tier is derived from the % alone, so it needs no extra reads here.
-          // The "controlling owner" crown stays on the company's Ownership tab,
-          // which is the only place the whole cap table is loaded.
-          const t = isPrev ? null : controlTier(l.shDirectPct);
-          return t ? ` <span class="badge ${t.cls}" style="margin-left:4px;">${t.label}</span>` : '';
-        })()}</td>
-        <td class="num">${fmtPctOwn(l.shTotalPct)}</td>
-        <td>${esc(l.shDate || '—')}</td>
-        <td>${isPrev ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}</td>
-      </tr>`;
+      <div class="contact-item${isPrev ? ' prev' : ''}">
+        <span class="contact-name person-link" data-gotoco="${esc(l.companyId)}">${esc(l.companyName || '—')}</span>
+        ${isPrev ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>'}
+        <div class="contact-detail">${roleBits.join(' · ') || '—'}</div>
+        ${pctLine}
+      </div>`;
     }).join('');
   document.getElementById('personBody').innerHTML = `
     <div class="card">
       <div class="sec-title">Positions</div>
-      ${links.length ? `<div style="overflow-x:auto;"><table class="own-table">
-        <thead><tr><th>Company</th><th>Role</th><th class="num">Direct %</th><th class="num">Total %</th><th>As of</th><th>Status</th></tr></thead>
-        <tbody>${rows}</tbody></table></div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No known positions.</div>'}
-      <div class="own-legend"><span class="cur">currently</span><span class="prv">previously</span></div>
+      ${links.length ? rows : '<div style="font-size:0.85rem;color:var(--text-light);">No known positions.</div>'}
+      ${links.length ? `<div class="own-legend"><span class="cur">currently</span><span class="prv">previously</span></div>` : ''}
     </div>
     <div class="card">
       <div class="sec-title">Contact</div>
@@ -5709,22 +5721,100 @@ async function recalcAll(){
 }
 
 // ── Export CSV ───────────────────────────────────────────────────────────────
-async function exportCsv(){
+// One entry per exportable column; `get` returns the raw cell value (before
+// exportCsv's CSV-injection guard/quoting runs on it). Grouped the same way
+// COMPANY_STAT_GROUPS is, so the field picker feels familiar, but these carry
+// real value getters rather than presence tests.
+const COMPANY_EXPORT_FIELDS = [
+  { title: 'Identity', fields: [
+    { key: 'name',        label: 'Name',         get: c => c.name },
+    { key: 'nif',         label: 'NIF',          get: c => c.nif },
+    { key: 'bvdId',       label: 'BvD ID',       get: c => c.bvdId },
+    { key: 'legalForm',   label: 'Legal form',   get: c => c.legalForm },
+    { key: 'yearFounded', label: 'Year founded', get: c => c.yearFounded },
+  ]},
+  { title: 'Geography', fields: [
+    { key: 'concelho',  label: 'Concelho', get: c => c.concelho },
+    { key: 'postcode',  label: 'Postcode', get: c => c.postcode },
+    { key: 'nuts2',     label: 'NUTS II',  get: c => c.nuts2 },
+    { key: 'nuts3',     label: 'NUTS III', get: c => c.nuts3 },
+    { key: 'hqAddress', label: 'Address',  get: c => c.hqAddress },
+  ]},
+  { title: 'Classification', fields: [
+    { key: 'sector',                label: 'Sector',                 get: c => c.sector },
+    { key: 'subSector',             label: 'Sub-sector',             get: c => c.subSector },
+    { key: 'naceCode',              label: 'NACE code',              get: c => c.naceCode },
+    { key: 'caeCode',               label: 'CAE code',               get: c => c.caeCode },
+    { key: 'guoName',               label: 'GUO (ultimate owner)',   get: c => c.guoName },
+    { key: 'independenceIndicator', label: 'Independence indicator', get: c => c.independenceIndicator },
+  ]},
+  { title: 'Contact', fields: [
+    { key: 'website',        label: 'Website',         get: c => c.website },
+    { key: 'companyEmail',   label: 'Company email',   get: c => c.companyEmail },
+    { key: 'companyPhone',   label: 'Company phone',   get: c => c.companyPhone },
+    { key: 'linkedinUrl',    label: 'LinkedIn',        get: c => c.linkedinUrl },
+    { key: 'primaryContact', label: 'Primary contact', get: c => ((c.contacts||[]).find(x=>x.isPrimary) || (c.contacts||[])[0])?.name },
+  ]},
+  { title: 'Financials', fields: [
+    { key: 'revenueY1',    label: 'Revenue (Y1)',    get: c => c.computedRevenue ?? '' },
+    { key: 'ebitdaY1',     label: 'EBITDA (Y1)',     get: c => c.computedEBITDA ?? '' },
+    { key: 'ebitdaMargin', label: 'EBITDA %',        get: c => c.computedEBITDAMargin != null ? (c.computedEBITDAMargin * 100).toFixed(1) : '' },
+    { key: 'growthRecent', label: 'Growth (recent)', get: c => c.computedGrowthRecent != null ? (c.computedGrowthRecent * 100).toFixed(1) : '' },
+    { key: 'employees',    label: 'Employees',       get: c => c.computedEmployees ?? '' },
+    { key: 'auditingFirm', label: 'Auditing firm',   get: c => c.auditingFirm },
+  ]},
+  { title: 'Pipeline', fields: [
+    { key: 'stage',      label: 'Stage',              get: c => STAGES[c.stage]?.label || c.stage },
+    { key: 'priority',   label: 'Priority',           get: c => PRIO_LABELS[c.priority] || '' },
+    { key: 'fitScore',   label: 'Fit',                get: c => (Number(c.fitScore) || 0).toFixed(1) },
+    { key: 'owner',      label: 'Owner',              get: c => OWNER_LABELS[c.owner] || '' },
+    { key: 'sourceType', label: 'Source',             get: c => SOURCE_LABELS[c.sourceType] || '' },
+    { key: 'reason',     label: 'Reason (pass/hold)', get: c => c.reasonExcluded ? ((c.stage === 'pass' ? PASS_REASONS : HOLD_REASONS)[c.reasonExcluded] || '') : '' },
+  ]},
+  { title: 'Outreach', fields: [
+    { key: 'lastTouch', label: 'Last touch', get: c => c.lastTouchAt ? tsToDate(c.lastTouchAt).toLocaleDateString('en-GB') : '' },
+    { key: 'attempts',  label: 'Attempts',   get: c => c.outreachAttempts || 0 },
+  ]},
+  { title: 'Ownership', fields: [
+    { key: 'shareholderCount', label: 'Shareholders (count)', get: c => c.peopleCounts?.sh ?? '' },
+    { key: 'managerCount',     label: 'Managers (count)',     get: c => c.peopleCounts?.mgmt ?? '' },
+  ]},
+];
+// Today's export columns, in today's order — the default selection, so
+// someone who never opens the picker gets exactly what they always got.
+const COMPANY_EXPORT_DEFAULT_KEYS = ['name','sector','subSector','naceCode','caeCode','stage','priority','fitScore','owner','sourceType','concelho','postcode','nuts2','nuts3','hqAddress','primaryContact','revenueY1','ebitdaY1','ebitdaMargin','growthRecent','employees','lastTouch','attempts','reason'];
+const EXPORT_FIELD_KEYS_STORAGE_KEY = 'exportFieldKeys';
+
+function openExportFields(){
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(EXPORT_FIELD_KEYS_STORAGE_KEY) || 'null'); } catch(e){}
+  const selected = new Set(Array.isArray(saved) && saved.length ? saved : COMPANY_EXPORT_DEFAULT_KEYS);
+  document.getElementById('exportFieldsBody').innerHTML = COMPANY_EXPORT_FIELDS.map(g => `
+    <div class="fm-group">
+      <div class="fm-head"><strong>${esc(g.title)}</strong></div>
+      <div class="fm-fields">
+        ${g.fields.map(f => `<label class="check-item"><input type="checkbox" class="exportFieldChk" data-key="${esc(f.key)}" ${selected.has(f.key) ? 'checked' : ''}> ${esc(f.label)}</label>`).join('')}
+      </div>
+    </div>`).join('');
+  updateExportFieldsCount();
+  document.querySelectorAll('.exportFieldChk').forEach(chk => chk.addEventListener('change', updateExportFieldsCount));
+  showEl('exportFieldsModal', true);
+}
+function updateExportFieldsCount(){
+  const total = COMPANY_EXPORT_FIELDS.reduce((s, g) => s + g.fields.length, 0);
+  const n = document.querySelectorAll('.exportFieldChk:checked').length;
+  document.getElementById('exportFieldsCount').textContent = `${n} of ${total} selected`;
+  document.getElementById('exportFieldsConfirmBtn').disabled = n === 0;
+}
+
+async function exportCsv(keys){
   await ensureFullDataset();
   const list = sortList(getFiltered());
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
-  const headers = ['Name','Sector','Sub-sector','NACE','CAE','Stage','Priority','Fit','Owner','Source','Concelho','Postcode','NUTS2','NUTS3','Address','Primary Contact','Revenue Y1','EBITDA Y1','EBITDA%','Growth (Recent)','Employees','Last Touch','Attempts','Reason'];
-  const rows = list.map(c => {
-    const pc = (c.contacts||[]).find(x=>x.isPrimary) || (c.contacts||[])[0];
-    return [
-    c.name, c.sector, c.subSector, c.naceCode, c.caeCode, STAGES[c.stage]?.label||c.stage,
-    PRIO_LABELS[c.priority]||'', (Number(c.fitScore)||0).toFixed(1), OWNER_LABELS[c.owner]||'', SOURCE_LABELS[c.sourceType]||'',
-    c.concelho, c.postcode, c.nuts2, c.nuts3, c.hqAddress, pc?.name||'',
-    c.computedRevenue??'', c.computedEBITDA??'', c.computedEBITDAMargin!=null?(c.computedEBITDAMargin*100).toFixed(1):'', c.computedGrowthRecent!=null?(c.computedGrowthRecent*100).toFixed(1):'',
-    c.computedEmployees??'', c.lastTouchAt?tsToDate(c.lastTouchAt).toLocaleDateString('en-GB'):'', c.outreachAttempts||0,
-    c.reasonExcluded?((c.stage==='pass'?PASS_REASONS:HOLD_REASONS)[c.reasonExcluded]||''):'',
-  ].map(esc2).join(',');
-  });
+  const fieldByKey = new Map(COMPANY_EXPORT_FIELDS.flatMap(g => g.fields).map(f => [f.key, f]));
+  const fields = keys.map(k => fieldByKey.get(k)).filter(Boolean);
+  const headers = fields.map(f => f.label);
+  const rows = list.map(c => fields.map(f => f.get(c)).map(esc2).join(','));
   const csv = [headers.map(esc2).join(','), ...rows].join('\r\n');
   const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download:`douro-search-${todayStr()}.csv` });
@@ -6144,7 +6234,17 @@ document.getElementById('statisticsCloseBtn').addEventListener('click', () => sh
 document.getElementById('settingsSaveBtn').addEventListener('click', saveSettings);
 document.getElementById('recalcBtn').addEventListener('click', recalcAll);
 document.getElementById('addBrokerBtn').addEventListener('click', addBroker);
-document.getElementById('exportBtn').addEventListener('click', exportCsv);
+document.getElementById('exportBtn').addEventListener('click', openExportFields);
+document.getElementById('exportSelectAllBtn').addEventListener('click', () => { document.querySelectorAll('.exportFieldChk').forEach(c => c.checked = true); updateExportFieldsCount(); });
+document.getElementById('exportSelectNoneBtn').addEventListener('click', () => { document.querySelectorAll('.exportFieldChk').forEach(c => c.checked = false); updateExportFieldsCount(); });
+document.getElementById('exportFieldsCancelBtn').addEventListener('click', () => showEl('exportFieldsModal', false));
+document.getElementById('exportFieldsConfirmBtn').addEventListener('click', async () => {
+  const keys = [...document.querySelectorAll('.exportFieldChk:checked')].map(c => c.dataset.key);
+  if (!keys.length) return;
+  try { localStorage.setItem(EXPORT_FIELD_KEYS_STORAGE_KEY, JSON.stringify(keys)); } catch(e){}
+  showEl('exportFieldsModal', false);
+  await exportCsv(keys);
+});
 document.getElementById('bulkImportBtn').addEventListener('click', async () => { await ensureFullDataset(); openBulk(); });
 document.getElementById('bulkCancelBtn').addEventListener('click', () => showEl('bulkModal', false));
 document.getElementById('bulkConfirmBtn').addEventListener('click', confirmBulk);
@@ -6298,7 +6398,7 @@ document.getElementById('cNaceCode').addEventListener('blur', () => {
 });
 
 // Overlay click-to-close
-['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','statisticsModal','bulkModal','peopleImportModal','reportModal','mapListsModal','miniMapModal'].forEach(id => {
+['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','statisticsModal','bulkModal','peopleImportModal','reportModal','mapListsModal','miniMapModal','exportFieldsModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id, false); });
 });
 </script>
