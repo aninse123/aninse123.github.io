@@ -1727,38 +1727,147 @@ function computeStats(companies){
     },
   };
 }
-// searchPeople/searchPersonLinks can reach ~60-100k docs at full scale, so
-// this is two cheap aggregation reads (same pattern as fetchTotalCount()),
-// never a full load.
+// Every field worth tracking on a company, grouped the same way the Company
+// Data Model doc groups them. `test` looks at the already-computed company
+// object (same shape rowHtml()/renderDetail() already use), so this is free
+// once companies are loaded -- no extra reads beyond ensureFullDataset().
+const COMPANY_STAT_GROUPS = [
+  { title: 'Identity', fields: [
+    { key: 'nif',         label: 'NIF',         test: c => !!c.nif },
+    { key: 'bvdId',       label: 'BvD ID',      test: c => !!c.bvdId },
+    { key: 'legalForm',   label: 'Legal form',  test: c => !!c.legalForm },
+    { key: 'yearFounded', label: 'Year founded',test: c => !!c.yearFounded },
+  ]},
+  { title: 'Geography', fields: [
+    { key: 'postcode',  label: 'Postcode',            test: c => !!c.postcode },
+    { key: 'concelho',  label: 'Concelho',             test: c => !!c.concelho },
+    { key: 'nuts2',     label: 'NUTS II',              test: c => !!c.nuts2 },
+    { key: 'hqAddress', label: 'HQ address',           test: c => !!c.hqAddress },
+  ]},
+  { title: 'Classification', fields: [
+    { key: 'sector',                 label: 'Sector',                  test: c => !!c.sector },
+    { key: 'naceCode',               label: 'NACE code',               test: c => !!c.naceCode },
+    { key: 'caeCode',                label: 'CAE code',                test: c => !!c.caeCode },
+    { key: 'guoName',                label: 'GUO (ultimate owner)',    test: c => !!c.guoName },
+    { key: 'independenceIndicator',  label: 'Independence indicator',  test: c => !!c.independenceIndicator },
+  ]},
+  { title: 'Contact', fields: [
+    { key: 'website',      label: 'Website',   test: c => !!c.website },
+    { key: 'companyEmail', label: 'Email',      test: c => !!c.companyEmail },
+    { key: 'companyPhone', label: 'Phone',      test: c => !!c.companyPhone },
+    { key: 'linkedinUrl',  label: 'LinkedIn',   test: c => !!c.linkedinUrl },
+  ]},
+  { title: 'Financials', fields: [
+    { key: 'y1Revenue',    label: 'Revenue (Y1)',  test: c => !!c.financials?.Y1?.revenue },
+    { key: 'y1Ebitda',     label: 'EBITDA (Y1)',   test: c => !!c.financials?.Y1?.ebitda },
+    { key: 'auditingFirm', label: 'Auditing firm', test: c => !!c.auditingFirm },
+  ]},
+  { title: 'Pipeline', fields: [
+    { key: 'fitScore',   label: 'Fit score', test: c => c.fitScore != null },
+    { key: 'priority',   label: 'Priority',  test: c => !!c.priority },
+    { key: 'owner',      label: 'Owner',     test: c => !!c.owner },
+    { key: 'sourceType', label: 'Source',    test: c => !!c.sourceType },
+  ]},
+  { title: 'Outreach & Ownership', fields: [
+    { key: 'contacts',  label: 'Contacts',       test: c => (c.contacts || []).length > 0 },
+    { key: 'ownership', label: 'Ownership data', test: c => c.peopleCounts && ((c.peopleCounts.sh || 0) + (c.peopleCounts.mgmt || 0)) > 0 },
+  ]},
+];
+// Mirrors PERSON_CONTACT_FIELDS (the person profile's own Contact card) for
+// the hand-entered group, so the two can never drift on field names.
+const PEOPLE_STAT_GROUPS = [
+  { title: 'Identity', fields: [
+    { key: 'uci',               label: 'Orbis UCI',              test: p => !!p.uci },
+    { key: 'nif',                label: 'NIF',                    test: p => !!p.nif },
+    { key: 'nationalId',         label: 'National ID',            test: p => !!p.nationalId },
+    { key: 'matchedCompanyId',   label: 'Matched to a CRM company', test: p => !!p.matchedCompanyId },
+  ]},
+  { title: 'Geography', fields: [
+    { key: 'country',     label: 'Country',     test: p => !!p.country },
+    { key: 'nationality', label: 'Nationality', test: p => !!p.nationality },
+  ]},
+  { title: 'Succession', fields: [
+    { key: 'birthDate', label: 'Birth date', test: p => !!p.birthDate },
+    { key: 'orbisAge',  label: 'Orbis age',  test: p => p.orbisAge != null },
+  ]},
+  { title: 'Contact \u2014 Orbis-sourced', fields:
+    PERSON_CONTACT_FIELDS.filter(f => f.orbis).map(f => ({ key: f.orbis, label: f.label, test: p => (p[f.orbis] || []).length > 0 }))
+      .concat([{ key: 'orbisWebsites', label: 'Website', test: p => (p.orbisWebsites || []).length > 0 }]),
+  },
+  { title: 'Contact \u2014 hand-entered', fields:
+    PERSON_CONTACT_FIELDS.map(f => ({ key: f.key, label: f.label, test: p => !!p[f.key] })),
+  },
+  { title: 'Network', fields: [
+    { key: 'linkCount', label: 'Has a position', test: p => (p.linkCount || 0) > 0 },
+    { key: 'notes',     label: 'Notes',           test: p => !!p.notes },
+  ]},
+];
+// Same shape/spirit as buildFieldReport() (the import panel), but against
+// live Firestore documents instead of parsed import rows -- every field here
+// is a real field in our own schema, so there is no "missing column" state
+// to report, only "nobody has filled this in yet" (0%) vs "some data" (>0%).
+function buildDocFieldReport(docs, groups){
+  const total = docs.length;
+  return groups.map(g => {
+    const fields = g.fields.map(f => {
+      const n = total ? docs.filter(d => f.test(d)).length : 0;
+      return { key: f.key, label: f.label, n, pct: total ? Math.round(100 * n / total) : 0 };
+    });
+    return { title: g.title, fields, foundCount: fields.filter(f => f.pct > 0).length };
+  });
+}
+function renderStatFieldGroups(groups){
+  const dot = f => f.pct === 0
+    ? '<span class="fm-dot fm-empty" title="No record has a value here yet">\u25cb</span>'
+    : `<span class="fm-dot fm-ok" title="${f.n} of the total (${f.pct}%)">\u25cf</span>`;
+  return groups.map(g => `
+    <div class="fm-group">
+      <div class="fm-head"><strong>${esc(g.title)}</strong><span class="fm-count">${g.foundCount}/${g.fields.length}</span></div>
+      <div class="fm-fields">${g.fields.map(f => `
+        <div class="fm-field">
+          ${dot(f)}<span class="fm-label">${esc(f.label)}</span>
+          <span class="fm-pct">${f.pct}%</span>
+        </div>`).join('')}</div>
+    </div>`).join('');
+}
+// searchPersonLinks stays a cheap count-only read (same pattern as
+// fetchTotalCount()) -- nothing in PEOPLE_STAT_GROUPS needs link documents,
+// only the person documents themselves and a total link count for the
+// summary line.
 async function fetchPeopleOwnershipCounts(){
   try {
-    const [peopleSnap, linksSnap] = await Promise.all([
-      getCountFromServer(collection(db, 'searchPeople')),
-      getCountFromServer(collection(db, 'searchPersonLinks')),
-    ]);
-    const people = peopleSnap.data().count, links = linksSnap.data().count;
-    addReads(Math.max(1, Math.ceil(people / 1000)) + Math.max(1, Math.ceil(links / 1000)));
-    return { people, links };
-  } catch(e){ console.error(e); return { people: null, links: null }; }
+    const linksSnap = await getCountFromServer(collection(db, 'searchPersonLinks'));
+    const links = linksSnap.data().count;
+    addReads(Math.max(1, Math.ceil(links / 1000)));
+    return { links };
+  } catch(e){ console.error(e); return { links: null }; }
 }
-function statBar(label, n, pctVal, total){
-  return `<div style="margin-bottom:8px;">
-    <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:3px;">
-      <span>${esc(label)}</span><span style="color:var(--text-light);">${n.toLocaleString('en')} of ${total.toLocaleString('en')} (${pctVal}%)</span>
-    </div>
-    <div style="height:6px;border-radius:3px;overflow:hidden;background:var(--border);">
-      <div style="height:100%;width:${pctVal}%;background:var(--primary);border-radius:3px;"></div>
-    </div>
-  </div>`;
+// searchPeople is loaded in full (not just counted) so PEOPLE_STAT_GROUPS can
+// compute per-field completion the same way COMPANY_STAT_GROUPS does for
+// companies. At the current scale (people in the low hundreds, pending the
+// full Phase 5 population import) this is a small, one-time cost, same
+// spirit as ensureFullDataset() for companies -- but once Phase 5 runs
+// this becomes ~26,700 reads per Statistics open, the same order of cost as
+// loading every company. If that turns out to matter in practice, this is
+// the spot to add the same cache/progress treatment ensureFullDataset() and
+// the Load-all button already have for companies -- not built pre-emptively
+// for a collection that is currently a few hundred documents.
+async function fetchAllPeople(){
+  try {
+    const snap = await getDocs(collection(db, 'searchPeople'));
+    addReads(snap.docs.length || 1);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e){ console.error(e); return []; }
 }
 async function openStatistics(){
   showEl('statisticsModal', true);
   document.getElementById('statisticsBody').innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);">Loading\u2026</div>';
   await ensureFullDataset();
   const stats = computeStats(companies);
-  const peopleOwnership = await fetchPeopleOwnershipCounts();
+  const [peopleOwnership, peopleDocs] = await Promise.all([fetchPeopleOwnershipCounts(), fetchAllPeople()]);
   if (document.getElementById('statisticsModal').style.display === 'none') return; // closed while loading
-  const c = stats.completeness;
+  const companyGroups = buildDocFieldReport(companies, COMPANY_STAT_GROUPS);
+  const peopleGroups = buildDocFieldReport(peopleDocs, PEOPLE_STAT_GROUPS);
   document.getElementById('statisticsBody').innerHTML = `
     <div class="modal-section-title">Pipeline</div>
     <div style="font-size:0.85rem;margin-bottom:14px;">
@@ -1779,23 +1888,13 @@ async function openStatistics(){
         ${Object.entries(SOURCE_LABELS).filter(([k]) => stats.bySource[k]).map(([k,label]) => `<div style="display:flex;justify-content:space-between;font-size:0.78rem;padding:2px 0;"><span>${esc(label)}</span><span>${stats.bySource[k]}</span></div>`).join('')}
       </div>
     </div>
-    <div class="modal-section-title">Data completeness</div>
-    <div style="margin-bottom:18px;">
-      ${statBar('NIF', c.nif.n, c.nif.pct, stats.total)}
-      ${statBar('Website', c.website.n, c.website.pct, stats.total)}
-      ${statBar('Financials (Y1 revenue)', c.financials.n, c.financials.pct, stats.total)}
-      ${statBar('Contacts', c.contacts.n, c.contacts.pct, stats.total)}
-      ${statBar('Postcode (map-geocodable)', c.postcode.n, c.postcode.pct, stats.total)}
-      ${statBar('Sector', c.sector.n, c.sector.pct, stats.total)}
-      ${statBar('Fit score', c.fitScore.n, c.fitScore.pct, stats.total)}
-      ${statBar('Ownership data (Ownership tab)', c.ownership.n, c.ownership.pct, stats.total)}
+    <div class="modal-section-title">Company field completion</div>
+    <div style="margin-bottom:18px;">${renderStatFieldGroups(companyGroups)}</div>
+    <div class="modal-section-title">People field completion</div>
+    <div style="font-size:0.82rem;color:var(--text-light);margin-bottom:10px;">
+      ${peopleDocs.length.toLocaleString('en')} people/entities \u00b7 ${(peopleOwnership.links ?? '\u2014').toLocaleString?.('en') ?? peopleOwnership.links} links
     </div>
-    <div class="modal-section-title">People &amp; Ownership</div>
-    <div style="font-size:0.85rem;">
-      ${peopleOwnership.people != null
-        ? `<strong>${peopleOwnership.people.toLocaleString('en')}</strong> people/entities \u00b7 <strong>${peopleOwnership.links.toLocaleString('en')}</strong> links across <strong>${c.ownership.n.toLocaleString('en')}</strong> companies (${c.ownership.pct}%)`
-        : 'Failed to load \u2014 see console.'}
-    </div>`;
+    <div>${peopleDocs.length ? renderStatFieldGroups(peopleGroups) : '<div style="font-size:0.85rem;color:var(--text-light);">No people yet \u2014 import ownership data or add a person from a company\u2019s Ownership tab.</div>'}</div>`;
 }
 
 async function seedBrokers(){
