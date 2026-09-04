@@ -2346,6 +2346,13 @@ async function openDetail(id, tab){
   showEl('listView', false); showEl('personView', false); showEl('detailView', true);
   window.scrollTo(0,0);
   setActiveTab(tab || 'overview');
+  // A company reached via a cross-reference (a graph node, a GUO link, a
+  // person's Positions table) may not be in the bounded "recently touched"
+  // window yet — load the full set first rather than rendering into an
+  // undefined company. The common case (opening a row already on screen)
+  // skips this entirely, since that company is already in `companies`.
+  if (!getCompany()) await ensureFullDataset();
+  if (currentCoId !== id) return;   // moved on while the full set was loading
   // Render from the company already in memory BEFORE waiting on anything.
   // Awaiting the activity fetch first left every panel showing the PREVIOUS
   // company for the length of a round-trip — most visibly the Ownership tab,
@@ -2574,7 +2581,7 @@ function renderContacts(c){
 }
 
 function renderActivityLog(){
-  const c = getCompany();
+  const c = getCompany(); if (!c) return;
   const today = new Date(); today.setHours(0,0,0,0);
   const overdue = activities.filter(a => a.status==='open' && tsToDate(a.date) < today);
   const overdueHtml = overdue.length ? `<div class="overdue-banner">
