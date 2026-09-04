@@ -1790,13 +1790,19 @@ const PEOPLE_STAT_GROUPS = [
     { key: 'birthDate', label: 'Birth date', test: p => !!p.birthDate },
     { key: 'orbisAge',  label: 'Orbis age',  test: p => p.orbisAge != null },
   ]},
-  { title: 'Contact \u2014 Orbis-sourced', fields:
-    PERSON_CONTACT_FIELDS.filter(f => f.orbis).map(f => ({ key: f.orbis, label: f.label, test: p => (p[f.orbis] || []).length > 0 }))
-      .concat([{ key: 'orbisWebsites', label: 'Website', test: p => (p.orbisWebsites || []).length > 0 }]),
-  },
-  { title: 'Contact \u2014 hand-entered', fields:
-    PERSON_CONTACT_FIELDS.map(f => ({ key: f.key, label: f.label, test: p => !!p[f.key] })),
-  },
+  { title: 'Contact \u2014 Orbis-sourced', get fields(){
+    // PERSON_CONTACT_FIELDS is declared later in the file (it lives next to
+    // the person-profile Contact card it belongs to) -- a plain top-level
+    // reference here would be a temporal-dead-zone crash the moment this
+    // module loads, before Statistics is ever opened. A getter defers the
+    // read to call time (inside buildDocFieldReport(), well after the whole
+    // module has finished loading), which is late enough either way.
+    return PERSON_CONTACT_FIELDS.filter(f => f.orbis).map(f => ({ key: f.orbis, label: f.label, test: p => (p[f.orbis] || []).length > 0 }))
+      .concat([{ key: 'orbisWebsites', label: 'Website', test: p => (p.orbisWebsites || []).length > 0 }]);
+  }},
+  { title: 'Contact \u2014 hand-entered', get fields(){
+    return PERSON_CONTACT_FIELDS.map(f => ({ key: f.key, label: f.label, test: p => !!p[f.key] }));
+  }},
   { title: 'Network', fields: [
     { key: 'linkCount', label: 'Has a position', test: p => (p.linkCount || 0) > 0 },
     { key: 'notes',     label: 'Notes',           test: p => !!p.notes },
