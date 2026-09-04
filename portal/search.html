@@ -5163,8 +5163,12 @@ async function renderNetworkGraph(container, focusType, focusId){
         return;
       }
       const id = el.dataset.gid, matched = el.dataset.gmatched;
-      if (t === 'company') openDetail(id);
-      else if (matched) openDetail(matched);          // corporate holder that IS a CRM company
+      // Land on Ownership, not Overview — clicking a node in the network is a
+      // network-browsing action, so the destination should be the tab that
+      // has its own network graph, keeping a click-through walk uninterrupted
+      // instead of dropping back to Overview after every hop.
+      if (t === 'company') openDetail(id, 'ownership');
+      else if (matched) openDetail(matched, 'ownership'); // corporate holder that IS a CRM company
       else openPerson(id, currentCoId ? { type:'company', id: currentCoId, tab:'ownership' } : { type:'list' });
     }));
   }
