@@ -4651,9 +4651,17 @@ function layoutGraph(g, W, H){
       const k = placed.get(key) || 0; placed.set(key, k + 1);
       let angle;
       if (!p || ring1.length <= 1){
-        // The graph's only ring-1 node has nothing nearby to avoid — spread
-        // its satellites all the way around it.
-        angle = (k / total) * Math.PI * 2 - Math.PI / 2;
+        // The graph's only ring-1 node has nothing ELSE nearby to avoid —
+        // except the edge running back to the focus itself. A full 2π
+        // sweep necessarily crosses that direction at its halfway point no
+        // matter where it starts, landing a satellite right on top of the
+        // focus↔parent line. Leave a gap there instead and spread the rest
+        // across the remaining arc, centred on the direction leading
+        // further away from the focus (the parent's own seed angle).
+        const away = p ? p.seedAngle : 0;
+        const gap = Math.PI / 4;
+        const arc = Math.PI * 2 - gap;
+        angle = total === 1 ? away : away - arc / 2 + (k / (total - 1)) * arc;
       } else {
         // Several companies in play: fan each one's satellites on the side
         // facing away from the shared centre, so they don't wander into a
