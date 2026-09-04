@@ -246,9 +246,13 @@
     .contact-grid label { display: flex; flex-direction: column; gap: 4px; }
     .contact-grid label > span { font-size: 0.72rem; color: var(--text-light); font-weight: 600; }
     .contact-grid label > em { font-size: 0.68rem; color: var(--text-light); font-style: normal; opacity: .8; }
-    .own-legend { display: flex; gap: 16px; font-size: 0.72rem; color: var(--text-light); margin-top: 10px; }
+    .own-legend { display: flex; gap: 16px; font-size: 0.72rem; color: var(--text-light); margin-top: 10px; flex-wrap: wrap; }
     .own-legend .cur::before { content: '—'; color: var(--primary); font-weight: 700; margin-right: 5px; }
     .own-legend .prv::before { content: '—'; color: #B9B2A6; font-weight: 700; margin-right: 5px; }
+    .own-legend .mgmt::before { content: '···'; color: var(--text-light); font-weight: 700; margin-right: 5px; letter-spacing: -1px; }
+    .graph-wrap { position: relative; }
+    .graph-controls { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; z-index: 2; }
+    .graph-controls .btn--icon { min-width: 26px; justify-content: center; background: var(--white); }
 
     /* Add-on links */
     .addon-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 6px; font-size: 0.82rem; }
@@ -4400,6 +4404,8 @@ async function handlePeopleFile(file){
 
 const GRAPH_RING1_CAP = 10;   // keeps a hub company readable
 const GRAPH_RING2_CAP = 6;    // per ring-1 node
+const GRAPH_ZOOM_MIN = 0.4;   // relative to the graph's native size
+const GRAPH_ZOOM_MAX = 2.6;
 
 function linkIsCurrent(l){ return l.shCurrent === true || l.mgmtCurrent === true; }
 function linkEdgeLabel(l){
@@ -4412,6 +4418,14 @@ function linkEdgeLabel(l){
   if (l.shCurrent === false || l.mgmtCurrent === false) bits.push('(previous)');
   return bits.join(' · ') || 'linked';
 }
+// Which facet(s) a relationship carries — drives the edge style below, so a
+// shareholder-only line reads differently from a management-only one even
+// when both happen to be current and the same colour.
+function linkRelation(l){
+  const hasSh = l.shDirectPct != null || l.shTotalPct != null || l.shCurrent != null;
+  const hasMgmt = (l.mgmtRoles || []).length > 0 || l.mgmtCurrent != null;
+  return hasSh && hasMgmt ? 'both' : hasMgmt ? 'mgmt' : 'sh';
+}
 // Bigger holdings and current relationships first, so the caps drop the least
 // interesting links rather than an arbitrary slice.
 function graphLinkRank(a, b){
@@ -4419,11 +4433,23 @@ function graphLinkRank(a, b){
   if (cur) return cur;
   return (b.shDirectPct || 0) - (a.shDirectPct || 0);
 }
+// A company Orbis records as having no controlling owner above it — either
+// genuinely independent, or itself the top of a group (a GUO). Same test as
+// headerOwner()/resolveOwnership(); surfaced on the graph as a small badge so
+// the top of an ownership chain is visible without opening each company.
+function isGuoCompany(company){
+  const t = String(company?.ownershipMeta?.entityType || '').trim();
+  return !!t && (/independent/i.test(t) || /^guo$/i.test(t));
+}
 
-async function buildGraph(focusType, focusId, depth = 1){
+// `expandRing1`/`expandRing2` lift the caps below for one graph without
+// re-fetching anything — every link involved is already in the client-side
+// cache (fetchCompanyLinks/fetchPersonLinks), so an expand is a free re-slice
+// of data already in memory, not a new read.
+async function buildGraph(focusType, focusId, opts = {}){
+  const { depth = 1, expandRing1 = false, expandRing2 = new Set() } = opts;
   const nodes = new Map(), edges = [], seenEdge = new Set();
-  let overflow = 0;
-  const key = (t, id) => (t === 'person' ? 'p:' : 'c:') + id;
+  const key = (t, id) => (t === 'person' ? 'p:' : t === 'company' ? 'c:' : 'm:') + id;
   const add = (t, id, label, extra = {}) => {
     const k = key(t, id);
     if (!nodes.has(k)) nodes.set(k, { id:k, refId:id, type:t, label: label || '—', ring: extra.ring ?? 9, ...extra });
@@ -4434,51 +4460,80 @@ async function buildGraph(focusType, focusId, depth = 1){
     const k = aK < bK ? aK + '|' + bK : bK + '|' + aK;
     if (seenEdge.has(k) || aK === bK) return;
     seenEdge.add(k);
-    edges.push({ a:aK, b:bK, current: linkIsCurrent(l), label: linkEdgeLabel(l), pct: l.shDirectPct });
+    edges.push({ a:aK, b:bK, current: linkIsCurrent(l), label: linkEdgeLabel(l), pct: l.shDirectPct, relation: linkRelation(l) });
+  };
+  // A "+N more" placeholder node stands in for links a ring cap dropped.
+  const addMoreEdge = (aK, bK) => {
+    const k = aK < bK ? aK + '|' + bK : bK + '|' + aK;
+    if (seenEdge.has(k)) return;
+    seenEdge.add(k);
+    edges.push({ a:aK, b:bK, more:true });
   };
 
   if (focusType === 'company'){
     const co = companies.find(c => c.id === focusId);
     add('company', focusId, co?.name || 'This company', { ring:0, focus:true });
-    let links = [...await fetchCompanyLinks(focusId)].sort(graphLinkRank);
-    if (links.length > GRAPH_RING1_CAP){ overflow += links.length - GRAPH_RING1_CAP; links = links.slice(0, GRAPH_RING1_CAP); }
-    for (const l of links){
+    const allLinks = [...await fetchCompanyLinks(focusId)].sort(graphLinkRank);
+    const ring1Links = expandRing1 ? allLinks : allLinks.slice(0, GRAPH_RING1_CAP);
+    const ring1Overflow = expandRing1 ? 0 : Math.max(0, allLinks.length - GRAPH_RING1_CAP);
+    for (const l of ring1Links){
       add('person', l.personId, l.personName, { ring:1, entityType:l.personEntityType, matchedCompanyId:l.personMatchedCompanyId });
       addEdge(key('company', focusId), key('person', l.personId), l);
     }
+    if (ring1Overflow > 0){
+      add('more', 'ring1', `+${ring1Overflow} more`, { ring:1, moreCount:ring1Overflow, expandKind:'ring1' });
+      addMoreEdge(key('company', focusId), key('more', 'ring1'));
+    }
     if (depth >= 1){
-      const sets = await Promise.all(links.map(l => fetchPersonLinks(l.personId)));
-      links.forEach((l, i) => {
-        let others = sets[i].filter(x => x.companyId !== focusId).sort(graphLinkRank);
-        if (others.length > GRAPH_RING2_CAP){ overflow += others.length - GRAPH_RING2_CAP; others = others.slice(0, GRAPH_RING2_CAP); }
+      const sets = await Promise.all(ring1Links.map(l => fetchPersonLinks(l.personId)));
+      ring1Links.forEach((l, i) => {
+        const allOthers = sets[i].filter(x => x.companyId !== focusId).sort(graphLinkRank);
+        const expanded = expandRing2.has(l.personId);
+        const others = expanded ? allOthers : allOthers.slice(0, GRAPH_RING2_CAP);
+        const ring2Overflow = expanded ? 0 : Math.max(0, allOthers.length - GRAPH_RING2_CAP);
         for (const o of others){
           add('company', o.companyId, o.companyName, { ring:2 });
           addEdge(key('person', l.personId), key('company', o.companyId), o);
+        }
+        if (ring2Overflow > 0){
+          add('more', 'r2:' + l.personId, `+${ring2Overflow} more`, { ring:2, moreCount:ring2Overflow, expandKind:'ring2', expandKey:l.personId });
+          addMoreEdge(key('person', l.personId), key('more', 'r2:' + l.personId));
         }
       });
     }
   } else {
     const p = personDocCache.get(focusId) || await fetchPerson(focusId).catch(() => null);
     add('person', focusId, p?.name || 'This person', { ring:0, focus:true, entityType:p?.entityType });
-    let links = [...await fetchPersonLinks(focusId)].sort(graphLinkRank);
-    if (links.length > GRAPH_RING1_CAP){ overflow += links.length - GRAPH_RING1_CAP; links = links.slice(0, GRAPH_RING1_CAP); }
-    for (const l of links){
+    const allLinks = [...await fetchPersonLinks(focusId)].sort(graphLinkRank);
+    const ring1Links = expandRing1 ? allLinks : allLinks.slice(0, GRAPH_RING1_CAP);
+    const ring1Overflow = expandRing1 ? 0 : Math.max(0, allLinks.length - GRAPH_RING1_CAP);
+    for (const l of ring1Links){
       add('company', l.companyId, l.companyName, { ring:1 });
       addEdge(key('person', focusId), key('company', l.companyId), l);
     }
+    if (ring1Overflow > 0){
+      add('more', 'ring1', `+${ring1Overflow} more`, { ring:1, moreCount:ring1Overflow, expandKind:'ring1' });
+      addMoreEdge(key('person', focusId), key('more', 'ring1'));
+    }
     if (depth >= 1){
-      const sets = await Promise.all(links.map(l => fetchCompanyLinks(l.companyId)));
-      links.forEach((l, i) => {
-        let others = sets[i].filter(x => x.personId !== focusId).sort(graphLinkRank);
-        if (others.length > GRAPH_RING2_CAP){ overflow += others.length - GRAPH_RING2_CAP; others = others.slice(0, GRAPH_RING2_CAP); }
+      const sets = await Promise.all(ring1Links.map(l => fetchCompanyLinks(l.companyId)));
+      ring1Links.forEach((l, i) => {
+        const allOthers = sets[i].filter(x => x.personId !== focusId).sort(graphLinkRank);
+        const expanded = expandRing2.has(l.companyId);
+        const others = expanded ? allOthers : allOthers.slice(0, GRAPH_RING2_CAP);
+        const ring2Overflow = expanded ? 0 : Math.max(0, allOthers.length - GRAPH_RING2_CAP);
         for (const o of others){
           add('person', o.personId, o.personName, { ring:2, entityType:o.personEntityType, matchedCompanyId:o.personMatchedCompanyId });
           addEdge(key('company', l.companyId), key('person', o.personId), o);
         }
+        if (ring2Overflow > 0){
+          add('more', 'r2:' + l.companyId, `+${ring2Overflow} more`, { ring:2, moreCount:ring2Overflow, expandKind:'ring2', expandKey:l.companyId });
+          addMoreEdge(key('company', l.companyId), key('more', 'r2:' + l.companyId));
+        }
       });
     }
   }
-  return { nodes:[...nodes.values()], edges, overflow };
+  return { nodes:[...nodes.values()], edges };
 }
 
 // Deterministic radial seed (stable across renders — the same graph always
@@ -4614,92 +4669,232 @@ function graphInitials(label){
 }
 function graphTrim(s, n){ s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
+// Pan/zoom a rendered graph via its viewBox: drag on empty canvas to pan,
+// Ctrl/Cmd + scroll to zoom toward the cursor (plain scroll is left alone so
+// it doesn't hijack the page's own scrolling). Returns zoomIn/zoomOut/reset
+// for the toolbar buttons plus destroy() — draw() below tears the previous
+// instance down before building the next, so re-rendering (recentring,
+// expanding a "+N more" node) never leaves a stale window-level listener.
+function attachGraphZoomPan(svg, initW, initH){
+  const vb = { x:0, y:0, w:initW, h:initH };
+  const minW = initW * GRAPH_ZOOM_MIN, maxW = initW * GRAPH_ZOOM_MAX;
+  const apply = () => svg.setAttribute('viewBox', `${vb.x.toFixed(1)} ${vb.y.toFixed(1)} ${vb.w.toFixed(1)} ${vb.h.toFixed(1)}`);
+  const zoomAt = (factor, cx, cy) => {
+    const nw = Math.max(minW, Math.min(maxW, vb.w * factor));
+    if (nw === vb.w) return;
+    const actual = nw / vb.w;
+    const fx = (cx - vb.x) / vb.w, fy = (cy - vb.y) / vb.h;
+    vb.w *= actual; vb.h *= actual;
+    vb.x = cx - fx * vb.w; vb.y = cy - fy * vb.h;
+    apply();
+  };
+  const toSvgPoint = (evt) => {
+    const pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
+    const m = svg.getScreenCTM();
+    return m ? pt.matrixTransform(m.inverse()) : { x: vb.x + vb.w / 2, y: vb.y + vb.h / 2 };
+  };
+  const onWheel = (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;   // plain scroll: leave page scrolling alone
+    e.preventDefault();
+    const p = toSvgPoint(e);
+    zoomAt(e.deltaY > 0 ? 1.15 : 1 / 1.15, p.x, p.y);
+  };
+  let dragging = false, last = null;
+  const onDown = (e) => {
+    if (e.target.closest('.gnode')) return;   // let node clicks work normally
+    dragging = true; last = { x:e.clientX, y:e.clientY };
+    svg.style.cursor = 'grabbing';
+  };
+  const onMove = (e) => {
+    if (!dragging) return;
+    const rect = svg.getBoundingClientRect();
+    const scale = vb.w / (rect.width || 1);
+    vb.x -= (e.clientX - last.x) * scale;
+    vb.y -= (e.clientY - last.y) * scale;
+    last = { x:e.clientX, y:e.clientY };
+    apply();
+  };
+  const onUp = () => { if (dragging){ dragging = false; svg.style.cursor = ''; } };
+
+  svg.addEventListener('wheel', onWheel, { passive:false });
+  svg.addEventListener('mousedown', onDown);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+
+  return {
+    zoomIn: () => zoomAt(1 / 1.3, vb.x + vb.w / 2, vb.y + vb.h / 2),
+    zoomOut: () => zoomAt(1.3, vb.x + vb.w / 2, vb.y + vb.h / 2),
+    reset: () => { vb.x = 0; vb.y = 0; vb.w = initW; vb.h = initH; apply(); },
+    destroy(){
+      svg.removeEventListener('wheel', onWheel);
+      svg.removeEventListener('mousedown', onDown);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    },
+  };
+}
+
 async function renderNetworkGraph(container, focusType, focusId){
   if (!container) return;
-  container.innerHTML = '<div style="font-size:0.82rem;color:var(--text-light);">Building network…</div>';
-  let g;
-  try { g = await buildGraph(focusType, focusId); }
-  catch(e){ console.error(e); container.innerHTML = `<div class="modal-err" style="display:block;">Couldn't build the network: ${esc(e.message)}</div>`; return; }
-  // The panel may have been re-rendered (or the user navigated away) while the
-  // ring-2 queries were in flight — don't write into a detached container.
-  if (!container.isConnected) return;
-  if (!g.edges.length){
-    container.innerHTML = '<div style="font-size:0.82rem;color:var(--text-light);">No connections yet — import ownership data or add a person on the Ownership tab.</div>';
-    return;
+  // Expand state lives in this closure, not in buildGraph's result, so
+  // clicking a "+N more" chip can re-run draw() and have the graph remember
+  // it was expanded without a full component re-mount.
+  let expandRing1 = false;
+  const expandRing2 = new Set();
+  let controls = null;
+
+  async function draw(){
+    container.innerHTML = '<div style="font-size:0.82rem;color:var(--text-light);">Building network…</div>';
+    let g;
+    try { g = await buildGraph(focusType, focusId, { expandRing1, expandRing2 }); }
+    catch(e){ console.error(e); container.innerHTML = `<div class="modal-err" style="display:block;">Couldn't build the network: ${esc(e.message)}</div>`; return; }
+    // The panel may have been re-rendered (or the user navigated away) while
+    // the ring-2 queries were in flight — don't write into a detached container.
+    if (!container.isConnected) return;
+    if (!g.edges.length){
+      container.innerHTML = '<div style="font-size:0.82rem;color:var(--text-light);">No connections yet — import ownership data or add a person on the Ownership tab.</div>';
+      return;
+    }
+
+    // Taller canvas as the graph grows, so the relaxation has room to separate
+    // nodes instead of clamping them all against the edges.
+    const W = 760, H = Math.max(400, Math.min(620, 300 + g.nodes.length * 22));
+    layoutGraph(g, W, H);
+    const at = id => g.nodes.find(n => n.id === id);
+    const CUR = 'var(--primary)', PREV = '#B9B2A6';
+
+    // Trim each end back to the node's edge so lines don't run under the shape —
+    // and further when the edge heads downward, so it clears that node's own
+    // caption instead of striking through it.
+    const trimAt = (from, to) => {
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const isCo = from.type === 'company' || from.entityType === 'entity';
+      const base = isCo ? 24 : 23;
+      const down = dy / d;                        // 1 = straight down
+      const clear = base + Math.max(0, down) * 26; // caption sits ~26px lower
+      return { x: from.x + dx / d * Math.min(clear, d * 0.45), y: from.y + dy / d * Math.min(clear, d * 0.45) };
+    };
+
+    const edgeSvg = g.edges.map(e => {
+      const a0 = at(e.a), b0 = at(e.b);
+      if (!a0 || !b0) return '';
+      const a = trimAt(a0, b0), b = trimAt(b0, a0);
+      if (e.more){
+        return `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"
+          stroke="#C9C2B4" stroke-width="1.2" stroke-linecap="round" stroke-dasharray="2 3" opacity="0.55"/>`;
+      }
+      const baseW = e.pct != null ? (1.2 + Math.min(e.pct, 100) / 100 * 2.2) : 1.4;
+      const w = e.relation === 'both' ? baseW + 0.6 : baseW;
+      // Shareholder edges keep the original solid/dashed-for-previous look;
+      // management-only edges get a dotted pattern instead so the two facets
+      // read apart even when both are current and the same colour. A "both"
+      // relationship stays solid (just thicker) — it's still fundamentally a
+      // current/previous distinction, not a third pattern to learn.
+      const dash = e.relation === 'mgmt'
+        ? (e.current ? '1.5 3' : '2 4')
+        : (e.current ? '' : '5 4');
+      const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+      const pctTag = e.pct != null
+        ? `<text x="${midX.toFixed(1)}" y="${(midY - 5).toFixed(1)}" text-anchor="middle" font-size="9.5" font-weight="700"
+             fill="${e.current ? CUR : PREV}" stroke="#FFFFFF" stroke-width="3" paint-order="stroke">${e.pct}%</text>`
+        : '';
+      return `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"
+        stroke="${e.current ? CUR : PREV}" stroke-width="${w.toFixed(2)}" stroke-linecap="round"
+        ${dash ? `stroke-dasharray="${dash}"` : ''} opacity="${e.current ? 0.75 : 0.6}">
+        <title>${esc(a0.label)} — ${esc(b0.label)}: ${esc(e.label)}</title></line>${pctTag}`;
+    }).join('');
+
+    const nodeSvg = g.nodes.map(n => {
+      if (n.type === 'more'){
+        return `<g class="gnode" data-gtype="more" data-gexpandkind="${esc(n.expandKind)}" data-gexpandkey="${esc(n.expandKey || '')}" style="cursor:pointer;">
+          <title>${n.moreCount} more connection${n.moreCount === 1 ? '' : 's'} — click to show</title>
+          <circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="17" fill="#F4F1EA" stroke="#B9B2A6" stroke-width="1.5" stroke-dasharray="3 3"/>
+          <text x="${n.x.toFixed(1)}" y="${(n.y + 4).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="var(--text-light)">+${n.moreCount}</text>
+          <text x="${n.x.toFixed(1)}" y="${(n.y + 32).toFixed(1)}" text-anchor="middle" font-size="10" fill="var(--text-light)"
+            stroke="#FFFFFF" stroke-width="3.5" paint-order="stroke">more</text>
+        </g>`;
+      }
+      const dim = n.ring === 2 ? 0.82 : 1;
+      const isCo = n.type === 'company' || (n.type === 'person' && n.entityType === 'entity');
+      const label = graphTrim(n.label, n.focus ? 30 : 22);
+      const stroke = n.focus ? 'var(--primary)' : (isCo ? '#9C7A3C' : 'var(--primary)');
+      const fill = n.focus ? 'var(--primary)' : '#FFFFFF';
+      const txt = n.focus ? '#FFFFFF' : 'var(--text)';
+      const guo = n.type === 'company' && isGuoCompany(companies.find(c => c.id === n.refId));
+      const shape = isCo
+        ? `<rect x="${(n.x-26).toFixed(1)}" y="${(n.y-19).toFixed(1)}" width="52" height="38" rx="8"
+             fill="${fill}" stroke="${stroke}" stroke-width="${n.focus?2.5:1.6}"/>
+           <text x="${n.x.toFixed(1)}" y="${(n.y+5).toFixed(1)}" text-anchor="middle" font-size="15" fill="${txt}">🏢</text>`
+        : `<circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="21"
+             fill="${fill}" stroke="${stroke}" stroke-width="${n.focus?2.5:1.6}"/>
+           <text x="${n.x.toFixed(1)}" y="${(n.y+4).toFixed(1)}" text-anchor="middle" font-size="11"
+             font-weight="700" fill="${txt}">${esc(graphInitials(n.label))}</text>`;
+      const guoBadge = guo
+        ? `<circle cx="${(n.x+22).toFixed(1)}" cy="${(n.y-15).toFixed(1)}" r="9" fill="#FFFFFF" stroke="#9C7A3C" stroke-width="1.2"/>
+           <text x="${(n.x+22).toFixed(1)}" y="${(n.y-11.5).toFixed(1)}" text-anchor="middle" font-size="9">🏛</text>`
+        : '';
+      return `<g class="gnode" data-gtype="${isCo && n.type==='company' ? 'company' : n.type}" data-gid="${esc(n.refId)}"
+          data-gmatched="${esc(n.matchedCompanyId || '')}" style="cursor:pointer;opacity:${dim}">
+        <title>${esc(n.label)}${n.focus ? ' (current view)' : ' — click to centre on this'}${guo ? ' · Orbis records no controlling owner above this company' : ''}</title>
+        ${shape}${guoBadge}
+        <text x="${n.x.toFixed(1)}" y="${(n.y + (isCo ? 34 : 37)).toFixed(1)}" text-anchor="middle"
+          font-size="10.5" fill="var(--text-light)"
+          stroke="#FFFFFF" stroke-width="3.5" paint-order="stroke"
+          style="font-weight:${n.focus ? 600 : 400};">${esc(label)}</text>
+      </g>`;
+    }).join('');
+
+    const hasMgmtEdge = g.edges.some(e => e.relation === 'mgmt');
+    const hasGuoNode = g.nodes.some(n => n.type === 'company' && isGuoCompany(companies.find(c => c.id === n.refId)));
+
+    container.innerHTML = `
+      <div class="graph-wrap">
+        <div class="graph-controls">
+          <button type="button" class="btn btn--ghost btn--icon" data-gzoom="in" title="Zoom in">＋</button>
+          <button type="button" class="btn btn--ghost btn--icon" data-gzoom="out" title="Zoom out">－</button>
+          <button type="button" class="btn btn--ghost btn--icon" data-gzoom="reset" title="Reset view">↺</button>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-width:100%;display:block;touch-action:none;" xmlns="http://www.w3.org/2000/svg">
+          <g>${edgeSvg}</g><g>${nodeSvg}</g>
+        </svg>
+      </div>
+      <div class="own-legend" style="justify-content:space-between;">
+        <span>
+          <span class="cur">currently</span>
+          <span class="prv" style="margin-left:14px;">previously</span>
+          ${hasMgmtEdge ? `<span class="mgmt" style="margin-left:14px;">management</span>` : ''}
+          ${hasGuoNode ? `<span style="margin-left:14px;">🏛 no controlling owner above</span>` : ''}
+        </span>
+        <span>click a node to centre · ⌃ scroll or drag to zoom/pan</span>
+      </div>`;
+
+    controls?.destroy?.();
+    controls = attachGraphZoomPan(container.querySelector('svg'), W, H);
+    container.querySelectorAll('[data-gzoom]').forEach(btn => btn.addEventListener('click', () => {
+      const k = btn.dataset.gzoom;
+      if (k === 'in') controls.zoomIn();
+      else if (k === 'out') controls.zoomOut();
+      else controls.reset();
+    }));
+
+    container.querySelectorAll('.gnode').forEach(el => el.addEventListener('click', () => {
+      const t = el.dataset.gtype;
+      if (t === 'more'){
+        const kind = el.dataset.gexpandkind;
+        if (kind === 'ring1') expandRing1 = true;
+        else if (kind === 'ring2') expandRing2.add(el.dataset.gexpandkey);
+        draw();
+        return;
+      }
+      const id = el.dataset.gid, matched = el.dataset.gmatched;
+      if (t === 'company') openDetail(id);
+      else if (matched) openDetail(matched);          // corporate holder that IS a CRM company
+      else openPerson(id, currentCoId ? { type:'company', id: currentCoId, tab:'ownership' } : { type:'list' });
+    }));
   }
 
-  // Taller canvas as the graph grows, so the relaxation has room to separate
-  // nodes instead of clamping them all against the edges.
-  const W = 760, H = Math.max(400, Math.min(620, 300 + g.nodes.length * 22));
-  layoutGraph(g, W, H);
-  const at = id => g.nodes.find(n => n.id === id);
-  const CUR = 'var(--primary)', PREV = '#B9B2A6';
-
-  // Trim each end back to the node's edge so lines don't run under the shape —
-  // and further when the edge heads downward, so it clears that node's own
-  // caption instead of striking through it.
-  const trimAt = (from, to) => {
-    const dx = to.x - from.x, dy = to.y - from.y;
-    const d = Math.hypot(dx, dy) || 1;
-    const isCo = from.type === 'company' || from.entityType === 'entity';
-    const base = isCo ? 24 : 23;
-    const down = dy / d;                        // 1 = straight down
-    const clear = base + Math.max(0, down) * 26; // caption sits ~26px lower
-    return { x: from.x + dx / d * Math.min(clear, d * 0.45), y: from.y + dy / d * Math.min(clear, d * 0.45) };
-  };
-
-  const edgeSvg = g.edges.map(e => {
-    const a0 = at(e.a), b0 = at(e.b);
-    if (!a0 || !b0) return '';
-    const a = trimAt(a0, b0), b = trimAt(b0, a0);
-    const w = e.pct != null ? (1.2 + Math.min(e.pct, 100) / 100 * 2.2) : 1.4;
-    return `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"
-      stroke="${e.current ? CUR : PREV}" stroke-width="${w.toFixed(2)}" stroke-linecap="round"
-      ${e.current ? '' : 'stroke-dasharray="5 4"'} opacity="${e.current ? 0.75 : 0.6}">
-      <title>${esc(a0.label)} — ${esc(b0.label)}: ${esc(e.label)}</title></line>`;
-  }).join('');
-
-  const nodeSvg = g.nodes.map(n => {
-    const dim = n.ring === 2 ? 0.82 : 1;
-    const isCo = n.type === 'company' || (n.type === 'person' && n.entityType === 'entity');
-    const label = graphTrim(n.label, n.focus ? 30 : 22);
-    const stroke = n.focus ? 'var(--primary)' : (isCo ? '#9C7A3C' : 'var(--primary)');
-    const fill = n.focus ? 'var(--primary)' : '#FFFFFF';
-    const txt = n.focus ? '#FFFFFF' : 'var(--text)';
-    const shape = isCo
-      ? `<rect x="${(n.x-26).toFixed(1)}" y="${(n.y-19).toFixed(1)}" width="52" height="38" rx="8"
-           fill="${fill}" stroke="${stroke}" stroke-width="${n.focus?2.5:1.6}"/>
-         <text x="${n.x.toFixed(1)}" y="${(n.y+5).toFixed(1)}" text-anchor="middle" font-size="15" fill="${txt}">🏢</text>`
-      : `<circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="21"
-           fill="${fill}" stroke="${stroke}" stroke-width="${n.focus?2.5:1.6}"/>
-         <text x="${n.x.toFixed(1)}" y="${(n.y+4).toFixed(1)}" text-anchor="middle" font-size="11"
-           font-weight="700" fill="${txt}">${esc(graphInitials(n.label))}</text>`;
-    return `<g class="gnode" data-gtype="${isCo && n.type==='company' ? 'company' : n.type}" data-gid="${esc(n.refId)}"
-        data-gmatched="${esc(n.matchedCompanyId || '')}" style="cursor:pointer;opacity:${dim}">
-      <title>${esc(n.label)}${n.focus ? ' (current view)' : ' — click to centre on this'}</title>
-      ${shape}
-      <text x="${n.x.toFixed(1)}" y="${(n.y + (isCo ? 34 : 37)).toFixed(1)}" text-anchor="middle"
-        font-size="10.5" fill="var(--text-light)"
-        stroke="#FFFFFF" stroke-width="3.5" paint-order="stroke"
-        style="font-weight:${n.focus ? 600 : 400};">${esc(label)}</text>
-    </g>`;
-  }).join('');
-
-  container.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-width:100%;display:block;" xmlns="http://www.w3.org/2000/svg">
-      <g>${edgeSvg}</g><g>${nodeSvg}</g>
-    </svg>
-    <div class="own-legend" style="justify-content:space-between;">
-      <span><span class="cur">currently</span> <span class="prv" style="margin-left:14px;">previously</span></span>
-      <span>${g.overflow ? `<strong>showing ${g.nodes.length - 1} of ${g.nodes.length - 1 + g.overflow}</strong> connections · ` : ''}click a node to centre on it</span>
-    </div>`;
-
-  container.querySelectorAll('.gnode').forEach(el => el.addEventListener('click', () => {
-    const t = el.dataset.gtype, id = el.dataset.gid, matched = el.dataset.gmatched;
-    if (t === 'company') openDetail(id);
-    else if (matched) openDetail(matched);          // corporate holder that IS a CRM company
-    else openPerson(id, currentCoId ? { type:'company', id: currentCoId, tab:'ownership' } : { type:'list' });
-  }));
+  await draw();
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
