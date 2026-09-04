@@ -356,6 +356,7 @@
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn--ghost" id="settingsBtn">⚙ Settings</button>
+        <button class="btn btn--ghost" id="statisticsBtn">📊 Statistics</button>
         <button class="btn btn--ghost" id="exportBtn">⬇ Export CSV</button>
         <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
         <button class="btn btn--ghost" id="peopleImportBtn">🧑‍💼 Import People</button>
@@ -753,6 +754,16 @@
 </div>
 
 <!-- Settings modal -->
+<div class="overlay" id="statisticsModal" style="display:none;">
+  <div class="modal modal--lg">
+    <div class="modal-title">Statistics</div>
+    <div id="statisticsBody"><div style="font-size:0.85rem;color:var(--text-light);">Loading…</div></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="statisticsCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="settingsModal" style="display:none;">
   <div class="modal modal--lg">
     <div class="modal-title">Settings</div>
@@ -1667,6 +1678,124 @@ async function fetchTotalCount(){
   } catch(e) { cachedTotalCount = null; }
   renderSummary();
   renderReadsAndFreshness();
+}
+
+// ── Statistics view ─────────────────────────────────────────────────────────
+// Pure function (no DOM, no Firestore) so it's testable directly: what
+// fraction of the pipeline actually has a website, a NIF, financials, ... --
+// the same "how complete is this data" question the import field-mapping
+// panel already answers for a file about to be imported, asked here about
+// the CRM as it stands today. Kept separate from renderSummary()'s pipeline
+// pills, which answer a different question (funnel by stage).
+function computeStats(companies){
+  const total = companies.length;
+  const pct = n => total ? Math.round((n / total) * 1000) / 10 : 0;
+  const byStage = {}; STAGE_ORDER.forEach(k => byStage[k] = 0);
+  const byOwner = { andre: 0, antonio: 0, unassigned: 0 };
+  const bySource = { unassigned: 0 }; Object.keys(SOURCE_LABELS).forEach(k => bySource[k] = 0);
+  let withNif = 0, withWebsite = 0, withFinancials = 0, withContacts = 0,
+      withPostcode = 0, withSector = 0, withFit = 0, withOwnership = 0;
+  let fitSum = 0, fitCount = 0;
+  for (const c of companies){
+    if (byStage[c.stage] != null) byStage[c.stage]++;
+    if (c.owner === 'andre' || c.owner === 'antonio') byOwner[c.owner]++; else byOwner.unassigned++;
+    if (c.sourceType && bySource[c.sourceType] != null) bySource[c.sourceType]++; else bySource.unassigned++;
+    if (c.nif) withNif++;
+    if (c.website) withWebsite++;
+    if (c.financials?.Y1?.revenue) withFinancials++;
+    if ((c.contacts || []).length) withContacts++;
+    if (c.postcode) withPostcode++;
+    if (c.sector) withSector++;
+    if (c.fitScore != null){ withFit++; fitSum += c.fitScore; fitCount++; }
+    if (c.peopleCounts && ((c.peopleCounts.sh || 0) + (c.peopleCounts.mgmt || 0) > 0)) withOwnership++;
+  }
+  const inactiveStages = ['pass', 'closed'];
+  const active = total - inactiveStages.reduce((sum, k) => sum + (byStage[k] || 0), 0);
+  return {
+    total, active,
+    avgFit: fitCount ? Math.round((fitSum / fitCount) * 10) / 10 : null,
+    byStage, byOwner, bySource,
+    completeness: {
+      nif:         { n: withNif,        pct: pct(withNif) },
+      website:     { n: withWebsite,    pct: pct(withWebsite) },
+      financials:  { n: withFinancials, pct: pct(withFinancials) },
+      contacts:    { n: withContacts,   pct: pct(withContacts) },
+      postcode:    { n: withPostcode,   pct: pct(withPostcode) },
+      sector:      { n: withSector,     pct: pct(withSector) },
+      fitScore:    { n: withFit,        pct: pct(withFit) },
+      ownership:   { n: withOwnership,  pct: pct(withOwnership) },
+    },
+  };
+}
+// searchPeople/searchPersonLinks can reach ~60-100k docs at full scale, so
+// this is two cheap aggregation reads (same pattern as fetchTotalCount()),
+// never a full load.
+async function fetchPeopleOwnershipCounts(){
+  try {
+    const [peopleSnap, linksSnap] = await Promise.all([
+      getCountFromServer(collection(db, 'searchPeople')),
+      getCountFromServer(collection(db, 'searchPersonLinks')),
+    ]);
+    const people = peopleSnap.data().count, links = linksSnap.data().count;
+    addReads(Math.max(1, Math.ceil(people / 1000)) + Math.max(1, Math.ceil(links / 1000)));
+    return { people, links };
+  } catch(e){ console.error(e); return { people: null, links: null }; }
+}
+function statBar(label, n, pctVal, total){
+  return `<div style="margin-bottom:8px;">
+    <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:3px;">
+      <span>${esc(label)}</span><span style="color:var(--text-light);">${n.toLocaleString('en')} of ${total.toLocaleString('en')} (${pctVal}%)</span>
+    </div>
+    <div style="height:6px;border-radius:3px;overflow:hidden;background:var(--border);">
+      <div style="height:100%;width:${pctVal}%;background:var(--primary);border-radius:3px;"></div>
+    </div>
+  </div>`;
+}
+async function openStatistics(){
+  showEl('statisticsModal', true);
+  document.getElementById('statisticsBody').innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);">Loading\u2026</div>';
+  await ensureFullDataset();
+  const stats = computeStats(companies);
+  const peopleOwnership = await fetchPeopleOwnershipCounts();
+  if (document.getElementById('statisticsModal').style.display === 'none') return; // closed while loading
+  const c = stats.completeness;
+  document.getElementById('statisticsBody').innerHTML = `
+    <div class="modal-section-title">Pipeline</div>
+    <div style="font-size:0.85rem;margin-bottom:14px;">
+      <strong>${stats.total.toLocaleString('en')}</strong> companies \u00b7
+      <strong>${stats.active.toLocaleString('en')}</strong> active \u00b7
+      avg fit <strong>${stats.avgFit ?? '\u2014'}</strong>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;">
+      <div>
+        <div style="font-size:0.76rem;font-weight:600;color:var(--text-light);margin-bottom:6px;">By stage</div>
+        ${STAGE_ORDER.filter(k => stats.byStage[k]).map(k => `<div style="display:flex;justify-content:space-between;font-size:0.78rem;padding:2px 0;"><span>${esc(STAGES[k].label)}</span><span>${stats.byStage[k]}</span></div>`).join('')}
+      </div>
+      <div>
+        <div style="font-size:0.76rem;font-weight:600;color:var(--text-light);margin-bottom:6px;">By owner / source</div>
+        <div style="display:flex;justify-content:space-between;font-size:0.78rem;padding:2px 0;"><span>Andr\u00e9</span><span>${stats.byOwner.andre}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:0.78rem;padding:2px 0;"><span>Ant\u00f3nio</span><span>${stats.byOwner.antonio}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:0.78rem;padding:2px 0;"><span>Unassigned</span><span>${stats.byOwner.unassigned}</span></div>
+        ${Object.entries(SOURCE_LABELS).filter(([k]) => stats.bySource[k]).map(([k,label]) => `<div style="display:flex;justify-content:space-between;font-size:0.78rem;padding:2px 0;"><span>${esc(label)}</span><span>${stats.bySource[k]}</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="modal-section-title">Data completeness</div>
+    <div style="margin-bottom:18px;">
+      ${statBar('NIF', c.nif.n, c.nif.pct, stats.total)}
+      ${statBar('Website', c.website.n, c.website.pct, stats.total)}
+      ${statBar('Financials (Y1 revenue)', c.financials.n, c.financials.pct, stats.total)}
+      ${statBar('Contacts', c.contacts.n, c.contacts.pct, stats.total)}
+      ${statBar('Postcode (map-geocodable)', c.postcode.n, c.postcode.pct, stats.total)}
+      ${statBar('Sector', c.sector.n, c.sector.pct, stats.total)}
+      ${statBar('Fit score', c.fitScore.n, c.fitScore.pct, stats.total)}
+      ${statBar('Ownership data (Ownership tab)', c.ownership.n, c.ownership.pct, stats.total)}
+    </div>
+    <div class="modal-section-title">People &amp; Ownership</div>
+    <div style="font-size:0.85rem;">
+      ${peopleOwnership.people != null
+        ? `<strong>${peopleOwnership.people.toLocaleString('en')}</strong> people/entities \u00b7 <strong>${peopleOwnership.links.toLocaleString('en')}</strong> links across <strong>${c.ownership.n.toLocaleString('en')}</strong> companies (${c.ownership.pct}%)`
+        : 'Failed to load \u2014 see console.'}
+    </div>`;
 }
 
 async function seedBrokers(){
@@ -5559,6 +5688,8 @@ document.getElementById('addonCancelBtn').addEventListener('click', () => showEl
 document.getElementById('addonSaveBtn').addEventListener('click', saveAddon);
 document.getElementById('settingsBtn').addEventListener('click', openSettings);
 document.getElementById('settingsCancelBtn').addEventListener('click', () => showEl('settingsModal', false));
+document.getElementById('statisticsBtn').addEventListener('click', openStatistics);
+document.getElementById('statisticsCloseBtn').addEventListener('click', () => showEl('statisticsModal', false));
 document.getElementById('settingsSaveBtn').addEventListener('click', saveSettings);
 document.getElementById('recalcBtn').addEventListener('click', recalcAll);
 document.getElementById('addBrokerBtn').addEventListener('click', addBroker);
@@ -5716,7 +5847,7 @@ document.getElementById('cNaceCode').addEventListener('blur', () => {
 });
 
 // Overlay click-to-close
-['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','bulkModal','peopleImportModal','reportModal','mapListsModal','miniMapModal'].forEach(id => {
+['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','statisticsModal','bulkModal','peopleImportModal','reportModal','mapListsModal','miniMapModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id, false); });
 });
 </script>
