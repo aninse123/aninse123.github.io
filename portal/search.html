@@ -4413,6 +4413,12 @@ const GRAPH_RING1_CAP = 10;   // keeps a hub company readable
 const GRAPH_RING2_CAP = 6;    // per ring-1 node
 const GRAPH_ZOOM_MIN = 0.4;   // relative to the graph's native size
 const GRAPH_ZOOM_MAX = 2.6;
+// How far a ring-2 node sits from its own ring-1 parent (layoutGraph) —
+// module-level because renderNetworkGraph also needs it, to size the canvas
+// tall/wide enough up front for the busiest hub's satellites to fit their
+// full orbit without the "keep inside the viewBox" clamp having to pull the
+// worst-placed one off its circle.
+function graphOrbitR(n){ return 68 + Math.sqrt(n) * 34; }
 
 function linkIsCurrent(l){ return l.shCurrent === true || l.mgmtCurrent === true; }
 function linkEdgeLabel(l){
@@ -4553,7 +4559,19 @@ async function buildGraph(focusType, focusId, opts = {}){
       });
     }
   }
-  return { nodes:[...nodes.values()], edges };
+  // How many ring-2 satellites the busiest ring-1 parent has — layoutGraph()
+  // orbits each parent's satellites around it (see graphOrbitR), and the
+  // caller sizes the canvas from this so that orbit has room to fit before
+  // layout even runs, rather than discovering it doesn't afterward.
+  const ring2ByParent = new Map();
+  for (const e of edges){
+    const A = nodes.get(e.a), B = nodes.get(e.b);
+    if (!A || !B) continue;
+    if (A.ring === 1 && B.ring === 2) ring2ByParent.set(A.id, (ring2ByParent.get(A.id) || 0) + 1);
+    if (B.ring === 1 && A.ring === 2) ring2ByParent.set(B.id, (ring2ByParent.get(B.id) || 0) + 1);
+  }
+  const maxChildCount = ring2ByParent.size ? Math.max(...ring2ByParent.values()) : 0;
+  return { nodes:[...nodes.values()], edges, maxChildCount };
 }
 
 // Deterministic radial seed (stable across renders — the same graph always
@@ -4561,21 +4579,14 @@ async function buildGraph(focusType, focusId, opts = {}){
 // overlap and it reads organically rather than mechanically.
 function layoutGraph(g, W, H){
   const cx = W / 2, cy = H / 2;
-  // Elliptical rings: the canvas is much wider than it is tall, so spreading
-  // horizontally uses the space instead of clustering everything mid-canvas.
-  const rx1 = W * 0.21, ry1 = H * 0.27;
-  const rx2 = W * 0.38, ry2 = H * 0.44;
-  const R1 = (rx1 + ry1) / 2, R2 = (rx2 + ry2) / 2;   // spring targets
+  let rx1 = W * 0.21, ry1 = H * 0.27;
   const ring1 = g.nodes.filter(n => n.ring === 1);
   const ring2 = g.nodes.filter(n => n.ring === 2);
   const focus = g.nodes.find(n => n.focus);
-  if (focus){ focus.x = cx; focus.y = cy; focus.fixed = true; }
 
-  ring1.forEach((n, i) => {
-    const a = (i / Math.max(1, ring1.length)) * Math.PI * 2 - Math.PI / 2;
-    n.x = cx + Math.cos(a) * rx1; n.y = cy + Math.sin(a) * ry1; n.seedAngle = a;
-  });
-  // Seed each ring-2 node in a fan around whichever ring-1 node introduced it.
+  // Structure only — doesn't depend on any node's x/y — so it can be built
+  // before ring-1 is even seeded, which lets the sizing pass below know how
+  // much orbit room each ring-1 node's satellites will need up front.
   const parentOf = new Map();
   for (const e of g.edges){
     const A = g.nodes.find(n => n.id === e.a), B = g.nodes.find(n => n.id === e.b);
@@ -4584,38 +4595,106 @@ function layoutGraph(g, W, H){
       if (B.ring === 1 && A.ring === 2 && !parentOf.has(A.id)) parentOf.set(A.id, B);
     }
   }
-  // Fan each parent's children out evenly and symmetrically around it. The
-  // previous formula advanced by spread/2 per child but alternated by ±0.28 x
-  // spread, a swing wider than the step — so consecutive children landed ~2°
-  // apart, effectively on top of each other, and the relaxation pass could not
-  // separate them because the push direction between coincident nodes is
-  // degenerate. It only showed on person-focused graphs, where every colleague
-  // hangs off a single company.
   const childCount = new Map();
   ring2.forEach(n => { const k = parentOf.get(n.id)?.id || 'x'; childCount.set(k, (childCount.get(k) || 0) + 1); });
-  // A ring-1 node with several ring-2 satellites (a person's ONE company with
-  // five colleagues is the common case, not the exception) needs more than
-  // the base orbit radius, or the fan's angular spread still lands them too
-  // close together at that radius to avoid overlapping — the widened-spread
-  // fix above only solved consecutive children landing at the same angle, not
-  // a crowded ring genuinely not having enough room. sqrt keeps a real hub
-  // (a dozen+ children) from growing the radius without bound.
-  const orbitScale = n => Math.max(1, Math.sqrt(n) * 0.9);
-  const placed = new Map();
-  ring2.forEach(n => {
-    const p = parentOf.get(n.id);
-    const key = p?.id || 'x';
-    const base = p ? p.seedAngle : Math.random() * Math.PI * 2;
-    const total = childCount.get(key) || 1;
-    const k = placed.get(key) || 0; placed.set(key, k + 1);
-    // Widen the fan as the count grows, but never past a half-turn.
-    const spread = Math.min(Math.PI, 0.55 * Math.max(1, total - 1));
-    const a = total === 1 ? base : base - spread / 2 + (k / (total - 1)) * spread;
-    const scale = orbitScale(total);
-    n.x = cx + Math.cos(a) * rx2 * scale; n.y = cy + Math.sin(a) * ry2 * scale;
+
+  // Shrink the ring-1 ellipse when a lone hub's full orbit would otherwise
+  // reach past the canvas edge. A single company positioned at the standard
+  // ellipse distance, orbited by several colleagues at their full radius,
+  // routinely needed more clearance than a 400-620px canvas gave — and
+  // without this, the final "keep everything inside the viewBox" clamp below
+  // would silently pull the worst-placed satellite off its circle (wrong
+  // radius, no longer equidistant) rather than the whole ring backing off
+  // together. Better a tighter "rings" look than that.
+  const pad = 58;
+  const maxOrbit = ring1.reduce((m, n) => {
+    const c = childCount.get(n.id);
+    return c ? Math.max(m, graphOrbitR(c)) : m;
+  }, 0);
+  // Cap ring-1's OWN distance from centre so it plus the fixed orbit radius
+  // fits — the orbit radius itself is left alone, since that's what keeps
+  // ring-2 siblings legibly spaced from EACH OTHER; only how far out their
+  // shared parent sits needs to give way.
+  rx1 = Math.min(rx1, Math.max(20, W / 2 - pad - maxOrbit));
+  ry1 = Math.min(ry1, Math.max(20, H / 2 - pad - maxOrbit));
+
+  if (focus){ focus.x = cx; focus.y = cy; focus.fixed = true; }
+  ring1.forEach((n, i) => {
+    const a = (i / Math.max(1, ring1.length)) * Math.PI * 2 - Math.PI / 2;
+    n.x = cx + Math.cos(a) * rx1; n.y = cy + Math.sin(a) * ry1;
+    n.seedAngle = a;
+    // The focus↔ring-1 spring below pulls toward THIS node's own distance
+    // from centre, not a flat isotropic average of rx1/ry1 — with the
+    // shrink above only tightening whichever axis was cramped, an isotropic
+    // target would pull a vertically-shrunk node back out along the (still
+    // roomy) horizontal average, undoing the fit.
+    n.idealR = Math.hypot(Math.cos(a) * rx1, Math.sin(a) * ry1);
   });
 
-  // Relaxation: separate nodes, pull linked pairs to a target length.
+  // Ring-2 nodes orbit their OWN ring-1 parent in true polar coordinates —
+  // angle + a fixed radius from that parent's live position, recomputed every
+  // touch. Earlier this was seeded on a shared ellipse around the canvas
+  // centre, which only reads as "around the parent" when the parent happens
+  // to sit near that centre — and nothing stopped the generic box-repulsion
+  // below from then dragging a lone company's several colleagues into a
+  // near-straight line, since it had no notion they were meant to orbit a
+  // point. Deriving x/y from angle+parent on every relaxation touch makes
+  // "equidistant around the company" a hard guarantee instead of an emergent
+  // (and fragile) result of 2D box physics.
+  const polar = new Map();   // ring-2 node id -> { angle }
+  {
+    const placed = new Map();
+    ring2.forEach(n => {
+      const p = parentOf.get(n.id);
+      const key = p?.id || 'x';
+      const total = childCount.get(key) || 1;
+      const k = placed.get(key) || 0; placed.set(key, k + 1);
+      let angle;
+      if (!p || ring1.length <= 1){
+        // The graph's only ring-1 node has nothing nearby to avoid — spread
+        // its satellites all the way around it.
+        angle = (k / total) * Math.PI * 2 - Math.PI / 2;
+      } else {
+        // Several companies in play: fan each one's satellites on the side
+        // facing away from the shared centre, so they don't wander into a
+        // neighbouring company's own cluster.
+        const base = p.seedAngle;
+        const spread = Math.min(Math.PI * 1.6, 0.6 + 0.9 * Math.max(1, total - 1));
+        angle = total === 1 ? base : base - spread / 2 + (k / (total - 1)) * spread;
+      }
+      polar.set(n.id, { angle });
+    });
+  }
+  const refreshOne = n => {
+    const p = parentOf.get(n.id);
+    if (!p) return;
+    const s = polar.get(n.id);
+    const r = graphOrbitR(childCount.get(p.id) || 1);
+    n.x = p.x + Math.cos(s.angle) * r;
+    n.y = p.y + Math.sin(s.angle) * r;
+  };
+  ring2.forEach(refreshOne);
+
+  // Relaxation: separate nodes, pull linked pairs to a target length. A
+  // ring-1/focus/"more"-at-ring-1 node is moved directly, as before. A
+  // ring-2 node's push is instead converted into an angle nudge around its
+  // own parent (the radial component is dropped — orbit radius is a fixed
+  // constraint now, not a spring equilibrium), so it always stays on that
+  // parent's circle; two same-parent siblings pushing on each other
+  // necessarily fans their angles apart rather than collapsing onto a line.
+  const applyPush = (n, dx, dy) => {
+    if (n.fixed) return;
+    const p = parentOf.get(n.id);
+    if (n.ring === 2 && p){
+      const s = polar.get(n.id);
+      const tx = -Math.sin(s.angle), ty = Math.cos(s.angle);   // unit tangent
+      s.angle += (dx * tx + dy * ty) / graphOrbitR(childCount.get(p.id) || 1);
+      refreshOne(n);
+    } else {
+      n.x += dx; n.y += dy;
+    }
+  };
+
   // Each node occupies a BOX, not a circle — the caption underneath is much
   // wider than the node itself and hangs below it, so radial repulsion leaves
   // captions sitting on top of neighbouring nodes. Boxes are pushed apart
@@ -4635,22 +4714,20 @@ function layoutGraph(g, W, H){
         // Resolve along the cheaper axis.
         if (ox / needX < oy / needY){
           const push = (dx >= 0 ? ox : -ox) * 0.25;
-          if (!a.fixed) a.x -= push; if (!b.fixed) b.x += push;
+          applyPush(a, -push, 0); applyPush(b, push, 0);
         } else {
           const push = (dy >= 0 ? oy : -oy) * 0.25;
-          if (!a.fixed) a.y -= push; if (!b.fixed) b.y += push;
+          applyPush(a, 0, -push); applyPush(b, 0, push);
         }
       }
     }
+    // Ring-0↔ring-1 spring only — a ring-2 node's distance from its parent is
+    // the fixed orbitR constraint above, not something to spring-pull.
     for (const e of g.edges){
+      if (e.more) continue;
       const a = all.find(n => n.id === e.a), b = all.find(n => n.id === e.b);
-      if (!a || !b) continue;
-      let ideal;
-      if (a.ring === 0 || b.ring === 0) ideal = R1;
-      else {
-        const parent = a.ring === 1 ? a : b;   // exactly one end is ring-1 by construction
-        ideal = (R2 - R1) * orbitScale(childCount.get(parent.id) || 1);
-      }
+      if (!a || !b || (a.ring !== 0 && b.ring !== 0)) continue;
+      const ideal = (a.ring === 1 ? a : b).idealR;
       let dx = b.x - a.x, dy = b.y - a.y;
       const d = Math.hypot(dx, dy) || 0.01;
       const f = (d - ideal) / d * 0.06;
@@ -4682,14 +4759,15 @@ function layoutGraph(g, W, H){
           const clear = 22;
           if (dist < clear){
             const push = (clear - dist) / dist * 0.4;
-            n.x += ox * push; n.y += oy * push;
+            applyPush(n, ox * push, oy * push);
           }
         }
       }
     }
   }
-  // Keep everything inside the viewBox.
-  const pad = 58;
+  // Keep everything inside the viewBox — a last-resort safety net; the
+  // shrink pass above already sized things to avoid needing this in the
+  // common case.
   for (const n of all){
     n.x = Math.max(pad, Math.min(W - pad, n.x));
     n.y = Math.max(pad, Math.min(H - pad, n.y));
@@ -4791,8 +4869,17 @@ async function renderNetworkGraph(container, focusType, focusId){
     }
 
     // Taller canvas as the graph grows, so the relaxation has room to separate
-    // nodes instead of clamping them all against the edges.
-    const W = 760, H = Math.max(400, Math.min(620, 300 + g.nodes.length * 22));
+    // nodes instead of clamping them all against the edges. A single busy
+    // ring-1 hub (one company with several colleagues, the common
+    // person-focus case) needs proportionally more height than node count
+    // alone implies — layoutGraph() orbits its satellites around it at
+    // graphOrbitR(count), and 0.23 is (0.5 - the 0.27 ring-1 seed fraction
+    // layoutGraph uses), i.e. how much of H/2 is actually left over once the
+    // ring-1 node's own seed distance is accounted for.
+    const W = 760;
+    const baseH = Math.max(400, Math.min(620, 300 + g.nodes.length * 22));
+    const orbitH = g.maxChildCount ? Math.ceil((58 + graphOrbitR(g.maxChildCount)) / 0.23) : 0;
+    const H = Math.min(900, Math.max(baseH, orbitH));
     layoutGraph(g, W, H);
     const at = id => g.nodes.find(n => n.id === id);
     const CUR = 'var(--primary)', PREV = '#B9B2A6', MGMT = '#B91C1C';
@@ -4829,15 +4916,17 @@ async function renderNetworkGraph(container, focusType, focusId){
           stroke="${e.current ? CUR : PREV}" stroke-width="${w.toFixed(2)}" stroke-linecap="round"
           ${e.current ? '' : 'stroke-dasharray="5 4"'} opacity="${e.current ? 0.75 : 0.6}">${title}</line>`;
       }
-      // Management component: always dotted, always red — so "current
-      // manager" reads the same colour whether or not the person also holds
-      // shares, instead of being a same-blue variant only a dash pattern
-      // away from "shareholder". For "both", it's drawn on top of the
-      // shareholder line at the same coordinates, so the dots show through.
+      // Management component: dotted, red when current so "current manager"
+      // reads distinctly from "current shareholder" at a glance — but grey,
+      // like every other previous relationship, once it's not current.
+      // "Previous" stays one colour across both facets rather than red
+      // fading to pink; the dash pattern alone still keeps it apart from a
+      // previous shareholder line. Drawn on top of the shareholder line at
+      // the same coordinates for "both", so the dots show through it.
       if (e.relation !== 'sh'){
         out += `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"
-          stroke="${MGMT}" stroke-width="1.7" stroke-linecap="round"
-          stroke-dasharray="${e.current ? '1.5 3' : '2 4'}" opacity="${e.current ? 0.85 : 0.5}">${title}</line>`;
+          stroke="${e.current ? MGMT : PREV}" stroke-width="1.7" stroke-linecap="round"
+          stroke-dasharray="${e.current ? '1.5 3' : '2 4'}" opacity="${e.current ? 0.85 : 0.6}">${title}</line>`;
       }
       if (e.pct != null){
         const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
