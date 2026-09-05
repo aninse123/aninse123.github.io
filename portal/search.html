@@ -454,6 +454,8 @@
         <button id="viewPeopleBtn">People</button>
       </div>
       <input type="text" class="search-input" id="searchInput" placeholder="Search by name or NIF…">
+      <button class="btn btn--ghost btn--sm" id="nifSearchBtn" title="Check the full database for this NIF">🔍</button>
+      <span id="nifSearchStatus" style="font-size:0.74rem;color:var(--text-light);"></span>
       <select class="filter-sel" id="stageFilter"><option value="">All Stages</option></select>
       <select class="filter-sel" id="ownerFilter"><option value="">All Owners</option><option value="andre">André</option><option value="antonio">António</option></select>
       <select class="filter-sel" id="priorityFilter"><option value="">All Priorities</option><option value="a">A</option><option value="b">B</option><option value="c">C</option></select>
@@ -462,8 +464,6 @@
       <button class="btn btn--ghost btn--sm" id="advFilterBtn">More filters ▾</button>
       <span class="results-count" id="resultsCount" style="margin-left:auto;"></span>
     </div>
-
-    <div id="subsetBanner" class="subset-banner" style="display:none;"></div>
 
     <!-- Advanced filters -->
     <div class="adv-filters" id="advFilters">
@@ -2076,26 +2076,16 @@ function renderSummary(){
 // the subset-of-loaded disclaimer banner below — one list, so a filter added
 // in one place is never silently missing from the other two.
 const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'];
-function isAnyFilterActive(){
-  return FILTER_INPUT_IDS.some(id => (document.getElementById(id).value || '').trim() !== '');
-}
-// List only needs the disclaimer when a filter/search is narrowing a dataset
-// that isn't fully loaded (the unfiltered "recently touched" window is not
-// claiming to be complete). Grouped/Map are inherently full-dataset views
-// (sector aggregates, national coverage) so they show it unconditionally
-// until a full load has happened.
-function renderSubsetBanner(){
-  const el = document.getElementById('subsetBanner');
-  if (fullyLoaded){ el.style.display = 'none'; return; }
-  const show = viewMode === 'grouped' || viewMode === 'map' || (viewMode === 'list' && isAnyFilterActive());
-  if (!show){ el.style.display = 'none'; return; }
-  const loadedNote = cachedTotalCount
-    ? `${companies.length.toLocaleString('en')} of ${cachedTotalCount.toLocaleString('en')} companies loaded`
-    : `${companies.length.toLocaleString('en')} companies loaded`;
-  const reason = viewMode === 'list' ? 'Filters only apply to what’s loaded so far' : 'This view needs the full dataset to be accurate';
-  el.style.display = 'flex';
-  el.innerHTML = `<span>⚠ ${esc(reason)} — ${esc(loadedNote)}.</span><button class="btn btn--ghost btn--sm" id="subsetBannerLoadBtn">⬇ Load all companies</button>`;
-  document.getElementById('subsetBannerLoadBtn').addEventListener('click', loadAllWithProgress);
+// Always states the true total (not just what's loaded) whenever the two
+// differ, right where people are actually looking — the results count next
+// to the table — rather than a separate banner that's easy to scan past.
+// The "Load all companies" button is always visible at the top of the page
+// (Pipeline Overview card), so there's no need to duplicate that CTA here.
+function renderResultsCount(n){
+  const suffix = (!fullyLoaded && cachedTotalCount)
+    ? ` loaded · ${cachedTotalCount.toLocaleString('en')} total`
+    : '';
+  document.getElementById('resultsCount').textContent = `${n.toLocaleString('en')} of ${companies.length.toLocaleString('en')}${suffix}`;
 }
 function getFiltered(){
   // deburr() (not plain toLowerCase()) so "texteis" matches "Têxteis" — company
@@ -2193,13 +2183,12 @@ function showCompanyToolbar(show){
 }
 function renderList(){
   showCompanyToolbar(viewMode !== 'people');
-  if (viewMode === 'people') { document.getElementById('subsetBanner').style.display = 'none'; return renderPeople(); }
-  renderSubsetBanner();
+  if (viewMode === 'people') return renderPeople();
   if (viewMode === 'grouped') return renderGrouped();
   if (viewMode === 'map') return renderMap();
   showEl('tableCard', true); showEl('groupedCard', false); showEl('mapCard', false); showEl('peopleCard', false);
   const list = sortList(getFiltered());
-  document.getElementById('resultsCount').textContent = `${list.length} of ${companies.length}`;
+  renderResultsCount(list.length);
   const tbody = document.getElementById('companyBody');
   if (!list.length) {
     tbody.innerHTML = `<tr><td colspan="12"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No companies found</div><div>Adjust filters or add a company.</div></div></td></tr>`;
@@ -2235,7 +2224,7 @@ function rowHtml(c){
 function renderGrouped(){
   showEl('tableCard', false); showEl('groupedCard', true); showEl('mapCard', false); showEl('peopleCard', false); showEl('pagination', false);
   const list = sortList(getFiltered());
-  document.getElementById('resultsCount').textContent = `${list.length} of ${companies.length}`;
+  renderResultsCount(list.length);
   const groups = {};
   list.forEach(c => {
     const sec = c.sector || '(No sector)';
@@ -2334,7 +2323,7 @@ function renderMap(){
   showEl('tableCard', false); showEl('groupedCard', false); showEl('mapCard', true); showEl('peopleCard', false); showEl('pagination', false);
   ensureLeafletMap();
   const base = sortList(getFiltered());
-  document.getElementById('resultsCount').textContent = `${base.length} of ${companies.length}`;
+  renderResultsCount(base.length);
   document.getElementById('mapFilteredCount').textContent = base.length;
   document.getElementById('mapCustomCount').textContent = mapSelection.size;
   renderMapSidebarList(base);
@@ -6937,9 +6926,9 @@ function openMiniMap(c){
 
 // View toggle — Grouped and Map are inherently full-dataset views (sector
 // aggregates, national coverage), but switching to either no longer blocks on
-// a full load: they render on whatever's in `companies` now, with
-// renderSubsetBanner() (called from renderList()) offering an explicit
-// "Load all companies" instead of an unannounced multi-second freeze.
+// a full load: they render on whatever's in `companies` now. renderResultsCount()
+// states the true total whenever it differs from what's loaded, and the
+// "Load all companies" button at the top of the page is always available.
 const viewBtns = { list:'viewListBtn', grouped:'viewGroupedBtn', map:'viewMapBtn', people:'viewPeopleBtn' };
 function setViewMode(mode){
   viewMode = mode;
@@ -6989,37 +6978,52 @@ document.getElementById('mapListSaveBtn').addEventListener('click', saveMapList)
 document.getElementById('mapExportBtn').addEventListener('click', exportMapCsv);
 
 // Filters — operate on whatever's currently loaded rather than blocking on a
-// full load; renderSubsetBanner() (inside renderList()) tells the user when
-// they're filtering a subset and offers an explicit "Load all companies".
+// full load; renderResultsCount() (inside renderList()) states the true
+// total whenever it differs from what's loaded.
 FILTER_INPUT_IDS.forEach(id => {
   const el = document.getElementById(id);
   el.addEventListener('input', () => { visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
   el.addEventListener('change', () => { visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
 });
-// NIF prefix search — the search box's substring match above only sees
-// already-loaded companies, so a purely-numeric query (a NIF or the start of
-// one) also fires a targeted Firestore range query (NIFs are stored as clean
-// 9-digit strings — verified against a live sample) and merges any newly
-// found companies in, rather than requiring a full load just to find one NIF.
+// NIF search — deliberately NOT fired on every keystroke. The plain substring
+// match in getFiltered() above only sees already-loaded companies and stays
+// instant/local as you type; reaching into Firestore only happens when the
+// user explicitly asks for it (🔍 button or Enter), and only when it could
+// actually find something new: input must be NIF-shaped (a run of 3-9
+// digits, since NIFs are stored as clean 9-digit strings — verified against a
+// live sample) and the dataset must not already be fully loaded (if it is,
+// the substring match above already covers everything). Anything else — a
+// name, or an empty box — is a no-op, on purpose: a search press must never
+// silently trigger a full 20,682-company load the way it would for a name
+// (that stays the explicit "Load all companies" button's job).
 let companySearchSeq = 0;
-let nifSearchDebounce = null;
-document.getElementById('searchInput').addEventListener('input', () => {
-  clearTimeout(nifSearchDebounce);
+function triggerNifSearch(){
   const raw = document.getElementById('searchInput').value.trim();
-  if (/^\d{3,9}$/.test(raw)) nifSearchDebounce = setTimeout(() => searchNifSupplement(raw), 300);
-});
+  document.getElementById('nifSearchStatus').textContent = '';
+  if (!/^\d{3,9}$/.test(raw) || fullyLoaded) return;
+  return searchNifSupplement(raw);
+}
+document.getElementById('nifSearchBtn').addEventListener('click', triggerNifSearch);
+document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') triggerNifSearch(); });
+document.getElementById('searchInput').addEventListener('input', () => { document.getElementById('nifSearchStatus').textContent = ''; });
 async function searchNifSupplement(digits){
+  const statusEl = document.getElementById('nifSearchStatus');
+  statusEl.textContent = 'Checking…';
   const seq = ++companySearchSeq;
   let snap;
   try {
     snap = await getDocs(query(collection(db,'searchCompanies'), where('nif','>=',digits), where('nif','<',digits+''), limit(50)));
-  } catch(e){ console.error(e); return; }
+  } catch(e){ console.error(e); if (seq === companySearchSeq) statusEl.textContent = 'Search failed — see console'; return; }
   addReads(snap.docs.length || 1);
-  if (seq !== companySearchSeq) return; // a newer keystroke already superseded this query
+  if (seq !== companySearchSeq) return; // a newer search already superseded this one
   if (document.getElementById('searchInput').value.trim() !== digits) return; // stale by the time it landed
   const have = new Set(companies.map(c => c.id));
   let added = 0;
   snap.docs.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields({ id: d.id, ...d.data() })); added++; } });
+  // Deliberately not "of 20,682" here -- a range query only pulls back the
+  // matches (capped at 50), never the whole collection, so framing this next
+  // to the full total would wrongly imply a bulk load happened.
+  statusEl.textContent = added ? `${added} match${added===1?'':'es'} found` : (snap.docs.length ? 'Already loaded' : 'No match found');
   if (added) renderList();
 }
 document.getElementById('loadAllBtn').addEventListener('click', loadAllWithProgress);
