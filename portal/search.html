@@ -350,6 +350,8 @@
     .ipb-clock strong { color: var(--text); font-weight: 600; }
     .ipb-quota { color: var(--text-light); font-variant-numeric: tabular-nums; font-size: 0.76rem; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: #FAFAF8; }
     .ipb-stop { margin-left: auto; background: #FEE2E2; color: #B91C1C; border: 1px solid #FECACA; border-radius: var(--radius); padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; font-family: var(--font-sans); }
+    .ipb-close { margin-left: auto; background: var(--white); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; font-family: var(--font-sans); }
+    .ipb-close:hover { background: var(--border); }
     .ipb-stop:hover { background: #FECACA; }
     .ipb-stop:disabled { opacity: 0.5; cursor: default; }
     .ipb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
@@ -384,6 +386,7 @@
     <span class="ipb-clock"><strong id="ipbElapsed">0s</strong> elapsed &middot; <span id="ipbEta">estimating…</span></span>
     <span class="ipb-quota" id="ipbQuota" title="Rough estimate of this browser's Firestore reads/writes today — resets at midnight, not billing-exact."></span>
     <button type="button" class="ipb-stop" id="ipbStopBtn">Stop</button>
+    <button type="button" class="ipb-close" id="ipbDismissBtn" style="display:none;">Close</button>
   </div>
   <div class="ipb-chips" id="ipbChips"></div>
   <div class="ipb-current" id="ipbCurrent">
@@ -4481,11 +4484,15 @@ const ImportProgress = (() => {
     el('ipbSummary').innerHTML = `<div>${esc(summaryText)}</div>` +
       (stageLines ? `<ul style="margin:6px 0 0;padding-left:18px;">${stageLines}</ul>` : '');
     el('ipbStopBtn').style.display = 'none';
+    // Stays on screen until manually dismissed — it used to auto-hide after
+    // 20s on success, which meant stepping away for even a minute (to check
+    // a screenshot, answer a message, anything) could mean coming back to no
+    // visible confirmation the import had actually finished.
+    el('ipbDismissBtn').style.display = '';
     if (kind !== 'complete' && curId) markChip(curId, kind === 'stopped' ? 'stopped' : 'error');
     clearCheckpoint();
     window.removeEventListener('beforeunload', beforeUnload);
     notify(kind === 'complete' ? 'Import finished' : kind === 'stopped' ? 'Import stopped' : 'Import failed', summaryText);
-    if (kind === 'complete') setTimeout(() => { el('importProgressBar').style.display = 'none'; el('ipbStopBtn').style.display = ''; }, 20000);
   }
   return {
     start(stageDefs){
@@ -4497,6 +4504,7 @@ const ImportProgress = (() => {
       el('ipbSummary').style.display = 'none';
       el('ipbCurrent').style.display = '';
       el('ipbStopBtn').disabled = false; el('ipbStopBtn').textContent = 'Stop'; el('ipbStopBtn').style.display = '';
+      el('ipbDismissBtn').style.display = 'none';
       renderChips(); renderQuota();
       if (tickTimer) clearInterval(tickTimer);
       tickTimer = setInterval(() => { renderCurrent(); renderTotal(); renderQuota(); saveCheckpoint(); }, 1000);
@@ -4540,6 +4548,7 @@ const ImportProgress = (() => {
 document.getElementById('ipbStopBtn').addEventListener('click', () => {
   if (confirm('Stop the import? Whatever is already in flight will finish and be saved — nothing after that will start. You can re-run the same file later to pick up where this left off.')) ImportProgress.requestStop();
 });
+document.getElementById('ipbDismissBtn').addEventListener('click', () => { document.getElementById('importProgressBar').style.display = 'none'; });
 // On load: an interrupted run leaves no trace anywhere else in the UI — this
 // is purely informational (nothing resumes automatically; re-running the
 // same file is the actual recovery path, via the no-op-skip logic above).
