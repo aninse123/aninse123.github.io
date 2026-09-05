@@ -4219,18 +4219,26 @@ async function checkPeopleImportDemotions(){
   const facetScope = computeFacetScope(rows);
   const found = [];
   try {
-    await mapPool(touched, async cid => {
-      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',cid)));
+    // Batched the same way as confirmPeopleImport's own pre-fetch: companyId
+    // is an indexed field, so 30-at-a-time `in` queries replace one query per
+    // touched company (2,500+ round-trips down to ~85 for the full file).
+    const touchedChunks = [];
+    for (let i = 0; i < touched.length; i += PERSON_IN_CHUNK) touchedChunks.push(touched.slice(i, i + PERSON_IN_CHUNK));
+    let done = 0;
+    await mapPool(touchedChunks, async chunk => {
+      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','in', chunk)));
       addReads(snap.docs.length || 1);
       for (const d of snap.docs){
         const l = d.data();
         for (const facet of ['shCurrent','mgmtCurrent']){
           const scope = facetScope[facet];
-          if (!scope.touched.has(cid) || scope.keep.has(d.id)) continue;
+          if (!scope.touched.has(l.companyId) || scope.keep.has(d.id)) continue;
           if (l[facet] === true) found.push({ name: l.personName, company: l.companyName, facet: facet === 'shCurrent' ? 'shareholder' : 'management' });
         }
       }
-    }, READ_CONCURRENCY, done => { resultEl.innerHTML = `<span class="spin-sm"></span> Checking ${done}/${touched.length} companies\u2026`; });
+      done += chunk.length;
+      resultEl.innerHTML = `<span class="spin-sm"></span> Checking ${Math.min(done, touched.length)}/${touched.length} companies\u2026`;
+    }, READ_CONCURRENCY);
   } catch(e){ console.error(e); resultEl.textContent = 'Check failed: ' + e.message; btn.disabled = false; return; }
   if (!found.length){
     resultEl.innerHTML = '<span style="color:var(--text-light);">No existing relationships will be demoted \u2014 this file agrees with everyone currently on record for these companies.</span>';
