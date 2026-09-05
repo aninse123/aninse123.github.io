@@ -4549,13 +4549,26 @@ async function confirmPeopleImport(){
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Checking what changed')); return; }
 
     // 3) Upsert people — skip anyone re-imported with nothing actually
-    //    different from what's stored (see personNeedsWrite).
-    ImportProgress.beginStage('people', byPerson.size);
-    let peopleSkipped = 0;
-    const peopleWritten = await commitInChunks([...byPerson.values()], 450, (batch, r) => {
+    //    different from what's stored (see personNeedsWrite). Filtered
+    //    BEFORE chunking, not just inside the write loop: chunking the FULL
+    //    list first meant a handful of real changes scattered across an
+    //    otherwise fully-unchanged file still forced nearly every 450-item
+    //    chunk to round-trip, since only one changed item in a chunk is
+    //    enough to make it commit. Filtering first means the number of
+    //    chunks (and round-trips) scales with how much actually changed,
+    //    not with how large the file is — the whole point on a re-import.
+    const peopleCandidates = [...byPerson.values()].map(r => {
       const co3 = r.country && r.country.length <= 3 ? r.country : '';
       const matchedCompanyId = r.holderNif ? (nifToCo.get(r.holderNif) || null) : null;
-      if (!personNeedsWrite(existingPeople.get(r.personId), r, co3, matchedCompanyId)){ peopleSkipped++; return false; }
+      return { r, co3, matchedCompanyId };
+    });
+    let peopleSkipped = 0;
+    const peopleToWrite = peopleCandidates.filter(c => {
+      if (personNeedsWrite(existingPeople.get(c.r.personId), c.r, c.co3, c.matchedCompanyId)) return true;
+      peopleSkipped++; return false;
+    });
+    ImportProgress.beginStage('people', peopleToWrite.length);
+    const peopleWritten = await commitInChunks(peopleToWrite, 450, (batch, { r, co3, matchedCompanyId }) => {
       batch.set(doc(db,'searchPeople', r.personId), {
         name: r.personName, nameKey: r.nameKey, nameTokens: personNameTokens(r.nameKey),
         namePrefixes: namePrefixes(r.nameKey),
@@ -4596,11 +4609,10 @@ async function confirmPeopleImport(){
 
     // 4) Upsert links — write only the facet this file actually carries, so a
     //    shareholders import never clears roles from a management import.
-    //    Skip a link whose payload matches what's already stored.
+    //    Skip a link whose payload matches what's already stored. Same
+    //    pre-filter-before-chunking reasoning as people, above.
     const linkRows = rows.filter(r => r.companyId);
-    ImportProgress.beginStage('links', linkRows.length);
-    let linksSkipped = 0;
-    const linksWritten = await commitInChunks(linkRows, 450, (batch, r) => {
+    const linkCandidates = linkRows.map(r => {
       const key = `${r.personId}__${r.companyId}`;
       const payload = {
         personId: r.personId, companyId: r.companyId,
@@ -4629,8 +4641,15 @@ async function confirmPeopleImport(){
         // relationship even though the file carries no job title.
         payload.mgmtCurrent = true;
       }
-      const existing = existingLinkByKey.get(key);
-      if (!linkNeedsWrite(existing, payload)){ linksSkipped++; return false; }
+      return { r, key, payload, existing: existingLinkByKey.get(key) };
+    });
+    let linksSkipped = 0;
+    const linksToWrite = linkCandidates.filter(c => {
+      if (linkNeedsWrite(c.existing, c.payload)) return true;
+      linksSkipped++; return false;
+    });
+    ImportProgress.beginStage('links', linksToWrite.length);
+    const linksWritten = await commitInChunks(linksToWrite, 450, (batch, { r, key, payload, existing }) => {
       batch.set(doc(db,'searchPersonLinks', key), payload, { merge: true });
       // Keep the in-memory snapshot accurate for the demotion scan and
       // counter refresh below — merge:true means the stored doc keeps any
@@ -4679,20 +4698,15 @@ async function confirmPeopleImport(){
         }
       }
     }
-    ImportProgress.beginStage('demoteCounters', demotions.size + touched.length);
-    await commitInChunks([...demotions.entries()], 450, (batch, [linkId, patch]) => {
-      batch.update(doc(db,'searchPersonLinks', linkId), { ...patch, updatedAt: serverTimestamp() });
-      return true;
-    }, { onProgress: done => ImportProgress.tick('demoteCounters', done), cancelToken });
-    tally.demoted = demoted;
-    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Marking previous relationships')); return; }
-
     // 6) Refresh denormalised counters — skip a company whose counts and
     //    ownership metadata already match what's stored (companies is already
     //    fully loaded in memory, so this comparison costs no extra reads).
+    //    Computed here (before beginStage) rather than inside the write loop
+    //    for the same reason as people/links above: the real total is known
+    //    up front, and only companies that actually changed get chunked.
     invalidatePeopleCaches();
     const meta = peopleImportStats.ownershipMeta || new Map();
-    await commitInChunks(touched, 450, (batch, cid) => {
+    const counterCandidates = touched.map(cid => {
       const links = linksByCo.get(cid) || [];
       const newCounts = peopleCountsFrom(links);
       const local = companies.find(c => c.id === cid);
@@ -4707,9 +4721,22 @@ async function confirmPeopleImport(){
         if (JSON.stringify(local?.ownershipMeta?.[k] ?? null) !== JSON.stringify(v)) ownershipChanged = true;
         payload[`ownershipMeta.${k}`] = v;
       }
-      if (JSON.stringify(local?.peopleCounts || null) === JSON.stringify(newCounts) && !ownershipChanged) return false;
-      batch.update(doc(db,'searchCompanies',cid), payload);
-      if (local){ local.peopleCounts = newCounts; if (om) local.ownershipMeta = { ...(local.ownershipMeta || {}), ...om }; }
+      const unchanged = JSON.stringify(local?.peopleCounts || null) === JSON.stringify(newCounts) && !ownershipChanged;
+      return { cid, payload, local, newCounts, om, unchanged };
+    });
+    const countersToWrite = counterCandidates.filter(c => !c.unchanged);
+
+    ImportProgress.beginStage('demoteCounters', demotions.size + countersToWrite.length);
+    await commitInChunks([...demotions.entries()], 450, (batch, [linkId, patch]) => {
+      batch.update(doc(db,'searchPersonLinks', linkId), { ...patch, updatedAt: serverTimestamp() });
+      return true;
+    }, { onProgress: done => ImportProgress.tick('demoteCounters', done), cancelToken });
+    tally.demoted = demoted;
+    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Marking previous relationships')); return; }
+
+    await commitInChunks(countersToWrite, 450, (batch, c) => {
+      batch.update(doc(db,'searchCompanies', c.cid), c.payload);
+      if (c.local){ c.local.peopleCounts = c.newCounts; if (c.om) c.local.ownershipMeta = { ...(c.local.ownershipMeta || {}), ...c.om }; }
       return true;
     }, { onProgress: done => ImportProgress.tick('demoteCounters', demotions.size + done), cancelToken });
     ImportProgress.finishStage('demoteCounters');
@@ -4734,10 +4761,20 @@ async function confirmPeopleImport(){
       }
     }, READ_CONCURRENCY, d => ImportProgress.tick('refresh', d), cancelToken);
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
-    await commitInChunks(personIds, 450, (batch, pid) => {
+    // The write side can't be pre-filtered until the read above resolves (the
+    // "real" total per person isn't known until then) — same idea as people/
+    // links, just one step later. The stage started with a pessimistic
+    // upper bound; correct it now that the actual write count is known, so
+    // the bar doesn't sit stuck at a low percentage through a nearly-empty
+    // write phase.
+    const refreshToWrite = personIds.filter(pid => {
       const c = counts.get(pid);
       const existing = existingPeople.get(pid);
-      if (existing && existing.linkCount === c.total && existing.currentLinkCount === c.current) return false;
+      return !(existing && existing.linkCount === c.total && existing.currentLinkCount === c.current);
+    });
+    ImportProgress.tick('refresh', personIdChunks.length, personIdChunks.length + refreshToWrite.length);
+    await commitInChunks(refreshToWrite, 450, (batch, pid) => {
+      const c = counts.get(pid);
       batch.update(doc(db,'searchPeople',pid), { linkCount: c.total, currentLinkCount: c.current });
       return true;
     }, { onProgress: done => ImportProgress.tick('refresh', personIdChunks.length + done), cancelToken });
