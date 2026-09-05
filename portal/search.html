@@ -454,7 +454,7 @@
         <button id="viewPeopleBtn">People</button>
       </div>
       <input type="text" class="search-input" id="searchInput" placeholder="Search by name or NIF…">
-      <button class="btn btn--ghost btn--sm" id="nifSearchBtn" title="Check the full database for this NIF">🔍</button>
+      <button class="btn btn--ghost btn--sm" id="nifSearchBtn" title="Check the full database for this name or NIF">🔍</button>
       <span id="nifSearchStatus" style="font-size:0.74rem;color:var(--text-light);"></span>
       <select class="filter-sel" id="stageFilter"><option value="">All Stages</option></select>
       <select class="filter-sel" id="ownerFilter"><option value="">All Owners</option><option value="andre">André</option><option value="antonio">António</option></select>
@@ -879,6 +879,9 @@
 
     <p class="hint">After changing criteria, recalculate all fit scores.</p>
     <button class="btn btn--ghost btn--sm" id="recalcBtn" style="margin-top:8px;">↻ Recalculate all fit scores</button>
+
+    <p class="hint" style="margin-top:14px;">One-time: builds the search index every company needs so name search can find companies that aren't currently loaded, by any word, not just an exact substring. Safe to re-run; only needed once, or after a bulk rename.</p>
+    <button class="btn btn--ghost btn--sm" id="rebuildNameIndexBtn" style="margin-top:8px;">↻ Rebuild company name search index</button>
 
     <div class="modal-section-title">Brokers</div>
     <div id="brokerList" style="margin-bottom:10px;"></div>
@@ -4688,7 +4691,7 @@ async function confirmPeopleImport(){
         const col = collection(db,'searchCompanies');
         const entries = [...need.values()].map(r => ({ r, ref: doc(col) }));
         tally.companiesAdded = await commitInChunks(entries, 450, (batch, { r, ref }) => {
-          batch.set(ref, { name: r.fileCompanyName, nif: r.companyNif || null, stage:'universe',
+          batch.set(ref, { name: r.fileCompanyName, ...companySearchFields(r.fileCompanyName), nif: r.companyNif || null, stage:'universe',
             sourceType:'ownership_import', financials:{}, contacts:[], addOnTo:[], addOns:[],
             lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
           for (const rr of rows) if (rr.unmatched && (rr.companyNif || normName(rr.fileCompanyName)) === (r.companyNif || normName(r.fileCompanyName))){
@@ -5836,9 +5839,10 @@ async function saveCompany(){
     if (editCoId) {
       const idx = companies.findIndex(c=>c.id===editCoId);
       const oldStage = companies[idx]?.stage;
-      const merged = computeFields({ ...companies[idx], ...data });
+      const merged = computeFields({ ...companies[idx], ...data, ...companySearchFields(data.name) });
       await updateDoc(doc(db,'searchCompanies',editCoId), {
         ...data,
+        nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes,
         computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
         computedEBITDAMargin: merged.computedEBITDAMargin,
         computedEBITDAWeighted: merged.computedEBITDAWeighted, computedEBITDAMarginWeighted: merged.computedEBITDAMarginWeighted,
@@ -5863,7 +5867,7 @@ async function saveCompany(){
       if (dup && !confirm(`This looks like it might already exist: "${dup.name}"${dup.nif ? ' (NIF ' + dup.nif + ')' : ''}. Create a new company anyway?`)) {
         return; // finally below still resets the button
       }
-      const base = { ...data, financials:{}, contacts:[], addOnTo:[], addOns:[], lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), createdBy: currentUser };
+      const base = { ...data, ...companySearchFields(data.name), financials:{}, contacts:[], addOnTo:[], addOns:[], lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), createdBy: currentUser };
       const computed = computeFields({ ...base });
       const full = {
         ...base,
@@ -6413,6 +6417,34 @@ async function recalcAll(){
   } catch(e){ alert('Error: '+e.message); btn.disabled=false; btn.innerHTML='↻ Recalculate all fit scores'; }
 }
 
+// One-time (or after a bulk rename) backfill of nameKey/nameTokens/namePrefixes
+// across every existing company -- every write path that creates or renames a
+// company already writes these going forward (companySearchFields()), this
+// just catches everything written before that existed. Same shape as
+// recalcAll() just above: full load first, batched writes, live progress.
+async function rebuildNameIndex(){
+  const btn = document.getElementById('rebuildNameIndexBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm" style="border-top-color:var(--primary);"></span>Rebuilding…';
+  await ensureFullDataset();
+  try {
+    const CHUNK = 450;
+    let done = 0;
+    for (let i = 0; i < companies.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      const slice = companies.slice(i, i + CHUNK);
+      for (const c of slice) {
+        const fields = companySearchFields(c.name);
+        Object.assign(c, fields);
+        batch.update(doc(db,'searchCompanies',c.id), fields);
+      }
+      await batch.commit();
+      done += slice.length;
+      btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Rebuilding… ${done}/${companies.length}`;
+    }
+    cacheCompanies();
+    btn.innerHTML='✓ Done'; setTimeout(()=>{ btn.innerHTML='↻ Rebuild company name search index'; btn.disabled=false; }, 1500);
+  } catch(e){ alert('Error: '+e.message); btn.disabled=false; btn.innerHTML='↻ Rebuild company name search index'; }
+}
+
 // ── Export CSV ───────────────────────────────────────────────────────────────
 // One entry per exportable column; `get` returns the raw cell value (before
 // exportCsv's CSV-injection guard/quoting runs on it). Grouped the same way
@@ -6563,8 +6595,27 @@ function pnum(s){
 function yearFrom(s){ const m = String(s||'').match(/(\d{4})/); return m ? +m[1] : null; }
 function deburr(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim(); }
 function onlyDigits(s){ return String(s||'').replace(/\D/g,''); }
+// Shared between normName() (dedup key, lowercase) and companySearchFields()
+// (search key, uppercase) -- legal-form suffixes are common, low-signal words
+// nobody actually searches or dedups by.
+const LEGAL_FORM_RE = /\b(lda|sa|unipessoal|limitada|sgps|eireli|ltda|s a)\b/g;
 // Normalised company name for soft duplicate warnings (strips accents, punctuation, legal forms).
-function normName(s){ return deburr(String(s||'').replace(/[.,\-–—&/]/g,' ')).replace(/\b(lda|sa|unipessoal|limitada|sgps|eireli|ltda|s a)\b/g,' ').replace(/\s+/g,' ').trim(); }
+function normName(s){ return deburr(String(s||'').replace(/[.,\-–—&/]/g,' ')).replace(LEGAL_FORM_RE,' ').replace(/\s+/g,' ').trim(); }
+// Company-name search fields -- same purpose as the person-search fields
+// below (nameKey/nameTokens/namePrefixes) but for searchCompanies: lets a
+// search reach a company that isn't loaded yet, by any word in its name, in
+// any order, with partial-word matching, not just an exact substring of
+// what's already in memory. A self-contained prefix loop rather than reusing
+// namePrefixes()/personNameTokens() below -- those are person-specific
+// (stopword list, no legal-form stripping) and already covered by tests;
+// duplicating three lines here is safer than reshaping working code.
+function companySearchFields(name){
+  const nameKey = deburr(String(name||'').replace(/[.,\-–—&/]/g,' ')).replace(LEGAL_FORM_RE,' ').replace(/\s+/g,' ').trim().toUpperCase();
+  const nameTokens = [...new Set(nameKey.split(' ').filter(w => w.length > 1))];
+  const prefixes = new Set();
+  for (const t of nameTokens) for (let i = 2; i <= t.length; i++) prefixes.add(t.slice(0, i));
+  return { nameKey, nameTokens, namePrefixes: [...prefixes] };
+}
 
 // ── People helpers ───────────────────────────────────────────────────────────
 // Orbis person rows carry no stable ID in list exports and salutations are
@@ -6790,6 +6841,7 @@ async function confirmBulk(){
     await commitInChunks(newRows, CHUNK, (batch, { co }) => {
       const local = computeFields({ ...co });
       batch.set(doc(col), { ...co,
+        ...companySearchFields(co.name),
         computedRevenue:local.computedRevenue, computedEBITDA:local.computedEBITDA, computedEBITDAMargin:local.computedEBITDAMargin,
         computedEBITDAWeighted:local.computedEBITDAWeighted, computedEBITDAMarginWeighted:local.computedEBITDAMarginWeighted,
         computedGrowthRecent:local.computedGrowthRecent, computedGrowthSustained:local.computedGrowthSustained, computedEBITDAStability:local.computedEBITDAStability,
@@ -6925,6 +6977,7 @@ document.getElementById('statisticsBtn').addEventListener('click', openStatistic
 document.getElementById('statisticsCloseBtn').addEventListener('click', () => showEl('statisticsModal', false));
 document.getElementById('settingsSaveBtn').addEventListener('click', saveSettings);
 document.getElementById('recalcBtn').addEventListener('click', recalcAll);
+document.getElementById('rebuildNameIndexBtn').addEventListener('click', rebuildNameIndex);
 document.getElementById('addBrokerBtn').addEventListener('click', addBroker);
 document.getElementById('exportBtn').addEventListener('click', openExportFields);
 document.getElementById('exportSelectAllBtn').addEventListener('click', () => { document.querySelectorAll('.exportFieldChk').forEach(c => c.checked = true); updateExportFieldsCount(); });
@@ -7068,26 +7121,24 @@ FILTER_INPUT_IDS.forEach(id => {
   el.addEventListener('input', () => { visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
   el.addEventListener('change', () => { visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
 });
-// NIF search — deliberately NOT fired on every keystroke. The plain substring
-// match in getFiltered() above only sees already-loaded companies and stays
-// instant/local as you type; reaching into Firestore only happens when the
-// user explicitly asks for it (🔍 button or Enter), and only when it could
-// actually find something new: input must be NIF-shaped (a run of 3-9
-// digits, since NIFs are stored as clean 9-digit strings — verified against a
-// live sample) and the dataset must not already be fully loaded (if it is,
-// the substring match above already covers everything). Anything else — a
-// name, or an empty box — is a no-op, on purpose: a search press must never
-// silently trigger a full 20,682-company load the way it would for a name
-// (that stays the explicit "Load all companies" button's job).
+// Company search (NIF or name) — deliberately NOT fired on every keystroke.
+// The plain substring/token match in getFiltered() above only sees
+// already-loaded companies and stays instant/local as you type; reaching
+// into Firestore only happens when the user explicitly asks for it (🔍
+// button or Enter), and only when it could actually find something new: the
+// dataset must not already be fully loaded (if it is, the local match above
+// already covers everything). An empty box is a no-op, on purpose.
 let companySearchSeq = 0;
-function triggerNifSearch(){
+function triggerCompanySearch(){
   const raw = document.getElementById('searchInput').value.trim();
   document.getElementById('nifSearchStatus').textContent = '';
-  if (!/^\d{3,9}$/.test(raw) || fullyLoaded) return;
-  return searchNifSupplement(raw);
+  if (!raw || fullyLoaded) return;
+  // NIFs are clean 9-digit strings (verified against a live sample) — a run
+  // of 3-9 digits is NIF-shaped; anything else is treated as a name.
+  return /^\d{3,9}$/.test(raw) ? searchNifSupplement(raw) : searchNameSupplement(raw);
 }
-document.getElementById('nifSearchBtn').addEventListener('click', triggerNifSearch);
-document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') triggerNifSearch(); });
+document.getElementById('nifSearchBtn').addEventListener('click', triggerCompanySearch);
+document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') triggerCompanySearch(); });
 document.getElementById('searchInput').addEventListener('input', () => { document.getElementById('nifSearchStatus').textContent = ''; });
 async function searchNifSupplement(digits){
   const statusEl = document.getElementById('nifSearchStatus');
@@ -7107,6 +7158,41 @@ async function searchNifSupplement(digits){
   // matches (capped at 50), never the whole collection, so framing this next
   // to the full total would wrongly imply a bulk load happened.
   statusEl.textContent = added ? `${added} match${added===1?'':'es'} found` : (snap.docs.length ? 'Already loaded' : 'No match found');
+  if (added) renderList();
+}
+// Name search — same shape as searchNifSupplement above, but reaches
+// company-name tokens/prefixes (companySearchFields()) instead of a raw
+// field range, mirroring renderPeople()'s query pattern: a namePrefixes
+// array-contains for the first word (partial-word match), a nameKey
+// prefix-range fallback if that comes back empty, then a client-side
+// AND-refine across every typed word. Requires the one-time "Rebuild company
+// name search index" backfill (Settings) to have run -- until then this
+// correctly finds nothing for un-backfilled companies, same as it would for
+// a company that genuinely has no match.
+async function searchNameSupplement(text){
+  const statusEl = document.getElementById('nifSearchStatus');
+  const { nameKey, nameTokens } = companySearchFields(text);
+  if (!nameTokens.length) { statusEl.textContent = ''; return; } // e.g. a single 1-char fragment
+  statusEl.textContent = 'Checking…';
+  const seq = ++companySearchSeq;
+  let docs;
+  try {
+    const snap = await getDocs(query(collection(db,'searchCompanies'), where('namePrefixes','array-contains', nameTokens[0]), limit(50)));
+    docs = snap.docs;
+    if (!docs.length){
+      const snap2 = await getDocs(query(collection(db,'searchCompanies'), orderBy('nameKey'), where('nameKey','>=',nameKey), where('nameKey','<=',nameKey+''), limit(50)));
+      docs = snap2.docs;
+    }
+  } catch(e){ console.error(e); if (seq === companySearchSeq) statusEl.textContent = 'Search failed — see console'; return; }
+  addReads(docs.length || 1);
+  if (seq !== companySearchSeq) return; // a newer search already superseded this one
+  if (document.getElementById('searchInput').value.trim() !== text) return; // stale by the time it landed
+  let matched = docs.map(d => ({ id:d.id, ...d.data() }));
+  if (nameTokens.length > 1) matched = matched.filter(c => nameTokens.every(t => (c.nameTokens||[]).includes(t) || String(c.nameKey||'').includes(t)));
+  const have = new Set(companies.map(c => c.id));
+  let added = 0;
+  matched.forEach(c => { if (!have.has(c.id)) { companies.push(computeFields(c)); added++; } });
+  statusEl.textContent = added ? `${added} match${added===1?'':'es'} found` : (matched.length ? 'Already loaded' : 'No match found');
   if (added) renderList();
 }
 document.getElementById('loadAllBtn').addEventListener('click', loadAllWithProgress);
