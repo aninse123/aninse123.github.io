@@ -4721,6 +4721,13 @@ async function confirmPeopleImport(){
       if (linkNeedsWrite(c.existing, c.payload)) return true;
       linksSkipped++; return false;
     });
+    // A person's true cross-company total (step 7) can only have changed if
+    // one of THEIR links was actually written or demoted this run — their
+    // own person-doc fields (name, phone, ...) are orthogonal to link count.
+    // Collected here and added to below at the demotion pass, then used in
+    // step 7 to skip the expensive per-person re-read entirely for anyone
+    // this run never touched.
+    const touchedPersonIds = new Set(linksToWrite.map(c => c.r.personId));
     ImportProgress.beginStage('links', linksToWrite.length);
     const linksWritten = await commitInChunks(linksToWrite, 450, (batch, { r, key, payload, existing }) => {
       batch.set(doc(db,'searchPersonLinks', key), payload, { merge: true });
@@ -4767,6 +4774,7 @@ async function confirmPeopleImport(){
             demotions.set(l.id, patch);
             l[facet] = false;
             demoted++;
+            if (l.personId) touchedPersonIds.add(l.personId);
           }
         }
       }
@@ -4816,22 +4824,30 @@ async function confirmPeopleImport(){
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Updating company counts')); return; }
 
     // 7) A person's totals span every company, including ones this file never
-    // mentioned, so they have to come from the database — that read can't be
-    // skipped. But the WRITE can be, when nothing actually changed. They do
-    // not need one query each: `in` takes 30 values, which is the difference
-    // between ~26,700 round-trips and ~890.
-    //
+    // mentioned, so a genuinely-changed person's read can't be skipped. But a
+    // person nothing this run touched — no link written, no demotion — can be
+    // skipped entirely: their true total couldn't have changed, and nothing
+    // else in the app relies on this sweep to "eventually" fix staleness from
+    // elsewhere. Confirmed by checking every write path to searchPersonLinks
+    // in the whole file (four total): the two manual ones (Add/Remove person
+    // in the Ownership tab) already call recountPerson() themselves right
+    // after writing, so they don't depend on a future import to correct
+    // anything. On a near-total re-import this can shrink this stage from
+    // ~890 round-trips down to a handful.
+    const personIdsToRefresh = personIds.filter(id => touchedPersonIds.has(id));
+    const refreshIdChunks = [];
+    for (let i = 0; i < personIdsToRefresh.length; i += PERSON_IN_CHUNK) refreshIdChunks.push(personIdsToRefresh.slice(i, i + PERSON_IN_CHUNK));
     // Stage total/progress is tracked in ROUND-TRIP units throughout, not raw
     // people counts: the read above batches 30 people per round-trip, the
     // write below batches up to 450 — mixing raw item counts from both into
-    // one linear total previously priced ~26,000 "cheap" write-items at the
-    // same per-unit cost as an "expensive" 30-person read round-trip (a 15x
+    // one linear total previously priced "cheap" write-items at the same
+    // per-unit cost as an "expensive" 30-person read round-trip (a 15x
     // error), which is exactly what produced a multi-hour ETA mid-read from
     // a stage that actually takes minutes.
-    const refreshWriteChunkEstimate = Math.ceil(personIds.length / 450); // pessimistic upper bound, corrected below
-    ImportProgress.beginStage('refresh', personIdChunks.length + refreshWriteChunkEstimate);
-    const counts = new Map(personIds.map(id => [id, { total: 0, current: 0 }]));
-    await mapPool(personIdChunks, async ch => {
+    const refreshWriteChunkEstimate = Math.ceil(personIdsToRefresh.length / 450); // pessimistic upper bound, corrected below
+    ImportProgress.beginStage('refresh', refreshIdChunks.length + refreshWriteChunkEstimate);
+    const counts = new Map(personIdsToRefresh.map(id => [id, { total: 0, current: 0 }]));
+    await mapPool(refreshIdChunks, async ch => {
       const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in',ch)));
       addReads(snap.docs.length || 1);
       for (const d of snap.docs){
@@ -4849,19 +4865,19 @@ async function confirmPeopleImport(){
     // upper bound; correct it now that the actual write count is known, so
     // the bar doesn't sit stuck at a low percentage through a nearly-empty
     // write phase.
-    const refreshToWrite = personIds.filter(pid => {
+    const refreshToWrite = personIdsToRefresh.filter(pid => {
       const c = counts.get(pid);
       const existing = existingPeople.get(pid);
       return !(existing && existing.linkCount === c.total && existing.currentLinkCount === c.current);
     });
     const refreshWriteChunkCount = Math.ceil(refreshToWrite.length / 450);
-    ImportProgress.tick('refresh', personIdChunks.length, personIdChunks.length + refreshWriteChunkCount);
+    ImportProgress.tick('refresh', refreshIdChunks.length, refreshIdChunks.length + refreshWriteChunkCount);
     await commitInChunks(refreshToWrite, 450, (batch, pid) => {
       const c = counts.get(pid);
       batch.update(doc(db,'searchPeople',pid), { linkCount: c.total, currentLinkCount: c.current });
       return true;
-    }, { onProgress: done => ImportProgress.tick('refresh', personIdChunks.length + Math.ceil(done / 450)), cancelToken });
-    ImportProgress.finishStage('refresh', `${refreshToWrite.length.toLocaleString('de-DE')} people's totals updated`);
+    }, { onProgress: done => ImportProgress.tick('refresh', refreshIdChunks.length + Math.ceil(done / 450)), cancelToken });
+    ImportProgress.finishStage('refresh', `${refreshToWrite.length.toLocaleString('de-DE')} people's totals updated (${personIdsToRefresh.length.toLocaleString('de-DE')} checked, ${(personIds.length - personIdsToRefresh.length).toLocaleString('de-DE')} untouched — skipped)`);
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
 
     await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted, peopleWritten, peopleSkipped, linksWritten, linksSkipped });
