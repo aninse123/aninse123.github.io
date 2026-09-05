@@ -348,6 +348,7 @@
     .ipb-title { font-weight: 600; color: var(--text); }
     .ipb-clock { color: var(--text-light); font-variant-numeric: tabular-nums; }
     .ipb-clock strong { color: var(--text); font-weight: 600; }
+    .ipb-quota { color: var(--text-light); font-variant-numeric: tabular-nums; font-size: 0.76rem; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: #FAFAF8; }
     .ipb-stop { margin-left: auto; background: #FEE2E2; color: #B91C1C; border: 1px solid #FECACA; border-radius: var(--radius); padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; font-family: var(--font-sans); }
     .ipb-stop:hover { background: #FECACA; }
     .ipb-stop:disabled { opacity: 0.5; cursor: default; }
@@ -381,6 +382,7 @@
   <div class="ipb-top">
     <span class="ipb-title">Importing people &amp; ownership</span>
     <span class="ipb-clock"><strong id="ipbElapsed">0s</strong> elapsed &middot; <span id="ipbEta">estimating…</span></span>
+    <span class="ipb-quota" id="ipbQuota" title="Rough estimate of this browser's Firestore reads/writes today — resets at midnight, not billing-exact."></span>
     <button type="button" class="ipb-stop" id="ipbStopBtn">Stop</button>
   </div>
   <div class="ipb-chips" id="ipbChips"></div>
@@ -1023,7 +1025,7 @@
 <script src="./vendor/leaflet/leaflet.markercluster.js"></script>
 <script src="./vendor/pt-postcodes.js?v=cp7-nominatim-1"></script>
 <script type="module">
-import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch } from './firebase-config.js';
+import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES } from './firebase-config.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
@@ -4358,6 +4360,17 @@ const ImportProgress = (() => {
     }
     el('ipbEta').textContent = (allKnown ? '~' : 'at least ~') + fmtDur(remainMs) + ' left';
   }
+  // Reuses the same session-local counters the nav bar's own reads/writes
+  // pill already tracks (every addReads()/batch.commit() anywhere in the
+  // app increments these) rather than keeping a separate count here — this
+  // is just a second, always-visible place to watch the same numbers while
+  // the bar has your attention, so you don't have to open the nav dropdown
+  // mid-import to see how much quota a big file is burning through.
+  function renderQuota(){
+    const reads = getTodayReads(), writes = getTodayWrites();
+    el('ipbQuota').textContent =
+      `${reads.toLocaleString('de-DE')}/${FREE_TIER_DAILY_READS.toLocaleString('de-DE')} reads · ${writes.toLocaleString('de-DE')}/${FREE_TIER_DAILY_WRITES.toLocaleString('de-DE')} writes today`;
+  }
   function saveCheckpoint(){
     try {
       const s = stageById(curId);
@@ -4367,11 +4380,16 @@ const ImportProgress = (() => {
   function clearCheckpoint(){ try { localStorage.removeItem(IMPORT_PROGRESS_KEY); } catch {} }
   function endRun(kind, summaryText){
     if (tickTimer) clearInterval(tickTimer); tickTimer = null;
-    renderTotal();
+    renderTotal(); renderQuota();
     el('ipbCurrent').style.display = 'none';
     el('ipbSummary').style.display = '';
     el('ipbSummary').className = 'ipb-summary' + (kind === 'complete' ? '' : ' error');
-    el('ipbSummary').textContent = summaryText;
+    // Per-stage breakdown (each stage's own note, set via finishStage) below
+    // the one-line summary — a stage that never started (cancelled/failed
+    // before reaching it) simply has nothing to show, not a blank line.
+    const stageLines = stages.filter(s => s.note).map(s => `<li>${esc(s.label)}: ${esc(s.note)}</li>`).join('');
+    el('ipbSummary').innerHTML = `<div>${esc(summaryText)}</div>` +
+      (stageLines ? `<ul style="margin:6px 0 0;padding-left:18px;">${stageLines}</ul>` : '');
     el('ipbStopBtn').style.display = 'none';
     if (kind !== 'complete' && curId) markChip(curId, kind === 'stopped' ? 'stopped' : 'error');
     clearCheckpoint();
@@ -4388,9 +4406,9 @@ const ImportProgress = (() => {
       el('ipbSummary').style.display = 'none';
       el('ipbCurrent').style.display = '';
       el('ipbStopBtn').disabled = false; el('ipbStopBtn').textContent = 'Stop'; el('ipbStopBtn').style.display = '';
-      renderChips();
+      renderChips(); renderQuota();
       if (tickTimer) clearInterval(tickTimer);
-      tickTimer = setInterval(() => { renderCurrent(); renderTotal(); saveCheckpoint(); }, 1000);
+      tickTimer = setInterval(() => { renderCurrent(); renderTotal(); renderQuota(); saveCheckpoint(); }, 1000);
       window.addEventListener('beforeunload', beforeUnload);
       try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch {}
       return cancelToken;
@@ -4407,10 +4425,11 @@ const ImportProgress = (() => {
       s.done = done; if (total != null) s.total = total;
       renderCurrent(); renderTotal();
     },
-    finishStage(id){
+    finishStage(id, note){
       const s = stageById(id);
       if (!s) return;
       s.finishedAt = Date.now(); if (s.total != null) s.done = s.total;
+      if (note) s.note = note;
       renderChips();
     },
     isCancelled(){ return !!cancelToken?.cancelled; },
@@ -4492,11 +4511,11 @@ async function confirmPeopleImport(){
           }
           return true;
         }, { onProgress: done => ImportProgress.tick('createCompanies', done), cancelToken });
-        ImportProgress.finishStage('createCompanies');
+        ImportProgress.finishStage('createCompanies', `${tally.companiesAdded.toLocaleString('de-DE')} compan${tally.companiesAdded===1?'y':'ies'} created`);
         if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Creating missing companies')); return; }
         fullyLoaded = false; await ensureFullDataset(); // pull the new docs into memory
       } else {
-        ImportProgress.finishStage('createCompanies'); // nothing was unmatched — nothing to do
+        ImportProgress.finishStage('createCompanies', 'nothing unmatched — nothing to create'); // nothing was unmatched — nothing to do
       }
     }
 
@@ -4550,7 +4569,7 @@ async function confirmPeopleImport(){
     }, READ_CONCURRENCY, done => ImportProgress.tick('checking', personIdChunks.length + done), cancelToken);
     const existingLinkByKey = new Map();
     for (const arr of linksByCo.values()) for (const l of arr) existingLinkByKey.set(l.id, l);
-    ImportProgress.finishStage('checking');
+    ImportProgress.finishStage('checking', `${existingPeople.size.toLocaleString('de-DE')} people, ${existingLinkByKey.size.toLocaleString('de-DE')} links checked against what's already stored`);
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Checking what changed')); return; }
 
     // 3) Upsert people — skip anyone re-imported with nothing actually
@@ -4609,7 +4628,7 @@ async function confirmPeopleImport(){
       return true;
     }, { onProgress: done => ImportProgress.tick('people', done), cancelToken });
     tally.peopleWritten = peopleWritten; tally.peopleSkipped = peopleSkipped;
-    ImportProgress.finishStage('people');
+    ImportProgress.finishStage('people', `${peopleWritten.toLocaleString('de-DE')} written, ${peopleSkipped.toLocaleString('de-DE')} unchanged`);
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('People')); return; }
 
     // 4) Upsert links — write only the facet this file actually carries, so a
@@ -4668,7 +4687,7 @@ async function confirmPeopleImport(){
       return true;
     }, { onProgress: done => ImportProgress.tick('links', done), cancelToken });
     tally.linksWritten = linksWritten; tally.linksSkipped = linksSkipped;
-    ImportProgress.finishStage('links');
+    ImportProgress.finishStage('links', `${linksWritten.toLocaleString('de-DE')} written, ${linksSkipped.toLocaleString('de-DE')} unchanged`);
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Links')); return; }
 
     // 5) Snapshot semantics: this file is the complete current picture for the
@@ -4744,7 +4763,7 @@ async function confirmPeopleImport(){
       if (c.local){ c.local.peopleCounts = c.newCounts; if (c.om) c.local.ownershipMeta = { ...(c.local.ownershipMeta || {}), ...c.om }; }
       return true;
     }, { onProgress: done => ImportProgress.tick('demoteCounters', demotions.size + done), cancelToken });
-    ImportProgress.finishStage('demoteCounters');
+    ImportProgress.finishStage('demoteCounters', `${demoted.toLocaleString('de-DE')} relationships demoted, ${countersToWrite.length.toLocaleString('de-DE')} company counts updated`);
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Updating company counts')); return; }
 
     // 7) A person's totals span every company, including ones this file never
@@ -4783,7 +4802,7 @@ async function confirmPeopleImport(){
       batch.update(doc(db,'searchPeople',pid), { linkCount: c.total, currentLinkCount: c.current });
       return true;
     }, { onProgress: done => ImportProgress.tick('refresh', personIdChunks.length + done), cancelToken });
-    ImportProgress.finishStage('refresh');
+    ImportProgress.finishStage('refresh', `${refreshToWrite.length.toLocaleString('de-DE')} people's totals updated`);
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
 
     await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted, peopleWritten, peopleSkipped, linksWritten, linksSkipped });
