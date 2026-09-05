@@ -3527,7 +3527,13 @@ function buildFieldReport(rows, headers, idx, hi){
 //
 // Bounded rather than unbounded because Promise.all over 26,000 queries opens
 // far more in-flight requests than the browser or the SDK will service well.
-const READ_CONCURRENCY = 20;
+// Raised from 20 -> 40 as an experiment: on a genuinely slow connection the
+// bottleneck may be "not enough requests in flight," in which case this
+// helps a lot -- or it may be per-request latency that doesn't improve with
+// more parallelism, in which case this does little. withRetry() already
+// absorbs any transient failures from the extra concurrent load either way,
+// so the downside of guessing wrong here is wasted time, not correctness.
+const READ_CONCURRENCY = 40;
 // Firestore's `in` operator accepts at most 30 values per query.
 const PERSON_IN_CHUNK = 30;
 function sleepMs(ms){ return new Promise(r => setTimeout(r, ms)); }
@@ -4577,12 +4583,7 @@ async function confirmPeopleImport(){
     const touchedChunkCount = Math.ceil(touched.length / PERSON_IN_CHUNK);
     ImportProgress.beginStage('checking', personIdChunks.length + touchedChunkCount);
     const existingPeople = new Map();
-    await mapPool(personIdChunks, async ch => {
-      const snap = await getDocs(query(collection(db,'searchPeople'), where(documentId(),'in', ch)));
-      addReads(snap.docs.length || 1);
-      for (const d of snap.docs) existingPeople.set(d.id, d.data());
-    }, READ_CONCURRENCY, done => ImportProgress.tick('checking', done), cancelToken);
-    // `companyId` is a plain indexed field, same as documentId() above — so
+    // `companyId` is a plain indexed field, same as documentId() below — so
     // it takes the same 30-at-a-time `in` batching instead of one query per
     // company. For a 2,500+ company file that's the difference between
     // ~2,500 round-trips and ~85; the old one-query-per-company approach
@@ -4591,16 +4592,30 @@ async function confirmPeopleImport(){
     const linksByCo = new Map();
     const touchedChunks = [];
     for (let i = 0; i < touched.length; i += PERSON_IN_CHUNK) touchedChunks.push(touched.slice(i, i + PERSON_IN_CHUNK));
-    if (!cancelToken.cancelled) await mapPool(touchedChunks, async chunk => {
-      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','in', chunk)));
-      addReads(snap.docs.length || 1);
-      for (const d of snap.docs){
-        const l = { id: d.id, ...d.data() };
-        let arr = linksByCo.get(l.companyId);
-        if (!arr){ arr = []; linksByCo.set(l.companyId, arr); }
-        arr.push(l);
-      }
-    }, READ_CONCURRENCY, done => ImportProgress.tick('checking', personIdChunks.length + done), cancelToken);
+    // These two reads hit different collections with no dependency on each
+    // other, so they run concurrently rather than one after the other —
+    // each writes only to its own Map, so there's nothing to race. Combined
+    // progress is the sum of both counters, updated by whichever finishes
+    // its latest chunk first.
+    let checkingDoneA = 0, checkingDoneB = 0;
+    const tickChecking = () => ImportProgress.tick('checking', checkingDoneA + checkingDoneB);
+    await Promise.all([
+      mapPool(personIdChunks, async ch => {
+        const snap = await getDocs(query(collection(db,'searchPeople'), where(documentId(),'in', ch)));
+        addReads(snap.docs.length || 1);
+        for (const d of snap.docs) existingPeople.set(d.id, d.data());
+      }, READ_CONCURRENCY, done => { checkingDoneA = done; tickChecking(); }, cancelToken),
+      mapPool(touchedChunks, async chunk => {
+        const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','in', chunk)));
+        addReads(snap.docs.length || 1);
+        for (const d of snap.docs){
+          const l = { id: d.id, ...d.data() };
+          let arr = linksByCo.get(l.companyId);
+          if (!arr){ arr = []; linksByCo.set(l.companyId, arr); }
+          arr.push(l);
+        }
+      }, READ_CONCURRENCY, done => { checkingDoneB = done; tickChecking(); }, cancelToken),
+    ]);
     const existingLinkByKey = new Map();
     for (const arr of linksByCo.values()) for (const l of arr) existingLinkByKey.set(l.id, l);
     ImportProgress.finishStage('checking', `${existingPeople.size.toLocaleString('de-DE')} people, ${existingLinkByKey.size.toLocaleString('de-DE')} links checked against what's already stored`);
