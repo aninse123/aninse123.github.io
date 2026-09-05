@@ -2459,11 +2459,22 @@ async function openDetail(id, tab){
   setActiveTab(tab || 'overview');
   // A company reached via a cross-reference (a graph node, a GUO link, a
   // person's Positions table) may not be in the bounded "recently touched"
-  // window yet — load the full set first rather than rendering into an
-  // undefined company. The common case (opening a row already on screen)
-  // skips this entirely, since that company is already in `companies`.
-  if (!getCompany()) await ensureFullDataset();
-  if (currentCoId !== id) return;   // moved on while the full set was loading
+  // window yet. Caught live: this used to call ensureFullDataset() here,
+  // silently downloading all ~20,682 companies just to resolve the ONE row
+  // this page needs -- a company with no Ownership data at all still had to
+  // wait out a full-collection load before it could show "No people yet".
+  // A single targeted doc fetch resolves the same case in one cheap read.
+  // The common case (opening a row already on screen) skips this entirely,
+  // since that company is already in `companies`.
+  if (!getCompany()){
+    try {
+      const snap = await getDoc(doc(db,'searchCompanies', id));
+      addReads(1);
+      if (currentCoId !== id) return; // moved on while fetching
+      if (snap.exists()) companies.push(computeFields({ id: snap.id, ...snap.data() }));
+    } catch(e){ console.error(e); }
+  }
+  if (currentCoId !== id) return;   // moved on while fetching
   // Render from the company already in memory BEFORE waiting on anything.
   // Awaiting the activity fetch first left every panel showing the PREVIOUS
   // company for the length of a round-trip — most visibly the Ownership tab,
