@@ -4820,7 +4820,16 @@ async function confirmPeopleImport(){
     // skipped. But the WRITE can be, when nothing actually changed. They do
     // not need one query each: `in` takes 30 values, which is the difference
     // between ~26,700 round-trips and ~890.
-    ImportProgress.beginStage('refresh', personIdChunks.length + personIds.length);
+    //
+    // Stage total/progress is tracked in ROUND-TRIP units throughout, not raw
+    // people counts: the read above batches 30 people per round-trip, the
+    // write below batches up to 450 — mixing raw item counts from both into
+    // one linear total previously priced ~26,000 "cheap" write-items at the
+    // same per-unit cost as an "expensive" 30-person read round-trip (a 15x
+    // error), which is exactly what produced a multi-hour ETA mid-read from
+    // a stage that actually takes minutes.
+    const refreshWriteChunkEstimate = Math.ceil(personIds.length / 450); // pessimistic upper bound, corrected below
+    ImportProgress.beginStage('refresh', personIdChunks.length + refreshWriteChunkEstimate);
     const counts = new Map(personIds.map(id => [id, { total: 0, current: 0 }]));
     await mapPool(personIdChunks, async ch => {
       const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in',ch)));
@@ -4845,12 +4854,13 @@ async function confirmPeopleImport(){
       const existing = existingPeople.get(pid);
       return !(existing && existing.linkCount === c.total && existing.currentLinkCount === c.current);
     });
-    ImportProgress.tick('refresh', personIdChunks.length, personIdChunks.length + refreshToWrite.length);
+    const refreshWriteChunkCount = Math.ceil(refreshToWrite.length / 450);
+    ImportProgress.tick('refresh', personIdChunks.length, personIdChunks.length + refreshWriteChunkCount);
     await commitInChunks(refreshToWrite, 450, (batch, pid) => {
       const c = counts.get(pid);
       batch.update(doc(db,'searchPeople',pid), { linkCount: c.total, currentLinkCount: c.current });
       return true;
-    }, { onProgress: done => ImportProgress.tick('refresh', personIdChunks.length + done), cancelToken });
+    }, { onProgress: done => ImportProgress.tick('refresh', personIdChunks.length + Math.ceil(done / 450)), cancelToken });
     ImportProgress.finishStage('refresh', `${refreshToWrite.length.toLocaleString('de-DE')} people's totals updated`);
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
 
