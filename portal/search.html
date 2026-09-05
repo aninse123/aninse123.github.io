@@ -508,6 +508,7 @@
       </div>
       <div class="pagination" id="pagination" style="display:none;">
         <button class="btn btn--ghost btn--sm" id="loadMoreBtn">Load more</button>
+        <span id="loadMoreExhausted" style="display:none;font-size:0.8rem;color:var(--text-light);">That's everything currently loaded — <button class="btn btn--ghost btn--sm" id="loadMoreExhaustedBtn">⬇ Load all companies</button> to see the rest.</span>
       </div>
     </div>
 
@@ -2178,7 +2179,7 @@ function sortList(list){
 // (#peopleSearchInput) and needs none of these; leaving them live meant
 // typing in the company search box while on People triggered a full
 // 20,682-company load for a view that never reads the result.
-const COMPANY_ONLY_TOOLBAR_IDS = ['searchInput','stageFilter','ownerFilter','priorityFilter','sectorFilter','advFilterBtn','resultsCount'];
+const COMPANY_ONLY_TOOLBAR_IDS = ['searchInput','nifSearchBtn','nifSearchStatus','stageFilter','ownerFilter','priorityFilter','sectorFilter','advFilterBtn','resultsCount'];
 function showCompanyToolbar(show){
   COMPANY_ONLY_TOOLBAR_IDS.forEach(id => showEl(id, show));
   const fitGroup = document.getElementById('fitMin')?.closest('.filter-group');
@@ -2202,8 +2203,21 @@ function renderList(){
   const shown = list.slice(0, visibleCount);
   tbody.innerHTML = shown.map(rowHtml).join('');
   tbody.querySelectorAll('.row-clickable').forEach(r => r.addEventListener('click', () => openDetail(r.dataset.id)));
-  if (list.length > visibleCount) { showEl('pagination', true); document.getElementById('loadMoreBtn').textContent = `Load more (${list.length - visibleCount} hidden)`; }
-  else showEl('pagination', false);
+  if (list.length > visibleCount) {
+    showEl('pagination', true); showEl('loadMoreBtn', true); showEl('loadMoreExhausted', false);
+    document.getElementById('loadMoreBtn').textContent = `Load more (${list.length - visibleCount} hidden)`;
+  } else if (!fullyLoaded) {
+    // Shown everything currently loaded that matches (or all of it, with no
+    // filter active) -- but more unloaded companies exist and might match too.
+    // Used to silently trigger a full ensureFullDataset() load right here;
+    // now it's an explicit, visible choice, same as everywhere else that
+    // reaches for the full dataset.
+    showEl('pagination', true); showEl('loadMoreBtn', false); showEl('loadMoreExhausted', true);
+    document.getElementById('loadMoreExhausted').firstChild.textContent =
+      `No more matches among the ${companies.length.toLocaleString('en')} loaded — `;
+  } else {
+    showEl('pagination', false);
+  }
 }
 function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
@@ -2382,7 +2396,9 @@ function updateMapMarkers(){
   if (markers.length) leafletMap.fitBounds(markerClusterGroup.getBounds(), { padding:[24,24] });
 }
 async function exportMapCsv(){
-  await ensureFullDataset();
+  const btn = document.getElementById('mapExportBtn');
+  btn.disabled = true; const origLabel = btn.innerHTML; btn.innerHTML = '<span class="spin-sm"></span>Preparing…';
+  try { await ensureFullDataset(); } finally { btn.disabled = false; btn.innerHTML = origLabel; }
   const base = sortList(getFiltered());
   const list = mapMode === 'custom' ? base.filter(c => mapSelection.has(c.id)) : base;
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
@@ -4432,7 +4448,7 @@ function notify(title, body){
 }
 const ImportProgress = (() => {
   let stages = [], curId = null, startedAt = null, cancelToken = null, tickTimer = null;
-  let totalEtaSnapshotMs = null, totalEtaSnapshotFloorMs = null, totalEtaSnapshotAt = null;
+  let totalEtaSnapshotMs = null, totalEtaSnapshotAt = null;
   const el = id => document.getElementById(id);
   const beforeUnload = e => { e.preventDefault(); e.returnValue = ''; };
   function fmtDur(ms){
@@ -4496,16 +4512,25 @@ const ImportProgress = (() => {
       if (refRate) remainMs += refRate * st.total; else allKnown = false;
     }
     totalEtaSnapshotMs = allKnown ? remainMs : null;
-    totalEtaSnapshotFloorMs = allKnown ? null : remainMs;
     totalEtaSnapshotAt = Date.now();
   }
   function renderTotal(){
     if (!startedAt) return;
     el('ipbElapsed').textContent = fmtDur(Date.now() - startedAt);
     const since = totalEtaSnapshotAt ? Date.now() - totalEtaSnapshotAt : 0;
-    if (totalEtaSnapshotMs != null) el('ipbEta').textContent = '~' + fmtDur(Math.max(0, totalEtaSnapshotMs - since)) + ' left';
-    else if (totalEtaSnapshotFloorMs != null) el('ipbEta').textContent = 'at least ~' + fmtDur(Math.max(0, totalEtaSnapshotFloorMs - since)) + ' left';
-    else el('ipbEta').textContent = 'estimating…';
+    if (totalEtaSnapshotMs != null) {
+      el('ipbEta').textContent = '~' + fmtDur(Math.max(0, totalEtaSnapshotMs - since)) + ' left';
+      return;
+    }
+    // Caught live: at least one stage still ahead has a size that isn't known
+    // until it actually begins (every stage in this importer, until the last
+    // one), so "remaining work in stages after this one" always computed to
+    // zero -- the displayed "total" silently collapsed to the CURRENT stage's
+    // own countdown the whole time, looking like a real total when it wasn't
+    // one. A step count is honest about not having a full-run estimate yet,
+    // instead of a duration that happens to always read the same as the stage.
+    const idx = stages.findIndex(x => x.id === curId);
+    el('ipbEta').textContent = idx >= 0 ? `stage ${idx + 1} of ${stages.length}` : 'estimating…';
   }
   // Reuses the same session-local counters the nav bar's own reads/writes
   // pill already tracks (every addReads()/batch.commit() anywhere in the
@@ -4552,7 +4577,7 @@ const ImportProgress = (() => {
     start(stageDefs){
       stages = stageDefs.map(d => ({ ...d, total: d.total ?? null, done: 0, startedAt: null, finishedAt: null }));
       curId = null; startedAt = Date.now();
-      totalEtaSnapshotMs = null; totalEtaSnapshotFloorMs = null; totalEtaSnapshotAt = null;
+      totalEtaSnapshotMs = null; totalEtaSnapshotAt = null;
       cancelToken = { cancelled: false };
       el('importProgressBar').style.display = '';
       el('ipbSummary').style.display = 'none';
@@ -4630,7 +4655,10 @@ async function confirmPeopleImport(){
   if (!rows.length) return;
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
   const stageDefs = [];
-  if (createMissing) stageDefs.push({ id:'createCompanies', label:'Creating missing companies' });
+  if (createMissing) stageDefs.push(
+    { id:'createCompanies', label:'Creating missing companies' },
+    { id:'refreshCompanies', label:'Refreshing company list' },
+  );
   stageDefs.push(
     { id:'checking', label:'Checking what changed' },
     { id:'people', label:'People' },
@@ -4670,9 +4698,17 @@ async function confirmPeopleImport(){
         }, { onProgress: done => ImportProgress.tick('createCompanies', done), cancelToken });
         ImportProgress.finishStage('createCompanies', `${tally.companiesAdded.toLocaleString('de-DE')} compan${tally.companiesAdded===1?'y':'ies'} created`);
         if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Creating missing companies')); return; }
+        // ensureFullDataset() has no real progress to report (one opaque
+        // listener, not a chunked walk) -- caught live: this used to run
+        // silently between two stage chips with nothing of its own on the
+        // bar, so it looked stalled for however long it took. An
+        // indeterminate stage at least says what's happening right now.
+        ImportProgress.beginStage('refreshCompanies');
         fullyLoaded = false; await ensureFullDataset(); // pull the new docs into memory
+        ImportProgress.finishStage('refreshCompanies', 'done');
       } else {
         ImportProgress.finishStage('createCompanies', 'nothing unmatched — nothing to create'); // nothing was unmatched — nothing to do
+        ImportProgress.finishStage('refreshCompanies', 'not needed — no new companies created');
       }
     }
 
@@ -5817,6 +5853,16 @@ async function saveCompany(){
         await logAuto(editCoId, 'company_edited', 'Profile updated.');
       }
     } else {
+      // Soft duplicate check, same spirit as Bulk Import's — only against
+      // companies already loaded in memory (not worth forcing a full-dataset
+      // load just for this), so it can miss a duplicate that only exists
+      // outside the bounded window. A match asks, it never silently blocks.
+      const nifDigits = onlyDigits(data.nif);
+      const nameKey = normName(data.name);
+      const dup = companies.find(c => (nifDigits && onlyDigits(c.nif) === nifDigits) || (nameKey && normName(c.name) === nameKey));
+      if (dup && !confirm(`This looks like it might already exist: "${dup.name}"${dup.nif ? ' (NIF ' + dup.nif + ')' : ''}. Create a new company anyway?`)) {
+        return; // finally below still resets the button
+      }
       const base = { ...data, financials:{}, contacts:[], addOnTo:[], addOns:[], lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), createdBy: currentUser };
       const computed = computeFields({ ...base });
       const full = {
@@ -6888,10 +6934,25 @@ document.getElementById('exportFieldsConfirmBtn').addEventListener('click', asyn
   const keys = [...document.querySelectorAll('.exportFieldChk:checked')].map(c => c.dataset.key);
   if (!keys.length) return;
   try { localStorage.setItem(EXPORT_FIELD_KEYS_STORAGE_KEY, JSON.stringify(keys)); } catch(e){}
-  showEl('exportFieldsModal', false);
-  await exportCsv(keys);
+  // Same spinner-on-the-button treatment "Recalculate All" already uses —
+  // a fire-and-forget download doesn't need a whole loading modal, but it
+  // does need SOMETHING visible while ensureFullDataset() runs inside
+  // exportCsv(). The modal only closes once the export is actually ready.
+  const btn = document.getElementById('exportFieldsConfirmBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Preparing…';
+  try { await exportCsv(keys); }
+  finally { btn.disabled = false; btn.innerHTML = '⬇ Export CSV'; showEl('exportFieldsModal', false); }
 });
-document.getElementById('bulkImportBtn').addEventListener('click', async () => { await ensureFullDataset(); openBulk(); });
+document.getElementById('bulkImportBtn').addEventListener('click', async () => {
+  // Open the modal immediately with a visible loading state, rather than the
+  // button silently sitting there for however long ensureFullDataset() takes.
+  showEl('bulkModal', true);
+  document.getElementById('bulkFileName').textContent = 'Loading company data…';
+  document.getElementById('bulkFileInput').disabled = true;
+  await ensureFullDataset();
+  document.getElementById('bulkFileInput').disabled = false;
+  openBulk();
+});
 document.getElementById('bulkCancelBtn').addEventListener('click', () => showEl('bulkModal', false));
 document.getElementById('bulkConfirmBtn').addEventListener('click', confirmBulk);
 document.getElementById('bulkTemplateBtn').addEventListener('click', downloadTemplate);
@@ -6902,7 +6963,14 @@ document.getElementById('bulkFileInput').addEventListener('change', e => {
 });
 document.querySelectorAll('input[name=bulkMode]').forEach(r => r.addEventListener('change', updateBulkConfirmLabel));
 // People / Ownership importer
-document.getElementById('peopleImportBtn').addEventListener('click', async () => { await ensureFullDataset(); openPeopleImport(); });
+document.getElementById('peopleImportBtn').addEventListener('click', async () => {
+  showEl('peopleImportModal', true);
+  document.getElementById('peopleFileName').textContent = 'Loading company data…';
+  document.getElementById('peopleFileInput').disabled = true;
+  await ensureFullDataset();
+  document.getElementById('peopleFileInput').disabled = false;
+  openPeopleImport();
+});
 document.getElementById('peopleImportCancelBtn').addEventListener('click', () => showEl('peopleImportModal', false));
 document.getElementById('peopleCheckDemotionsBtn').addEventListener('click', checkPeopleImportDemotions);
 document.getElementById('peopleImportConfirmBtn').addEventListener('click', confirmPeopleImport);
@@ -7058,20 +7126,23 @@ function updateCodeLabel(inputId, labelId, codeField, descField){
   document.getElementById(labelId).textContent = match ? '= '+match[descField] : '';
 }
 
-// Load more — stays purely client-side while paging through what's already
-// loaded; only reaches for the full dataset once the bounded window runs out.
-document.getElementById('loadMoreBtn').addEventListener('click', async () => {
-  if (visibleCount >= companies.length && !fullyLoaded) await ensureFullDataset();
+// Load more — purely client-side, paging through what's already loaded.
+// Never reaches for the full dataset itself anymore; once that's exhausted,
+// renderList() shows #loadMoreExhausted with its own explicit "Load all
+// companies" button instead.
+document.getElementById('loadMoreBtn').addEventListener('click', () => {
   visibleCount += PAGE; renderList();
 });
+document.getElementById('loadMoreExhaustedBtn').addEventListener('click', loadAllWithProgress);
 
-// Sort — sorting a bounded "recently touched" window by e.g. Revenue would be
-// misleading, so any column sort needs the full dataset first.
-document.querySelectorAll('#companyTable th[data-col]').forEach(th => th.addEventListener('click', async () => {
+// Sort — operates on whatever's currently loaded, instantly, same as the
+// filters. Sorting a bounded "recently touched" window by Revenue is a
+// legitimate thing to want without committing to a full load first; the
+// results count already discloses "X of Y loaded · Z total" when it applies.
+document.querySelectorAll('#companyTable th[data-col]').forEach(th => th.addEventListener('click', () => {
   const col = th.dataset.col;
   if (sortCol === col) sortDir = sortDir==='asc'?'desc':'asc';
   else { sortCol = col; sortDir = (col==='name'||col==='sector')?'asc':'desc'; }
-  await ensureFullDataset();
   renderList();
 }));
 
