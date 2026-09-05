@@ -4508,22 +4508,33 @@ async function confirmPeopleImport(){
     //    no-op checks below AND the demotion scan and counter refresh
     //    further down, which used to each re-fetch this same link data a
     //    second (and third) time, after the writes had already happened.
-    ImportProgress.beginStage('checking', personIdChunks.length + touched.length);
+    const touchedChunkCount = Math.ceil(touched.length / PERSON_IN_CHUNK);
+    ImportProgress.beginStage('checking', personIdChunks.length + touchedChunkCount);
     const existingPeople = new Map();
     await mapPool(personIdChunks, async ch => {
       const snap = await getDocs(query(collection(db,'searchPeople'), where(documentId(),'in', ch)));
       addReads(snap.docs.length || 1);
       for (const d of snap.docs) existingPeople.set(d.id, d.data());
     }, READ_CONCURRENCY, done => ImportProgress.tick('checking', done), cancelToken);
-    // One query per company, run concurrently — see mapPool.
+    // `companyId` is a plain indexed field, same as documentId() above — so
+    // it takes the same 30-at-a-time `in` batching instead of one query per
+    // company. For a 2,500+ company file that's the difference between
+    // ~2,500 round-trips and ~85; the old one-query-per-company approach
+    // (still correct, just far more round-trips than necessary) is why this
+    // stage was the slowest part of a big import.
     const linksByCo = new Map();
-    const perCompany = cancelToken.cancelled ? [] : await mapPool(touched, cid =>
-      getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',cid)))
-        .then(snap => { addReads(snap.docs.length || 1); return { cid, docs: snap.docs }; }),
-      READ_CONCURRENCY,
-      done => ImportProgress.tick('checking', personIdChunks.length + done),
-      cancelToken);
-    for (const { cid, docs } of perCompany) linksByCo.set(cid, docs.map(d => ({ id: d.id, ...d.data() })));
+    const touchedChunks = [];
+    for (let i = 0; i < touched.length; i += PERSON_IN_CHUNK) touchedChunks.push(touched.slice(i, i + PERSON_IN_CHUNK));
+    if (!cancelToken.cancelled) await mapPool(touchedChunks, async chunk => {
+      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','in', chunk)));
+      addReads(snap.docs.length || 1);
+      for (const d of snap.docs){
+        const l = { id: d.id, ...d.data() };
+        let arr = linksByCo.get(l.companyId);
+        if (!arr){ arr = []; linksByCo.set(l.companyId, arr); }
+        arr.push(l);
+      }
+    }, READ_CONCURRENCY, done => ImportProgress.tick('checking', personIdChunks.length + done), cancelToken);
     const existingLinkByKey = new Map();
     for (const arr of linksByCo.values()) for (const l of arr) existingLinkByKey.set(l.id, l);
     ImportProgress.finishStage('checking');
