@@ -1759,6 +1759,10 @@ async function fetchTotalCount(){
   } catch(e) { cachedTotalCount = null; }
   renderSummary();
   renderReadsAndFreshness();
+  // The initial renderList() already ran (synchronously, on the bounded
+  // window) before this async count came back, so the results count would
+  // otherwise be stuck showing no total at all until the next filter/render.
+  renderList();
 }
 
 // ── Statistics view ─────────────────────────────────────────────────────────
