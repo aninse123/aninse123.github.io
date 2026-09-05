@@ -4315,7 +4315,10 @@ const ImportProgress = (() => {
   const stageById = id => stages.find(s => s.id === id);
   function renderChips(){
     el('ipbChips').innerHTML = stages.map(s => {
-      const cls = s.id === curId ? 'current' : s.finishedAt ? 'done' : '';
+      // Finished wins over "is this the current stage" — otherwise the last
+      // stage of a run (curId never advances past it) shows as perpetually
+      // "current" instead of "done" once finishStage() marks it complete.
+      const cls = s.finishedAt ? 'done' : (s.id === curId ? 'current' : '');
       return `<span class="ipb-chip ${cls}" data-stage="${s.id}">${s.label}</span>`;
     }).join('');
   }
