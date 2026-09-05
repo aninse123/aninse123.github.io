@@ -2753,6 +2753,60 @@ async function fetchPersonLinks(personId, force=false){
   personLinksCache.set(personId, links);
   return links;
 }
+// Batched versions of fetchCompanyLinks/fetchPersonLinks for buildGraph's
+// ring-2 expansion: it used to Promise.all() one query per ring-1 node (up
+// to GRAPH_RING1_CAP=10, unbatched) -- the same one-query-per-item pattern
+// fixed three times over in the people importer, here in the network graph
+// instead. Same fix: whatever isn't already cached gets fetched in ONE `in`
+// query (chunked at 30 in case a caller ever passes more), not one each.
+async function fetchManyCompanyLinks(companyIds){
+  const result = new Map();
+  const need = [];
+  for (const cid of [...new Set(companyIds)]){
+    if (companyLinksCache.has(cid)) result.set(cid, companyLinksCache.get(cid));
+    else need.push(cid);
+  }
+  if (need.length){
+    const byCid = new Map(need.map(cid => [cid, []]));
+    for (let i = 0; i < need.length; i += PERSON_IN_CHUNK){
+      const chunk = need.slice(i, i + PERSON_IN_CHUNK);
+      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','in', chunk)));
+      addReads(snap.docs.length || 1);
+      for (const d of snap.docs){
+        const l = { id:d.id, ...d.data() };
+        let arr = byCid.get(l.companyId);
+        if (!arr){ arr = []; byCid.set(l.companyId, arr); }
+        arr.push(l);
+      }
+    }
+    for (const [cid, links] of byCid){ companyLinksCache.set(cid, links); result.set(cid, links); }
+  }
+  return result;
+}
+async function fetchManyPersonLinks(personIds){
+  const result = new Map();
+  const need = [];
+  for (const pid of [...new Set(personIds)]){
+    if (personLinksCache.has(pid)) result.set(pid, personLinksCache.get(pid));
+    else need.push(pid);
+  }
+  if (need.length){
+    const byPid = new Map(need.map(pid => [pid, []]));
+    for (let i = 0; i < need.length; i += PERSON_IN_CHUNK){
+      const chunk = need.slice(i, i + PERSON_IN_CHUNK);
+      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in', chunk)));
+      addReads(snap.docs.length || 1);
+      for (const d of snap.docs){
+        const l = { id:d.id, ...d.data() };
+        let arr = byPid.get(l.personId);
+        if (!arr){ arr = []; byPid.set(l.personId, arr); }
+        arr.push(l);
+      }
+    }
+    for (const [pid, links] of byPid){ personLinksCache.set(pid, links); result.set(pid, links); }
+  }
+  return result;
+}
 async function fetchPerson(personId, force=false){
   if (!force && personDocCache.has(personId)) return personDocCache.get(personId);
   const snap = await getDoc(doc(db,'searchPeople',personId));
@@ -5043,7 +5097,8 @@ async function buildGraph(focusType, focusId, opts = {}){
       addMoreEdge(key('company', focusId), key('more', 'ring1'));
     }
     if (depth >= 1){
-      const sets = await Promise.all(ring1Links.map(l => fetchPersonLinks(l.personId)));
+      const linksByPersonId = await fetchManyPersonLinks(ring1Links.map(l => l.personId));
+      const sets = ring1Links.map(l => linksByPersonId.get(l.personId) || []);
       ring1Links.forEach((l, i) => {
         const allOthers = sets[i].filter(x => x.companyId !== focusId).sort(graphLinkRank);
         const expanded = expandRing2.has(l.personId);
@@ -5074,7 +5129,8 @@ async function buildGraph(focusType, focusId, opts = {}){
       addMoreEdge(key('person', focusId), key('more', 'ring1'));
     }
     if (depth >= 1){
-      const sets = await Promise.all(ring1Links.map(l => fetchCompanyLinks(l.companyId)));
+      const linksByCompanyId = await fetchManyCompanyLinks(ring1Links.map(l => l.companyId));
+      const sets = ring1Links.map(l => linksByCompanyId.get(l.companyId) || []);
       ring1Links.forEach((l, i) => {
         // resolveOwnership() is null-safe on a missing company doc, so this
         // works even when the ring-1 company isn't in the loaded window.
