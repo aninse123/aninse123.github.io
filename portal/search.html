@@ -4504,7 +4504,12 @@ async function confirmPeopleImport(){
     for (const r of rows) if (!byPerson.has(r.personId)) byPerson.set(r.personId, r);
     // Corporate holders that are themselves CRM companies → matchedCompanyId.
     const nifToCo = new Map();
-    for (const c of companies){ const n = onlyDigits(c.nif) || nifFromAny('', c.bvdId); if (n) nifToCo.set(n, c.id); }
+    // Same pass also builds an id -> company lookup: the counters step below
+    // used to call `companies.find(c => c.id === cid)` once per touched
+    // company, an O(20,000+) linear scan every time -- up to ~2,500 × 20,000
+    // comparisons for a full-population import. A Map turns that into O(1).
+    const companiesById = new Map();
+    for (const c of companies){ const n = onlyDigits(c.nif) || nifFromAny('', c.bvdId); if (n) nifToCo.set(n, c.id); companiesById.set(c.id, c); }
     const touched = [...new Set(rows.map(r => r.companyId).filter(Boolean))];
     const personIds = [...byPerson.keys()];
     const personIdChunks = [];
@@ -4709,7 +4714,7 @@ async function confirmPeopleImport(){
     const counterCandidates = touched.map(cid => {
       const links = linksByCo.get(cid) || [];
       const newCounts = peopleCountsFrom(links);
-      const local = companies.find(c => c.id === cid);
+      const local = companiesById.get(cid);
       const om = meta.get(cid);
       const payload = { peopleCounts: newCounts };
       let ownershipChanged = false;
