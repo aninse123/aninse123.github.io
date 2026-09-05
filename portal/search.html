@@ -341,6 +341,32 @@
     #mapContainer { flex: 1; min-width: 0; }
     .dp-pin { background: none; border: none; }
     @media (max-width: 900px) { .map-layout { flex-direction: column; } .map-sidebar { width: 100%; max-height: 220px; } }
+
+    /* ── Import progress bar — persists across view changes and modal close ── */
+    .import-progress-bar { position: sticky; top: 0; z-index: 40; background: var(--white); border-bottom: 1.5px solid var(--border); padding: 10px 20px; box-shadow: var(--shadow-sm); font-size: 0.82rem; }
+    .ipb-top { display: flex; align-items: center; gap: 14px; }
+    .ipb-title { font-weight: 600; color: var(--text); }
+    .ipb-clock { color: var(--text-light); font-variant-numeric: tabular-nums; }
+    .ipb-clock strong { color: var(--text); font-weight: 600; }
+    .ipb-stop { margin-left: auto; background: #FEE2E2; color: #B91C1C; border: 1px solid #FECACA; border-radius: var(--radius); padding: 5px 12px; font-size: 0.78rem; font-weight: 600; cursor: pointer; font-family: var(--font-sans); }
+    .ipb-stop:hover { background: #FECACA; }
+    .ipb-stop:disabled { opacity: 0.5; cursor: default; }
+    .ipb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+    .ipb-chip { padding: 3px 10px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; border: 1px solid var(--border); color: var(--text-light); background: #FAFAF8; }
+    .ipb-chip.done { background: var(--secondary); border-color: var(--secondary); color: var(--white); }
+    .ipb-chip.current { background: var(--primary); border-color: var(--primary); color: var(--white); }
+    .ipb-chip.stopped, .ipb-chip.error { background: #FEE2E2; border-color: #FECACA; color: #B91C1C; }
+    .ipb-current { margin-top: 8px; }
+    .ipb-current-row { display: flex; align-items: baseline; gap: 10px; color: var(--text-light); }
+    .ipb-stage-name { font-weight: 600; color: var(--text); }
+    .ipb-stage-count { font-variant-numeric: tabular-nums; }
+    .ipb-stage-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+    .ipb-track { margin-top: 6px; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+    .ipb-fill { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.25s ease; }
+    .ipb-summary { margin-top: 8px; color: var(--text-light); }
+    .ipb-summary.error { color: #B91C1C; }
+    #resumeImportBanner { display: none; position: sticky; top: 0; z-index: 40; background: #FFF7ED; border-bottom: 1.5px solid #FED7AA; padding: 10px 20px; font-size: 0.82rem; color: #9A3412; }
+    #resumeImportBanner button { margin-left: 10px; background: none; border: 1px solid #FED7AA; border-radius: var(--radius); padding: 3px 10px; font-size: 0.76rem; color: #9A3412; cursor: pointer; font-family: var(--font-sans); }
   </style>
 </head>
 <body>
@@ -349,6 +375,25 @@
 
 <!-- Nav -->
 <nav class="nav" id="siteNav"></nav>
+
+<div id="resumeImportBanner"></div>
+<div id="importProgressBar" class="import-progress-bar" style="display:none;">
+  <div class="ipb-top">
+    <span class="ipb-title">Importing people &amp; ownership</span>
+    <span class="ipb-clock"><strong id="ipbElapsed">0s</strong> elapsed &middot; <span id="ipbEta">estimating…</span></span>
+    <button type="button" class="ipb-stop" id="ipbStopBtn">Stop</button>
+  </div>
+  <div class="ipb-chips" id="ipbChips"></div>
+  <div class="ipb-current" id="ipbCurrent">
+    <div class="ipb-current-row">
+      <span class="ipb-stage-name" id="ipbStageName"></span>
+      <span class="ipb-stage-count" id="ipbStageCount"></span>
+      <span class="ipb-stage-time" id="ipbStageTime"></span>
+    </div>
+    <div class="ipb-track"><div class="ipb-fill" id="ipbFill" style="width:0%;"></div></div>
+  </div>
+  <div class="ipb-summary" id="ipbSummary" style="display:none;"></div>
+</div>
 
 <div class="main">
 
@@ -3483,18 +3528,36 @@ function buildFieldReport(rows, headers, idx, hi){
 const READ_CONCURRENCY = 20;
 // Firestore's `in` operator accepts at most 30 values per query.
 const PERSON_IN_CHUNK = 30;
-async function mapPool(items, fn, limit = READ_CONCURRENCY, onProgress){
+function sleepMs(ms){ return new Promise(r => setTimeout(r, ms)); }
+// A dropped connection (a sleep/wake cycle, a flaky hotspot) fails exactly one
+// round-trip, not the underlying request — retrying it costs nothing extra,
+// and it's safe everywhere this is used: every write in the file is either a
+// `merge:true` set or an arrayUnion, both idempotent, so replaying one that
+// actually landed can't double anything. 3 tries, doubling backoff.
+async function withRetry(fn, tries = 3, baseDelayMs = 800){
+  for (let attempt = 0; ; attempt++){
+    try { return await fn(); }
+    catch (e){ if (attempt >= tries - 1) throw e; await sleepMs(baseDelayMs * 2 ** attempt); }
+  }
+}
+// `cancelToken` is an optional { cancelled: bool } shared by reference. A
+// worker checks it before picking up its NEXT item — whatever it already
+// started stays in flight and completes normally, so a cancelled run can
+// never leave a batch half-committed. Callers that don't pass one behave
+// exactly as before.
+async function mapPool(items, fn, limit = READ_CONCURRENCY, onProgress, cancelToken){
   const results = new Array(items.length);
   let next = 0, done = 0;
   const worker = async () => {
     while (next < items.length){
+      if (cancelToken?.cancelled) return;
       const i = next++;
-      results[i] = await fn(items[i], i);
+      results[i] = await withRetry(() => fn(items[i], i));
       if (onProgress && ++done % 50 === 0) onProgress(done);
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  if (onProgress && items.length) onProgress(items.length);
+  if (onProgress && items.length) onProgress(cancelToken?.cancelled ? done : items.length);
   return results;
 }
 // Writes are heavier than reads (each touches a real document, and a bad
@@ -3513,7 +3576,7 @@ const WRITE_CONCURRENCY = 6;
 // true, or returns false to skip a no-op; a chunk where every item was
 // skipped never calls commit() at all — a real network round-trip saved,
 // not just a write. Returns how many items actually got a write staged.
-async function commitInChunks(items, chunkSize, build, { concurrency = WRITE_CONCURRENCY, onProgress } = {}){
+async function commitInChunks(items, chunkSize, build, { concurrency = WRITE_CONCURRENCY, onProgress, cancelToken } = {}){
   const chunks = [];
   for (let i = 0; i < items.length; i += chunkSize) chunks.push(items.slice(i, i + chunkSize));
   let processed = 0, written = 0;
@@ -3524,7 +3587,7 @@ async function commitInChunks(items, chunkSize, build, { concurrency = WRITE_CON
     if (staged) await batch.commit();
     written += staged; processed += chunk.length;
     onProgress?.(processed, items.length);
-  }, concurrency);
+  }, concurrency, undefined, cancelToken);
   return written;
 }
 
@@ -4224,6 +4287,153 @@ function linkNeedsWrite(existing, payload){
   return false;
 }
 
+// ── Import progress bar ──────────────────────────────────────────────────
+// Lives under the nav, not inside the modal: closing/hiding the modal was
+// already found to be purely cosmetic (confirmPeopleImport keeps running
+// underneath), so progress needs a home that survives that and view changes.
+// A stage is declared with its item count when it's known (right before it
+// starts, since several counts — demotions, touched companies for the
+// counter pass — are only computed mid-run) and ticked via the same
+// onProgress callbacks already threaded through commitInChunks/mapPool.
+const IMPORT_PROGRESS_KEY = 'peopleImportProgress';
+function notify(title, body){
+  try {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'granted') new Notification(title, { body });
+    else if (Notification.permission !== 'denied') Notification.requestPermission().then(p => { if (p === 'granted') new Notification(title, { body }); });
+  } catch {}
+}
+const ImportProgress = (() => {
+  let stages = [], curId = null, startedAt = null, cancelToken = null, tickTimer = null;
+  const el = id => document.getElementById(id);
+  const beforeUnload = e => { e.preventDefault(); e.returnValue = ''; };
+  function fmtDur(ms){
+    if (ms == null || ms < 0 || !isFinite(ms)) return '—';
+    const s = Math.round(ms / 1000), m = Math.floor(s / 60), r = s % 60;
+    return m ? `${m}m ${r}s` : `${r}s`;
+  }
+  const stageById = id => stages.find(s => s.id === id);
+  function renderChips(){
+    el('ipbChips').innerHTML = stages.map(s => {
+      const cls = s.id === curId ? 'current' : s.finishedAt ? 'done' : '';
+      return `<span class="ipb-chip ${cls}" data-stage="${s.id}">${s.label}</span>`;
+    }).join('');
+  }
+  function markChip(id, cls){ el('ipbChips').querySelector(`[data-stage="${id}"]`)?.classList.add(cls); }
+  function renderCurrent(){
+    const s = stageById(curId);
+    if (!s) return;
+    el('ipbStageName').textContent = s.label;
+    el('ipbStageCount').textContent = s.total ? `${s.done.toLocaleString('de-DE')}/${s.total.toLocaleString('de-DE')}` : `${s.done.toLocaleString('de-DE')}`;
+    const elapsed = Date.now() - s.startedAt;
+    el('ipbFill').style.width = (s.total ? Math.min(100, (s.done / s.total) * 100) : 0) + '%';
+    let etaTxt = 'estimating…';
+    if (s.total && s.done > 0 && s.done < s.total) etaTxt = '~' + fmtDur((elapsed / s.done) * (s.total - s.done)) + ' left';
+    else if (s.total && s.done >= s.total) etaTxt = 'finishing…';
+    el('ipbStageTime').textContent = fmtDur(elapsed) + ' elapsed · ' + etaTxt;
+  }
+  function renderTotal(){
+    if (!startedAt) return;
+    el('ipbElapsed').textContent = fmtDur(Date.now() - startedAt);
+    const s = stageById(curId);
+    const idx = stages.findIndex(x => x.id === curId);
+    let remainMs = 0, allKnown = true;
+    const refRate = (s && s.total && s.done > 0) ? (Date.now() - s.startedAt) / s.done : null;
+    if (s && s.total && refRate) remainMs += refRate * (s.total - s.done); else allKnown = false;
+    for (let i = idx + 1; i < stages.length; i++){
+      const st = stages[i];
+      if (st.total == null){ allKnown = false; continue; }
+      if (refRate) remainMs += refRate * st.total; else allKnown = false;
+    }
+    el('ipbEta').textContent = (allKnown ? '~' : 'at least ~') + fmtDur(remainMs) + ' left';
+  }
+  function saveCheckpoint(){
+    try {
+      const s = stageById(curId);
+      localStorage.setItem(IMPORT_PROGRESS_KEY, JSON.stringify({ ts: Date.now(), stageLabel: s?.label, done: s?.done, total: s?.total }));
+    } catch {}
+  }
+  function clearCheckpoint(){ try { localStorage.removeItem(IMPORT_PROGRESS_KEY); } catch {} }
+  function endRun(kind, summaryText){
+    if (tickTimer) clearInterval(tickTimer); tickTimer = null;
+    renderTotal();
+    el('ipbCurrent').style.display = 'none';
+    el('ipbSummary').style.display = '';
+    el('ipbSummary').className = 'ipb-summary' + (kind === 'complete' ? '' : ' error');
+    el('ipbSummary').textContent = summaryText;
+    el('ipbStopBtn').style.display = 'none';
+    if (kind !== 'complete' && curId) markChip(curId, kind === 'stopped' ? 'stopped' : 'error');
+    clearCheckpoint();
+    window.removeEventListener('beforeunload', beforeUnload);
+    notify(kind === 'complete' ? 'Import finished' : kind === 'stopped' ? 'Import stopped' : 'Import failed', summaryText);
+    if (kind === 'complete') setTimeout(() => { el('importProgressBar').style.display = 'none'; el('ipbStopBtn').style.display = ''; }, 20000);
+  }
+  return {
+    start(stageDefs){
+      stages = stageDefs.map(d => ({ ...d, total: d.total ?? null, done: 0, startedAt: null, finishedAt: null }));
+      curId = null; startedAt = Date.now();
+      cancelToken = { cancelled: false };
+      el('importProgressBar').style.display = '';
+      el('ipbSummary').style.display = 'none';
+      el('ipbCurrent').style.display = '';
+      el('ipbStopBtn').disabled = false; el('ipbStopBtn').textContent = 'Stop'; el('ipbStopBtn').style.display = '';
+      renderChips();
+      if (tickTimer) clearInterval(tickTimer);
+      tickTimer = setInterval(() => { renderCurrent(); renderTotal(); saveCheckpoint(); }, 1000);
+      window.addEventListener('beforeunload', beforeUnload);
+      try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch {}
+      return cancelToken;
+    },
+    beginStage(id, total){
+      const s = stageById(id);
+      if (!s) return;
+      curId = id; s.startedAt = Date.now(); if (total != null) s.total = total; s.done = 0;
+      renderChips(); renderCurrent(); renderTotal();
+    },
+    tick(id, done, total){
+      const s = stageById(id);
+      if (!s || id !== curId) return;
+      s.done = done; if (total != null) s.total = total;
+      renderCurrent(); renderTotal();
+    },
+    finishStage(id){
+      const s = stageById(id);
+      if (!s) return;
+      s.finishedAt = Date.now(); if (s.total != null) s.done = s.total;
+      renderChips();
+    },
+    isCancelled(){ return !!cancelToken?.cancelled; },
+    requestStop(){
+      if (!cancelToken || cancelToken.cancelled) return;
+      cancelToken.cancelled = true;
+      el('ipbStopBtn').disabled = true; el('ipbStopBtn').textContent = 'Stopping…';
+    },
+    complete(summaryText){ endRun('complete', summaryText); },
+    stopped(summaryText){ endRun('stopped', summaryText); },
+    fail(message){ endRun('failed', 'Import failed: ' + message); },
+  };
+})();
+document.getElementById('ipbStopBtn').addEventListener('click', () => {
+  if (confirm('Stop the import? Whatever is already in flight will finish and be saved — nothing after that will start. You can re-run the same file later to pick up where this left off.')) ImportProgress.requestStop();
+});
+// On load: an interrupted run leaves no trace anywhere else in the UI — this
+// is purely informational (nothing resumes automatically; re-running the
+// same file is the actual recovery path, via the no-op-skip logic above).
+(function checkResumeBanner(){
+  try {
+    const raw = localStorage.getItem(IMPORT_PROGRESS_KEY);
+    if (!raw) return;
+    const cp = JSON.parse(raw);
+    const ago = Date.now() - cp.ts;
+    if (ago > 1000 * 60 * 60 * 24){ localStorage.removeItem(IMPORT_PROGRESS_KEY); return; }
+    const banner = document.getElementById('resumeImportBanner');
+    const mins = Math.round(ago / 60000);
+    banner.innerHTML = `⚠ An import was interrupted — last seen at "${cp.stageLabel || '?'}" (${(cp.done ?? '?').toLocaleString?.('de-DE') ?? cp.done}/${cp.total ?? '?'}), ${mins < 1 ? 'under a minute' : mins + ' min'} ago. Re-run the same file to finish it — already-written records are skipped automatically. <button type="button" id="resumeDismissBtn">Dismiss</button>`;
+    banner.style.display = '';
+    document.getElementById('resumeDismissBtn').addEventListener('click', () => { banner.style.display = 'none'; localStorage.removeItem(IMPORT_PROGRESS_KEY); });
+  } catch {}
+})();
+
 async function confirmPeopleImport(){
   const btn = document.getElementById('peopleImportConfirmBtn');
   const errEl = document.getElementById('peopleImportErr'); errEl.style.display = 'none';
@@ -4232,6 +4442,24 @@ async function confirmPeopleImport(){
   const rows = peopleImportRows.filter(r => createMissing || !r.unmatched);
   if (!rows.length) return;
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
+  const stageDefs = [];
+  if (createMissing) stageDefs.push({ id:'createCompanies', label:'Creating missing companies' });
+  stageDefs.push(
+    { id:'checking', label:'Checking what changed' },
+    { id:'people', label:'People' },
+    { id:'links', label:'Links' },
+    { id:'demoteCounters', label:'Previous relationships & counts' },
+    { id:'refresh', label:'Refreshing totals' },
+  );
+  const cancelToken = ImportProgress.start(stageDefs);
+  // Whatever has actually landed by the time a stop is requested — used both
+  // for the "stopped early" summary and for the logPortal audit entry, so a
+  // partial run is never silently unrecorded.
+  const tally = { peopleWritten:0, peopleSkipped:0, linksWritten:0, linksSkipped:0, demoted:0, companiesAdded:0 };
+  function stoppedSummary(stageLabel){
+    return `Stopped during "${stageLabel}". So far: ${tally.peopleWritten} people, ${tally.linksWritten} links written`
+      + `${tally.companiesAdded ? `, ${tally.companiesAdded} companies created` : ''}. Re-run the same file to finish — nothing already written is duplicated.`;
+  }
   try {
     // 1) Create missing companies first (opt-in), so links have a target.
     // Always-new docs — nothing to diff against, so every one is written —
@@ -4241,9 +4469,10 @@ async function confirmPeopleImport(){
       const need = new Map();
       for (const r of rows) if (r.unmatched) need.set(r.companyNif || normName(r.fileCompanyName), r);
       if (need.size){
+        ImportProgress.beginStage('createCompanies', need.size);
         const col = collection(db,'searchCompanies');
         const entries = [...need.values()].map(r => ({ r, ref: doc(col) }));
-        await commitInChunks(entries, 450, (batch, { r, ref }) => {
+        tally.companiesAdded = await commitInChunks(entries, 450, (batch, { r, ref }) => {
           batch.set(ref, { name: r.fileCompanyName, nif: r.companyNif || null, stage:'universe',
             sourceType:'ownership_import', financials:{}, contacts:[], addOnTo:[], addOns:[],
             lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
@@ -4251,8 +4480,12 @@ async function confirmPeopleImport(){
             rr.companyId = ref.id; rr.unmatched = false;
           }
           return true;
-        }, { onProgress: done => { btn.innerHTML = `<span class="spin-sm"></span>Adding companies… ${done}/${entries.length}`; } });
+        }, { onProgress: done => ImportProgress.tick('createCompanies', done), cancelToken });
+        ImportProgress.finishStage('createCompanies');
+        if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Creating missing companies')); return; }
         fullyLoaded = false; await ensureFullDataset(); // pull the new docs into memory
+      } else {
+        ImportProgress.finishStage('createCompanies'); // nothing was unmatched — nothing to do
       }
     }
 
@@ -4272,26 +4505,30 @@ async function confirmPeopleImport(){
     //    no-op checks below AND the demotion scan and counter refresh
     //    further down, which used to each re-fetch this same link data a
     //    second (and third) time, after the writes had already happened.
-    btn.innerHTML = '<span class="spin-sm"></span>Checking what changed…';
+    ImportProgress.beginStage('checking', personIdChunks.length + touched.length);
     const existingPeople = new Map();
     await mapPool(personIdChunks, async ch => {
       const snap = await getDocs(query(collection(db,'searchPeople'), where(documentId(),'in', ch)));
       addReads(snap.docs.length || 1);
       for (const d of snap.docs) existingPeople.set(d.id, d.data());
-    }, READ_CONCURRENCY);
+    }, READ_CONCURRENCY, done => ImportProgress.tick('checking', done), cancelToken);
     // One query per company, run concurrently — see mapPool.
     const linksByCo = new Map();
-    const perCompany = await mapPool(touched, cid =>
+    const perCompany = cancelToken.cancelled ? [] : await mapPool(touched, cid =>
       getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',cid)))
         .then(snap => { addReads(snap.docs.length || 1); return { cid, docs: snap.docs }; }),
       READ_CONCURRENCY,
-      done => { btn.innerHTML = `<span class="spin-sm"></span>Checking… ${done}/${touched.length}`; });
+      done => ImportProgress.tick('checking', personIdChunks.length + done),
+      cancelToken);
     for (const { cid, docs } of perCompany) linksByCo.set(cid, docs.map(d => ({ id: d.id, ...d.data() })));
     const existingLinkByKey = new Map();
     for (const arr of linksByCo.values()) for (const l of arr) existingLinkByKey.set(l.id, l);
+    ImportProgress.finishStage('checking');
+    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Checking what changed')); return; }
 
     // 3) Upsert people — skip anyone re-imported with nothing actually
     //    different from what's stored (see personNeedsWrite).
+    ImportProgress.beginStage('people', byPerson.size);
     let peopleSkipped = 0;
     const peopleWritten = await commitInChunks([...byPerson.values()], 450, (batch, r) => {
       const co3 = r.country && r.country.length <= 3 ? r.country : '';
@@ -4330,12 +4567,16 @@ async function confirmPeopleImport(){
         source: 'orbis', updatedAt: serverTimestamp(),
       }, { merge: true });
       return true;
-    }, { onProgress: done => { btn.innerHTML = `<span class="spin-sm"></span>People… ${done}/${byPerson.size}`; } });
+    }, { onProgress: done => ImportProgress.tick('people', done), cancelToken });
+    tally.peopleWritten = peopleWritten; tally.peopleSkipped = peopleSkipped;
+    ImportProgress.finishStage('people');
+    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('People')); return; }
 
     // 4) Upsert links — write only the facet this file actually carries, so a
     //    shareholders import never clears roles from a management import.
     //    Skip a link whose payload matches what's already stored.
     const linkRows = rows.filter(r => r.companyId);
+    ImportProgress.beginStage('links', linkRows.length);
     let linksSkipped = 0;
     const linksWritten = await commitInChunks(linkRows, 450, (batch, r) => {
       const key = `${r.personId}__${r.companyId}`;
@@ -4379,7 +4620,10 @@ async function confirmPeopleImport(){
       const idx = arr.findIndex(x => x.id === key);
       if (idx >= 0) arr[idx] = merged; else arr.push(merged);
       return true;
-    }, { onProgress: done => { btn.innerHTML = `<span class="spin-sm"></span>Links… ${done}/${linkRows.length}`; } });
+    }, { onProgress: done => ImportProgress.tick('links', done), cancelToken });
+    tally.linksWritten = linksWritten; tally.linksSkipped = linksSkipped;
+    ImportProgress.finishStage('links');
+    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Links')); return; }
 
     // 5) Snapshot semantics: this file is the complete current picture for the
     //    companies it covers, so anyone previously current for those companies
@@ -4413,10 +4657,13 @@ async function confirmPeopleImport(){
         }
       }
     }
+    ImportProgress.beginStage('demoteCounters', demotions.size + touched.length);
     await commitInChunks([...demotions.entries()], 450, (batch, [linkId, patch]) => {
       batch.update(doc(db,'searchPersonLinks', linkId), { ...patch, updatedAt: serverTimestamp() });
       return true;
-    });
+    }, { onProgress: done => ImportProgress.tick('demoteCounters', done), cancelToken });
+    tally.demoted = demoted;
+    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Marking previous relationships')); return; }
 
     // 6) Refresh denormalised counters — skip a company whose counts and
     //    ownership metadata already match what's stored (companies is already
@@ -4442,13 +4689,16 @@ async function confirmPeopleImport(){
       batch.update(doc(db,'searchCompanies',cid), payload);
       if (local){ local.peopleCounts = newCounts; if (om) local.ownershipMeta = { ...(local.ownershipMeta || {}), ...om }; }
       return true;
-    });
+    }, { onProgress: done => ImportProgress.tick('demoteCounters', demotions.size + done), cancelToken });
+    ImportProgress.finishStage('demoteCounters');
+    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Updating company counts')); return; }
 
     // 7) A person's totals span every company, including ones this file never
     // mentioned, so they have to come from the database — that read can't be
     // skipped. But the WRITE can be, when nothing actually changed. They do
     // not need one query each: `in` takes 30 values, which is the difference
     // between ~26,700 round-trips and ~890.
+    ImportProgress.beginStage('refresh', personIdChunks.length + personIds.length);
     const counts = new Map(personIds.map(id => [id, { total: 0, current: 0 }]));
     await mapPool(personIdChunks, async ch => {
       const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in',ch)));
@@ -4460,27 +4710,31 @@ async function confirmPeopleImport(){
         c.total++;
         if (l.shCurrent === true || l.mgmtCurrent === true) c.current++;
       }
-    }, READ_CONCURRENCY, d => { btn.innerHTML = `<span class="spin-sm"></span>People… ${d}/${personIdChunks.length}`; });
+    }, READ_CONCURRENCY, d => ImportProgress.tick('refresh', d), cancelToken);
+    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
     await commitInChunks(personIds, 450, (batch, pid) => {
       const c = counts.get(pid);
       const existing = existingPeople.get(pid);
       if (existing && existing.linkCount === c.total && existing.currentLinkCount === c.current) return false;
       batch.update(doc(db,'searchPeople',pid), { linkCount: c.total, currentLinkCount: c.current });
       return true;
-    });
+    }, { onProgress: done => ImportProgress.tick('refresh', personIdChunks.length + done), cancelToken });
+    ImportProgress.finishStage('refresh');
+    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
 
     await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted, peopleWritten, peopleSkipped, linksWritten, linksSkipped });
     invalidatePeopleCaches();
     cacheCompanies();
     showEl('peopleImportModal', false);
     const skipped = peopleSkipped + linksSkipped;
-    const skipNote = skipped ? `\n${skipped.toLocaleString('de-DE')} record${skipped===1?'':'s'} unchanged since last import — skipped, no write.` : '';
-    alert(`Imported ${rows.length} link${rows.length===1?'':'s'} across ${byPerson.size} people/entities and ${touched.length} companies.${demoted?`\n${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}${skipNote}`);
+    const skipNote = skipped ? ` ${skipped.toLocaleString('de-DE')} record${skipped===1?'':'s'} unchanged since last import — skipped, no write.` : '';
+    ImportProgress.complete(`Imported ${rows.length.toLocaleString('de-DE')} link${rows.length===1?'':'s'} across ${byPerson.size.toLocaleString('de-DE')} people/entities and ${touched.length.toLocaleString('de-DE')} companies.${demoted?` ${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}${skipNote}`);
     if (viewMode === 'people') renderPeople();
     if (currentCoId) { const c = getCompany(); if (c) { renderOwnership(c); renderOverview(c); } }
   } catch(e){
     console.error(e);
     errEl.textContent = e.message; errEl.style.display = 'block';
+    ImportProgress.fail(e.message);
   } finally { btn.disabled = false; updatePeopleImportBtn(); }
 }
 
