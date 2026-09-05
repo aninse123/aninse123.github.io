@@ -6542,8 +6542,12 @@ async function confirmBulk(){
     // 2) Update existing: auto-refresh financials (skipped when nothing
     //    changed — mergeFinancials already reports that), collect
     //    non-financial diffs for the report regardless of the write decision.
+    // Map built once rather than companies.find() per row — same O(n) linear
+    // scan per lookup that was worth fixing in the people importer, here on
+    // the company Bulk Import path instead.
+    const companiesByIdForUpdate = new Map(companies.map(c => [c.id, c]));
     await commitInChunks(updRows, CHUNK, (batch, r) => {
-      const ex = companies.find(c => c.id === r.matchId);
+      const ex = companiesByIdForUpdate.get(r.matchId);
       if (!ex) return false;
       const { merged, changed } = mergeFinancials(ex.financials, r.co.financials);
       for (const [f,label] of ORBIS_FIRMOGRAPHIC) {
@@ -6594,10 +6598,12 @@ async function applyReportChanges(){
   const ids = Object.keys(byCo);
   try {
     // Every id here was explicitly ticked by the user, so there is nothing
-    // to diff-gate — just parallelise the commits.
+    // to diff-gate — just parallelise the commits. Map built once rather
+    // than companies.find() per id, same reasoning as confirmBulk above.
+    const companiesByIdForReport = new Map(companies.map(c => [c.id, c]));
     await commitInChunks(ids, 450, (batch, id) => {
       batch.update(doc(db,'searchCompanies',id), { ...byCo[id], updatedAt: serverTimestamp() });
-      const c = companies.find(x => x.id === id); if (c) Object.assign(c, byCo[id]);
+      const c = companiesByIdForReport.get(id); if (c) Object.assign(c, byCo[id]);
       return true;
     });
     showEl('reportModal', false); renderSummary(); renderList();
