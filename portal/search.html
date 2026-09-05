@@ -4315,6 +4315,7 @@ function notify(title, body){
 }
 const ImportProgress = (() => {
   let stages = [], curId = null, startedAt = null, cancelToken = null, tickTimer = null;
+  let totalEtaSnapshotMs = null, totalEtaSnapshotFloorMs = null, totalEtaSnapshotAt = null;
   const el = id => document.getElementById(id);
   const beforeUnload = e => { e.preventDefault(); e.returnValue = ''; };
   function fmtDur(ms){
@@ -4333,6 +4334,24 @@ const ImportProgress = (() => {
     }).join('');
   }
   function markChip(id, cls){ el('ipbChips').querySelector(`[data-stage="${id}"]`)?.classList.add(cls); }
+  // ETA is a SNAPSHOT taken at the moment of each real tick, then counted
+  // down live between ticks using the rate observed at that snapshot --
+  // never recomputed from scratch on the 1s render timer. Recomputing
+  // elapsed/done fresh every second was the bug: done stays frozen between
+  // ticks (they land every ~50 items) while elapsed keeps climbing, so the
+  // rate — and the ETA — inflated for no real reason, then corrected back
+  // down all at once the moment a real tick arrived. A user watching that
+  // sees the estimate get worse and then suddenly jump better, which reads
+  // as the import failing to make progress even though it's on pace.
+  function snapshotStageEta(s){
+    if (s.total && s.done > 0 && s.done < s.total){
+      const rate = (Date.now() - s.startedAt) / s.done;
+      s.etaSnapshotMs = rate * (s.total - s.done);
+      s.etaSnapshotAt = Date.now();
+    } else {
+      s.etaSnapshotMs = null; s.etaSnapshotAt = null;
+    }
+  }
   function renderCurrent(){
     const s = stageById(curId);
     if (!s) return;
@@ -4341,13 +4360,14 @@ const ImportProgress = (() => {
     const elapsed = Date.now() - s.startedAt;
     el('ipbFill').style.width = (s.total ? Math.min(100, (s.done / s.total) * 100) : 0) + '%';
     let etaTxt = 'estimating…';
-    if (s.total && s.done > 0 && s.done < s.total) etaTxt = '~' + fmtDur((elapsed / s.done) * (s.total - s.done)) + ' left';
+    if (s.etaSnapshotMs != null) etaTxt = '~' + fmtDur(Math.max(0, s.etaSnapshotMs - (Date.now() - s.etaSnapshotAt))) + ' left';
     else if (s.total && s.done >= s.total) etaTxt = 'finishing…';
     el('ipbStageTime').textContent = fmtDur(elapsed) + ' elapsed · ' + etaTxt;
   }
-  function renderTotal(){
-    if (!startedAt) return;
-    el('ipbElapsed').textContent = fmtDur(Date.now() - startedAt);
+  // Same snapshot-and-countdown idea, aggregated across the current stage's
+  // own remaining work plus every stage after it (using that same snapshot
+  // rate as the best available estimate for stages that haven't started).
+  function snapshotTotalEta(){
     const s = stageById(curId);
     const idx = stages.findIndex(x => x.id === curId);
     let remainMs = 0, allKnown = true;
@@ -4358,7 +4378,17 @@ const ImportProgress = (() => {
       if (st.total == null){ allKnown = false; continue; }
       if (refRate) remainMs += refRate * st.total; else allKnown = false;
     }
-    el('ipbEta').textContent = (allKnown ? '~' : 'at least ~') + fmtDur(remainMs) + ' left';
+    totalEtaSnapshotMs = allKnown ? remainMs : null;
+    totalEtaSnapshotFloorMs = allKnown ? null : remainMs;
+    totalEtaSnapshotAt = Date.now();
+  }
+  function renderTotal(){
+    if (!startedAt) return;
+    el('ipbElapsed').textContent = fmtDur(Date.now() - startedAt);
+    const since = totalEtaSnapshotAt ? Date.now() - totalEtaSnapshotAt : 0;
+    if (totalEtaSnapshotMs != null) el('ipbEta').textContent = '~' + fmtDur(Math.max(0, totalEtaSnapshotMs - since)) + ' left';
+    else if (totalEtaSnapshotFloorMs != null) el('ipbEta').textContent = 'at least ~' + fmtDur(Math.max(0, totalEtaSnapshotFloorMs - since)) + ' left';
+    else el('ipbEta').textContent = 'estimating…';
   }
   // Reuses the same session-local counters the nav bar's own reads/writes
   // pill already tracks (every addReads()/batch.commit() anywhere in the
@@ -4401,6 +4431,7 @@ const ImportProgress = (() => {
     start(stageDefs){
       stages = stageDefs.map(d => ({ ...d, total: d.total ?? null, done: 0, startedAt: null, finishedAt: null }));
       curId = null; startedAt = Date.now();
+      totalEtaSnapshotMs = null; totalEtaSnapshotFloorMs = null; totalEtaSnapshotAt = null;
       cancelToken = { cancelled: false };
       el('importProgressBar').style.display = '';
       el('ipbSummary').style.display = 'none';
@@ -4417,12 +4448,14 @@ const ImportProgress = (() => {
       const s = stageById(id);
       if (!s) return;
       curId = id; s.startedAt = Date.now(); if (total != null) s.total = total; s.done = 0;
+      snapshotStageEta(s); snapshotTotalEta();
       renderChips(); renderCurrent(); renderTotal();
     },
     tick(id, done, total){
       const s = stageById(id);
       if (!s || id !== curId) return;
       s.done = done; if (total != null) s.total = total;
+      snapshotStageEta(s); snapshotTotalEta();
       renderCurrent(); renderTotal();
     },
     finishStage(id, note){
@@ -4430,6 +4463,7 @@ const ImportProgress = (() => {
       if (!s) return;
       s.finishedAt = Date.now(); if (s.total != null) s.done = s.total;
       if (note) s.note = note;
+      snapshotStageEta(s); snapshotTotalEta();
       renderChips();
     },
     isCancelled(){ return !!cancelToken?.cancelled; },
