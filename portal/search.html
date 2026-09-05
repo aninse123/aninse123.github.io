@@ -73,6 +73,12 @@
     .pipeline-pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
     .pipeline-pills .label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-light); margin-right: 4px; }
 
+    /* Subset-of-loaded-companies disclaimer — shown when a view needs the
+       full dataset (or a filter is active) but only the bounded window has
+       been loaded yet. */
+    .subset-banner { display: flex; align-items: center; gap: 10px; background: #EFF6FF; border: 1px solid #BFDBFE; color: #1D4ED8; border-radius: var(--radius); padding: 8px 14px; font-size: 0.8rem; margin-bottom: 12px; }
+    .subset-banner button { margin-left: auto; flex-shrink: 0; }
+
     /* Toolbar */
     .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
     .view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
@@ -457,6 +463,8 @@
       <span class="results-count" id="resultsCount" style="margin-left:auto;"></span>
     </div>
 
+    <div id="subsetBanner" class="subset-banner" style="display:none;"></div>
+
     <!-- Advanced filters -->
     <div class="adv-filters" id="advFilters">
       <select class="filter-sel" id="subSectorFilter"><option value="">All Sub-sectors</option></select>
@@ -812,6 +820,7 @@
 <div class="overlay" id="statisticsModal" style="display:none;">
   <div class="modal modal--lg">
     <div class="modal-title">Statistics</div>
+    <div id="statsSubsetBanner" class="subset-banner" style="display:none;"></div>
     <div id="statisticsBody"><div style="font-size:0.85rem;color:var(--text-light);">Loading…</div></div>
     <div class="modal-actions">
       <button class="btn btn--ghost" id="statisticsCloseBtn">Close</button>
@@ -1937,10 +1946,23 @@ async function fetchAllPeople(){
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch(e){ console.error(e); return []; }
 }
+function renderStatsSubsetBanner(){
+  const el = document.getElementById('statsSubsetBanner');
+  if (fullyLoaded){ el.style.display = 'none'; return; }
+  const loadedNote = cachedTotalCount
+    ? `${companies.length.toLocaleString('en')} of ${cachedTotalCount.toLocaleString('en')} companies loaded`
+    : `${companies.length.toLocaleString('en')} companies loaded`;
+  el.style.display = 'flex';
+  el.innerHTML = `<span>\u26a0 Based on ${esc(loadedNote)} \u2014 totals below are partial.</span><button class="btn btn--ghost btn--sm" id="statsSubsetBannerLoadBtn">\u2b07 Load all companies</button>`;
+  document.getElementById('statsSubsetBannerLoadBtn').addEventListener('click', async () => {
+    await loadAllWithProgress();
+    if (document.getElementById('statisticsModal').style.display !== 'none') openStatistics();
+  });
+}
 async function openStatistics(){
   showEl('statisticsModal', true);
   document.getElementById('statisticsBody').innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);">Loading\u2026</div>';
-  await ensureFullDataset();
+  renderStatsSubsetBanner();
   const stats = computeStats(companies);
   const [peopleOwnership, peopleDocs] = await Promise.all([fetchPeopleOwnershipCounts(), fetchAllPeople()]);
   if (document.getElementById('statisticsModal').style.display === 'none') return; // closed while loading
@@ -2045,11 +2067,36 @@ function renderSummary(){
   ).join('');
   document.getElementById('pipelinePills').innerHTML = `<span class="label">Pipeline</span>${pills || '<span style="font-size:0.8rem;color:var(--text-light)">No companies yet</span>'}`;
   document.querySelectorAll('#pipelinePills [data-stage]').forEach(p => {
-    p.addEventListener('click', async () => { document.getElementById('stageFilter').value = p.dataset.stage; await ensureFullDataset(); renderList(); });
+    p.addEventListener('click', () => { document.getElementById('stageFilter').value = p.dataset.stage; renderList(); });
   });
 }
 
 // ── Filtering ────────────────────────────────────────────────────────────────
+// Shared with the filter-input listeners near the bottom of the file and with
+// the subset-of-loaded disclaimer banner below — one list, so a filter added
+// in one place is never silently missing from the other two.
+const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'];
+function isAnyFilterActive(){
+  return FILTER_INPUT_IDS.some(id => (document.getElementById(id).value || '').trim() !== '');
+}
+// List only needs the disclaimer when a filter/search is narrowing a dataset
+// that isn't fully loaded (the unfiltered "recently touched" window is not
+// claiming to be complete). Grouped/Map are inherently full-dataset views
+// (sector aggregates, national coverage) so they show it unconditionally
+// until a full load has happened.
+function renderSubsetBanner(){
+  const el = document.getElementById('subsetBanner');
+  if (fullyLoaded){ el.style.display = 'none'; return; }
+  const show = viewMode === 'grouped' || viewMode === 'map' || (viewMode === 'list' && isAnyFilterActive());
+  if (!show){ el.style.display = 'none'; return; }
+  const loadedNote = cachedTotalCount
+    ? `${companies.length.toLocaleString('en')} of ${cachedTotalCount.toLocaleString('en')} companies loaded`
+    : `${companies.length.toLocaleString('en')} companies loaded`;
+  const reason = viewMode === 'list' ? 'Filters only apply to what’s loaded so far' : 'This view needs the full dataset to be accurate';
+  el.style.display = 'flex';
+  el.innerHTML = `<span>⚠ ${esc(reason)} — ${esc(loadedNote)}.</span><button class="btn btn--ghost btn--sm" id="subsetBannerLoadBtn">⬇ Load all companies</button>`;
+  document.getElementById('subsetBannerLoadBtn').addEventListener('click', loadAllWithProgress);
+}
 function getFiltered(){
   const search = (document.getElementById('searchInput').value||'').toLowerCase();
   const searchDigits = search.replace(/[^a-z0-9]/gi,'');
@@ -2144,9 +2191,10 @@ function showCompanyToolbar(show){
 }
 function renderList(){
   showCompanyToolbar(viewMode !== 'people');
+  if (viewMode === 'people') { document.getElementById('subsetBanner').style.display = 'none'; return renderPeople(); }
+  renderSubsetBanner();
   if (viewMode === 'grouped') return renderGrouped();
   if (viewMode === 'map') return renderMap();
-  if (viewMode === 'people') return renderPeople();
   showEl('tableCard', true); showEl('groupedCard', false); showEl('mapCard', false); showEl('peopleCard', false);
   const list = sortList(getFiltered());
   document.getElementById('resultsCount').textContent = `${list.length} of ${companies.length}`;
@@ -6886,14 +6934,15 @@ function openMiniMap(c){
 }
 
 // View toggle — Grouped and Map are inherently full-dataset views (sector
-// aggregates, national coverage), so switching to either needs the full load.
+// aggregates, national coverage), but switching to either no longer blocks on
+// a full load: they render on whatever's in `companies` now, with
+// renderSubsetBanner() (called from renderList()) offering an explicit
+// "Load all companies" instead of an unannounced multi-second freeze.
 const viewBtns = { list:'viewListBtn', grouped:'viewGroupedBtn', map:'viewMapBtn', people:'viewPeopleBtn' };
-async function setViewMode(mode){
+function setViewMode(mode){
   viewMode = mode;
   Object.values(viewBtns).forEach(id => document.getElementById(id).classList.remove('active'));
   document.getElementById(viewBtns[mode]).classList.add('active');
-  // People view queries its own collection — it needs no company dataset at all.
-  if (mode === 'grouped' || mode === 'map') await ensureFullDataset();
   if (mode === 'map') mapSidebarVisibleCount = MAP_SIDEBAR_PAGE;
   renderList();
 }
@@ -6937,17 +6986,44 @@ document.getElementById('mapListsCloseBtn').addEventListener('click', () => show
 document.getElementById('mapListSaveBtn').addEventListener('click', saveMapList);
 document.getElementById('mapExportBtn').addEventListener('click', exportMapCsv);
 
-// Filters — any real filter/search interaction needs the full dataset (the
-// bounded default window is "recently touched", not a representative sample).
-['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'].forEach(id => {
+// Filters — operate on whatever's currently loaded rather than blocking on a
+// full load; renderSubsetBanner() (inside renderList()) tells the user when
+// they're filtering a subset and offers an explicit "Load all companies".
+FILTER_INPUT_IDS.forEach(id => {
   const el = document.getElementById(id);
-  el.addEventListener('input', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
-  el.addEventListener('change', async () => { await ensureFullDataset(); visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
+  el.addEventListener('input', () => { visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
+  el.addEventListener('change', () => { visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList(); });
 });
+// NIF prefix search — the search box's substring match above only sees
+// already-loaded companies, so a purely-numeric query (a NIF or the start of
+// one) also fires a targeted Firestore range query (NIFs are stored as clean
+// 9-digit strings — verified against a live sample) and merges any newly
+// found companies in, rather than requiring a full load just to find one NIF.
+let companySearchSeq = 0;
+let nifSearchDebounce = null;
+document.getElementById('searchInput').addEventListener('input', () => {
+  clearTimeout(nifSearchDebounce);
+  const raw = document.getElementById('searchInput').value.trim();
+  if (/^\d{3,9}$/.test(raw)) nifSearchDebounce = setTimeout(() => searchNifSupplement(raw), 300);
+});
+async function searchNifSupplement(digits){
+  const seq = ++companySearchSeq;
+  let snap;
+  try {
+    snap = await getDocs(query(collection(db,'searchCompanies'), where('nif','>=',digits), where('nif','<',digits+''), limit(50)));
+  } catch(e){ console.error(e); return; }
+  addReads(snap.docs.length || 1);
+  if (seq !== companySearchSeq) return; // a newer keystroke already superseded this query
+  if (document.getElementById('searchInput').value.trim() !== digits) return; // stale by the time it landed
+  const have = new Set(companies.map(c => c.id));
+  let added = 0;
+  snap.docs.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields({ id: d.id, ...d.data() })); added++; } });
+  if (added) renderList();
+}
 document.getElementById('loadAllBtn').addEventListener('click', loadAllWithProgress);
 document.getElementById('advFilterBtn').addEventListener('click', () => document.getElementById('advFilters').classList.toggle('open'));
 document.getElementById('clearFiltersBtn').addEventListener('click', () => {
-  ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'].forEach(id=>document.getElementById(id).value='');
+  FILTER_INPUT_IDS.forEach(id=>document.getElementById(id).value='');
   document.getElementById('naceLabel').textContent=''; document.getElementById('caeLabel').textContent='';
   visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList();
 });
