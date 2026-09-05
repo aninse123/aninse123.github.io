@@ -2098,7 +2098,9 @@ function renderSubsetBanner(){
   document.getElementById('subsetBannerLoadBtn').addEventListener('click', loadAllWithProgress);
 }
 function getFiltered(){
-  const search = (document.getElementById('searchInput').value||'').toLowerCase();
+  // deburr() (not plain toLowerCase()) so "texteis" matches "Têxteis" — company
+  // names carry accents in the source data but people rarely type them.
+  const search = deburr(document.getElementById('searchInput').value||'');
   const searchDigits = search.replace(/[^a-z0-9]/gi,'');
   const stageF = document.getElementById('stageFilter').value;
   const ownerF = document.getElementById('ownerFilter').value;
@@ -2125,7 +2127,7 @@ function getFiltered(){
 
   return companies.filter(c => {
     if (search) {
-      const nameHit = (c.name||'').toLowerCase().includes(search);
+      const nameHit = deburr(c.name).includes(search);
       const nifHit  = searchDigits && String(c.nif||'').replace(/[^a-z0-9]/gi,'').toLowerCase().includes(searchDigits);
       if (!nameHit && !nifHit) return false;
     }
