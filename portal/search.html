@@ -2333,8 +2333,17 @@ function pinIcon(){
 function ensureLeafletMap(){
   if (leafletMap) return;
   leafletMap = L.map('mapContainer').setView([39.6, -8.0], 6.3); // Portugal centre
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  // CARTO's free basemap tiles started requiring an API key (caught live,
+  // 2026-09-06 -- confirmed independently of any browser session: the tile
+  // endpoint now returns a small "API KEY REQUIRED" placeholder image
+  // instead of a map, for every request, unauthenticated). Esri's World
+  // Street Map tiles are free/no-key with a long track record for exactly
+  // this use (unlike osm.org's own tile servers, whose usage policy actively
+  // discourages relying on them for an ongoing production app) -- different
+  // visual style than CARTO's light/pastel one, but the map otherwise works
+  // identically (markers, clustering, postcode geocoding all untouched).
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China (Hong Kong), Esri (Thailand), TomTom, 2012',
     maxZoom: 19
   }).addTo(leafletMap);
   markerClusterGroup = L.markerClusterGroup({ maxClusterRadius: 50 });
@@ -7049,8 +7058,8 @@ function openMiniMap(c){
   setTimeout(() => { // modal must be visible/sized before Leaflet measures the container
     if (!miniMap) {
       miniMap = L.map('miniMapContainer');
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China (Hong Kong), Esri (Thailand), TomTom, 2012'
       }).addTo(miniMap);
     }
     miniMap.setView([c.computedLat, c.computedLng], 14);
