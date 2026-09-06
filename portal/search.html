@@ -260,6 +260,12 @@
     .graph-wrap { position: relative; }
     .graph-controls { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; z-index: 2; }
     .graph-controls .btn--icon { min-width: 26px; justify-content: center; background: var(--white); }
+    /* Shows instantly on hover (no native-tooltip delay) with the node's full,
+       untruncated name -- labels on the graph itself stay short so they don't
+       collide with their neighbours. */
+    .graph-tooltip { position: absolute; z-index: 3; pointer-events: none; display: none;
+      background: var(--text); color: #fff; font-size: 0.74rem; line-height: 1.35;
+      padding: 5px 9px; border-radius: 5px; max-width: 260px; box-shadow: var(--shadow-sm); }
 
     /* Add-on links */
     .addon-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 6px; font-size: 0.82rem; }
@@ -5159,9 +5165,13 @@ function isGuoCompany(company){
 // `expandRing1`/`expandRing2` lift the caps below for one graph without
 // re-fetching anything — every link involved is already in the client-side
 // cache (fetchCompanyLinks/fetchPersonLinks), so an expand is a free re-slice
-// of data already in memory, not a new read.
+// of data already in memory, not a new read. expandRing2 is a Map (key ->
+// how many to reveal), not a boolean Set: a "+371 more" click used to jump
+// straight to showing all 371 at once, which just traded one unreadable
+// state (capped) for a worse one (everything). Each click now reveals one
+// more capped batch (GRAPH_RING2_CAP at a time) instead.
 async function buildGraph(focusType, focusId, opts = {}){
-  const { depth = 1, expandRing1 = false, expandRing2 = new Set() } = opts;
+  const { depth = 1, expandRing1 = false, expandRing2 = new Map() } = opts;
   const nodes = new Map(), edges = [], seenEdge = new Set();
   const key = (t, id) => (t === 'person' ? 'p:' : t === 'company' ? 'c:' : 'm:') + id;
   const add = (t, id, label, extra = {}) => {
@@ -5212,9 +5222,9 @@ async function buildGraph(focusType, focusId, opts = {}){
       const sets = ring1Links.map(l => linksByPersonId.get(l.personId) || []);
       ring1Links.forEach((l, i) => {
         const allOthers = sets[i].filter(x => x.companyId !== focusId).sort(graphLinkRank);
-        const expanded = expandRing2.has(l.personId);
-        const others = expanded ? allOthers : allOthers.slice(0, GRAPH_RING2_CAP);
-        const ring2Overflow = expanded ? 0 : Math.max(0, allOthers.length - GRAPH_RING2_CAP);
+        const reveal = expandRing2.get(l.personId) || GRAPH_RING2_CAP;
+        const others = allOthers.slice(0, reveal);
+        const ring2Overflow = Math.max(0, allOthers.length - others.length);
         for (const o of others){
           add('company', o.companyId, o.companyName, { ring:2 });
           addEdge(key('person', l.personId), key('company', o.companyId), o);
@@ -5248,9 +5258,9 @@ async function buildGraph(focusType, focusId, opts = {}){
         const owners = resolveOwnership(companies.find(c => c.id === l.companyId), sets[i]).ownerIds;
         if (owners.has(focusId)) focusNode.isOwner = true;
         const allOthers = sets[i].filter(x => x.personId !== focusId).sort(graphLinkRank);
-        const expanded = expandRing2.has(l.companyId);
-        const others = expanded ? allOthers : allOthers.slice(0, GRAPH_RING2_CAP);
-        const ring2Overflow = expanded ? 0 : Math.max(0, allOthers.length - GRAPH_RING2_CAP);
+        const reveal = expandRing2.get(l.companyId) || GRAPH_RING2_CAP;
+        const others = allOthers.slice(0, reveal);
+        const ring2Overflow = Math.max(0, allOthers.length - others.length);
         for (const o of others){
           add('person', o.personId, o.personName, { ring:2, entityType:o.personEntityType, matchedCompanyId:o.personMatchedCompanyId, isOwner: owners.has(o.personId) });
           addEdge(key('company', l.companyId), key('person', o.personId), o);
@@ -5500,7 +5510,14 @@ function graphTrim(s, n){ s = String(s || ''); return s.length > n ? s.slice(0, 
 // expanding a "+N more" node) never leaves a stale window-level listener.
 function attachGraphZoomPan(svg, initW, initH){
   const vb = { x:0, y:0, w:initW, h:initH };
-  const minW = initW * GRAPH_ZOOM_MIN, maxW = initW * GRAPH_ZOOM_MAX;
+  // minW as a flat fraction of initW breaks down now that the logical canvas
+  // itself varies a lot by graph density (a busy single hub can be several
+  // times a sparse graph's size) -- 40% of a big canvas is still a coarse
+  // view exactly when a dense graph most needs to zoom in close. Anchored
+  // instead to a fixed reference (the old flat default width), so max
+  // zoom-in always reaches at least as close a view regardless of how large
+  // the starting canvas is.
+  const minW = Math.min(initW * GRAPH_ZOOM_MIN, 760 * GRAPH_ZOOM_MIN), maxW = initW * GRAPH_ZOOM_MAX;
   const apply = () => svg.setAttribute('viewBox', `${vb.x.toFixed(1)} ${vb.y.toFixed(1)} ${vb.w.toFixed(1)} ${vb.h.toFixed(1)}`);
   const zoomAt = (factor, cx, cy) => {
     const nw = Math.max(minW, Math.min(maxW, vb.w * factor));
@@ -5563,7 +5580,7 @@ async function renderNetworkGraph(container, focusType, focusId){
   // clicking a "+N more" chip can re-run draw() and have the graph remember
   // it was expanded without a full component re-mount.
   let expandRing1 = false;
-  const expandRing2 = new Set();
+  const expandRing2 = new Map();
   let controls = null;
 
   async function draw(){
@@ -5579,19 +5596,35 @@ async function renderNetworkGraph(container, focusType, focusId){
       return;
     }
 
-    // Taller canvas as the graph grows, so the relaxation has room to separate
-    // nodes instead of clamping them all against the edges. A single busy
-    // ring-1 hub (one company with several colleagues, the common
-    // person-focus case) needs proportionally more height than node count
-    // alone implies — layoutGraph() orbits its satellites around it at
-    // graphOrbitR(count), and 0.23 is (0.5 - the 0.27 ring-1 seed fraction
-    // layoutGraph uses), i.e. how much of H/2 is actually left over once the
-    // ring-1 node's own seed distance is accounted for.
-    const W = 760;
-    const baseH = Math.max(400, Math.min(620, 300 + g.nodes.length * 22));
-    const orbitH = g.maxChildCount ? Math.ceil((58 + graphOrbitR(g.maxChildCount)) / 0.23) : 0;
-    const H = Math.min(900, Math.max(baseH, orbitH));
+    // Logical canvas (the coordinate space layoutGraph() positions nodes in)
+    // vs. on-screen display size are now DELIBERATELY decoupled -- caught
+    // live: a busy single hub (e.g. one company via 371 connections) needed
+    // far more room than the old fixed 900px height cap allowed, silently
+    // cramming everything back into the same crowded space the sizing
+    // formula below already knew wasn't enough. There's no real ceiling on
+    // the logical canvas itself (it's just SVG coordinates, not pixels) --
+    // it's rendered into a fixed-height box (displayH below) via the SVG's
+    // default preserveAspectRatio ("xMidYMid meet"), so a bigger canvas
+    // simply starts more zoomed OUT within the same on-screen space, and the
+    // existing zoom/pan (ctrl-scroll or the +/- buttons) is how you read any
+    // one part of it comfortably -- the same interaction the Map view uses,
+    // just against a graph instead of geography.
+    //
+    // graphOrbitR(count) is how far layoutGraph() orbits a hub's satellites;
+    // 0.23 is (0.5 - the 0.27 ring-1 seed fraction layoutGraph uses), i.e.
+    // how much of H/2 is actually left over once the ring-1 node's own seed
+    // distance is accounted for. Orbits spread in full 360°, so width needs
+    // comparable room to height, not the flat 760 this used to stay at.
+    const orbitSpread = g.maxChildCount ? graphOrbitR(g.maxChildCount) : 0;
+    const orbitH = orbitSpread ? Math.ceil((58 + orbitSpread) / 0.23) : 0;
+    const baseH = Math.max(400, 300 + g.nodes.length * 22);
+    const W = Math.max(760, Math.ceil(400 + orbitSpread * 2));
+    const H = Math.max(baseH, orbitH);
     layoutGraph(g, W, H);
+    // On-screen size stays modest regardless of how large the logical
+    // canvas above got -- same bounds the old H used to be clamped into,
+    // now describing pixels on the page instead of layout coordinates.
+    const displayH = Math.max(400, Math.min(620, 300 + g.nodes.length * 22));
     const at = id => g.nodes.find(n => n.id === id);
     const CUR = 'var(--primary)', PREV = '#B9B2A6', MGMT = '#B91C1C';
 
@@ -5659,7 +5692,7 @@ async function renderNetworkGraph(container, focusType, focusId){
       }
       const dim = n.ring === 2 ? 0.82 : 1;
       const isCo = n.type === 'company' || (n.type === 'person' && n.entityType === 'entity');
-      const label = graphTrim(n.label, n.focus ? 30 : 22);
+      const label = graphTrim(n.label, n.focus ? 30 : 28);
       const stroke = n.focus ? 'var(--primary)' : (isCo ? '#9C7A3C' : 'var(--primary)');
       const fill = n.focus ? 'var(--primary)' : '#FFFFFF';
       const txt = n.focus ? '#FFFFFF' : 'var(--text)';
@@ -5686,9 +5719,10 @@ async function renderNetworkGraph(container, focusType, focusId){
         ? `<circle cx="${badgeX.toFixed(1)}" cy="${(n.y-15).toFixed(1)}" r="9" fill="#FFFFFF" stroke="#9C7A3C" stroke-width="1.2"/>
            <text x="${badgeX.toFixed(1)}" y="${(n.y-11.5).toFixed(1)}" text-anchor="middle" font-size="9">👑</text>`
         : '';
+      const tipText = `${esc(n.label)}${n.focus ? ' (current view)' : ' — click to centre on this'}${guo ? ' · Orbis records no controlling owner above this company' : ''}${n.isOwner ? ' · Controlling owner' : ''}`;
       return `<g class="gnode" data-gtype="${isCo && n.type==='company' ? 'company' : n.type}" data-gid="${esc(n.refId)}"
-          data-gmatched="${esc(n.matchedCompanyId || '')}" style="cursor:pointer;opacity:${dim}">
-        <title>${esc(n.label)}${n.focus ? ' (current view)' : ' — click to centre on this'}${guo ? ' · Orbis records no controlling owner above this company' : ''}${n.isOwner ? ' · Controlling owner' : ''}</title>
+          data-gmatched="${esc(n.matchedCompanyId || '')}" data-gtooltip="${tipText}" style="cursor:pointer;opacity:${dim}">
+        <title>${tipText}</title>
         ${shape}${guoBadge}${crownBadge}
         <text x="${n.x.toFixed(1)}" y="${(n.y + (isCo ? 34 : 37)).toFixed(1)}" text-anchor="middle"
           font-size="10.5" fill="var(--text-light)"
@@ -5708,9 +5742,10 @@ async function renderNetworkGraph(container, focusType, focusId){
           <button type="button" class="btn btn--ghost btn--icon" data-gzoom="out" title="Zoom out">－</button>
           <button type="button" class="btn btn--ghost btn--icon" data-gzoom="reset" title="Reset view">↺</button>
         </div>
-        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;max-width:100%;display:block;touch-action:none;" xmlns="http://www.w3.org/2000/svg">
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${displayH}px;max-width:100%;display:block;touch-action:none;" xmlns="http://www.w3.org/2000/svg">
           <g>${edgeSvg}</g><g>${nodeSvg}</g>
         </svg>
+        <div class="graph-tooltip"></div>
       </div>
       <div class="own-legend" style="justify-content:space-between;">
         <span>
@@ -5732,12 +5767,35 @@ async function renderNetworkGraph(container, focusType, focusId){
       else controls.reset();
     }));
 
+    // Custom tooltip: same content as the native <title> (data-gtooltip carries
+    // the identical composed text), but instant instead of the browser's
+    // hover-and-wait delay -- the native <title> stays in the markup too, as
+    // a free fallback for anyone navigating by keyboard.
+    const wrap = container.querySelector('.graph-wrap');
+    const tooltip = container.querySelector('.graph-tooltip');
+    container.querySelectorAll('.gnode').forEach(el => {
+      el.addEventListener('mouseenter', () => {
+        tooltip.textContent = el.dataset.gtooltip || '';
+        tooltip.style.display = 'block';
+      });
+      el.addEventListener('mousemove', e => {
+        const r = wrap.getBoundingClientRect();
+        const maxLeft = Math.max(0, r.width - 270), maxTop = Math.max(0, r.height - 40);
+        tooltip.style.left = Math.min(e.clientX - r.left + 14, maxLeft) + 'px';
+        tooltip.style.top = Math.min(e.clientY - r.top + 14, maxTop) + 'px';
+      });
+      el.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    });
+
     container.querySelectorAll('.gnode').forEach(el => el.addEventListener('click', () => {
       const t = el.dataset.gtype;
       if (t === 'more'){
         const kind = el.dataset.gexpandkind;
         if (kind === 'ring1') expandRing1 = true;
-        else if (kind === 'ring2') expandRing2.add(el.dataset.gexpandkey);
+        else if (kind === 'ring2') {
+          const gk = el.dataset.gexpandkey;
+          expandRing2.set(gk, (expandRing2.get(gk) || GRAPH_RING2_CAP) + GRAPH_RING2_CAP);
+        }
         draw();
         return;
       }
