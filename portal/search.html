@@ -3475,6 +3475,12 @@ async function renderPeople(){
 // person.
 let peopleImportRows = [];   // flat, one entry per person↔company edge
 let peopleImportStats = null;
+// True while a previous import's "Refreshing totals" tail is still running in
+// the background (see confirmPeopleImport()) — the modal closes as soon as
+// the real data is committed, so nothing else stops a second import from
+// starting and resetting ImportProgress's shared stage/cancelToken state out
+// from under the first run's still-ticking bar. Guarded in openPeopleImport().
+let backgroundRefreshInFlight = false;
 
 const PEOPLE_ALIAS = {
   companyName: ['company name latin alphabet','company name','name'],
@@ -4994,6 +5000,19 @@ async function confirmPeopleImport(){
     ImportProgress.finishStage('demoteCounters', `${demoted.toLocaleString('de-DE')} relationships demoted, ${countersToWrite.length.toLocaleString('de-DE')} company counts updated`);
     if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Updating company counts')); return; }
 
+    // Every load-bearing write (people, links, demotions, company counters)
+    // is committed at this point. What's left below only recomputes cosmetic
+    // linkCount/currentLinkCount badges, so the modal closes here instead of
+    // holding the app hostage for that — it keeps running in the background
+    // (refreshPersonTotals(), unawaited) and the still-visible sticky bar
+    // keeps tracking it through to genuine completion.
+    await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted, peopleWritten, peopleSkipped, linksWritten, linksSkipped });
+    invalidatePeopleCaches();
+    cacheCompanies();
+    showEl('peopleImportModal', false);
+    if (viewMode === 'people') renderPeople();
+    if (currentCoId) { const c = getCompany(); if (c) { renderOwnership(c); renderOverview(c); } }
+
     // 7) A person's totals span every company, including ones this file never
     // mentioned, so a genuinely-changed person's read can't be skipped. But a
     // person nothing this run touched — no link written, no demotion — can be
@@ -5005,61 +5024,60 @@ async function confirmPeopleImport(){
     // after writing, so they don't depend on a future import to correct
     // anything. On a near-total re-import this can shrink this stage from
     // ~890 round-trips down to a handful.
-    const personIdsToRefresh = personIds.filter(id => touchedPersonIds.has(id));
-    const refreshIdChunks = [];
-    for (let i = 0; i < personIdsToRefresh.length; i += PERSON_IN_CHUNK) refreshIdChunks.push(personIdsToRefresh.slice(i, i + PERSON_IN_CHUNK));
-    // Stage total/progress is tracked in ROUND-TRIP units throughout, not raw
-    // people counts: the read above batches 30 people per round-trip, the
-    // write below batches up to 450 — mixing raw item counts from both into
-    // one linear total previously priced "cheap" write-items at the same
-    // per-unit cost as an "expensive" 30-person read round-trip (a 15x
-    // error), which is exactly what produced a multi-hour ETA mid-read from
-    // a stage that actually takes minutes.
-    const refreshWriteChunkEstimate = Math.ceil(personIdsToRefresh.length / 450); // pessimistic upper bound, corrected below
-    ImportProgress.beginStage('refresh', refreshIdChunks.length + refreshWriteChunkEstimate);
-    const counts = new Map(personIdsToRefresh.map(id => [id, { total: 0, current: 0 }]));
-    await mapPool(refreshIdChunks, async ch => {
-      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in',ch)));
-      addReads(snap.docs.length || 1);
-      for (const d of snap.docs){
-        const l = d.data();
-        const c = counts.get(l.personId);
-        if (!c) continue;                       // a link whose person is not in this import
-        c.total++;
-        if (l.shCurrent === true || l.mgmtCurrent === true) c.current++;
-      }
-    }, READ_CONCURRENCY, d => ImportProgress.tick('refresh', d), cancelToken);
-    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
-    // The write side can't be pre-filtered until the read above resolves (the
-    // "real" total per person isn't known until then) — same idea as people/
-    // links, just one step later. The stage started with a pessimistic
-    // upper bound; correct it now that the actual write count is known, so
-    // the bar doesn't sit stuck at a low percentage through a nearly-empty
-    // write phase.
-    const refreshToWrite = personIdsToRefresh.filter(pid => {
-      const c = counts.get(pid);
-      const existing = existingPeople.get(pid);
-      return !(existing && existing.linkCount === c.total && existing.currentLinkCount === c.current);
-    });
-    const refreshWriteChunkCount = Math.ceil(refreshToWrite.length / 450);
-    ImportProgress.tick('refresh', refreshIdChunks.length, refreshIdChunks.length + refreshWriteChunkCount);
-    await commitInChunks(refreshToWrite, 450, (batch, pid) => {
-      const c = counts.get(pid);
-      batch.update(doc(db,'searchPeople',pid), { linkCount: c.total, currentLinkCount: c.current });
-      return true;
-    }, { onProgress: done => ImportProgress.tick('refresh', refreshIdChunks.length + Math.ceil(done / 450)), cancelToken });
-    ImportProgress.finishStage('refresh', `${refreshToWrite.length.toLocaleString('de-DE')} people's totals updated (${personIdsToRefresh.length.toLocaleString('de-DE')} checked, ${(personIds.length - personIdsToRefresh.length).toLocaleString('de-DE')} untouched — skipped)`);
-    if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
-
-    await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted, peopleWritten, peopleSkipped, linksWritten, linksSkipped });
-    invalidatePeopleCaches();
-    cacheCompanies();
-    showEl('peopleImportModal', false);
-    const skipped = peopleSkipped + linksSkipped;
-    const skipNote = skipped ? ` ${skipped.toLocaleString('de-DE')} record${skipped===1?'':'s'} unchanged since last import — skipped, no write.` : '';
-    ImportProgress.complete(`Imported ${rows.length.toLocaleString('de-DE')} link${rows.length===1?'':'s'} across ${byPerson.size.toLocaleString('de-DE')} people/entities and ${touched.length.toLocaleString('de-DE')} companies.${demoted?` ${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}${skipNote}`);
-    if (viewMode === 'people') renderPeople();
-    if (currentCoId) { const c = getCompany(); if (c) { renderOwnership(c); renderOverview(c); } }
+    async function refreshPersonTotals(){
+      const personIdsToRefresh = personIds.filter(id => touchedPersonIds.has(id));
+      const refreshIdChunks = [];
+      for (let i = 0; i < personIdsToRefresh.length; i += PERSON_IN_CHUNK) refreshIdChunks.push(personIdsToRefresh.slice(i, i + PERSON_IN_CHUNK));
+      // Stage total/progress is tracked in ROUND-TRIP units throughout, not raw
+      // people counts: the read above batches 30 people per round-trip, the
+      // write below batches up to 450 — mixing raw item counts from both into
+      // one linear total previously priced "cheap" write-items at the same
+      // per-unit cost as an "expensive" 30-person read round-trip (a 15x
+      // error), which is exactly what produced a multi-hour ETA mid-read from
+      // a stage that actually takes minutes.
+      const refreshWriteChunkEstimate = Math.ceil(personIdsToRefresh.length / 450); // pessimistic upper bound, corrected below
+      ImportProgress.beginStage('refresh', refreshIdChunks.length + refreshWriteChunkEstimate);
+      const counts = new Map(personIdsToRefresh.map(id => [id, { total: 0, current: 0 }]));
+      await mapPool(refreshIdChunks, async ch => {
+        const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in',ch)));
+        addReads(snap.docs.length || 1);
+        for (const d of snap.docs){
+          const l = d.data();
+          const c = counts.get(l.personId);
+          if (!c) continue;                       // a link whose person is not in this import
+          c.total++;
+          if (l.shCurrent === true || l.mgmtCurrent === true) c.current++;
+        }
+      }, READ_CONCURRENCY, d => ImportProgress.tick('refresh', d), cancelToken);
+      if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
+      // The write side can't be pre-filtered until the read above resolves (the
+      // "real" total per person isn't known until then) — same idea as people/
+      // links, just one step later. The stage started with a pessimistic
+      // upper bound; correct it now that the actual write count is known, so
+      // the bar doesn't sit stuck at a low percentage through a nearly-empty
+      // write phase.
+      const refreshToWrite = personIdsToRefresh.filter(pid => {
+        const c = counts.get(pid);
+        const existing = existingPeople.get(pid);
+        return !(existing && existing.linkCount === c.total && existing.currentLinkCount === c.current);
+      });
+      const refreshWriteChunkCount = Math.ceil(refreshToWrite.length / 450);
+      ImportProgress.tick('refresh', refreshIdChunks.length, refreshIdChunks.length + refreshWriteChunkCount);
+      await commitInChunks(refreshToWrite, 450, (batch, pid) => {
+        const c = counts.get(pid);
+        batch.update(doc(db,'searchPeople',pid), { linkCount: c.total, currentLinkCount: c.current });
+        return true;
+      }, { onProgress: done => ImportProgress.tick('refresh', refreshIdChunks.length + Math.ceil(done / 450)), cancelToken });
+      ImportProgress.finishStage('refresh', `${refreshToWrite.length.toLocaleString('de-DE')} people's totals updated (${personIdsToRefresh.length.toLocaleString('de-DE')} checked, ${(personIds.length - personIdsToRefresh.length).toLocaleString('de-DE')} untouched — skipped)`);
+      if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
+      const skipped = peopleSkipped + linksSkipped;
+      const skipNote = skipped ? ` ${skipped.toLocaleString('de-DE')} record${skipped===1?'':'s'} unchanged since last import — skipped, no write.` : '';
+      ImportProgress.complete(`Imported ${rows.length.toLocaleString('de-DE')} link${rows.length===1?'':'s'} across ${byPerson.size.toLocaleString('de-DE')} people/entities and ${touched.length.toLocaleString('de-DE')} companies.${demoted?` ${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}${skipNote}`);
+    }
+    backgroundRefreshInFlight = true;
+    refreshPersonTotals()
+      .catch(e => { console.error(e); ImportProgress.fail(e.message); })
+      .finally(() => { backgroundRefreshInFlight = false; });
   } catch(e){
     console.error(e);
     errEl.textContent = e.message; errEl.style.display = 'block';
@@ -7084,6 +7102,7 @@ document.getElementById('bulkFileInput').addEventListener('change', e => {
 document.querySelectorAll('input[name=bulkMode]').forEach(r => r.addEventListener('change', updateBulkConfirmLabel));
 // People / Ownership importer
 document.getElementById('peopleImportBtn').addEventListener('click', async () => {
+  if (backgroundRefreshInFlight){ alert('A previous import is still finishing up its totals refresh — try again in a moment.'); return; }
   showEl('peopleImportModal', true);
   document.getElementById('peopleFileName').textContent = 'Loading company data…';
   document.getElementById('peopleFileInput').disabled = true;
