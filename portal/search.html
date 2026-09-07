@@ -3475,12 +3475,17 @@ async function renderPeople(){
 // person.
 let peopleImportRows = [];   // flat, one entry per person↔company edge
 let peopleImportStats = null;
-// True while a previous import's "Refreshing totals" tail is still running in
-// the background (see confirmPeopleImport()) — the modal closes as soon as
-// the real data is committed, so nothing else stops a second import from
-// starting and resetting ImportProgress's shared stage/cancelToken state out
-// from under the first run's still-ticking bar. Guarded in openPeopleImport().
-let backgroundRefreshInFlight = false;
+// True for the ENTIRE duration of a people import, start to genuine finish —
+// including its trailing "Refreshing totals" background tail. Needed because
+// the file-picker modal is dismissible mid-run (its own Cancel button, and a
+// generic click-outside-to-close handler, `search.html` ~7333, neither of
+// which check whether an import is active) and, once the modal's closed,
+// "Import People" is clickable again. Without this, a second import could
+// start while the first is still mid-stage and reset ImportProgress's shared
+// stage/cancelToken state out from under it — not just a display glitch, but
+// two runs writing through the same shared state at once. Guarded in the
+// peopleImportBtn click handler.
+let peopleImportInFlight = false;
 
 const PEOPLE_ALIAS = {
   companyName: ['company name latin alphabet','company name','name'],
@@ -4677,6 +4682,8 @@ async function confirmPeopleImport(){
   const allPrevious = document.getElementById('peopleAllPrevious').checked;
   const rows = peopleImportRows.filter(r => createMissing || !r.unmatched);
   if (!rows.length) return;
+  peopleImportInFlight = true;
+  let backgroundTaskStarted = false; // set true only once refreshPersonTotals() is actually kicked off below -- that task then owns clearing peopleImportInFlight itself, on its own completion
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
   const stageDefs = [];
   if (createMissing) stageDefs.push(
@@ -5074,15 +5081,22 @@ async function confirmPeopleImport(){
       const skipNote = skipped ? ` ${skipped.toLocaleString('de-DE')} record${skipped===1?'':'s'} unchanged since last import — skipped, no write.` : '';
       ImportProgress.complete(`Imported ${rows.length.toLocaleString('de-DE')} link${rows.length===1?'':'s'} across ${byPerson.size.toLocaleString('de-DE')} people/entities and ${touched.length.toLocaleString('de-DE')} companies.${demoted?` ${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}${skipNote}`);
     }
-    backgroundRefreshInFlight = true;
+    backgroundTaskStarted = true;
     refreshPersonTotals()
       .catch(e => { console.error(e); ImportProgress.fail(e.message); })
-      .finally(() => { backgroundRefreshInFlight = false; });
+      .finally(() => { peopleImportInFlight = false; });
   } catch(e){
     console.error(e);
     errEl.textContent = e.message; errEl.style.display = 'block';
     ImportProgress.fail(e.message);
-  } finally { btn.disabled = false; updatePeopleImportBtn(); }
+  } finally {
+    btn.disabled = false; updatePeopleImportBtn();
+    // Every early exit (a cancelled-mid-stage `return`, or a thrown error
+    // caught above) skips the background task entirely -- clear the flag
+    // here for those. The success path clears it itself, once the
+    // background task genuinely finishes, not here.
+    if (!backgroundTaskStarted) peopleImportInFlight = false;
+  }
 }
 
 async function openPeopleImport(){
@@ -7102,7 +7116,7 @@ document.getElementById('bulkFileInput').addEventListener('change', e => {
 document.querySelectorAll('input[name=bulkMode]').forEach(r => r.addEventListener('change', updateBulkConfirmLabel));
 // People / Ownership importer
 document.getElementById('peopleImportBtn').addEventListener('click', async () => {
-  if (backgroundRefreshInFlight){ alert('A previous import is still finishing up its totals refresh — try again in a moment.'); return; }
+  if (peopleImportInFlight){ alert('An import is already running — try again once it finishes.'); return; }
   showEl('peopleImportModal', true);
   document.getElementById('peopleFileName').textContent = 'Loading company data…';
   document.getElementById('peopleFileInput').disabled = true;
