@@ -427,6 +427,7 @@
         <button class="btn btn--ghost" id="exportBtn">⬇ Export CSV</button>
         <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
         <button class="btn btn--ghost" id="peopleImportBtn">🧑‍💼 Import People</button>
+        <button class="btn btn--ghost" id="companiesImportBtn">🏢 Import Companies</button>
         <button class="btn btn--primary" id="newCompanyBtn">＋ New Company</button>
       </div>
     </div>
@@ -1014,6 +1015,34 @@
     <div class="modal-actions">
       <button class="btn btn--ghost" id="peopleImportCancelBtn">Cancel</button>
       <button class="btn btn--primary" id="peopleImportConfirmBtn" disabled>Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import Companies (Orbis company-level exports: Profile / Legal & Account / Financials / Advisors) -->
+<div class="overlay" id="companiesImportModal" style="display:none;">
+  <div class="modal modal--lg">
+    <div class="modal-title">Import Companies</div>
+    <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:6px;">Drop in an Orbis company export (.xlsx or .csv) — <strong>Company Profile</strong>, <strong>Legal &amp; Account</strong>, <strong>Financials</strong>, or <strong>Advisors/Updates</strong>. The export type is detected automatically from its columns.</p>
+    <p style="font-size:0.78rem;color:var(--text-light);margin-bottom:16px;">Companies are matched to the CRM by <strong>NIF</strong> (VAT/Tax number) or <strong>BvD ID</strong>. This only updates companies already in the CRM — a row that doesn't match one is skipped and listed below, never used to create a new company.</p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px;">
+      <label class="btn btn--ghost btn--sm" style="cursor:pointer;margin:0;">📂 Choose file<input type="file" id="companiesFileInput" accept=".xlsx,.csv,text/csv" style="display:none;"></label>
+      <span id="companiesFileName" style="font-size:0.82rem;color:var(--text-light);"></span>
+    </div>
+    <div id="companiesShapeDetected" style="display:none;margin-bottom:14px;padding:10px 12px;background:#FAFAF8;border:1px solid var(--border);border-radius:var(--radius);font-size:0.83rem;"></div>
+    <div id="companiesImportPreview" style="display:none;">
+      <div style="font-size:0.83rem;font-weight:600;margin-bottom:10px;" id="companiesImportSummary"></div>
+      <div style="max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+        <table class="preview-table">
+          <thead><tr><th>Company</th><th>NIF / BvD ID</th><th>Fields to update</th><th>Status</th></tr></thead>
+          <tbody id="companiesImportBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-err" id="companiesImportErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="companiesImportCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="companiesImportConfirmBtn" disabled>Import</button>
     </div>
   </div>
 </div>
@@ -5141,6 +5170,341 @@ async function handlePeopleFile(file){
   }
 }
 
+// ── Companies importer (Orbis company-level exports) ───────────────────────
+// Enriches companies already in the CRM from any of Orbis's four company
+// export shapes (Company Profile / Legal & Account / Financials /
+// Advisors & Updates) -- one button, one modal, the shape auto-detected from
+// the header row so nothing forces the user to pick a type up front. Field
+// selection for every shape is the Orbis Field Ledger (mapped and validated
+// across three progressively larger samples, up to 1,000 companies, earlier
+// this session) -- this file only implements the machinery, not a second
+// copy of that field-by-field reasoning.
+//
+// Deliberately narrower than the People importer in one way: a row that
+// doesn't match an existing CRM company (by NIF or BvD ID) is skipped and
+// reported, never used to create a new company -- that stays Bulk Import's
+// job. And unlike confirmPeopleImport(), this applies the in-flight-guard
+// lesson from the start instead of as a later fix: the guard covers the
+// whole run, not just a trailing stage.
+let companiesImportInFlight = false;
+let companiesImportRows = [];
+let companiesImportStats = null;
+
+// Excel serial date (days since 1899-12-30, the same epoch quirk Excel
+// itself uses) -> 'YYYY-MM-DD'. Several Orbis fields across these exports
+// arrive as raw serials (e.g. Date of incorporation, Status updated date),
+// not formatted date strings -- confirmed while mapping the legal/account
+// and financials exports earlier this session.
+function excelSerialToDate(serial){
+  const n = Number(serial);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const ms = Math.round((n - 25569) * 86400 * 1000); // 25569 = days from 1899-12-30 to 1970-01-01
+  const d = new Date(ms);
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+// Splits an Orbis multi-value cell (newline-separated -- one entry per
+// shareholder/advisor/legal event/status-history item) into a trimmed array,
+// dropping blanks and the 'n.a.' placeholder Orbis uses for "not available".
+function splitOrbisMultiValue(s){
+  return String(s || '').split('\n').map(x => x.trim()).filter(x => x && x.toLowerCase() !== 'n.a.');
+}
+
+// One alias map per export shape, same shape as PEOPLE_ALIAS (~3490):
+// internal field key -> the exact normalized-lowercase header text to match.
+// Only 'profile' is populated so far (Phase 1 of the approved build order --
+// Legal & Account, Financials and Advisors/Updates follow the same pattern
+// in later phases). detectCompanyExportShape() below already recognizes all
+// four shapes, so uploading one of the other three fails with a clear
+// "not built yet" message rather than silently mis-mapping it.
+const COMPANY_ALIAS = {
+  profile: {
+    companyName: ['company name latin alphabet'],
+    address: ['address line 1 latin alphabet'],
+    postcode: ['postcode latin alphabet'],
+    city: ['city latin alphabet'],
+    country: ['country'],
+    latitude: ['latitude'],
+    longitude: ['longitude'],
+    regionInCountry: ['region in country'],
+    regionType: ['type of region in country'],
+    nuts1: ['nuts1'],
+    nuts2: ['nuts2'],
+    nuts3: ['nuts3'],
+    phone: ['telephone number'],
+    fax: ['fax number'],
+    domain: ['domain'],
+    website: ['website address'],
+    email: ['e-mail address'],
+    tradeDescriptionPt: ['trade description in original language'],
+    productsServices: ['products & services'],
+    bvdSector: ['bvd sectors'],
+    industryClassificationSystem: ['national industry classification'],
+    caeCode: ['primary code(s) in national industry classification'],
+    caeDescription: ['primary code in national industry classification - description'],
+    caeSecondaryCode: ['secondary code(s) in national industry classification'],
+    caeSecondaryDescription: ['secondary code in national industry classification - description'],
+    naceMainSection: ['nace rev. 2 main section'],
+    naceCode: ['nace rev. 2.1, core code (4 digits)'],
+    naceDescription: ['nace rev. 2.1, core code - description'],
+    nacePrimaryCode: ['nace rev. 2.1, primary code(s)'],
+    nacePrimaryDescription: ['nace rev. 2.1, primary code(s) - description'],
+    naceSecondaryCode: ['nace rev. 2.1, secondary code(s)'],
+    naceSecondaryDescription: ['nace rev. 2.1, secondary code(s) - description'],
+    fullOverview: ['full overview'],
+    mainActivity: ['main activity'],
+    mainForeignCountries: ['main foreign countries or regions'],
+    mainProductionSites: ['main production sites'],
+    mainDistributionSites: ['main distribution sites'],
+    mainCustomers: ['main customers'],
+    bvdId: ['bvd id number'],
+    vatNumber: ['vat/tax number'],
+    euid: ['other company id number'],
+  },
+  legal: {}, financials: {}, advisors: {},
+};
+function companiesColIndex(headers, aliasMap, key){
+  const want = aliasMap[key] || [];
+  for (const w of want){ const i = headers.indexOf(w); if (i !== -1) return i; }
+  return -1;
+}
+// One distinctive marker column per shape, each confirmed unique to that
+// export while mapping all four this session. Returns null if the file
+// doesn't look like any of them.
+function detectCompanyExportShape(headerRow){
+  const norm = headerRow.map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
+  if (norm.includes('standardized legal form')) return 'legal';
+  // Not just "operating revenue (turnover)" -- the Advisors/Updates export's
+  // stock-market block has a "...per share" variant sharing that prefix
+  // (confirmed while testing this against the real header rows), so the
+  // unit suffix is required too.
+  if (norm.some(h => h.startsWith('operating revenue (turnover) th eur') || h.startsWith('operating revenue (turnover) th usd'))) return 'financials';
+  if (norm.some(h => h === 'advfull name' || h === 'number of advisors')) return 'advisors';
+  if (norm.includes('company name latin alphabet')) return 'profile';
+  return null;
+}
+
+// Builds the write payload for one Company Profile row, applying the two
+// gating rules established while mapping this export: a non-Portuguese VAT
+// number is never forced through 9-digit-NIF validation, and an industry
+// code is only mapped into caeCode/caeDescription when the classification
+// system is actually CAE Rev. 3 (Portugal's own system) -- otherwise it's
+// flagged, not silently mis-filed, so a future non-PT company doesn't end up
+// with e.g. a Spanish CNAE code labelled as a Portuguese CAE code.
+function parseCompanyProfileRow(idx, vals){
+  const g = key => { const i = idx[key]; return (i == null || i === -1) ? '' : String(vals[i] || '').trim(); };
+  const country = g('country');
+  const isPT = /^portugal$/i.test(country);
+  const vatRaw = g('vatNumber');
+  const payload = {};
+  const warnings = [];
+
+  const bvdId = g('bvdId');
+  if (bvdId) payload.bvdId = bvdId;
+  let nifDigits = '';
+  if (vatRaw){
+    if (isPT){
+      nifDigits = onlyDigits(vatRaw);
+      if (nifDigits.length === 9) payload.nif = nifDigits;
+      else warnings.push(`VAT/Tax number "${vatRaw}" is not a 9-digit PT NIF`);
+    } else {
+      payload.foreignTaxId = vatRaw;
+      warnings.push(`Non-Portuguese VAT number (${country || 'unknown country'}) — stored as foreignTaxId, not validated as a NIF`);
+    }
+  }
+
+  if (g('companyName')) payload.name = g('companyName');
+  if (g('address')) payload.hqAddress = g('address');
+  if (g('postcode')) payload.postcode = g('postcode');
+  if (g('city')) payload.city = g('city');
+  if (country) payload.country = country;
+  const lat = parseFloat(g('latitude')); if (Number.isFinite(lat)) payload.latitude = lat;
+  const lon = parseFloat(g('longitude')); if (Number.isFinite(lon)) payload.longitude = lon;
+
+  // "Region in country" is a two-part multi-value cell: District/Município
+  // for the mainland, but Autonomous region/Município for Madeira & Açores
+  // (confirmed at n=200 this session -- Type of region in country carries
+  // which one applies, it's the parsing key, not a field of its own).
+  const regionParts = splitOrbisMultiValue(g('regionInCountry'));
+  const typeParts = splitOrbisMultiValue(g('regionType'));
+  if (regionParts[0]){ payload.distrito = regionParts[0]; payload.distritoType = /autonomous/i.test(typeParts[0] || '') ? 'autonomous_region' : 'district'; }
+  if (regionParts[1]) payload.concelho = regionParts[1];
+
+  if (g('nuts1')) payload.nuts1 = g('nuts1');
+  if (g('nuts2')) payload.nuts2 = g('nuts2');
+  if (g('nuts3')) payload.nuts3 = g('nuts3');
+  if (g('phone')) payload.companyPhone = g('phone');
+  if (g('fax')) payload.fax = g('fax');
+  if (g('domain')) payload.domain = g('domain');
+  // Website address can carry more than one domain (newline-separated) --
+  // only the first is stored in this phase; a company-level multi-value
+  // website array (mirroring the People importer's orbisWebsites pattern)
+  // is a reasonable later addition, not required for the first shape.
+  const websites = splitOrbisMultiValue(g('website'));
+  if (websites[0]) payload.website = websites[0];
+  if (g('email')) payload.companyEmail = g('email');
+  if (g('tradeDescriptionPt')) payload.tradeDescriptionPt = g('tradeDescriptionPt');
+  if (g('productsServices')) payload.productsServices = g('productsServices');
+  if (g('bvdSector')) payload.bvdSector = g('bvdSector');
+
+  const system = g('industryClassificationSystem');
+  if (system){
+    payload.industryClassificationSystem = system;
+    if (/^cae rev\.?\s*3$/i.test(system)){
+      if (g('caeCode')) payload.caeCode = g('caeCode');
+      if (g('caeDescription')) payload.caeDescription = g('caeDescription');
+      if (g('caeSecondaryCode')) payload.caeSecondaryCode = g('caeSecondaryCode');
+      if (g('caeSecondaryDescription')) payload.caeSecondaryDescription = g('caeSecondaryDescription');
+    } else {
+      warnings.push(`Industry classification system is "${system}", not CAE Rev. 3 — code not mapped into caeCode (that system isn't supported yet)`);
+    }
+  }
+  if (g('naceMainSection')) payload.naceMainSection = g('naceMainSection');
+  if (g('naceCode')) payload.naceCode = g('naceCode');
+  if (g('naceDescription')) payload.naceDescription = g('naceDescription');
+  if (g('nacePrimaryCode')) payload.nacePrimaryCode = g('nacePrimaryCode');
+  if (g('nacePrimaryDescription')) payload.nacePrimaryDescription = g('nacePrimaryDescription');
+  if (g('naceSecondaryCode')) payload.naceSecondaryCode = g('naceSecondaryCode');
+  if (g('naceSecondaryDescription')) payload.naceSecondaryDescription = g('naceSecondaryDescription');
+  if (g('fullOverview')) payload.fullOverview = g('fullOverview');
+  if (g('mainActivity')) payload.mainActivity = g('mainActivity');
+  if (g('mainForeignCountries')) payload.mainForeignCountries = g('mainForeignCountries');
+  if (g('mainProductionSites')) payload.mainProductionSites = g('mainProductionSites');
+  if (g('mainDistributionSites')) payload.mainDistributionSites = g('mainDistributionSites');
+  if (g('mainCustomers')) payload.mainCustomers = g('mainCustomers');
+  if (g('euid')) payload.euid = g('euid');
+
+  return { payload, warnings, nifDigits: isPT ? nifDigits : '', bvdId };
+}
+
+function parseCompaniesRows(rows){
+  let hi = rows.findIndex(r => r.some(c => /^company name/i.test(String(c || '').replace(/\n/g,' ').trim())));
+  if (hi === -1) hi = 0;
+  const headerRow = rows[hi] || [];
+  const shape = detectCompanyExportShape(headerRow);
+  if (!shape) throw new Error("This file doesn't look like an Orbis company export.");
+  if (shape !== 'profile'){
+    const label = { legal:'Legal & Account', financials:'Financials', advisors:'Advisors/Updates' }[shape];
+    throw new Error(`${label} imports aren't built yet — only Company Profile exports are supported so far.`);
+  }
+  const headers = headerRow.map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
+  const aliasMap = COMPANY_ALIAS[shape];
+  const idx = {};
+  for (const k of Object.keys(aliasMap)) idx[k] = companiesColIndex(headers, aliasMap, k);
+
+  const dataRows = rows.slice(hi + 1).filter(r => r.some(c => String(c || '').trim()));
+  const parsed = dataRows.map(vals => {
+    const { payload, warnings, nifDigits, bvdId } = parseCompanyProfileRow(idx, vals);
+    return { payload, warnings, nifDigits, bvdId, name: payload.name || '(no name)' };
+  });
+  companiesImportStats = { shape, rowsSeen: parsed.length };
+  return parsed;
+}
+
+function renderCompaniesImportPreview(){
+  const existingByNif = new Map(companies.filter(c => onlyDigits(c.nif)).map(c => [onlyDigits(c.nif), c]));
+  const existingByBvd = new Map(companies.filter(c => c.bvdId).map(c => [c.bvdId, c]));
+  let matched = 0;
+  const body = companiesImportRows.map(r => {
+    const match = (r.nifDigits && existingByNif.get(r.nifDigits)) || (r.bvdId && existingByBvd.get(r.bvdId)) || null;
+    const fieldCount = Object.keys(r.payload).length;
+    if (match) matched++;
+    const status = match
+      ? (r.warnings.length ? `<span style="color:#B45309">⚠ ${esc(r.warnings.join('; '))}</span>` : '<span class="row-ok">✓ Matched</span>')
+      : '<span style="color:var(--text-light)">⊘ Not found in CRM — skipped</span>';
+    return `<tr class="${match ? '' : 'row-bad'}">
+      <td>${esc(r.name)}</td><td>${esc(r.nifDigits || r.bvdId || '—')}</td>
+      <td>${fieldCount}</td><td>${status}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('companiesImportBody').innerHTML = body;
+  const skipped = companiesImportRows.length - matched;
+  document.getElementById('companiesImportSummary').innerHTML =
+    `<span style="color:var(--secondary)">✓ ${matched} matched, ready to update</span>` +
+    (skipped ? ` &nbsp; <span style="color:var(--text-light)">⊘ ${skipped} not found in CRM — will be skipped</span>` : '');
+  showEl('companiesImportPreview', true);
+  document.getElementById('companiesImportConfirmBtn').disabled = matched === 0;
+}
+
+async function handleCompaniesFile(file){
+  const errEl = document.getElementById('companiesImportErr'); errEl.style.display = 'none';
+  document.getElementById('companiesFileName').textContent = file.name + ' — reading…';
+  try {
+    let rows;
+    if (/\.xlsx$/i.test(file.name)){
+      const { readXlsx } = await import('./vendor/xlsx-lite.js');
+      const wb = await readXlsx(file);
+      const name = wb.sheetNames.includes('Results') ? 'Results'
+        : wb.sheetNames.reduce((a,b) => (wb.sheets[b].length > (wb.sheets[a]?.length||0) ? b : a), wb.sheetNames[0]);
+      rows = wb.sheets[name];
+    } else {
+      rows = parseCSV(await file.text());
+    }
+    companiesImportRows = parseCompaniesRows(rows);
+    const shapeLabel = { profile:'Company Profile' }[companiesImportStats.shape] || companiesImportStats.shape;
+    document.getElementById('companiesFileName').textContent = `${file.name} — ${shapeLabel}, ${companiesImportStats.rowsSeen} compan${companiesImportStats.rowsSeen===1?'y':'ies'}`;
+    document.getElementById('companiesShapeDetected').style.display = '';
+    document.getElementById('companiesShapeDetected').textContent = `Detected: ${shapeLabel} export`;
+    renderCompaniesImportPreview();
+  } catch(e){
+    console.error(e);
+    document.getElementById('companiesFileName').textContent = file.name;
+    errEl.textContent = e.message; errEl.style.display = 'block';
+    showEl('companiesImportPreview', false); showEl('companiesShapeDetected', false);
+    document.getElementById('companiesImportConfirmBtn').disabled = true;
+  }
+}
+
+async function confirmCompaniesImport(){
+  if (!companiesImportRows.length) return;
+  const btn = document.getElementById('companiesImportConfirmBtn');
+  const errEl = document.getElementById('companiesImportErr'); errEl.style.display = 'none';
+  companiesImportInFlight = true;
+  let ranToCompletion = false;
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
+  const cancelToken = ImportProgress.start([
+    { id:'matching', label:'Matching to CRM companies' },
+    { id:'updating', label:'Updating companies' },
+  ]);
+  try {
+    const existingByNif = new Map(companies.filter(c => onlyDigits(c.nif)).map(c => [onlyDigits(c.nif), c]));
+    const existingByBvd = new Map(companies.filter(c => c.bvdId).map(c => [c.bvdId, c]));
+    ImportProgress.beginStage('matching', companiesImportRows.length);
+    const toWrite = [];
+    let notFound = 0;
+    companiesImportRows.forEach((r, i) => {
+      const match = (r.nifDigits && existingByNif.get(r.nifDigits)) || (r.bvdId && existingByBvd.get(r.bvdId)) || null;
+      if (match) toWrite.push({ cid: match.id, payload: r.payload, local: match });
+      else notFound++;
+      if ((i + 1) % 50 === 0) ImportProgress.tick('matching', i + 1);
+    });
+    ImportProgress.finishStage('matching', `${toWrite.length.toLocaleString('de-DE')} matched, ${notFound.toLocaleString('de-DE')} not found in CRM — skipped`);
+    if (cancelToken.cancelled){ ImportProgress.stopped('Stopped during "Matching to CRM companies".'); return; }
+
+    ImportProgress.beginStage('updating', toWrite.length);
+    const written = await commitInChunks(toWrite, 450, (batch, { cid, payload, local }) => {
+      batch.update(doc(db,'searchCompanies', cid), { ...payload, updatedAt: serverTimestamp() });
+      Object.assign(local, payload);
+      return true;
+    }, { onProgress: done => ImportProgress.tick('updating', done), cancelToken });
+    ImportProgress.finishStage('updating', `${written.toLocaleString('de-DE')} companies updated`);
+    if (cancelToken.cancelled){ ImportProgress.stopped('Stopped during "Updating companies".'); return; }
+
+    await logPortal('companies_import', { shape: companiesImportStats.shape, rowsSeen: companiesImportRows.length, matched: toWrite.length, notFound });
+    showEl('companiesImportModal', false);
+    ImportProgress.complete(`${written.toLocaleString('de-DE')} compan${written===1?'y':'ies'} updated from ${companiesImportStats.shape === 'profile' ? 'a Company Profile' : companiesImportStats.shape} export. ${notFound ? `${notFound} row${notFound===1?'':'s'} not found in the CRM — skipped.` : ''}`);
+    ranToCompletion = true;
+    if (viewMode === 'list') renderCompanies();
+    if (currentCoId){ const c = getCompany(); if (c) renderOverview(c); }
+  } catch(e){
+    console.error(e);
+    errEl.textContent = e.message; errEl.style.display = 'block';
+    ImportProgress.fail(e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Import';
+    companiesImportInFlight = false;
+  }
+}
+
 // ── Network graph ────────────────────────────────────────────────────────────
 // Hand-rolled SVG (no chart library in this project — only Leaflet is vendored,
 // and it's for maps). Shows person ↔ company ↔ person paths around a focus
@@ -7131,6 +7495,25 @@ document.getElementById('peopleCreateMissing').addEventListener('change', update
 document.getElementById('peopleFileInput').addEventListener('change', e => {
   const f = e.target.files[0]; if (f) handlePeopleFile(f);
 });
+document.getElementById('companiesImportBtn').addEventListener('click', async () => {
+  if (companiesImportInFlight){ alert('An import is already running — try again once it finishes.'); return; }
+  companiesImportRows = []; companiesImportStats = null;
+  document.getElementById('companiesFileName').textContent = 'Loading company data…';
+  document.getElementById('companiesFileInput').value = '';
+  document.getElementById('companiesFileInput').disabled = true;
+  showEl('companiesShapeDetected', false); showEl('companiesImportPreview', false);
+  document.getElementById('companiesImportErr').style.display = 'none';
+  const cbtn = document.getElementById('companiesImportConfirmBtn'); cbtn.disabled = true; cbtn.textContent = 'Import';
+  showEl('companiesImportModal', true);
+  await ensureFullDataset();
+  document.getElementById('companiesFileInput').disabled = false;
+  document.getElementById('companiesFileName').textContent = '';
+});
+document.getElementById('companiesImportCancelBtn').addEventListener('click', () => showEl('companiesImportModal', false));
+document.getElementById('companiesImportConfirmBtn').addEventListener('click', confirmCompaniesImport);
+document.getElementById('companiesFileInput').addEventListener('change', e => {
+  const f = e.target.files[0]; if (f) handleCompaniesFile(f);
+});
 document.getElementById('reportApplyBtn').addEventListener('click', applyReportChanges);
 document.getElementById('reportCloseBtn').addEventListener('click', () => showEl('reportModal', false));
 document.getElementById('reportDownloadBtn').addEventListener('click', downloadReportCsv);
@@ -7344,7 +7727,7 @@ document.getElementById('cNaceCode').addEventListener('blur', () => {
 });
 
 // Overlay click-to-close
-['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','statisticsModal','bulkModal','peopleImportModal','reportModal','mapListsModal','miniMapModal','exportFieldsModal'].forEach(id => {
+['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','statisticsModal','bulkModal','peopleImportModal','companiesImportModal','reportModal','mapListsModal','miniMapModal','exportFieldsModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id, false); });
 });
 </script>
