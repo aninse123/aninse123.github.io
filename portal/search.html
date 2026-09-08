@@ -5218,6 +5218,25 @@ function orbisDMYToISO(s){
   const [, dd, mm, yyyy] = m;
   return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
 }
+// Splits an Orbis multi-value cell like splitOrbisMultiValue, but keeps
+// blank/n.a. slots as '' instead of dropping them. Required for the
+// Advisors block: a per-advisor column (e.g. Appointment date) can be
+// genuinely blank for one advisor in the middle of the list while sibling
+// columns (Name, UCI, Type...) stay fully populated for every advisor --
+// dropping those blanks would shift every later advisor's fields over by
+// one, misattributing e.g. advisor #5's appointment date to advisor #3
+// (confirmed against a real 5-advisor row this session).
+function splitOrbisMultiValuePositional(s){
+  return String(s || '').split('\n').map(x => x.trim());
+}
+// ADVDate(s) last received from IP(s) arrives in two different formats
+// within the same export -- usually DD/MM/YYYY, but sometimes a bare Excel
+// serial (confirmed at real scale: 492 formatted vs. 82 serial values in
+// one sample, no discernible pattern for which rows get which) -- so both
+// are tried.
+function parseAdvDateValue(s){
+  return orbisDMYToISO(s) || excelSerialToDate(s);
+}
 
 // One alias map per export shape, same shape as PEOPLE_ALIAS (~3490):
 // internal field key -> the exact normalized-lowercase header text to match.
@@ -5298,7 +5317,37 @@ const COMPANY_ALIAS = {
     legalEventType: ['legal events - type'],
     legalEventDetails: ['legal events - details'],
   },
-  financials: {}, advisors: {},
+  advisors: {
+    companyName: ['company name latin alphabet'],
+    bvdId: ['bvd id number'],
+    vatNumber: ['vat/tax number'],
+    numberOfAdvisors: ['number of advisors'],
+    numberOfCurrentAdvisors: ['number of current advisors'],
+    numberOfPreviousAdvisors: ['number of previous advisors'],
+    advFullName: ['advfull name'],
+    advUci: ['advuci (unique contact identifier)'],
+    advType: ['advadvisor type'],
+    advRole: ['advadvisor role (as provided, english)'],
+    advIndividualOrCompany: ['advindividual or company'],
+    advAppointmentDate: ['advappointment date'],
+    advResignationDate: ['advresignation date'],
+    advCurrentOrPrevious: ['advcurrent or previous'],
+    advLastReceivedDate: ['advdate(s) last received from ip(s)'],
+    advNoOfCosCurrentRole: ['advno of cos in which a current role is held'],
+    lastUpdateCompanyName: ['last update - company name'],
+    lastUpdateAddress: ['last update - address'],
+    lastUpdateTelephone: ['last update - telephone number'],
+    lastUpdateDomain: ['last update - domain update'],
+    lastUpdateWebsite: ['last update - website address'],
+    lastUpdateEmail: ['last update - e-mail address'],
+    lastUpdateStatus: ['last update - status (any change)'],
+    lastUpdateSizeClassification: ['last update - size classification'],
+    lastUpdateIndustryClassifications: ['last update - industry classifications'],
+    additionOfLastAnnualAccounts: ['addition of last annual accounts'],
+    lastUpdateAnnualAccounts: ['last update - annual accounts'],
+    lastUpdateBvdIndependenceIndicator: ['last update - bvd independence indicator'],
+  },
+  financials: {},
 };
 function companiesColIndex(headers, aliasMap, key){
   const want = aliasMap[key] || [];
@@ -5492,10 +5541,69 @@ function parseLegalRow(idx, vals){
   return { payload, warnings, nifDigits, bvdId };
 }
 
+// Builds the write payload for one Advisors/Updates row. The per-advisor
+// columns are zipped into an `advisors` array using the position-preserving
+// split above (see splitOrbisMultiValuePositional for why), keyed off
+// ADVFull name; a slot is dropped only if the name itself is blank. The
+// twelve "Last update - ..." columns are single-value freshness dates
+// (Excel serials, one per company, not per-advisor).
+const LAST_UPDATE_FIELDS = ['lastUpdateCompanyName','lastUpdateAddress','lastUpdateTelephone','lastUpdateDomain','lastUpdateWebsite','lastUpdateEmail','lastUpdateStatus','lastUpdateSizeClassification','lastUpdateIndustryClassifications','additionOfLastAnnualAccounts','lastUpdateAnnualAccounts','lastUpdateBvdIndependenceIndicator'];
+function parseAdvisorsRow(idx, vals){
+  const g = key => { const i = idx[key]; return (i == null || i === -1) ? '' : String(vals[i] || '').trim(); };
+  const payload = {};
+  const warnings = [];
+
+  const bvdId = g('bvdId');
+  if (bvdId) payload.bvdId = bvdId;
+  const vatRaw = g('vatNumber');
+  let nifDigits = '';
+  if (vatRaw){
+    nifDigits = onlyDigits(vatRaw);
+    if (nifDigits.length === 9) payload.nif = nifDigits;
+  }
+  if (g('companyName')) payload.name = g('companyName');
+
+  if (g('numberOfAdvisors')) payload.numberOfAdvisors = g('numberOfAdvisors');
+  if (g('numberOfCurrentAdvisors')) payload.numberOfCurrentAdvisors = g('numberOfCurrentAdvisors');
+  if (g('numberOfPreviousAdvisors')) payload.numberOfPreviousAdvisors = g('numberOfPreviousAdvisors');
+
+  const names = splitOrbisMultiValuePositional(g('advFullName'));
+  const ucis = splitOrbisMultiValuePositional(g('advUci'));
+  const types = splitOrbisMultiValuePositional(g('advType'));
+  const roles = splitOrbisMultiValuePositional(g('advRole'));
+  const individualOrCompany = splitOrbisMultiValuePositional(g('advIndividualOrCompany'));
+  const appointmentDates = splitOrbisMultiValuePositional(g('advAppointmentDate'));
+  const resignationDates = splitOrbisMultiValuePositional(g('advResignationDate'));
+  const currentOrPrevious = splitOrbisMultiValuePositional(g('advCurrentOrPrevious'));
+  const lastReceivedDates = splitOrbisMultiValuePositional(g('advLastReceivedDate'));
+  const noOfCosCurrentRole = splitOrbisMultiValuePositional(g('advNoOfCosCurrentRole'));
+
+  const advisors = names.map((name, i) => ({
+    name,
+    uci: ucis[i] || '',
+    type: types[i] || '',
+    role: roles[i] || '',
+    individualOrCompany: individualOrCompany[i] || '',
+    appointmentDate: appointmentDates[i] || '',
+    resignationDate: resignationDates[i] || '',
+    currentOrPrevious: currentOrPrevious[i] || '',
+    lastReceivedDate: parseAdvDateValue(lastReceivedDates[i]) || '',
+    noOfCosCurrentRole: noOfCosCurrentRole[i] || '',
+  })).filter(a => a.name);
+  if (advisors.length) payload.advisors = advisors;
+
+  for (const key of LAST_UPDATE_FIELDS){
+    const iso = excelSerialToDate(g(key));
+    if (iso) payload[key] = iso;
+  }
+
+  return { payload, warnings, nifDigits, bvdId };
+}
+
 // One row-parser per implemented shape. detectCompanyExportShape() already
 // recognizes all four; a shape without an entry here fails with a clear
 // "not built yet" message instead of silently mis-mapping it.
-const COMPANY_ROW_PARSERS = { profile: parseCompanyProfileRow, legal: parseLegalRow };
+const COMPANY_ROW_PARSERS = { profile: parseCompanyProfileRow, legal: parseLegalRow, advisors: parseAdvisorsRow };
 
 function parseCompaniesRows(rows){
   let hi = rows.findIndex(r => r.some(c => /^company name/i.test(String(c || '').replace(/\n/g,' ').trim())));
@@ -5505,8 +5613,7 @@ function parseCompaniesRows(rows){
   if (!shape) throw new Error("This file doesn't look like an Orbis company export.");
   const rowParser = COMPANY_ROW_PARSERS[shape];
   if (!rowParser){
-    const label = { financials:'Financials', advisors:'Advisors/Updates' }[shape];
-    throw new Error(`${label} imports aren't built yet — only Company Profile and Legal & Account exports are supported so far.`);
+    throw new Error(`Financials imports aren't built yet — only Company Profile, Legal & Account and Advisors/Updates exports are supported so far.`);
   }
   const headers = headerRow.map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
   const aliasMap = COMPANY_ALIAS[shape];
