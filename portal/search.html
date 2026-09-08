@@ -5208,14 +5208,24 @@ function excelSerialToDate(serial){
 function splitOrbisMultiValue(s){
   return String(s || '').split('\n').map(x => x.trim()).filter(x => x && x.toLowerCase() !== 'n.a.');
 }
+// Converts an Orbis "DD/MM/YYYY" date string to ISO -- Status date is the one
+// Legal & Account field that arrives already formatted rather than as an
+// Excel serial (confirmed against real data), sometimes wrapped in a
+// multi-value cell with a blank leading line.
+function orbisDMYToISO(s){
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(s || '').trim());
+  if (!m) return null;
+  const [, dd, mm, yyyy] = m;
+  return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+}
 
 // One alias map per export shape, same shape as PEOPLE_ALIAS (~3490):
 // internal field key -> the exact normalized-lowercase header text to match.
-// Only 'profile' is populated so far (Phase 1 of the approved build order --
-// Legal & Account, Financials and Advisors/Updates follow the same pattern
-// in later phases). detectCompanyExportShape() below already recognizes all
-// four shapes, so uploading one of the other three fails with a clear
-// "not built yet" message rather than silently mis-mapping it.
+// 'profile' and 'legal' are populated (Phases 1-2 of the approved build
+// order); Financials and Advisors/Updates follow the same pattern in later
+// phases. detectCompanyExportShape() below already recognizes all four
+// shapes, so uploading one of the other two fails with a clear "not built
+// yet" message rather than silently mis-mapping it.
 const COMPANY_ALIAS = {
   profile: {
     companyName: ['company name latin alphabet'],
@@ -5260,7 +5270,35 @@ const COMPANY_ALIAS = {
     vatNumber: ['vat/tax number'],
     euid: ['other company id number'],
   },
-  legal: {}, financials: {}, advisors: {},
+  legal: {
+    companyName: ['company name latin alphabet'],
+    bvdId: ['bvd id number'],
+    vatNumber: ['vat/tax number'],
+    releaseDate: ['release date'],
+    sizeClassification: ['size classification'],
+    status: ['status'],
+    statusDate: ['status date'],
+    statusUpdatedDate: ['status updated date'],
+    standardizedLegalForm: ['standardized legal form'],
+    nationalLegalForm: ['national legal form'],
+    dateOfIncorporation: ['date of incorporation'],
+    entityType: ['type of entity'],
+    previousCompanyName: ['previous company name latin alphabet'],
+    akaName: ['also known as name latin alphabet'],
+    inWorldCompliance: ['in worldcompliance - as any category'],
+    latestAnnualAccountClosingDate: ['latest annual account closing date'],
+    lastAvailYear: ['last avail. year'],
+    limitedFinancialIndicator: ['limited financial indicator'],
+    noRecentFinancialIndicator: ['no recent financial indicator'],
+    numberOfAvailableYears: ['number of available years'],
+    originalCurrency: ['original currency last avail. yr'],
+    legalEventDate: ['legal events - date'],
+    legalEventDescription: ['legal events - description latin alphabet'],
+    legalEventSource: ['legal events - source'],
+    legalEventType: ['legal events - type'],
+    legalEventDetails: ['legal events - details'],
+  },
+  financials: {}, advisors: {},
 };
 function companiesColIndex(headers, aliasMap, key){
   const want = aliasMap[key] || [];
@@ -5376,15 +5414,99 @@ function parseCompanyProfileRow(idx, vals){
   return { payload, warnings, nifDigits: isPT ? nifDigits : '', bvdId };
 }
 
+// Builds the write payload for one Legal & Account row. Status sometimes
+// carries a concatenated history ("Active\nActive (dormant)\nActive") --
+// the last segment is the current status. The five Legal events columns are
+// each independently newline-separated but NOT reliably zippable into one
+// event object per index: Legal events - Type packs multiple category tags
+// per event with no blank-line separator of its own, unlike Date/
+// Description/Source/Details which use a blank line between events
+// (confirmed against a real multi-event row this session). So each column
+// is stored as its own array, true to the source rather than a guessed zip.
+function parseLegalRow(idx, vals){
+  const g = key => { const i = idx[key]; return (i == null || i === -1) ? '' : String(vals[i] || '').trim(); };
+  const payload = {};
+  const warnings = [];
+
+  const bvdId = g('bvdId');
+  if (bvdId) payload.bvdId = bvdId;
+  const vatRaw = g('vatNumber');
+  let nifDigits = '';
+  if (vatRaw){
+    nifDigits = onlyDigits(vatRaw);
+    if (nifDigits.length === 9) payload.nif = nifDigits;
+  }
+  if (g('companyName')) payload.name = g('companyName');
+
+  const releaseDate = excelSerialToDate(g('releaseDate'));
+  if (releaseDate) payload.orbisReleaseDate = releaseDate;
+  if (g('sizeClassification')) payload.sizeClassification = g('sizeClassification');
+
+  const statusParts = splitOrbisMultiValue(g('status'));
+  if (statusParts.length) payload.status = statusParts[statusParts.length - 1];
+
+  const statusDateParts = splitOrbisMultiValue(g('statusDate'));
+  const statusDateIso = statusDateParts.length ? orbisDMYToISO(statusDateParts[statusDateParts.length - 1]) : null;
+  if (statusDateIso) payload.statusDate = statusDateIso;
+
+  const statusUpdatedDate = excelSerialToDate(g('statusUpdatedDate'));
+  if (statusUpdatedDate) payload.statusUpdatedDate = statusUpdatedDate;
+
+  if (g('standardizedLegalForm')) payload.standardizedLegalForm = g('standardizedLegalForm');
+  if (g('nationalLegalForm')) payload.nationalLegalForm = g('nationalLegalForm');
+
+  const incDate = excelSerialToDate(g('dateOfIncorporation'));
+  if (incDate) payload.dateOfIncorporation = incDate;
+
+  if (g('entityType')) payload.entityType = g('entityType');
+  if (g('previousCompanyName')) payload.previousCompanyName = g('previousCompanyName');
+  if (g('akaName')) payload.akaName = g('akaName');
+
+  const wc = g('inWorldCompliance');
+  if (wc) payload.inWorldCompliance = /^yes$/i.test(wc);
+
+  const latestClose = excelSerialToDate(g('latestAnnualAccountClosingDate'));
+  if (latestClose) payload.latestAnnualAccountClosingDate = latestClose;
+
+  if (g('lastAvailYear')) payload.lastAvailYear = g('lastAvailYear');
+
+  const limitedFin = g('limitedFinancialIndicator');
+  if (limitedFin) payload.limitedFinancialIndicator = /^yes$/i.test(limitedFin);
+  const noRecentFin = g('noRecentFinancialIndicator');
+  if (noRecentFin) payload.noRecentFinancialIndicator = /^yes$/i.test(noRecentFin);
+
+  if (g('numberOfAvailableYears')) payload.numberOfAvailableYears = g('numberOfAvailableYears');
+  if (g('originalCurrency')) payload.originalCurrency = g('originalCurrency');
+
+  const legalEventDates = splitOrbisMultiValue(g('legalEventDate'));
+  const legalEventDescriptions = splitOrbisMultiValue(g('legalEventDescription'));
+  const legalEventSources = splitOrbisMultiValue(g('legalEventSource'));
+  const legalEventTypes = splitOrbisMultiValue(g('legalEventType'));
+  const legalEventDetails = splitOrbisMultiValue(g('legalEventDetails'));
+  if (legalEventDates.length) payload.legalEventDates = legalEventDates;
+  if (legalEventDescriptions.length) payload.legalEventDescriptions = legalEventDescriptions;
+  if (legalEventSources.length) payload.legalEventSources = legalEventSources;
+  if (legalEventTypes.length) payload.legalEventTypes = legalEventTypes;
+  if (legalEventDetails.length) payload.legalEventDetails = legalEventDetails;
+
+  return { payload, warnings, nifDigits, bvdId };
+}
+
+// One row-parser per implemented shape. detectCompanyExportShape() already
+// recognizes all four; a shape without an entry here fails with a clear
+// "not built yet" message instead of silently mis-mapping it.
+const COMPANY_ROW_PARSERS = { profile: parseCompanyProfileRow, legal: parseLegalRow };
+
 function parseCompaniesRows(rows){
   let hi = rows.findIndex(r => r.some(c => /^company name/i.test(String(c || '').replace(/\n/g,' ').trim())));
   if (hi === -1) hi = 0;
   const headerRow = rows[hi] || [];
   const shape = detectCompanyExportShape(headerRow);
   if (!shape) throw new Error("This file doesn't look like an Orbis company export.");
-  if (shape !== 'profile'){
-    const label = { legal:'Legal & Account', financials:'Financials', advisors:'Advisors/Updates' }[shape];
-    throw new Error(`${label} imports aren't built yet — only Company Profile exports are supported so far.`);
+  const rowParser = COMPANY_ROW_PARSERS[shape];
+  if (!rowParser){
+    const label = { financials:'Financials', advisors:'Advisors/Updates' }[shape];
+    throw new Error(`${label} imports aren't built yet — only Company Profile and Legal & Account exports are supported so far.`);
   }
   const headers = headerRow.map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
   const aliasMap = COMPANY_ALIAS[shape];
@@ -5393,7 +5515,7 @@ function parseCompaniesRows(rows){
 
   const dataRows = rows.slice(hi + 1).filter(r => r.some(c => String(c || '').trim()));
   const parsed = dataRows.map(vals => {
-    const { payload, warnings, nifDigits, bvdId } = parseCompanyProfileRow(idx, vals);
+    const { payload, warnings, nifDigits, bvdId } = rowParser(idx, vals);
     return { payload, warnings, nifDigits, bvdId, name: payload.name || '(no name)' };
   });
   companiesImportStats = { shape, rowsSeen: parsed.length };
