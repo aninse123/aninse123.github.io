@@ -5347,12 +5347,44 @@ const COMPANY_ALIAS = {
     lastUpdateAnnualAccounts: ['last update - annual accounts'],
     lastUpdateBvdIndependenceIndicator: ['last update - bvd independence indicator'],
   },
-  financials: {},
+  // Financials only needs the 3 identity keys here -- its ~66 metrics x 10
+  // years don't fit the 1-header-per-field shape the other three shapes use
+  // (see FINANCIALS_METRICS / buildFinancialsYearSeries below).
+  financials: {
+    companyName: ['company name latin alphabet'],
+    bvdId: ['bvd id number'],
+    vatNumber: ['vat/tax number'],
+  },
 };
+const COMPANY_SHAPE_LABELS = { profile: 'Company Profile', legal: 'Legal & Account', advisors: 'Advisors/Updates', financials: 'Financials' };
 function companiesColIndex(headers, aliasMap, key){
   const want = aliasMap[key] || [];
   for (const w of want){ const i = headers.indexOf(w); if (i !== -1) return i; }
   return -1;
+}
+// Returns EVERY matching column index for an exact header string, not just
+// the first. The Financials export repeats several metric blocks under an
+// identical column header (confirmed against real data: 425 duplicate
+// headers in one 5699-col sample), and which occurrence actually carries
+// the real value is inconsistent -- for some metrics the first occurrence is
+// 'n.a.' while a later one has the real figure, and it's not always the
+// same occurrence across metrics. A full check of every duplicate-header
+// group in that sample found zero cases where two non-blank occurrences
+// actually disagreed, so "first non-blank wins" (financialsCellValue below)
+// is safe; "first column wins" on its own is not.
+function companiesColIndicesAll(headers, want){
+  const out = [];
+  for (let i = 0; i < headers.length; i++) if (headers[i] === want) out.push(i);
+  return out;
+}
+function financialsCellValue(vals, indices){
+  for (const i of indices){
+    const v = vals[i];
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (s && s.toLowerCase() !== 'n.a.') return s;
+  }
+  return '';
 }
 // One distinctive marker column per shape, each confirmed unique to that
 // export while mapping all four this session. Returns null if the file
@@ -5600,10 +5632,158 @@ function parseAdvisorsRow(idx, vals){
   return { payload, warnings, nifDigits, bvdId };
 }
 
+// Financials shape: ~66 metrics x 10 kept years (2016-2025 -- the real
+// coverage window established this session; 2010-2015 and 2026 are present
+// in the export but too sparsely filled to be worth carrying). Each metric
+// is either a currency-suffixed th-EUR amount (the matching th-USD column is
+// intentionally dropped -- this session's decision to not replicate the same
+// figures in two currencies), the standalone EUR exchange-rate audit field,
+// or a currency-agnostic metadata/ratio/headcount field. `header` is the
+// exact normalized (lowercased, whitespace-collapsed) metric name as it
+// appears before its year suffix; `unit` (if any) sits between the header
+// and the year, e.g. "p/l before tax th eur 2025". `type` controls how the
+// resolved cell is parsed: 'date' (Excel serial), 'text', or the 'number'
+// default. Verified against the real 5699-column header before shipping
+// (verify_financials_metrics.mjs): every metric x year combination resolves.
+const FINANCIALS_YEARS = ['2016','2017','2018','2019','2020','2021','2022','2023','2024','2025'];
+const FINANCIALS_METRICS = [
+  { key: 'closingDate', header: 'closing date', unit: null, type: 'date' },
+  { key: 'fiscalYear', header: 'fiscal year', unit: null },
+  { key: 'numberOfMonths', header: 'number of months', unit: null },
+  { key: 'auditStatus', header: 'audit status', unit: null, type: 'text' },
+  { key: 'accountingPractice', header: 'accounting practice', unit: null, type: 'text' },
+  { key: 'sourceOfFinancials', header: 'source of financials', unit: null, type: 'text' },
+  { key: 'originalCurrency', header: 'original currency', unit: null, type: 'text' },
+  { key: 'exchangeRateEur', header: 'exchange rate from original currency', unit: 'eur' },
+  { key: 'plBeforeTax', header: 'p/l before tax', unit: 'th eur' },
+  { key: 'plForPeriod', header: 'p/l for period [=net income]', unit: 'th eur' },
+  { key: 'currentRatio', header: 'current ratio', unit: null },
+  { key: 'profitMargin', header: 'profit margin', unit: null },
+  { key: 'roeBeforeTax', header: 'roe using p/l before tax', unit: null },
+  { key: 'roceBeforeTax', header: 'roce using p/l before tax', unit: null },
+  { key: 'solvencyRatioAsset', header: 'solvency ratio (asset based)', unit: null },
+  { key: 'nonCurrentAssets', header: 'non-current assets', unit: 'th eur' },
+  { key: 'intangibleAssets', header: 'intangible assets', unit: 'th eur' },
+  { key: 'tangibleFixedAssets', header: 'tangible fixed assets', unit: 'th eur' },
+  { key: 'otherNonCurrentAssets', header: 'other non-current assets', unit: 'th eur' },
+  { key: 'currentAssets', header: 'current assets', unit: 'th eur' },
+  { key: 'stock', header: 'stock', unit: 'th eur' },
+  { key: 'debtors', header: 'debtors', unit: 'th eur' },
+  { key: 'otherCurrentAssets', header: 'other current assets', unit: 'th eur' },
+  { key: 'cashAndCashEquivalent', header: 'of which cash and cash equivalent', unit: 'th eur' },
+  { key: 'totalAssets', header: 'total assets', unit: 'th eur' },
+  { key: 'shareholdersFunds', header: 'shareholders funds', unit: 'th eur' },
+  { key: 'capital', header: 'capital', unit: 'th eur' },
+  { key: 'otherShareholdersFunds', header: 'other shareholders funds', unit: 'th eur' },
+  { key: 'nonCurrentLiabilities', header: 'non-current liabilities', unit: 'th eur' },
+  { key: 'longTermDebt', header: 'long term debt', unit: 'th eur' },
+  { key: 'otherNonCurrentLiabilities', header: 'other non-current liabilities', unit: 'th eur' },
+  { key: 'provisions', header: 'of which provisions', unit: 'th eur' },
+  { key: 'currentLiabilities', header: 'current liabilities', unit: 'th eur' },
+  { key: 'loansShortTermDebt', header: 'loans & short-term debt', unit: 'th eur' },
+  { key: 'creditors', header: 'creditors', unit: 'th eur' },
+  { key: 'otherCurrentLiabilities', header: 'other current liabilities', unit: 'th eur' },
+  { key: 'totalShareholdersFundsAndLiabilities', header: "total shareholders' funds and liabilities", unit: 'th eur' },
+  { key: 'workingCapital', header: 'working capital', unit: 'th eur' },
+  { key: 'enterpriseValue', header: 'enterprise value', unit: 'th eur' },
+  { key: 'numberOfEmployees', header: 'number of employees', unit: null },
+  { key: 'operatingRevenue', header: 'operating revenue (turnover)', unit: 'th eur' },
+  { key: 'sales', header: 'sales', unit: 'th eur' },
+  { key: 'costsOfGoodsSold', header: 'costs of goods sold', unit: 'th eur' },
+  { key: 'grossProfit', header: 'gross profit', unit: 'th eur' },
+  { key: 'otherOperatingExpenseIncome', header: 'other operating expense (income)', unit: 'th eur' },
+  { key: 'operatingProfitEbit', header: 'operating profit (loss) [ebit]', unit: 'th eur' },
+  { key: 'financialProfit', header: 'financial profit (loss)', unit: 'th eur' },
+  { key: 'financialRevenue', header: 'financial revenue', unit: 'th eur' },
+  { key: 'financialExpenses', header: 'financial expenses', unit: 'th eur' },
+  { key: 'profitBeforeTaxPbt', header: 'profit (loss) before tax [pbt]', unit: 'th eur' },
+  { key: 'incomeTaxExpenses', header: 'income tax expenses (benefit)', unit: 'th eur' },
+  { key: 'profitAfterTaxPat', header: 'profit (loss) after tax [pat]', unit: 'th eur' },
+  { key: 'netExtraordinaryRevenuesExpenses', header: 'net extraordinary revenues (expenses)', unit: 'th eur' },
+  { key: 'extraordinaryRevenues', header: 'extraordinary revenues', unit: 'th eur' },
+  { key: 'extraordinaryExpenses', header: 'extraordinary expenses', unit: 'th eur' },
+  { key: 'profitForPeriodNetIncome', header: 'profit (loss) for the period [net income]', unit: 'th eur' },
+  { key: 'exportRevenue', header: 'export revenue', unit: 'th eur' },
+  { key: 'materialCosts', header: 'material costs', unit: 'th eur' },
+  { key: 'costsOfEmployees', header: 'costs of employees', unit: 'th eur' },
+  { key: 'depreciationAmortization', header: 'depreciation & amortization', unit: 'th eur' },
+  { key: 'otherOperatingItems', header: 'other operating items', unit: 'th eur' },
+  { key: 'interestPaid', header: 'interest paid', unit: 'th eur' },
+  { key: 'researchDevelopmentExpenses', header: 'research & development expenses', unit: 'th eur' },
+  { key: 'cashFlowNetIncomeBeforeDA', header: 'cash flow [net income before d&a]', unit: 'th eur' },
+  { key: 'addedValue', header: 'added value', unit: 'th eur' },
+  { key: 'ebitda', header: 'ebitda', unit: 'th eur' },
+];
+// Precomputes, once per uploaded file, every column index that could hold
+// each metric x year combination (companiesColIndicesAll -- plural, see why
+// above). Stashed onto the shared idx object as idx.__yearSeries so
+// parseFinancialsRow can stay on the same (idx, vals) signature as the
+// other three shapes' row parsers.
+function buildFinancialsYearSeries(headers){
+  const out = {};
+  for (const m of FINANCIALS_METRICS){
+    out[m.key] = {};
+    for (const year of FINANCIALS_YEARS){
+      const want = m.unit ? `${m.header} ${m.unit} ${year}` : `${m.header} ${year}`;
+      out[m.key][year] = companiesColIndicesAll(headers, want);
+    }
+  }
+  return out;
+}
+function pFinNum(v){
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+// Builds the write payload for one Financials row. Stored under a NEW
+// top-level field, orbisFinancials (year string -> metric values), instead
+// of inside the existing financials.Y1..Y5 object: that object is keyed by
+// relative recency position (Y1 = most recent) and only carries 4 metrics
+// (revenue/ebitda/netDebt/employees) feeding FIT_RECENCY_WEIGHTS and the
+// fit-score/list-view code -- reusing it here would mean either colliding
+// key schemes (absolute year vs. Y-position) or risking a plain-object
+// batch.update() silently replacing the whole financials field and wiping
+// out Y1..Y5 (Firestore's update() only deep-merges on dotted paths, not
+// nested object values). A sibling field keeps this purely additive: every
+// existing consumer of financials.Y1..Y5 is untouched, and wiring
+// orbisFinancials into scoring/visualization is a deliberate later step,
+// not an accidental side effect of this importer.
+function parseFinancialsRow(idx, vals){
+  const g = key => { const i = idx[key]; return (i == null || i === -1) ? '' : String(vals[i] || '').trim(); };
+  const payload = {};
+  const warnings = [];
+
+  const bvdId = g('bvdId');
+  if (bvdId) payload.bvdId = bvdId;
+  const vatRaw = g('vatNumber');
+  let nifDigits = '';
+  if (vatRaw){
+    nifDigits = onlyDigits(vatRaw);
+    if (nifDigits.length === 9) payload.nif = nifDigits;
+  }
+  if (g('companyName')) payload.name = g('companyName');
+
+  const yearSeries = idx.__yearSeries || {};
+  const orbisFinancials = {};
+  for (const year of FINANCIALS_YEARS){
+    const yearData = {};
+    for (const m of FINANCIALS_METRICS){
+      const indices = (yearSeries[m.key] && yearSeries[m.key][year]) || [];
+      const raw = financialsCellValue(vals, indices);
+      if (!raw) continue;
+      if (m.type === 'date'){ const d = excelSerialToDate(raw); if (d) yearData[m.key] = d; }
+      else if (m.type === 'text'){ yearData[m.key] = raw; }
+      else { const n = pFinNum(raw); if (n != null) yearData[m.key] = n; }
+    }
+    if (Object.keys(yearData).length) orbisFinancials[year] = yearData;
+  }
+  if (Object.keys(orbisFinancials).length) payload.orbisFinancials = orbisFinancials;
+
+  return { payload, warnings, nifDigits, bvdId };
+}
+
 // One row-parser per implemented shape. detectCompanyExportShape() already
-// recognizes all four; a shape without an entry here fails with a clear
-// "not built yet" message instead of silently mis-mapping it.
-const COMPANY_ROW_PARSERS = { profile: parseCompanyProfileRow, legal: parseLegalRow, advisors: parseAdvisorsRow };
+// recognizes all four.
+const COMPANY_ROW_PARSERS = { profile: parseCompanyProfileRow, legal: parseLegalRow, advisors: parseAdvisorsRow, financials: parseFinancialsRow };
 
 function parseCompaniesRows(rows){
   let hi = rows.findIndex(r => r.some(c => /^company name/i.test(String(c || '').replace(/\n/g,' ').trim())));
@@ -5612,13 +5792,11 @@ function parseCompaniesRows(rows){
   const shape = detectCompanyExportShape(headerRow);
   if (!shape) throw new Error("This file doesn't look like an Orbis company export.");
   const rowParser = COMPANY_ROW_PARSERS[shape];
-  if (!rowParser){
-    throw new Error(`Financials imports aren't built yet — only Company Profile, Legal & Account and Advisors/Updates exports are supported so far.`);
-  }
   const headers = headerRow.map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
   const aliasMap = COMPANY_ALIAS[shape];
   const idx = {};
   for (const k of Object.keys(aliasMap)) idx[k] = companiesColIndex(headers, aliasMap, k);
+  if (shape === 'financials') idx.__yearSeries = buildFinancialsYearSeries(headers);
 
   const dataRows = rows.slice(hi + 1).filter(r => r.some(c => String(c || '').trim()));
   const parsed = dataRows.map(vals => {
@@ -5669,7 +5847,7 @@ async function handleCompaniesFile(file){
       rows = parseCSV(await file.text());
     }
     companiesImportRows = parseCompaniesRows(rows);
-    const shapeLabel = { profile:'Company Profile' }[companiesImportStats.shape] || companiesImportStats.shape;
+    const shapeLabel = COMPANY_SHAPE_LABELS[companiesImportStats.shape] || companiesImportStats.shape;
     document.getElementById('companiesFileName').textContent = `${file.name} — ${shapeLabel}, ${companiesImportStats.rowsSeen} compan${companiesImportStats.rowsSeen===1?'y':'ies'}`;
     document.getElementById('companiesShapeDetected').style.display = '';
     document.getElementById('companiesShapeDetected').textContent = `Detected: ${shapeLabel} export`;
@@ -5720,7 +5898,7 @@ async function confirmCompaniesImport(){
 
     await logPortal('companies_import', { shape: companiesImportStats.shape, rowsSeen: companiesImportRows.length, matched: toWrite.length, notFound });
     showEl('companiesImportModal', false);
-    ImportProgress.complete(`${written.toLocaleString('de-DE')} compan${written===1?'y':'ies'} updated from ${companiesImportStats.shape === 'profile' ? 'a Company Profile' : companiesImportStats.shape} export. ${notFound ? `${notFound} row${notFound===1?'':'s'} not found in the CRM — skipped.` : ''}`);
+    ImportProgress.complete(`${written.toLocaleString('de-DE')} compan${written===1?'y':'ies'} updated from a ${COMPANY_SHAPE_LABELS[companiesImportStats.shape] || companiesImportStats.shape} export. ${notFound ? `${notFound} row${notFound===1?'':'s'} not found in the CRM — skipped.` : ''}`);
     ranToCompletion = true;
     if (viewMode === 'list') renderCompanies();
     if (currentCoId){ const c = getCompany(); if (c) renderOverview(c); }
