@@ -575,7 +575,10 @@
     <div class="tabs" id="detailTabs">
       <button class="tab active" data-tab="overview">Overview</button>
       <button class="tab" data-tab="financials">Financials</button>
+      <button class="tab" data-tab="finorbis">Financials (Orbis)</button>
       <button class="tab" data-tab="ownership">Ownership</button>
+      <button class="tab" data-tab="legal">Legal &amp; Compliance</button>
+      <button class="tab" data-tab="advisors">Advisors</button>
       <button class="tab" data-tab="contacts">Contacts</button>
       <button class="tab" data-tab="activities">Activities</button>
       <button class="tab" data-tab="deal">Deal</button>
@@ -583,7 +586,10 @@
 
     <div class="tab-panel active" id="panel-overview"></div>
     <div class="tab-panel" id="panel-financials"></div>
+    <div class="tab-panel" id="panel-finorbis"></div>
     <div class="tab-panel" id="panel-ownership"></div>
+    <div class="tab-panel" id="panel-legal"></div>
+    <div class="tab-panel" id="panel-advisors"></div>
     <div class="tab-panel" id="panel-contacts"></div>
     <div class="tab-panel" id="panel-activities"></div>
     <div class="tab-panel" id="panel-deal"></div>
@@ -1329,6 +1335,13 @@ function independenceBadge(code){
   if (!code) return '<span class="v" style="color:var(--text-light)">—</span>';
   const cls = code==='A' ? 'badge-green' : code==='B' ? 'badge-blue' : code==='C' ? 'badge-warn' : code==='D' ? 'badge-grey' : 'badge-grey';
   return `<span class="badge ${cls}">${esc(code)}</span>`;
+}
+// A risk/quality flag from the Legal & Account import (WorldCompliance,
+// limited/no-recent-financial indicators) -- true is bad here, unlike most
+// badges in this file, so it's warn-colored when true, quiet when false.
+function riskFlagBadge(flag, labelYes, labelNo){
+  if (flag == null) return '<span class="v" style="color:var(--text-light)">—</span>';
+  return flag ? `<span class="badge badge-warn">⚠ ${esc(labelYes)}</span>` : `<span class="badge badge-grey">${esc(labelNo)}</span>`;
 }
 function getCompany(){ return companies.find(c => c.id === currentCoId); }
 
@@ -2596,6 +2609,7 @@ function renderDetail(){
   menu.querySelectorAll('.stage-opt').forEach(o => o.addEventListener('click', () => changeStage(o.dataset.stage)));
 
   renderOverview(c); renderFinancials(c); renderOwnership(c); renderContacts(c); renderActivityLog(); renderDeal(c);
+  renderLegalCompliance(c); renderAdvisors(c); renderOrbisFinancials(c);
 }
 
 function renderOverview(c){
@@ -2648,10 +2662,55 @@ function renderOverview(c){
         <div class="info-row"><span class="k">Phone</span><span class="v">${esc(c.companyPhone||'—')}</span></div>
       </div>
     </div>
+    ${renderOverviewFinChart(c)}
     ${['pass','on_hold'].includes(c.stage) && c.reasonExcluded ? `<div class="card" style="border-left:4px solid #B91C1C;"><div class="sec-title">Reason — ${STAGES[c.stage].label}</div><div style="font-size:0.88rem;">${esc((c.stage==='pass'?PASS_REASONS:HOLD_REASONS)[c.reasonExcluded]||c.reasonExcluded)}</div></div>`:''}
     ${c.description ? `<div class="card"><div class="sec-title">Description</div><div style="font-size:0.88rem;line-height:1.6;white-space:pre-wrap;">${esc(c.description)}</div></div>`:''}
     <div class="card"><div class="sec-title">Fit Score Breakdown — ${Math.round(Number(c.fitScore)||0)}/100</div><div class="fit-breakdown">${fb}</div></div>
     ${addonHtml}`;
+}
+
+// Compact "quick view" of the Orbis financial year-series on the Overview
+// tab -- last 5 years with data, Revenue as bars + EBITDA as a line overlay
+// (both already in the same th-EUR unit, so one shared linear y-scale).
+// Hand-rolled SVG, same technique as renderNetworkGraph (~line 6395): compute
+// pixel positions in JS, .map()/.join('') template-literal shapes into a
+// viewBox'd <svg> string. Full 10-year, ~16-metric depth lives in the
+// "Financials (Orbis)" tab (renderOrbisFinancials) -- this is deliberately
+// small. Renders a plain placeholder card, never an empty chart, when no
+// Financials shape has been imported for this company yet.
+function renderOverviewFinChart(c){
+  const of = c.orbisFinancials || {};
+  const years = Object.keys(of).filter(y => of[y] && of[y].operatingRevenue != null).sort().slice(-5);
+  if (!years.length){
+    return `<div class="card"><div class="sec-title">Financial Trend (Orbis)</div><div style="font-size:0.85rem;color:var(--text-light);">Financial trend not yet imported.</div></div>`;
+  }
+  const revenue = years.map(y => Number(of[y].operatingRevenue) * 1000);
+  const ebitda  = years.map(y => of[y].ebitda != null ? Number(of[y].ebitda) * 1000 : null);
+  const maxVal = Math.max(...revenue, ...ebitda.filter(v => v != null), 1);
+  const W = 520, H = 170, padL = 8, padR = 8, padT = 10, padB = 22;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+  const n = years.length, slot = chartW / n, barW = Math.min(38, slot * 0.5);
+  const xCenter = i => padL + slot * i + slot / 2;
+  const yFor = v => padT + chartH - (Math.max(0, v) / maxVal) * chartH;
+
+  const bars = years.map((y, i) => {
+    const v = revenue[i];
+    const bh = chartH * (Math.max(0, v) / maxVal);
+    return `<rect x="${(xCenter(i) - barW / 2).toFixed(1)}" y="${yFor(v).toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="2" fill="var(--primary)"><title>${esc(y)} Revenue: ${fmtEurShort(v)}</title></rect>`;
+  }).join('');
+  const linePts = years.map((y, i) => ebitda[i] != null ? `${xCenter(i).toFixed(1)},${yFor(ebitda[i]).toFixed(1)}` : null).filter(Boolean).join(' ');
+  const line = linePts ? `<polyline points="${linePts}" fill="none" stroke="var(--secondary)" stroke-width="2"/>` : '';
+  const dots = years.map((y, i) => ebitda[i] != null ? `<circle cx="${xCenter(i).toFixed(1)}" cy="${yFor(ebitda[i]).toFixed(1)}" r="3.2" fill="var(--secondary)"><title>${esc(y)} EBITDA: ${fmtEurShort(ebitda[i])}</title></circle>` : '').join('');
+  const labels = years.map((y, i) => `<text x="${xCenter(i).toFixed(1)}" y="${(H - 8).toFixed(1)}" font-size="10" text-anchor="middle" fill="var(--text-light)">${esc(y)}</text>`).join('');
+
+  return `<div class="card">
+    <div class="sec-title">Financial Trend (Orbis)</div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;max-width:100%;display:block;" xmlns="http://www.w3.org/2000/svg">${bars}${line}${dots}${labels}</svg>
+    <div class="own-legend">
+      <span><span style="display:inline-block;width:8px;height:8px;background:var(--primary);border-radius:2px;margin-right:5px;"></span>Revenue</span>
+      <span><span style="display:inline-block;width:8px;height:8px;background:var(--secondary);border-radius:50%;margin-right:5px;"></span>EBITDA</span>
+    </div>
+  </div>`;
 }
 
 function renderAddonSection(c){
@@ -2704,6 +2763,194 @@ function renderFinancials(c){
       </div>
     </div>`;
   document.getElementById('saveFinBtn').addEventListener('click', saveFinancials);
+}
+
+// Read-only tab for the Legal & Account import shape: legal identity,
+// WorldCompliance/financial-data-quality risk flags, and the legal/
+// payment-default events block. legalEventDates[] is the authoritative event
+// count -- Descriptions/Sources/Details are confirmed 1:1 aligned with it,
+// but legalEventTypes[] is NOT (Orbis packs multiple category tags per event
+// with no event-boundary marker of its own), so Types are shown as a
+// separate unindexed tag list rather than falsely zipped into event rows.
+// legalEventDates[] entries are raw, unconverted Orbis text (never passed
+// through excelSerialToDate/orbisDMYToISO at import time) -- rendered
+// verbatim via esc(), never through fmtDate().
+function renderLegalCompliance(c){
+  const hasLegal = c.standardizedLegalForm || c.status || c.entityType || c.inWorldCompliance != null || (c.legalEventDates||[]).length;
+  if (!hasLegal){
+    document.getElementById('panel-legal').innerHTML = `<div class="card"><div class="sec-title">Legal &amp; Compliance</div><div style="font-size:0.85rem;color:var(--text-light);">Not yet imported — run the Legal &amp; Account import for this company to populate this tab.</div></div>`;
+    return;
+  }
+  const dates = c.legalEventDates || [];
+  const descs = c.legalEventDescriptions || [];
+  const srcs = c.legalEventSources || [];
+  const details = c.legalEventDetails || [];
+  const types = c.legalEventTypes || [];
+  const eventRows = dates.map((d,i) => `<tr><td>${esc(d)}</td><td>${esc(descs[i]||'—')}</td><td>${esc(srcs[i]||'—')}</td><td>${esc(details[i]||'—')}</td></tr>`).join('');
+
+  document.getElementById('panel-legal').innerHTML = `
+    <div class="detail-grid">
+      <div class="card">
+        <div class="sec-title">Legal Identity</div>
+        <div class="info-row"><span class="k">Standardized legal form</span><span class="v">${esc(c.standardizedLegalForm||'—')}</span></div>
+        <div class="info-row"><span class="k">National legal form</span><span class="v">${esc(c.nationalLegalForm||'—')}</span></div>
+        <div class="info-row"><span class="k">Entity type</span><span class="v">${esc(c.entityType||'—')}</span></div>
+        <div class="info-row"><span class="k">Date of incorporation</span><span class="v">${c.dateOfIncorporation?fmtDate(c.dateOfIncorporation):'—'}</span></div>
+        <div class="info-row"><span class="k">Status</span><span class="v">${esc(c.status||'—')}</span></div>
+        <div class="info-row"><span class="k">Status date</span><span class="v">${c.statusDate?fmtDate(c.statusDate):'—'}</span></div>
+        <div class="info-row"><span class="k">Status updated</span><span class="v">${c.statusUpdatedDate?fmtDate(c.statusUpdatedDate):'—'}</span></div>
+        <div class="info-row"><span class="k">Size classification</span><span class="v">${esc(c.sizeClassification||'—')}</span></div>
+        <div class="info-row"><span class="k">Previous company name</span><span class="v">${esc(c.previousCompanyName||'—')}</span></div>
+        <div class="info-row"><span class="k">Also known as</span><span class="v">${esc(c.akaName||'—')}</span></div>
+        <div class="info-row"><span class="k">Orbis release date</span><span class="v">${c.orbisReleaseDate?fmtDate(c.orbisReleaseDate):'—'}</span></div>
+      </div>
+      <div class="card">
+        <div class="sec-title">Compliance &amp; Data Quality</div>
+        <div class="info-row"><span class="k">WorldCompliance</span>${riskFlagBadge(c.inWorldCompliance,'Flagged','Clear')}</div>
+        <div class="info-row"><span class="k">Limited financial data</span>${riskFlagBadge(c.limitedFinancialIndicator,'Limited','Full')}</div>
+        <div class="info-row"><span class="k">No recent financials</span>${riskFlagBadge(c.noRecentFinancialIndicator,'Stale','Current')}</div>
+        <div class="info-row"><span class="k">Years available</span><span class="v">${esc(c.numberOfAvailableYears||'—')}</span></div>
+        <div class="info-row"><span class="k">Last available year</span><span class="v">${esc(c.lastAvailYear||'—')}</span></div>
+        <div class="info-row"><span class="k">Latest accounts closing</span><span class="v">${c.latestAnnualAccountClosingDate?fmtDate(c.latestAnnualAccountClosingDate):'—'}</span></div>
+        <div class="info-row"><span class="k">Original currency</span><span class="v">${esc(c.originalCurrency||'—')}</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="sec-title">Legal &amp; Payment-Default Events</div>
+      ${dates.length ? `<div class="table-wrap"><table class="fin-table">
+        <thead><tr><th>Date</th><th>Description</th><th>Source</th><th>Details</th></tr></thead>
+        <tbody>${eventRows}</tbody>
+      </table></div>
+      ${types.length ? `<div style="margin-top:14px;">
+        <div class="sec-title" style="margin-bottom:8px;">All Event Type Tags</div>
+        <div style="font-size:0.72rem;color:var(--text-light);margin-bottom:8px;">Not reliably matched to individual events above — Orbis packs multiple category tags together without event boundaries.</div>
+        ${types.map(t=>`<span class="badge badge-grey" style="margin:0 4px 4px 0;">${esc(t)}</span>`).join('')}
+      </div>` : ''}` : '<div style="font-size:0.85rem;color:var(--text-light);">No legal events on record.</div>'}
+    </div>`;
+}
+
+// Read-only tab for the Advisors/Updates import shape: auditor/banker
+// relationships (advisors[] is index-aligned across all its fields --
+// confirmed against real data, unlike the Legal shape's event arrays) plus
+// the 12 standalone "Last update" freshness dates, which are company-level
+// fields (not per-advisor) homed here because this is the shape that emits
+// them.
+function renderAdvisors(c){
+  const advisors = c.advisors || [];
+  const freshnessFields = [
+    ['lastUpdateCompanyName','Company name'], ['lastUpdateAddress','Address'],
+    ['lastUpdateTelephone','Telephone'], ['lastUpdateDomain','Domain'],
+    ['lastUpdateWebsite','Website'], ['lastUpdateEmail','Email'],
+    ['lastUpdateStatus','Status'], ['lastUpdateSizeClassification','Size classification'],
+    ['lastUpdateIndustryClassifications','Industry classifications'],
+    ['additionOfLastAnnualAccounts','Annual accounts added'],
+    ['lastUpdateAnnualAccounts','Annual accounts'],
+    ['lastUpdateBvdIndependenceIndicator','BvD independence indicator'],
+  ];
+  const hasFreshness = freshnessFields.some(([k]) => c[k]);
+  const hasAny = c.numberOfAdvisors != null || advisors.length || hasFreshness;
+  if (!hasAny){
+    document.getElementById('panel-advisors').innerHTML = `<div class="card"><div class="sec-title">Advisors</div><div style="font-size:0.85rem;color:var(--text-light);">Not yet imported — run the Advisors/Updates import for this company to populate this tab.</div></div>`;
+    return;
+  }
+  const advisorCards = advisors.length ? advisors.map(a => `
+    <div class="contact-item${a.currentOrPrevious==='Previous'?' prev':''}">
+      <span class="contact-name">${esc(a.name||'—')}</span> ${a.currentOrPrevious?`<span class="badge ${a.currentOrPrevious==='Current'?'badge-blue':'badge-grey'}">${esc(a.currentOrPrevious)}</span>`:''}
+      <div class="contact-role">${esc(a.type||'')}${a.role&&a.role!==a.type?' · '+esc(a.role):''}</div>
+      <div class="contact-detail">${esc(a.individualOrCompany||'—')}${a.noOfCosCurrentRole?' · '+esc(a.noOfCosCurrentRole)+' companies with current role':''}</div>
+      <div class="contact-detail">Appointed ${a.appointmentDate?fmtDate(a.appointmentDate):'—'}${a.resignationDate?' · Resigned '+fmtDate(a.resignationDate):''}</div>
+      <div class="contact-detail">Last received ${a.lastReceivedDate?fmtDate(a.lastReceivedDate):'—'}</div>
+    </div>`).join('') : '<div style="font-size:0.85rem;color:var(--text-light);">No advisors on record.</div>';
+  const freshnessRows = freshnessFields.map(([k,label]) => `<div class="info-row"><span class="k">${esc(label)}</span><span class="v">${c[k]?fmtDate(c[k]):'—'}</span></div>`).join('');
+
+  document.getElementById('panel-advisors').innerHTML = `
+    <div class="card">
+      <div class="sec-title">Advisors Summary</div>
+      <div style="display:flex;gap:22px;flex-wrap:wrap;">
+        <div class="summary-stat">Total <strong>${esc(c.numberOfAdvisors||'—')}</strong></div>
+        <div class="summary-stat">Current <strong>${esc(c.numberOfCurrentAdvisors||'—')}</strong></div>
+        <div class="summary-stat">Previous <strong>${esc(c.numberOfPreviousAdvisors||'—')}</strong></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="sec-title">Advisors</div>
+      ${advisorCards}
+    </div>
+    <div class="card">
+      <div class="sec-title">Data Freshness</div>
+      <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px;">When Orbis last saw a change to each field — not about the advisors themselves.</div>
+      ${freshnessRows}
+    </div>`;
+}
+
+// Read-only tab for the Financials import shape's full year-series
+// (orbisFinancials, 2016-2025) -- deliberately a separate tab from the
+// existing hand-edited "Financials" tab (Y1-Y5), never the other way
+// around: that grid stays editable and untouched, this one is re-import-only.
+// Shows a curated subset of the ~66 stored metrics (the ones users actually
+// scan); missing cells render '—' rather than hiding columns, since sparse
+// years are expected and informative. Monetary metrics are stored in
+// thousands of EUR, converted to raw EUR before fmtEurShort(). Ratio/percent
+// formatting (currentRatio as "x", margin/ROE as raw "%", not fmtPct() which
+// would multiply by 100 again) reflects the real Orbis export convention
+// confirmed this session -- worth re-checking against a populated company.
+const ORBIS_FIN_DISPLAY_METRICS = [
+  ['operatingRevenue','Operating revenue','eur'],
+  ['sales','Sales','eur'],
+  ['grossProfit','Gross profit','eur'],
+  ['ebitda','EBITDA','eur'],
+  ['operatingProfitEbit','EBIT','eur'],
+  ['profitForPeriodNetIncome','Net income','eur'],
+  ['totalAssets','Total assets','eur'],
+  ['shareholdersFunds',"Shareholders' funds",'eur'],
+  ['currentLiabilities','Current liabilities','eur'],
+  ['nonCurrentLiabilities','Non-current liabilities','eur'],
+  ['workingCapital','Working capital','eur'],
+  ['enterpriseValue','Enterprise value','eur'],
+  ['numberOfEmployees','Employees','num'],
+  ['currentRatio','Current ratio','ratio'],
+  ['profitMargin','Profit margin','pct'],
+  ['roeBeforeTax','ROE (before tax)','pct'],
+];
+function fmtOrbisFinCell(v, kind){
+  if (v == null) return '—';
+  const n = Number(v);
+  if (!isFinite(n)) return '—';
+  if (kind === 'eur') return fmtEurShort(n * 1000);
+  if (kind === 'ratio') return n.toFixed(2) + 'x';
+  if (kind === 'pct') return n.toFixed(1) + '%';
+  return String(n);
+}
+function renderOrbisFinancials(c){
+  const of = c.orbisFinancials || {};
+  const years = FINANCIALS_YEARS;
+  const hasAny = years.some(y => of[y] && Object.keys(of[y]).length);
+  if (!hasAny){
+    document.getElementById('panel-finorbis').innerHTML = `<div class="card"><div class="sec-title">Financials (Orbis)</div><div style="font-size:0.85rem;color:var(--text-light);">Not yet imported — run the Financials import for this company to populate this tab.</div></div>`;
+    return;
+  }
+  const lastYearWithData = [...years].reverse().find(y => of[y] && Object.keys(of[y]).length);
+  const meta = lastYearWithData ? of[lastYearWithData] : {};
+  const head = `<tr><th>Metric</th>${years.map(y=>`<th>${esc(y)}</th>`).join('')}</tr>`;
+  const rows = ORBIS_FIN_DISPLAY_METRICS.map(([key,label,kind]) =>
+    `<tr><td>${esc(label)}</td>${years.map(y=>`<td>${fmtOrbisFinCell((of[y]||{})[key], kind)}</td>`).join('')}</tr>`
+  ).join('');
+  document.getElementById('panel-finorbis').innerHTML = `
+    <div class="card">
+      <div class="sec-title">Financials (Orbis) — ${esc(lastYearWithData||'—')} snapshot</div>
+      <div class="info-row"><span class="k">Closing date</span><span class="v">${meta.closingDate?fmtDate(meta.closingDate):'—'}</span></div>
+      <div class="info-row"><span class="k">Audit status</span><span class="v">${esc(meta.auditStatus||'—')}</span></div>
+      <div class="info-row"><span class="k">Accounting practice</span><span class="v">${esc(meta.accountingPractice||'—')}</span></div>
+      <div class="info-row"><span class="k">Source of financials</span><span class="v">${esc(meta.sourceOfFinancials||'—')}</span></div>
+      <div class="info-row"><span class="k">Original currency</span><span class="v">${esc(meta.originalCurrency||'—')}</span></div>
+    </div>
+    <div class="card">
+      <div class="sec-title">2016 – 2025 (thousands EUR unless noted)</div>
+      <div class="table-wrap"><table class="fin-table">
+        <thead>${head}</thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
 }
 
 function renderContacts(c){
@@ -5898,10 +6145,11 @@ async function confirmCompaniesImport(){
 
     await logPortal('companies_import', { shape: companiesImportStats.shape, rowsSeen: companiesImportRows.length, matched: toWrite.length, notFound });
     showEl('companiesImportModal', false);
-    ImportProgress.complete(`${written.toLocaleString('de-DE')} compan${written===1?'y':'ies'} updated from a ${COMPANY_SHAPE_LABELS[companiesImportStats.shape] || companiesImportStats.shape} export. ${notFound ? `${notFound} row${notFound===1?'':'s'} not found in the CRM — skipped.` : ''}`);
+    const shapeLabelDone = COMPANY_SHAPE_LABELS[companiesImportStats.shape] || companiesImportStats.shape;
+    ImportProgress.complete(`${written.toLocaleString('de-DE')} compan${written===1?'y':'ies'} updated from ${/^[aeiou]/i.test(shapeLabelDone) ? 'an' : 'a'} ${shapeLabelDone} export. ${notFound ? `${notFound} row${notFound===1?'':'s'} not found in the CRM — skipped.` : ''}`);
     ranToCompletion = true;
-    if (viewMode === 'list') renderCompanies();
-    if (currentCoId){ const c = getCompany(); if (c) renderOverview(c); }
+    if (viewMode === 'list') renderList();
+    if (currentCoId && getCompany()) renderDetail();
   } catch(e){
     console.error(e);
     errEl.textContent = e.message; errEl.style.display = 'block';
