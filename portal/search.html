@@ -5753,6 +5753,9 @@ const COMPANY_ALIAS = {
   },
 };
 const COMPANY_SHAPE_LABELS = { profile: 'Company Profile', legal: 'Legal & Account', advisors: 'Advisors/Updates', financials: 'Financials' };
+function companyShapesLabel(shapes){
+  return shapes.map(s => COMPANY_SHAPE_LABELS[s] || s).join(' + ');
+}
 function companiesColIndex(headers, aliasMap, key){
   const want = aliasMap[key] || [];
   for (const w of want){ const i = headers.indexOf(w); if (i !== -1) return i; }
@@ -5785,17 +5788,31 @@ function financialsCellValue(vals, indices){
 // One distinctive marker column per shape, each confirmed unique to that
 // export while mapping all four this session. Returns null if the file
 // doesn't look like any of them.
-function detectCompanyExportShape(headerRow){
+// Returns every shape whose signature column(s) are present in this header
+// row -- not just the first match. A file can be a single-shape Orbis export
+// (the common case) or a custom combined export mixing columns from several
+// shapes into one file (e.g. Legal & Account + Financials together); either
+// way every shape actually present gets picked up and parsed, instead of
+// only the first one checked.
+//
+// "Company name latin alphabet" is NOT a usable profile signature here: it's
+// the identity column shared by all four shapes' alias maps, so it's present
+// in every export regardless of shape -- using it would flag every file as
+// (at least) profile. "Address line 1 latin alphabet" is unique to the
+// Company Profile shape's alias map (none of legal/advisors/financials
+// import an address column), so it's the correct signature.
+function detectCompanyExportShapes(headerRow){
   const norm = headerRow.map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
-  if (norm.includes('standardized legal form')) return 'legal';
+  const shapes = [];
+  if (norm.includes('standardized legal form')) shapes.push('legal');
   // Not just "operating revenue (turnover)" -- the Advisors/Updates export's
   // stock-market block has a "...per share" variant sharing that prefix
   // (confirmed while testing this against the real header rows), so the
   // unit suffix is required too.
-  if (norm.some(h => h.startsWith('operating revenue (turnover) th eur') || h.startsWith('operating revenue (turnover) th usd'))) return 'financials';
-  if (norm.some(h => h === 'advfull name' || h === 'number of advisors')) return 'advisors';
-  if (norm.includes('company name latin alphabet')) return 'profile';
-  return null;
+  if (norm.some(h => h.startsWith('operating revenue (turnover) th eur') || h.startsWith('operating revenue (turnover) th usd'))) shapes.push('financials');
+  if (norm.some(h => h === 'advfull name' || h === 'number of advisors')) shapes.push('advisors');
+  if (norm.includes('address line 1 latin alphabet')) shapes.push('profile');
+  return shapes;
 }
 
 // Builds the write payload for one Company Profile row, applying the two
@@ -6185,21 +6202,35 @@ function parseCompaniesRows(rows){
   let hi = rows.findIndex(r => r.some(c => /^company name/i.test(String(c || '').replace(/\n/g,' ').trim())));
   if (hi === -1) hi = 0;
   const headerRow = rows[hi] || [];
-  const shape = detectCompanyExportShape(headerRow);
-  if (!shape) throw new Error("This file doesn't look like an Orbis company export.");
-  const rowParser = COMPANY_ROW_PARSERS[shape];
+  const shapes = detectCompanyExportShapes(headerRow);
+  if (!shapes.length) throw new Error("This file doesn't look like an Orbis company export.");
   const headers = headerRow.map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
-  const aliasMap = COMPANY_ALIAS[shape];
+
+  // One shared column index built from every detected shape's alias map --
+  // safe to merge because the three identity keys (companyName/bvdId/
+  // vatNumber) resolve to the exact same header string, and hence the exact
+  // same column index, in all four shapes' alias maps. A combined export
+  // (e.g. Legal & Account columns plus Financials columns in one file) is
+  // parsed by running every detected shape's row-parser against this one
+  // shared index and merging their payloads, instead of picking only one
+  // shape and silently ignoring the other shapes' columns in the same row.
   const idx = {};
-  for (const k of Object.keys(aliasMap)) idx[k] = companiesColIndex(headers, aliasMap, k);
-  if (shape === 'financials') idx.__yearSeries = buildFinancialsYearSeries(headers);
+  for (const shape of shapes){
+    const aliasMap = COMPANY_ALIAS[shape];
+    for (const k of Object.keys(aliasMap)) idx[k] = companiesColIndex(headers, aliasMap, k);
+  }
+  if (shapes.includes('financials')) idx.__yearSeries = buildFinancialsYearSeries(headers);
 
   const dataRows = rows.slice(hi + 1).filter(r => r.some(c => String(c || '').trim()));
   const parsed = dataRows.map(vals => {
-    const { payload, warnings, nifDigits, bvdId } = rowParser(idx, vals);
+    const results = shapes.map(shape => COMPANY_ROW_PARSERS[shape](idx, vals));
+    const payload = Object.assign({}, ...results.map(r => r.payload));
+    const warnings = [].concat(...results.map(r => r.warnings));
+    const nifDigits = results.map(r => r.nifDigits).find(Boolean) || '';
+    const bvdId = results.map(r => r.bvdId).find(Boolean) || '';
     return { payload, warnings, nifDigits, bvdId, name: payload.name || '(no name)' };
   });
-  companiesImportStats = { shape, rowsSeen: parsed.length };
+  companiesImportStats = { shapes, rowsSeen: parsed.length };
   return parsed;
 }
 
@@ -6243,7 +6274,7 @@ async function handleCompaniesFile(file){
       rows = parseCSV(await file.text());
     }
     companiesImportRows = parseCompaniesRows(rows);
-    const shapeLabel = COMPANY_SHAPE_LABELS[companiesImportStats.shape] || companiesImportStats.shape;
+    const shapeLabel = companyShapesLabel(companiesImportStats.shapes);
     document.getElementById('companiesFileName').textContent = `${file.name} — ${shapeLabel}, ${companiesImportStats.rowsSeen} compan${companiesImportStats.rowsSeen===1?'y':'ies'}`;
     document.getElementById('companiesShapeDetected').style.display = '';
     document.getElementById('companiesShapeDetected').textContent = `Detected: ${shapeLabel} export`;
@@ -6292,9 +6323,9 @@ async function confirmCompaniesImport(){
     ImportProgress.finishStage('updating', `${written.toLocaleString('de-DE')} companies updated`);
     if (cancelToken.cancelled){ ImportProgress.stopped('Stopped during "Updating companies".'); return; }
 
-    await logPortal('companies_import', { shape: companiesImportStats.shape, rowsSeen: companiesImportRows.length, matched: toWrite.length, notFound });
+    await logPortal('companies_import', { shapes: companiesImportStats.shapes, rowsSeen: companiesImportRows.length, matched: toWrite.length, notFound });
     showEl('companiesImportModal', false);
-    const shapeLabelDone = COMPANY_SHAPE_LABELS[companiesImportStats.shape] || companiesImportStats.shape;
+    const shapeLabelDone = companyShapesLabel(companiesImportStats.shapes);
     ImportProgress.complete(`${written.toLocaleString('de-DE')} compan${written===1?'y':'ies'} updated from ${/^[aeiou]/i.test(shapeLabelDone) ? 'an' : 'a'} ${shapeLabelDone} export. ${notFound ? `${notFound} row${notFound===1?'':'s'} not found in the CRM — skipped.` : ''}`);
     ranToCompletion = true;
     if (viewMode === 'list') renderList();
