@@ -2712,7 +2712,7 @@ function renderDetail(){
     ${prioPill(c.priority)}
     ${fitBadge(c.fitScore)}
     ${c.owner?`<span class="badge badge-grey">👤 ${OWNER_LABELS[c.owner]}</span>`:''}
-    ${c.sourceType?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
+    ${SOURCE_LABELS[c.sourceType]?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
     ${headerOwner(c, primary)}`;
   const pill = document.getElementById('dMeta').querySelector('.stage-pill');
   const menu = document.getElementById('stageMenu');
