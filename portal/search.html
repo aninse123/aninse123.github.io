@@ -1430,6 +1430,14 @@ function trapezoid(x, a,b,c,d){
 }
 function fitAge(co){ return co.yearFounded ? (new Date().getFullYear() - co.yearFounded) : null; }
 function calcFit(co){
+  // Cutover: prefer the Orbis-based score when this company has real
+  // orbisFinancials data (computeOrbisFit returns strictly null otherwise,
+  // so every company without that field falls through to the exact
+  // unmodified legacy code below -- not "equivalent" behavior, the literal
+  // same code path). financials.Y1-Y5 and this legacy path stay fully
+  // intact; nothing here is deleted.
+  const orbis = computeOrbisFit(co);
+  if (orbis) return orbis.fitScore;
   const c = fitCriteria;
   const sizeScore = ramp(co.computedEBITDAWeighted, c.sizeFloor, c.sizeCeiling);
   const marginScore = ramp(co.computedEBITDAMarginWeighted, 0, c.marginTarget);
@@ -1445,6 +1453,9 @@ function calcFit(co){
   return Math.round(total / 100 * 10) / 10;
 }
 function fitBreakdown(co){
+  // Cutover: mirrors calcFit()'s Orbis-first, legacy-fallback logic above.
+  const orbis = computeOrbisFit(co);
+  if (orbis) return orbisFitBreakdown(orbis);
   const c = fitCriteria;
   const age = fitAge(co);
   return [
@@ -2727,6 +2738,10 @@ function renderDetail(){
 
 function renderOverview(c){
   const regions = (c.regions||[]).map(r=>REGION_LABELS[r]||r).join(', ') || '—';
+  // Reused for the "Based on Orbis financial data" caption below -- fitBreakdown(c)
+  // already computes this internally too; a cheap pure lookup, not worth threading
+  // through as a shared param for this one caption line.
+  const orbisResultForFit = computeOrbisFit(c);
   const fb = fitBreakdown(c).map(d => `
     <div class="fit-dim"><span>${esc(d.name)} <small style="color:var(--text-light);">(${d.weight}%)</small></span>
       <div class="fit-dim-bar"><div class="fit-dim-fill" style="width:${d.score}%"></div></div>
@@ -2778,7 +2793,7 @@ function renderOverview(c){
     ${renderOverviewFinChart(c)}
     ${['pass','on_hold'].includes(c.stage) && c.reasonExcluded ? `<div class="card" style="border-left:4px solid #B91C1C;"><div class="sec-title">Reason — ${STAGES[c.stage].label}</div><div style="font-size:0.88rem;">${esc((c.stage==='pass'?PASS_REASONS:HOLD_REASONS)[c.reasonExcluded]||c.reasonExcluded)}</div></div>`:''}
     ${c.description ? `<div class="card"><div class="sec-title">Description</div><div style="font-size:0.88rem;line-height:1.6;white-space:pre-wrap;">${esc(c.description)}</div></div>`:''}
-    <div class="card"><div class="sec-title">Fit Score Breakdown — ${Math.round(Number(c.fitScore)||0)}/100</div><div class="fit-breakdown">${fb}</div></div>
+    <div class="card"><div class="sec-title">Fit Score Breakdown — ${Math.round(Number(c.fitScore)||0)}/100</div>${orbisResultForFit ? `<div style="font-size:0.72rem;color:var(--text-light);margin:-4px 0 8px;">Based on Orbis financial data (${esc(orbisResultForFit.yearsUsed.slice().reverse().join('–'))}).</div>` : ''}<div class="fit-breakdown">${fb}</div></div>
     ${renderOrbisFitCard(c)}
     ${addonHtml}`;
 }
