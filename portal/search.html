@@ -307,7 +307,7 @@
     @media (max-width: 560px) { .form-row, .form-row-3 { grid-template-columns: 1fr; } .modal { padding: 22px 18px; } }
     .fit-dim-heading { font-size: 0.8rem; font-weight: 700; color: var(--text); margin: 16px 0 8px; display: flex; align-items: center; gap: 6px; }
     .fit-dim-heading:first-of-type { margin-top: 0; }
-    .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: #EEE8DC; color: var(--text-light); font-size: 0.65rem; font-weight: 700; font-style: normal; cursor: help; flex-shrink: 0; }
+    .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: #EEE8DC; color: var(--text-light); font-size: 0.65rem; font-weight: 700; font-style: normal; cursor: default; flex-shrink: 0; }
     label { display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text); margin-bottom: 5px; }
     label .opt { font-weight: 400; text-transform: none; color: var(--text-light); letter-spacing: 0; }
     .field { width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans); font-size: 0.9rem; color: var(--text); background: var(--white); transition: 0.2s; }
@@ -3090,13 +3090,13 @@ const ORBIS_FIN_DISPLAY_METRICS = [
 // with how the stored metrics themselves can be negative or absent.
 const ORBIS_FIN_DERIVED_METRICS = [
   ['EBITDA margin (derived)', y => (y.ebitda != null && y.operatingRevenue) ? (y.ebitda / y.operatingRevenue * 100) : null, 'pct',
-    'EBITDA ÷ Operating revenue × 100. Verified exact against Orbis’s own pre-computed value across a 191-company sample.'],
+    'EBITDA ÷ Operating revenue × 100.'],
   ['Liquidity ratio (derived)', y => (y.currentAssets != null && y.stock != null && y.currentLiabilities) ? ((y.currentAssets - y.stock) / y.currentLiabilities) : null, 'ratio',
-    '(Current assets − Stock) ÷ Current liabilities. Verified exact against Orbis’s own pre-computed value across a 192-company sample.'],
+    '(Current assets − Stock) ÷ Current liabilities.'],
   ['Solvency, liability-based (derived)', y => (y.shareholdersFunds != null && (y.nonCurrentLiabilities || y.currentLiabilities)) ? (y.shareholdersFunds / ((y.nonCurrentLiabilities||0) + (y.currentLiabilities||0)) * 100) : null, 'pct',
-    'Shareholders’ funds ÷ (Non-current liabilities + Current liabilities) × 100. Verified exact against Orbis’s own pre-computed value across a 102-company sample.'],
+    'Shareholders’ funds ÷ (Non-current liabilities + Current liabilities) × 100.'],
   ['Gearing (derived)', y => (y.shareholdersFunds) ? (((y.nonCurrentLiabilities||0) + (y.loansShortTermDebt||0)) / y.shareholdersFunds * 100) : null, 'pct',
-    '(Non-current liabilities + Loans & short-term debt) ÷ Shareholders’ funds × 100. Verified exact against Orbis’s own pre-computed value across a 186-company sample (185/186 exact — 1 rounding artifact near zero).'],
+    '(Non-current liabilities + Loans & short-term debt) ÷ Shareholders’ funds × 100.'],
 ];
 function fmtOrbisFinCell(v, kind){
   if (v == null) return '—';
@@ -3135,7 +3135,7 @@ function renderOrbisFinancials(c){
     </div>
     <div class="card">
       <div class="sec-title">2016 – 2025 (thousands EUR unless noted)</div>
-      <div style="font-size:0.72rem;color:var(--text-light);margin:-4px 0 8px;">Rows marked (derived) are computed client-side from the figures above, not stored fields — verified exact against Orbis's own pre-computed values on a 186-company sample (Sep 2026).</div>
+      <div style="font-size:0.72rem;color:var(--text-light);margin:-4px 0 8px;">Rows marked (derived) are computed client-side from the figures above, not stored fields.</div>
       <div class="table-wrap"><table class="fin-table">
         <thead>${head}</thead>
         <tbody>${rows}${derivedRows}</tbody>
