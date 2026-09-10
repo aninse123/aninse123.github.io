@@ -1177,6 +1177,21 @@ const DEFAULT_FIT = {
 // Fixed dimension weights (sum to 100) — validated via sensitivity analysis; not user-configurable.
 const FIT_WEIGHTS = { size:20, margin:15, stability:15, growthRecent:10, growthSustained:10, employees:15, age:15 };
 const FIT_RECENCY_WEIGHTS = { Y1:0.35, Y2:0.25, Y3:0.20, Y4:0.12, Y5:0.08 };
+// Same explanatory text already shown per-dimension in the Settings > Fit
+// Score Criteria modal (static HTML, lines ~849-891) -- reused here as a
+// lookup keyed by fitBreakdown()/orbisFitBreakdown()'s exact d.name strings
+// so the same info-icon tooltip pattern can be added to the Fit Score
+// Breakdown card on the Overview tab and its Orbis-preview counterpart,
+// without retyping the descriptions a third time.
+const FIT_DIM_TOOLTIPS = {
+  'EBITDA Size': 'Recency-weighted average EBITDA across up to 5 years (more recent years count more). Below Floor = 0 points, at or above Ceiling = 100 points — no penalty for being larger.',
+  'EBITDA Margin': 'Recency-weighted average of EBITDA ÷ Revenue per year, skipping any year missing either figure. 0 points at 0% margin, 100 points at Target or above.',
+  'EBITDA Stability': 'Standard deviation of year-over-year EBITDA growth rates (not raw levels, so steady fast growth isn’t penalized). 100 points at 0 volatility, 0 points at or above Max Volatility. Requires a full 5 years of EBITDA — if any year is missing, this dimension scores 0 rather than guessing.',
+  'Growth (Recent)': 'Annualized revenue growth (CAGR) from Y1 to Y3. Requires all three years of positive revenue — if any is missing, this dimension scores 0 rather than a distorted partial figure. 0 points at 0% or below, 100 points at Target or above.',
+  'Growth (Sustained)': 'Same as Growth Recent but over the full 5-year window (Y1 to Y5) — a stricter target since sustaining growth over 5 years is harder than over 3. Requires all 5 years of positive revenue or scores 0.',
+  'Employees': 'Headcount from the latest year on file. 0 points below Floor, 100 points across the Sweet Min–Sweet Max plateau, ramping back down to 0 at Ceiling.',
+  'Company Age': 'Years since founding. 0 points below Floor, 100 points at Ceiling or above — no penalty for being older; an older company often signals a proven, stable business (and, for a search fund, a retiring owner).',
+};
 
 // NACE Rev. 2 (≈ CAE Rev. 3) — Division (2-digit) titles, used to derive Sector/Sub-sector from a code.
 const NACE_DIVISIONS = {
@@ -2743,7 +2758,7 @@ function renderOverview(c){
   // through as a shared param for this one caption line.
   const orbisResultForFit = computeOrbisFit(c);
   const fb = fitBreakdown(c).map(d => `
-    <div class="fit-dim"><span>${esc(d.name)} <small style="color:var(--text-light);">(${d.weight}%)</small></span>
+    <div class="fit-dim"><span>${esc(d.name)} <small style="color:var(--text-light);">(${d.weight}%)</small> ${FIT_DIM_TOOLTIPS[d.name] ? `<span class="info-icon" title="${esc(FIT_DIM_TOOLTIPS[d.name])}">i</span>` : ''}</span>
       <div class="fit-dim-bar"><div class="fit-dim-fill" style="width:${d.score}%"></div></div>
       <span class="fit-dim-val">${Math.round(d.score)}</span>
     </div>
@@ -2806,7 +2821,7 @@ function renderOrbisFitCard(c){
     return `<div class="card"><div class="sec-title" style="display:flex;align-items:center;gap:8px;">Fit Score Breakdown (Orbis) — Preview<span class="badge badge-blue">PREVIEW</span></div><div style="font-size:0.85rem;color:var(--text-light);">Not yet imported — run the Financials import for this company to populate this score.</div></div>`;
   }
   const fbOrbis = orbisFitBreakdown(result).map(d => `
-    <div class="fit-dim"><span>${esc(d.name)} <small style="color:var(--text-light);">(${d.weight}%)</small></span>
+    <div class="fit-dim"><span>${esc(d.name)} <small style="color:var(--text-light);">(${d.weight}%)</small> ${FIT_DIM_TOOLTIPS[d.name] ? `<span class="info-icon" title="${esc(FIT_DIM_TOOLTIPS[d.name])}">i</span>` : ''}</span>
       <div class="fit-dim-bar"><div class="fit-dim-fill" style="width:${d.score}%"></div></div>
       <span class="fit-dim-val">${Math.round(d.score)}</span>
     </div>
@@ -3074,10 +3089,14 @@ const ORBIS_FIN_DISPLAY_METRICS = [
 // negative equity, which is real and should still divide) -- consistent
 // with how the stored metrics themselves can be negative or absent.
 const ORBIS_FIN_DERIVED_METRICS = [
-  ['EBITDA margin (derived)', y => (y.ebitda != null && y.operatingRevenue) ? (y.ebitda / y.operatingRevenue * 100) : null, 'pct'],
-  ['Liquidity ratio (derived)', y => (y.currentAssets != null && y.stock != null && y.currentLiabilities) ? ((y.currentAssets - y.stock) / y.currentLiabilities) : null, 'ratio'],
-  ['Solvency, liability-based (derived)', y => (y.shareholdersFunds != null && (y.nonCurrentLiabilities || y.currentLiabilities)) ? (y.shareholdersFunds / ((y.nonCurrentLiabilities||0) + (y.currentLiabilities||0)) * 100) : null, 'pct'],
-  ['Gearing (derived)', y => (y.shareholdersFunds) ? (((y.nonCurrentLiabilities||0) + (y.loansShortTermDebt||0)) / y.shareholdersFunds * 100) : null, 'pct'],
+  ['EBITDA margin (derived)', y => (y.ebitda != null && y.operatingRevenue) ? (y.ebitda / y.operatingRevenue * 100) : null, 'pct',
+    'EBITDA ÷ Operating revenue × 100. Verified exact against Orbis’s own pre-computed value across a 191-company sample.'],
+  ['Liquidity ratio (derived)', y => (y.currentAssets != null && y.stock != null && y.currentLiabilities) ? ((y.currentAssets - y.stock) / y.currentLiabilities) : null, 'ratio',
+    '(Current assets − Stock) ÷ Current liabilities. Verified exact against Orbis’s own pre-computed value across a 192-company sample.'],
+  ['Solvency, liability-based (derived)', y => (y.shareholdersFunds != null && (y.nonCurrentLiabilities || y.currentLiabilities)) ? (y.shareholdersFunds / ((y.nonCurrentLiabilities||0) + (y.currentLiabilities||0)) * 100) : null, 'pct',
+    'Shareholders’ funds ÷ (Non-current liabilities + Current liabilities) × 100. Verified exact against Orbis’s own pre-computed value across a 102-company sample.'],
+  ['Gearing (derived)', y => (y.shareholdersFunds) ? (((y.nonCurrentLiabilities||0) + (y.loansShortTermDebt||0)) / y.shareholdersFunds * 100) : null, 'pct',
+    '(Non-current liabilities + Loans & short-term debt) ÷ Shareholders’ funds × 100. Verified exact against Orbis’s own pre-computed value across a 186-company sample (185/186 exact — 1 rounding artifact near zero).'],
 ];
 function fmtOrbisFinCell(v, kind){
   if (v == null) return '—';
@@ -3102,8 +3121,8 @@ function renderOrbisFinancials(c){
   const rows = ORBIS_FIN_DISPLAY_METRICS.map(([key,label,kind]) =>
     `<tr><td>${esc(label)}</td>${years.map(y=>`<td>${fmtOrbisFinCell((of[y]||{})[key], kind)}</td>`).join('')}</tr>`
   ).join('');
-  const derivedRows = ORBIS_FIN_DERIVED_METRICS.map(([label,compute,kind]) =>
-    `<tr><td>${esc(label)}</td>${years.map(y=>`<td>${fmtOrbisFinCell(compute(of[y]||{}), kind)}</td>`).join('')}</tr>`
+  const derivedRows = ORBIS_FIN_DERIVED_METRICS.map(([label,compute,kind,formula]) =>
+    `<tr><td>${esc(label)} <span class="info-icon" title="${esc(formula)}">i</span></td>${years.map(y=>`<td>${fmtOrbisFinCell(compute(of[y]||{}), kind)}</td>`).join('')}</tr>`
   ).join('');
   document.getElementById('panel-finorbis').innerHTML = `
     <div class="card">
@@ -3116,17 +3135,10 @@ function renderOrbisFinancials(c){
     </div>
     <div class="card">
       <div class="sec-title">2016 – 2025 (thousands EUR unless noted)</div>
+      <div style="font-size:0.72rem;color:var(--text-light);margin:-4px 0 8px;">Rows marked (derived) are computed client-side from the figures above, not stored fields — verified exact against Orbis's own pre-computed values on a 186-company sample (Sep 2026).</div>
       <div class="table-wrap"><table class="fin-table">
         <thead>${head}</thead>
-        <tbody>${rows}</tbody>
-      </table></div>
-    </div>
-    <div class="card">
-      <div class="sec-title">Derived Ratios</div>
-      <div style="font-size:0.72rem;color:var(--text-light);margin:-4px 0 8px;">Computed client-side from the figures above, not stored fields — verified exact against Orbis's own pre-computed values on a 186-company sample (Sep 2026).</div>
-      <div class="table-wrap"><table class="fin-table">
-        <thead>${head}</thead>
-        <tbody>${derivedRows}</tbody>
+        <tbody>${rows}${derivedRows}</tbody>
       </table></div>
     </div>`;
 }
