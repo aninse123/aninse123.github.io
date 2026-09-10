@@ -1177,6 +1177,11 @@ const DEFAULT_FIT = {
 // Fixed dimension weights (sum to 100) — validated via sensitivity analysis; not user-configurable.
 const FIT_WEIGHTS = { size:20, margin:15, stability:15, growthRecent:10, growthSustained:10, employees:15, age:15 };
 const FIT_RECENCY_WEIGHTS = { Y1:0.35, Y2:0.25, Y3:0.20, Y4:0.12, Y5:0.08 };
+// Which years count as "recent enough" to anchor a company's fit-score
+// window on, most-recent-first. Manually nudged forward over time (same
+// pattern as FINANCIALS_YEARS) -- not wired into Settings, since this is a
+// periodic code change, not a per-company or live-tunable threshold.
+const FIT_ALLOWED_STARTING_YEARS = ['2025', '2024'];
 // Same explanatory text already shown per-dimension in the Settings > Fit
 // Score Criteria modal (static HTML, lines ~849-891) -- reused here as a
 // lookup keyed by fitBreakdown()/orbisFitBreakdown()'s exact d.name strings
@@ -1515,19 +1520,26 @@ function computeOrbisFit(co){
   const of = co.orbisFinancials || {};
   const populatedYears = Object.keys(of).filter(y => hasOrbisFinData(of[y]));
   if (!populatedYears.length) return null;
-  const anchor = populatedYears.sort().reverse()[0];
 
-  // Window = contiguous run walking backward from the anchor, capped at 5
-  // (a hard ceiling mirroring the legacy Y1-Y5 slot limit, not "as many
-  // years as available"). Stops at the first gap -- a company with e.g.
-  // 2018-2022 populated and 2020 missing gets a 1-year window (just 2022),
-  // not 5 non-adjacent years pretending to be sequential.
+  // Anchor on the most recent allowed year with real data; if none of the
+  // allowed years have data, force the anchor to the oldest allowed year
+  // anyway (a deliberate freshness penalty) instead of drifting back to
+  // whatever old real year exists -- a company whose latest filed accounts
+  // are years stale shouldn't be scored as if that old year were "now".
+  let anchor = FIT_ALLOWED_STARTING_YEARS.find(y => hasOrbisFinData(of[y]));
+  if (!anchor) anchor = FIT_ALLOWED_STARTING_YEARS[FIT_ALLOWED_STARTING_YEARS.length - 1];
+
+  // Window = the 5 contiguous calendar years ending at the anchor, always --
+  // not "walk backward and stop at the first gap" (the old rule). A year
+  // with no data simply contributes null to that Y-slot: the weighted-
+  // average dimensions (size/margin) below already skip null years, and the
+  // dimensions requiring a complete run (stability, growth sustained,
+  // growth recent) already require every relevant slot to be non-null -- so
+  // a gap anywhere in the window, including at the front (the forced-anchor
+  // case above), still zeros exactly the right dimensions out with no
+  // further special-casing needed.
   const yearsUsed = [];
-  for (let i = 0; i < 5; i++){
-    const y = String(Number(anchor) - i);
-    if (!hasOrbisFinData(of[y])) break;
-    yearsUsed.push(y);
-  }
+  for (let i = 0; i < 5; i++) yearsUsed.push(String(Number(anchor) - i));
 
   const eur = v => v == null ? null : Number(v) * 1000; // orbisFinancials monetary values are in th EUR
   const rev = y => { const v = of[y]?.operatingRevenue; return (v != null && Number(v) > 0) ? eur(v) : null; };
