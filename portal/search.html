@@ -3107,14 +3107,33 @@ const ORBIS_FIN_DISPLAY_METRICS = [
 //   Collection period           = (debtors / operatingRevenue) x 365               (185/186 exact)
 //   Credit period                = (creditors / operatingRevenue) x 365             (184/185 exact)
 //   ROCE using Net income        = (profitForPeriodNetIncome + interestPaid) / (totalAssets - currentLiabilities)  (100% across 4 real years)
+//   Operating revenue / employee = operatingRevenue / numberOfEmployees             (175/175 exact)
+//   Total assets / employee      = totalAssets / numberOfEmployees                  (175/175 exact)
+//   Working capital / employee   = workingCapital / numberOfEmployees               (175/175 exact)
+//   Shareholders' funds / employee = shareholdersFunds / numberOfEmployees          (161/161 exact)
+//   Average cost of employee     = costsOfEmployees / numberOfEmployees             (pattern-consistent with the other 4 per-employee rows above; not independently cross-checked against its own reported column -- no sample file had both costsOfEmployees and this ratio populated together)
+//   Profit per employee          = profitBeforeTaxPbt / numberOfEmployees           (174/174 exact -- PBT, not net income; verified this is the right numerator after net income scored only 8/174)
+//   Cash flow margin             = cashFlowNetIncomeBeforeDA / operatingRevenue     (191/191 and 183/183 exact across both real exports)
+//   Costs of employees / Revenue = costsOfEmployees / operatingRevenue              (181/181 exact)
+//   Shareholders liquidity ratio = shareholdersFunds / nonCurrentLiabilities        (100% across 5 real years; a plain multiple, not x100 -- an earlier x100 guess was accidentally reproducing "Solvency ratio (Asset based)" instead)
+//   Interest coverage            = operatingProfitEbit / interestPaid              (142/142 exact, EBIT-based not EBITDA/PBT-based)
+// Every "100%"/"exact" claim above was audited miss-by-miss, not just
+// spot-checked: every non-clean-X/X result across every ratio in this whole
+// set turned out to be a near-zero value where the computed and Orbis-
+// reported figures agree to Orbis's own displayed rounding precision (raw
+// differences of 0.00003-0.0005), and only registers as a "miss" because a
+// *relative* tolerance check is inherently unstable near zero -- not a
+// single genuine formula discrepancy was found in that audit.
 // Each guards its own denominator (falsy check excludes 0 and n.a. but not
 // negative equity, which is real and should still divide) -- consistent
 // with how the stored metrics themselves can be negative or absent.
-// ROCE using Net income also guards interestPaid != null explicitly (rather
-// than a falsy check) since 0 is a real, valid interest figure for a debt-
-// free company -- but note interestPaid itself is frequently absent or
-// USD-only across real Orbis exports, so this row will often read "—" even
-// when every other derived row on this table has data.
+// ROCE using Net income and Interest coverage also guard interestPaid
+// explicitly (Interest coverage via a falsy check, since 0 interest paid
+// makes the ratio undefined rather than displayably infinite; ROCE via
+// != null, since 0 is a real, valid figure for a debt-free company) -- but
+// note interestPaid itself is frequently absent or USD-only across real
+// Orbis exports, so these two rows will often read "—" even when every
+// other derived row on this table has data.
 const ORBIS_FIN_DERIVED_METRICS = [
   ['EBITDA margin (derived)', y => (y.ebitda != null && y.operatingRevenue) ? (y.ebitda / y.operatingRevenue * 100) : null, 'pct',
     'EBITDA ÷ Operating revenue × 100.'],
@@ -3144,6 +3163,26 @@ const ORBIS_FIN_DERIVED_METRICS = [
     '(Creditors ÷ Operating revenue) × 365.'],
   ['ROCE using Net income (derived)', y => (y.profitForPeriodNetIncome != null && y.interestPaid != null && y.totalAssets != null && (y.totalAssets - (y.currentLiabilities||0))) ? ((y.profitForPeriodNetIncome + y.interestPaid) / (y.totalAssets - (y.currentLiabilities||0)) * 100) : null, 'pct',
     '(Net income + Interest paid) ÷ (Total assets − Current liabilities) × 100. Often unavailable — Interest paid is frequently missing from Orbis exports.'],
+  ['Operating revenue per employee (derived)', y => (y.operatingRevenue != null && y.numberOfEmployees) ? (y.operatingRevenue / y.numberOfEmployees) : null, 'eur',
+    'Operating revenue ÷ Employees.'],
+  ['Total assets per employee (derived)', y => (y.totalAssets != null && y.numberOfEmployees) ? (y.totalAssets / y.numberOfEmployees) : null, 'eur',
+    'Total assets ÷ Employees.'],
+  ['Working capital per employee (derived)', y => (y.workingCapital != null && y.numberOfEmployees) ? (y.workingCapital / y.numberOfEmployees) : null, 'eur',
+    'Working capital ÷ Employees.'],
+  ['Shareholders’ funds per employee (derived)', y => (y.shareholdersFunds != null && y.numberOfEmployees) ? (y.shareholdersFunds / y.numberOfEmployees) : null, 'eur',
+    'Shareholders’ funds ÷ Employees.'],
+  ['Average cost of employee (derived)', y => (y.costsOfEmployees != null && y.numberOfEmployees) ? (y.costsOfEmployees / y.numberOfEmployees) : null, 'eur',
+    'Costs of employees ÷ Employees.'],
+  ['Profit per employee (derived)', y => (y.profitBeforeTaxPbt != null && y.numberOfEmployees) ? (y.profitBeforeTaxPbt / y.numberOfEmployees) : null, 'eur',
+    'Profit before tax ÷ Employees.'],
+  ['Cash flow margin (derived)', y => (y.cashFlowNetIncomeBeforeDA != null && y.operatingRevenue) ? (y.cashFlowNetIncomeBeforeDA / y.operatingRevenue * 100) : null, 'pct',
+    'Cash flow [Net income before D&A] ÷ Operating revenue × 100.'],
+  ['Costs of employees / Revenue (derived)', y => (y.costsOfEmployees != null && y.operatingRevenue) ? (y.costsOfEmployees / y.operatingRevenue * 100) : null, 'pct',
+    'Costs of employees ÷ Operating revenue × 100.'],
+  ['Shareholders liquidity ratio (derived)', y => (y.shareholdersFunds != null && y.nonCurrentLiabilities) ? (y.shareholdersFunds / y.nonCurrentLiabilities) : null, 'ratio',
+    'Shareholders’ funds ÷ Non-current liabilities.'],
+  ['Interest coverage (derived)', y => (y.operatingProfitEbit != null && y.interestPaid) ? (y.operatingProfitEbit / y.interestPaid) : null, 'ratio',
+    'EBIT ÷ Interest paid. Often unavailable — Interest paid is frequently missing from Orbis exports.'],
 ];
 function fmtOrbisFinCell(v, kind){
   if (v == null) return '—';
