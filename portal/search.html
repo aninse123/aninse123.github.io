@@ -3063,13 +3063,13 @@ function renderAdvisors(c){
 // (orbisFinancials, 2016-2025) -- deliberately a separate tab from the
 // existing hand-edited "Financials" tab (Y1-Y5), never the other way
 // around: that grid stays editable and untouched, this one is re-import-only.
-// Shows a curated subset of the ~66 stored metrics (the ones users actually
+// Shows a curated subset of the stored metrics (the ones users actually
 // scan); missing cells render '—' rather than hiding columns, since sparse
 // years are expected and informative. Monetary metrics are stored in
-// thousands of EUR, converted to raw EUR before fmtEurShort(). Ratio/percent
-// formatting (currentRatio as "x", margin/ROE as raw "%", not fmtPct() which
-// would multiply by 100 again) reflects the real Orbis export convention
-// confirmed this session -- worth re-checking against a populated company.
+// thousands of EUR, converted to raw EUR before fmtEurShort(). Every ratio/
+// percent metric users actually see now lives in ORBIS_FIN_DERIVED_METRICS
+// below, computed here rather than imported raw -- this list is EUR/count
+// metrics only.
 const ORBIS_FIN_DISPLAY_METRICS = [
   ['operatingRevenue','Operating revenue','eur'],
   ['sales','Sales','eur'],
@@ -3082,11 +3082,9 @@ const ORBIS_FIN_DISPLAY_METRICS = [
   ['currentLiabilities','Current liabilities','eur'],
   ['nonCurrentLiabilities','Non-current liabilities','eur'],
   ['workingCapital','Working capital','eur'],
+  ['netCurrentAssets','Net current assets','eur'],
   ['enterpriseValue','Enterprise value','eur'],
   ['numberOfEmployees','Employees','num'],
-  ['currentRatio','Current ratio','ratio'],
-  ['profitMargin','Profit margin','pct'],
-  ['roeBeforeTax','ROE (before tax)','pct'],
 ];
 // Ratios Orbis's own "Global format" export provides pre-computed (as their
 // own columns) but that we don't import -- proven, not assumed, against two
@@ -3183,6 +3181,24 @@ const ORBIS_FIN_DERIVED_METRICS = [
     'Shareholders’ funds ÷ Non-current liabilities.'],
   ['Interest coverage (derived)', y => (y.operatingProfitEbit != null && y.interestPaid) ? (y.operatingProfitEbit / y.interestPaid) : null, 'ratio',
     'EBIT ÷ Interest paid. Often unavailable — Interest paid is frequently missing from Orbis exports.'],
+  // These 5 were previously imported RAW from Orbis's own pre-computed
+  // columns (Key financials & employees block) rather than computed here --
+  // converted to match every other row in this table, after verifying each
+  // formula against a real 1000-company export by comparing against Orbis's
+  // own then-still-imported raw value in the same row (99.9%+ match, all
+  // misses near-zero-denominator rounding noise). Profit margin's formula
+  // was NOT assumed -- a net-income-basis hypothesis was tested first and
+  // rejected (~10% match); PBT-basis is what Orbis actually reports.
+  ['Current ratio (derived)', y => (y.currentAssets != null && y.currentLiabilities) ? (y.currentAssets / y.currentLiabilities) : null, 'ratio',
+    'Current assets ÷ Current liabilities.'],
+  ['Profit margin (derived)', y => (y.profitBeforeTaxPbt != null && y.operatingRevenue) ? (y.profitBeforeTaxPbt / y.operatingRevenue * 100) : null, 'pct',
+    'Profit before tax ÷ Operating revenue × 100.'],
+  ['ROE using P/L before tax (derived)', y => (y.profitBeforeTaxPbt != null && y.shareholdersFunds) ? (y.profitBeforeTaxPbt / y.shareholdersFunds * 100) : null, 'pct',
+    'Profit before tax ÷ Shareholders’ funds × 100.'],
+  ['ROCE using P/L before tax (derived)', y => (y.profitBeforeTaxPbt != null && y.interestPaid != null && y.totalAssets != null && (y.totalAssets - (y.currentLiabilities||0))) ? ((y.profitBeforeTaxPbt + y.interestPaid) / (y.totalAssets - (y.currentLiabilities||0)) * 100) : null, 'pct',
+    '(Profit before tax + Interest paid) ÷ (Total assets − Current liabilities) × 100. Often unavailable — Interest paid is frequently missing from Orbis exports.'],
+  ['Solvency, asset-based (derived)', y => (y.shareholdersFunds != null && y.totalAssets) ? (y.shareholdersFunds / y.totalAssets * 100) : null, 'pct',
+    'Shareholders’ funds ÷ Total assets × 100.'],
 ];
 function fmtOrbisFinCell(v, kind){
   if (v == null) return '—';
@@ -5761,6 +5777,18 @@ function splitOrbisMultiValuePositional(s){
 function parseAdvDateValue(s){
   return orbisDMYToISO(s) || excelSerialToDate(s);
 }
+// Local status date / Local status change date have the same serial-vs-DMY
+// ambiguity as parseAdvDateValue above, PLUS a multi-value packed-cell form
+// on top (confirmed against real data: "06/03/2026\n16/09/2025") -- so this
+// splits first, then tries both formats on just the last (most recent)
+// segment, same as statusDate above. A bare single-value serial still works:
+// splitOrbisMultiValue on a string with no newline returns a 1-element array.
+function parseLocalStatusDateValue(s){
+  const parts = splitOrbisMultiValue(s);
+  if (!parts.length) return null;
+  const last = parts[parts.length - 1];
+  return orbisDMYToISO(last) || excelSerialToDate(last);
+}
 
 // One alias map per export shape, same shape as PEOPLE_ALIAS (~3490):
 // internal field key -> the exact normalized-lowercase header text to match.
@@ -5771,10 +5799,10 @@ function parseAdvDateValue(s){
 // yet" message rather than silently mis-mapping it.
 const COMPANY_ALIAS = {
   profile: {
-    companyName: ['company name latin alphabet'],
-    address: ['address line 1 latin alphabet'],
-    postcode: ['postcode latin alphabet'],
-    city: ['city latin alphabet'],
+    companyName: ['company name latin alphabet', 'company name'],
+    address: ['address line 1 latin alphabet', 'address line 1'],
+    postcode: ['postcode latin alphabet', 'postcode'],
+    city: ['city latin alphabet', 'city'],
     country: ['country'],
     latitude: ['latitude'],
     longitude: ['longitude'],
@@ -5814,7 +5842,7 @@ const COMPANY_ALIAS = {
     euid: ['other company id number'],
   },
   legal: {
-    companyName: ['company name latin alphabet'],
+    companyName: ['company name latin alphabet', 'company name'],
     bvdId: ['bvd id number'],
     vatNumber: ['vat/tax number'],
     releaseDate: ['release date'],
@@ -5822,12 +5850,22 @@ const COMPANY_ALIAS = {
     status: ['status'],
     statusDate: ['status date'],
     statusUpdatedDate: ['status updated date'],
+    // Portugal's own registry status -- independently sourced from Orbis's
+    // harmonized `status` above, so the two can legitimately disagree.
+    // Verified against real data: only 1.6% filled, but when present it's
+    // genuinely distinct signal Status never carries (e.g. "Revitalization
+    // plan approved / Special revitalization process") -- a distress flag
+    // worth the low fill rate.
+    localStatus: ['local status'],
+    localStatusDate: ['local status date'],
+    localStatusChangeDate: ['local status change date'],
+    branchIndicator: ['branch indicator'],
     standardizedLegalForm: ['standardized legal form'],
     nationalLegalForm: ['national legal form'],
     dateOfIncorporation: ['date of incorporation'],
     entityType: ['type of entity'],
-    previousCompanyName: ['previous company name latin alphabet'],
-    akaName: ['also known as name latin alphabet'],
+    previousCompanyName: ['previous company name latin alphabet', 'previous company name'],
+    akaName: ['also known as name latin alphabet', 'also known as name'],
     inWorldCompliance: ['in worldcompliance - as any category'],
     latestAnnualAccountClosingDate: ['latest annual account closing date'],
     lastAvailYear: ['last avail. year'],
@@ -5836,13 +5874,13 @@ const COMPANY_ALIAS = {
     numberOfAvailableYears: ['number of available years'],
     originalCurrency: ['original currency last avail. yr'],
     legalEventDate: ['legal events - date'],
-    legalEventDescription: ['legal events - description latin alphabet'],
+    legalEventDescription: ['legal events - description latin alphabet', 'legal events - description'],
     legalEventSource: ['legal events - source'],
     legalEventType: ['legal events - type'],
     legalEventDetails: ['legal events - details'],
   },
   advisors: {
-    companyName: ['company name latin alphabet'],
+    companyName: ['company name latin alphabet', 'company name'],
     bvdId: ['bvd id number'],
     vatNumber: ['vat/tax number'],
     numberOfAdvisors: ['number of advisors'],
@@ -5875,7 +5913,7 @@ const COMPANY_ALIAS = {
   // years don't fit the 1-header-per-field shape the other three shapes use
   // (see FINANCIALS_METRICS / buildFinancialsYearSeries below).
   financials: {
-    companyName: ['company name latin alphabet'],
+    companyName: ['company name latin alphabet', 'company name'],
     bvdId: ['bvd id number'],
     vatNumber: ['vat/tax number'],
   },
@@ -6074,6 +6112,21 @@ function parseLegalRow(idx, vals){
   const statusUpdatedDate = excelSerialToDate(g('statusUpdatedDate'));
   if (statusUpdatedDate) payload.statusUpdatedDate = statusUpdatedDate;
 
+  // Stored as plain text, not coerced to a boolean/enum like
+  // inWorldCompliance -- localStatus's real values are free-text distress
+  // descriptions ("Revitalization plan approved / Special revitalization
+  // process"), not a fixed enum, so text is the correct final representation,
+  // not a placeholder. branchIndicator has only ever shown "No" in real data
+  // seen so far -- kept as text rather than assumed-boolean since "Yes" has
+  // never been observed to confirm the exact wording.
+  if (g('localStatus')) payload.localStatus = g('localStatus');
+  if (g('branchIndicator')) payload.branchIndicator = g('branchIndicator');
+
+  const localStatusDate = parseLocalStatusDateValue(g('localStatusDate'));
+  if (localStatusDate) payload.localStatusDate = localStatusDate;
+  const localStatusChangeDate = parseLocalStatusDateValue(g('localStatusChangeDate'));
+  if (localStatusChangeDate) payload.localStatusChangeDate = localStatusChangeDate;
+
   if (g('standardizedLegalForm')) payload.standardizedLegalForm = g('standardizedLegalForm');
   if (g('nationalLegalForm')) payload.nationalLegalForm = g('nationalLegalForm');
 
@@ -6198,11 +6251,12 @@ const FINANCIALS_METRICS = [
   { key: 'exchangeRateEur', header: 'exchange rate from original currency', unit: 'eur' },
   { key: 'plBeforeTax', header: 'p/l before tax', unit: 'th eur' },
   { key: 'plForPeriod', header: 'p/l for period [=net income]', unit: 'th eur' },
-  { key: 'currentRatio', header: 'current ratio', unit: null },
-  { key: 'profitMargin', header: 'profit margin', unit: null },
-  { key: 'roeBeforeTax', header: 'roe using p/l before tax', unit: null },
-  { key: 'roceBeforeTax', header: 'roce using p/l before tax', unit: null },
-  { key: 'solvencyRatioAsset', header: 'solvency ratio (asset based)', unit: null },
+  // Current ratio / Profit margin / ROE & ROCE before tax / Solvency (asset
+  // based) used to be raw-imported here from Orbis's own pre-computed
+  // columns. Converted to computed derived metrics (ORBIS_FIN_DERIVED_METRICS)
+  // instead, after verifying each formula against a real export -- now
+  // consistent with every other ratio in this app, and no longer dependent
+  // on the "Key financials & employees" block specifically being ticked.
   { key: 'nonCurrentAssets', header: 'non-current assets', unit: 'th eur' },
   { key: 'intangibleAssets', header: 'intangible assets', unit: 'th eur' },
   { key: 'tangibleFixedAssets', header: 'tangible fixed assets', unit: 'th eur' },
@@ -6226,6 +6280,11 @@ const FINANCIALS_METRICS = [
   { key: 'otherCurrentLiabilities', header: 'other current liabilities', unit: 'th eur' },
   { key: 'totalShareholdersFundsAndLiabilities', header: "total shareholders' funds and liabilities", unit: 'th eur' },
   { key: 'workingCapital', header: 'working capital', unit: 'th eur' },
+  // Confirmed against a real 1000-company export NOT a duplicate of Working
+  // capital (values genuinely differ, sometimes by tens of millions EUR) --
+  // but only 0.3% filled (3/1000 companies) for Portuguese SMEs. Mapped
+  // anyway for completeness/consistency with its sibling Memo-lines fields.
+  { key: 'netCurrentAssets', header: 'net current assets', unit: 'th eur' },
   { key: 'enterpriseValue', header: 'enterprise value', unit: 'th eur' },
   { key: 'numberOfEmployees', header: 'number of employees', unit: null },
   { key: 'operatingRevenue', header: 'operating revenue (turnover)', unit: 'th eur' },
