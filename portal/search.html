@@ -3089,17 +3089,32 @@ const ORBIS_FIN_DISPLAY_METRICS = [
   ['roeBeforeTax','ROE (before tax)','pct'],
 ];
 // Ratios Orbis's own "Global format" export provides pre-computed (as their
-// own columns) but that we don't import -- proven, not assumed, against a
-// real 186-company combined export (Sep 2026) to be exact functions of
+// own columns) but that we don't import -- proven, not assumed, against two
+// real combined/financials-only exports (Sep 2026) to be exact functions of
 // metrics already in ORBIS_FIN_DISPLAY_METRICS above, so importing them as
 // separate stored fields would just be redundant data:
-//   EBITDA margin              = ebitda / operatingRevenue            (exact)
-//   Liquidity ratio             = (currentAssets - stock) / currentLiabilities   (192/192 exact)
+//   EBITDA margin              = ebitda / operatingRevenue                        (exact)
+//   Liquidity ratio             = (currentAssets - stock) / currentLiabilities     (192/192 exact)
 //   Solvency ratio (Liability)  = shareholdersFunds / (nonCurrentLiabilities + currentLiabilities)  (102/102 exact)
 //   Gearing                     = (nonCurrentLiabilities + loansShortTermDebt) / shareholdersFunds  (185/186 exact)
+//   EBIT margin                 = operatingProfitEbit / operatingRevenue           (182/182 exact)
+//   Gross margin                = grossProfit / operatingRevenue                   (177/177 exact)
+//   ROE using Net income        = profitForPeriodNetIncome / shareholdersFunds     (173/173 exact)
+//   ROA using Net income        = profitForPeriodNetIncome / totalAssets           (186/186 exact)
+//   ROA using PBT               = profitBeforeTaxPbt / totalAssets                 (186/186 exact)
+//   Net assets turnover         = operatingRevenue / (totalAssets - currentLiabilities)  (180/181 exact)
+//   Stock turnover               = operatingRevenue / stock                        (100% across 4 real years, tiny near-zero residuals aside)
+//   Collection period           = (debtors / operatingRevenue) x 365               (185/186 exact)
+//   Credit period                = (creditors / operatingRevenue) x 365             (184/185 exact)
+//   ROCE using Net income        = (profitForPeriodNetIncome + interestPaid) / (totalAssets - currentLiabilities)  (100% across 4 real years)
 // Each guards its own denominator (falsy check excludes 0 and n.a. but not
 // negative equity, which is real and should still divide) -- consistent
 // with how the stored metrics themselves can be negative or absent.
+// ROCE using Net income also guards interestPaid != null explicitly (rather
+// than a falsy check) since 0 is a real, valid interest figure for a debt-
+// free company -- but note interestPaid itself is frequently absent or
+// USD-only across real Orbis exports, so this row will often read "—" even
+// when every other derived row on this table has data.
 const ORBIS_FIN_DERIVED_METRICS = [
   ['EBITDA margin (derived)', y => (y.ebitda != null && y.operatingRevenue) ? (y.ebitda / y.operatingRevenue * 100) : null, 'pct',
     'EBITDA ÷ Operating revenue × 100.'],
@@ -3109,6 +3124,26 @@ const ORBIS_FIN_DERIVED_METRICS = [
     'Shareholders’ funds ÷ (Non-current liabilities + Current liabilities) × 100.'],
   ['Gearing (derived)', y => (y.shareholdersFunds) ? (((y.nonCurrentLiabilities||0) + (y.loansShortTermDebt||0)) / y.shareholdersFunds * 100) : null, 'pct',
     '(Non-current liabilities + Loans & short-term debt) ÷ Shareholders’ funds × 100.'],
+  ['EBIT margin (derived)', y => (y.operatingProfitEbit != null && y.operatingRevenue) ? (y.operatingProfitEbit / y.operatingRevenue * 100) : null, 'pct',
+    'EBIT ÷ Operating revenue × 100.'],
+  ['Gross margin (derived)', y => (y.grossProfit != null && y.operatingRevenue) ? (y.grossProfit / y.operatingRevenue * 100) : null, 'pct',
+    'Gross profit ÷ Operating revenue × 100.'],
+  ['ROE using Net income (derived)', y => (y.profitForPeriodNetIncome != null && y.shareholdersFunds) ? (y.profitForPeriodNetIncome / y.shareholdersFunds * 100) : null, 'pct',
+    'Net income ÷ Shareholders’ funds × 100.'],
+  ['ROA using Net income (derived)', y => (y.profitForPeriodNetIncome != null && y.totalAssets) ? (y.profitForPeriodNetIncome / y.totalAssets * 100) : null, 'pct',
+    'Net income ÷ Total assets × 100.'],
+  ['ROA using PBT (derived)', y => (y.profitBeforeTaxPbt != null && y.totalAssets) ? (y.profitBeforeTaxPbt / y.totalAssets * 100) : null, 'pct',
+    'Profit before tax ÷ Total assets × 100.'],
+  ['Net assets turnover (derived)', y => (y.operatingRevenue != null && y.totalAssets != null && (y.totalAssets - (y.currentLiabilities||0))) ? (y.operatingRevenue / (y.totalAssets - (y.currentLiabilities||0))) : null, 'ratio',
+    'Operating revenue ÷ (Total assets − Current liabilities).'],
+  ['Stock turnover (derived)', y => (y.operatingRevenue != null && y.stock) ? (y.operatingRevenue / y.stock) : null, 'ratio',
+    'Operating revenue ÷ Stock.'],
+  ['Collection period (derived)', y => (y.debtors != null && y.operatingRevenue) ? (y.debtors / y.operatingRevenue * 365) : null, 'days',
+    '(Debtors ÷ Operating revenue) × 365.'],
+  ['Credit period (derived)', y => (y.creditors != null && y.operatingRevenue) ? (y.creditors / y.operatingRevenue * 365) : null, 'days',
+    '(Creditors ÷ Operating revenue) × 365.'],
+  ['ROCE using Net income (derived)', y => (y.profitForPeriodNetIncome != null && y.interestPaid != null && y.totalAssets != null && (y.totalAssets - (y.currentLiabilities||0))) ? ((y.profitForPeriodNetIncome + y.interestPaid) / (y.totalAssets - (y.currentLiabilities||0)) * 100) : null, 'pct',
+    '(Net income + Interest paid) ÷ (Total assets − Current liabilities) × 100. Often unavailable — Interest paid is frequently missing from Orbis exports.'],
 ];
 function fmtOrbisFinCell(v, kind){
   if (v == null) return '—';
@@ -3117,6 +3152,7 @@ function fmtOrbisFinCell(v, kind){
   if (kind === 'eur') return fmtEurShort(n * 1000);
   if (kind === 'ratio') return n.toFixed(2) + 'x';
   if (kind === 'pct') return n.toFixed(1) + '%';
+  if (kind === 'days') return n.toFixed(0) + ' days';
   return String(n);
 }
 function renderOrbisFinancials(c){
