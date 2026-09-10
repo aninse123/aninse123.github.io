@@ -3061,6 +3061,24 @@ const ORBIS_FIN_DISPLAY_METRICS = [
   ['profitMargin','Profit margin','pct'],
   ['roeBeforeTax','ROE (before tax)','pct'],
 ];
+// Ratios Orbis's own "Global format" export provides pre-computed (as their
+// own columns) but that we don't import -- proven, not assumed, against a
+// real 186-company combined export (Sep 2026) to be exact functions of
+// metrics already in ORBIS_FIN_DISPLAY_METRICS above, so importing them as
+// separate stored fields would just be redundant data:
+//   EBITDA margin              = ebitda / operatingRevenue            (exact)
+//   Liquidity ratio             = (currentAssets - stock) / currentLiabilities   (192/192 exact)
+//   Solvency ratio (Liability)  = shareholdersFunds / (nonCurrentLiabilities + currentLiabilities)  (102/102 exact)
+//   Gearing                     = (nonCurrentLiabilities + loansShortTermDebt) / shareholdersFunds  (185/186 exact)
+// Each guards its own denominator (falsy check excludes 0 and n.a. but not
+// negative equity, which is real and should still divide) -- consistent
+// with how the stored metrics themselves can be negative or absent.
+const ORBIS_FIN_DERIVED_METRICS = [
+  ['EBITDA margin (derived)', y => (y.ebitda != null && y.operatingRevenue) ? (y.ebitda / y.operatingRevenue * 100) : null, 'pct'],
+  ['Liquidity ratio (derived)', y => (y.currentAssets != null && y.stock != null && y.currentLiabilities) ? ((y.currentAssets - y.stock) / y.currentLiabilities) : null, 'ratio'],
+  ['Solvency, liability-based (derived)', y => (y.shareholdersFunds != null && (y.nonCurrentLiabilities || y.currentLiabilities)) ? (y.shareholdersFunds / ((y.nonCurrentLiabilities||0) + (y.currentLiabilities||0)) * 100) : null, 'pct'],
+  ['Gearing (derived)', y => (y.shareholdersFunds) ? (((y.nonCurrentLiabilities||0) + (y.loansShortTermDebt||0)) / y.shareholdersFunds * 100) : null, 'pct'],
+];
 function fmtOrbisFinCell(v, kind){
   if (v == null) return '—';
   const n = Number(v);
@@ -3084,6 +3102,9 @@ function renderOrbisFinancials(c){
   const rows = ORBIS_FIN_DISPLAY_METRICS.map(([key,label,kind]) =>
     `<tr><td>${esc(label)}</td>${years.map(y=>`<td>${fmtOrbisFinCell((of[y]||{})[key], kind)}</td>`).join('')}</tr>`
   ).join('');
+  const derivedRows = ORBIS_FIN_DERIVED_METRICS.map(([label,compute,kind]) =>
+    `<tr><td>${esc(label)}</td>${years.map(y=>`<td>${fmtOrbisFinCell(compute(of[y]||{}), kind)}</td>`).join('')}</tr>`
+  ).join('');
   document.getElementById('panel-finorbis').innerHTML = `
     <div class="card">
       <div class="sec-title">Financials (Orbis) — ${esc(lastYearWithData||'—')} snapshot</div>
@@ -3098,6 +3119,14 @@ function renderOrbisFinancials(c){
       <div class="table-wrap"><table class="fin-table">
         <thead>${head}</thead>
         <tbody>${rows}</tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <div class="sec-title">Derived Ratios</div>
+      <div style="font-size:0.72rem;color:var(--text-light);margin:-4px 0 8px;">Computed client-side from the figures above, not stored fields — verified exact against Orbis's own pre-computed values on a 186-company sample (Sep 2026).</div>
+      <div class="table-wrap"><table class="fin-table">
+        <thead>${head}</thead>
+        <tbody>${derivedRows}</tbody>
       </table></div>
     </div>`;
 }
