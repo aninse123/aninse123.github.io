@@ -6782,6 +6782,26 @@ function parseCompaniesRows(rows){
 // formatting difference (dots/dashes) never blocks a real match.
 const foreignTaxIdKey = v => onlyDigits(v) || v || '';
 
+// Used by confirmCompaniesImport()'s updating stage to send only the fields
+// that actually changed, instead of a matched row's entire parsed payload
+// every time. Most identity/geography fields (address, postcode, NUTS
+// codes, phone, ...) are identical between two Orbis exports of the same
+// company -- re-sending them is pure wasted bytes on a write path that's
+// network-bound (payload size), not request-count-bound, so chunk size and
+// concurrency don't move it much. Firestore bills 1 write per document
+// regardless of payload size either way, so this is purely a wall-clock/
+// bandwidth win, not a write-count/cost one. JSON.stringify comparison for
+// non-primitives (arrays, orbisFinancials, ...) is good enough here -- these
+// are always plain parsed data, never functions or Firestore-SDK objects.
+function fieldsEqual(a, b){
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  if (typeof a === 'object' || typeof b === 'object'){
+    try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+  }
+  return false;
+}
+
 function classifyCompaniesImportRows(rows){
   const existingByNif  = new Map(companies.filter(c => onlyDigits(c.nif)).map(c => [onlyDigits(c.nif), c]));
   const existingByBvd  = new Map(companies.filter(c => c.bvdId).map(c => [c.bvdId, c]));
@@ -7076,8 +7096,14 @@ async function confirmCompaniesImport(){
       // new name until the next full recompute). Free: same one write per
       // company, just a fuller payload.
       const merged = computeFields({ ...match, ...r.payload, ...companySearchFields(r.payload.name || match.name) });
-      const payload = {
-        ...r.payload, updatedAt: serverTimestamp(),
+      // Only send fields that actually differ from what's already stored --
+      // for a real mass update most rows change a handful of fields (a
+      // refreshed financial year, a status update, ...) while dozens of
+      // identity/geography fields are identical to last time. Still exactly
+      // one write per company either way (Firestore bills per document, not
+      // per byte), this only cuts how much has to go over the wire.
+      const candidate = {
+        ...r.payload,
         nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes,
         computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
         computedEBITDAMargin: merged.computedEBITDAMargin,
@@ -7085,6 +7111,8 @@ async function confirmCompaniesImport(){
         computedGrowthRecent: merged.computedGrowthRecent, computedGrowthSustained: merged.computedGrowthSustained, computedEBITDAStability: merged.computedEBITDAStability,
         computedEmployees: merged.computedEmployees, fitScore: merged.fitScore,
       };
+      const payload = { updatedAt: serverTimestamp() };
+      for (const [k, v] of Object.entries(candidate)) if (!fieldsEqual(v, match[k])) payload[k] = v;
       // set(..., {merge:true}) instead of update(): `matched` can point at
       // companies loaded from a cache up to 25 minutes stale
       // (ensureFullDataset's cache path), so a company deleted since then
