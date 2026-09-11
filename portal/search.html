@@ -4335,6 +4335,20 @@ async function mapPool(items, fn, limit = READ_CONCURRENCY, onProgress, cancelTo
 // latency win over one-at-a-time, without pushing into territory that risks
 // surprising contention on a shared collection.
 const WRITE_CONCURRENCY = 6;
+// Import Companies' create/update stages use a smaller chunk than the 450
+// every other commitInChunks() call in this file shares (People-import
+// links/counters/demotions -- small, fixed-shape docs). A company document
+// from a real Orbis export can be far richer: a Financials-shape row alone
+// carries orbisFinancials with up to 66 metrics x 10 years, and a combined
+// export merges several shapes' fields into one row. 450 such documents in
+// one writeBatch can be large enough that the whole batch sits at 0% for a
+// long stretch before it resolves all at once, instead of ticking smoothly --
+// caught live against a real ~1,000-company mass import, where "Updating
+// companies" appeared to hang for minutes before jumping. Smaller chunks
+// keep each commit() quick and progress ticking, without changing what gets
+// written or how many total round-trips happen (WRITE_CONCURRENCY still caps
+// how many run at once).
+const COMPANY_IMPORT_CHUNK = 100;
 // Commits N independent writeBatches with bounded concurrency instead of one
 // at a time. Each chunk touches disjoint documents (the caller partitions
 // `items` by index, so no document can land in two chunks), so there is no
@@ -6893,6 +6907,19 @@ async function confirmCompaniesImport(){
   stageDefs.push({ id:'updating', label:'Updating companies' });
   const cancelToken = ImportProgress.start(stageDefs);
   try {
+    // A mass import writes hundreds-to-thousands of documents into
+    // searchCompanies. If the full-dataset live listener (ensureFullDataset's
+    // onSnapshot path) is still attached, EVERY one of those writes bounces
+    // back through it and re-materializes the ENTIRE company collection --
+    // computeFields() over all of them plus an IndexedDB cache rewrite --
+    // once per write burst. Confirmed as the real cause of the multi-minute
+    // "stuck at 0%, then jumps" freezes seen on a real ~1,000-row import, far
+    // more than write-batch size alone. The in-memory `companies` array is
+    // already kept correct by this function's own push/assign calls below,
+    // so detaching costs nothing during the run -- the only trade-off is no
+    // live cross-tab updates for the rest of this session, same as the
+    // cached-load path already behaves.
+    if (fullDatasetUnsub) { fullDatasetUnsub(); fullDatasetUnsub = null; }
     ImportProgress.beginStage('matching', companiesImportRows.length);
     const { matched, creatable, dup, noId } = classifyCompaniesImportRows(companiesImportRows);
     ImportProgress.tick('matching', companiesImportRows.length);
@@ -6905,8 +6932,17 @@ async function confirmCompaniesImport(){
       if (creatable.length) {
         const col = collection(db, 'searchCompanies');
         const entries = creatable.map(({ r }) => ({ r, ref: doc(col) }));
-        const createdRefs = [];
-        created = await commitInChunks(entries, 450, (batch, { r, ref }) => {
+        // A Set, not an array pushed inside build(): withRetry() (inside
+        // mapPool, inside commitInChunks) retries a WHOLE chunk's worth of
+        // build() calls on a transient commit() failure -- a fresh writeBatch
+        // each attempt, so the Firestore write itself is fine, but a plain
+        // array push would double every entry from a chunk that failed once
+        // and then succeeded, silently duplicating both the in-memory
+        // companies list and the activity-log writes below. ref.id is
+        // generated once up front (doc(col) above), so it's stable across
+        // retries and safe to dedupe on.
+        const createdIds = new Set();
+        created = await commitInChunks(entries, COMPANY_IMPORT_CHUNK, (batch, { r, ref }) => {
           const base = {
             ...r.payload, ...companySearchFields(r.payload.name),
             stage: 'universe', sourceType: 'company_import',
@@ -6914,6 +6950,13 @@ async function confirmCompaniesImport(){
             lastTouchAt: null, outreachAttempts: 0,
             createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser,
           };
+          // Same derivation backfillSectors() would otherwise apply to these
+          // rows, unannounced, the next time anyone loads the full dataset --
+          // doing it here is free (same one write, fuller payload) and means
+          // that backfill has nothing left to do for this batch.
+          const derived = naceDerive(base.naceCode || base.caeCode);
+          if (derived.sector) base.sector = derived.sector;
+          if (derived.subSector) base.subSector = derived.subSector;
           const computed = computeFields({ ...base });
           const full = {
             ...base,
@@ -6924,24 +6967,68 @@ async function confirmCompaniesImport(){
             computedEmployees: computed.computedEmployees, fitScore: computed.fitScore,
           };
           batch.set(ref, full);
-          // Keeps the in-memory array current for the rest of THIS run and any
-          // later dup-checks this session — mirrors saveCompany()'s companies.push(local).
-          companies.push(computeFields({ id: ref.id, ...full }));
-          createdRefs.push(ref.id);
+          if (!createdIds.has(ref.id)) {
+            createdIds.add(ref.id);
+            // Keeps the in-memory array current for the rest of THIS run and any
+            // later dup-checks this session — mirrors saveCompany()'s companies.push(local).
+            companies.push(computeFields({ id: ref.id, ...full }));
+          }
           return true;
         }, { onProgress: done => ImportProgress.tick('creating', done), cancelToken });
         ImportProgress.finishStage('creating', `${created.toLocaleString('de-DE')} compan${created===1?'y':'ies'} created`);
         if (cancelToken.cancelled){ ImportProgress.stopped('Stopped during "Creating new companies".'); return; }
-        for (const id of createdRefs) await logAuto(id, 'company_created', 'Created from company import.');
+        // One activity-log doc per new company. Batched via commitInChunks
+        // (same as the company writes above) rather than mapPool/logAuto's
+        // own single addDoc per call -- these are tiny, fixed-shape docs (no
+        // payload-size reason for a small chunk), so a handful of writeBatch
+        // commits beats hundreds of individual round-trips. Same total write
+        // count either way (one doc per company); this only cuts wall-clock
+        // time, and it was previously a fully sequential `for...await` loop
+        // that alone added tens of seconds with no progress feedback on a
+        // real ~1,000-row mass import.
+        await commitInChunks([...createdIds], 450, (batch, id) => {
+          batch.set(doc(collection(db,'searchActivities')), {
+            companyId: id, type: 'company_created', date: Timestamp.now(), title: null,
+            content: 'Created from company import.', status: null,
+            createdAt: serverTimestamp(), createdBy: currentUser,
+          });
+          return true;
+        }, { cancelToken });
       } else {
         ImportProgress.finishStage('creating', 'nothing eligible — nothing to create');
       }
     }
 
     ImportProgress.beginStage('updating', matched.length);
-    const written = await commitInChunks(matched, 450, (batch, { r, match }) => {
-      batch.update(doc(db,'searchCompanies', match.id), { ...r.payload, updatedAt: serverTimestamp() });
-      Object.assign(match, r.payload);
+    const written = await commitInChunks(matched, COMPANY_IMPORT_CHUNK, (batch, { r, match }) => {
+      // Recompute computed*/fitScore and the name-search index here too --
+      // same as the creating stage above and saveCompany()'s manual edit path
+      // (search.html, editCoId branch) -- otherwise a matched company's
+      // stored fitScore and nameKey/nameTokens/namePrefixes silently go stale
+      // after this write (fitScore keeps reading pre-import financials;
+      // if the row renamed the company, it also becomes unfindable by its
+      // new name until the next full recompute). Free: same one write per
+      // company, just a fuller payload.
+      const merged = computeFields({ ...match, ...r.payload, ...companySearchFields(r.payload.name || match.name) });
+      const payload = {
+        ...r.payload, updatedAt: serverTimestamp(),
+        nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes,
+        computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
+        computedEBITDAMargin: merged.computedEBITDAMargin,
+        computedEBITDAWeighted: merged.computedEBITDAWeighted, computedEBITDAMarginWeighted: merged.computedEBITDAMarginWeighted,
+        computedGrowthRecent: merged.computedGrowthRecent, computedGrowthSustained: merged.computedGrowthSustained, computedEBITDAStability: merged.computedEBITDAStability,
+        computedEmployees: merged.computedEmployees, fitScore: merged.fitScore,
+      };
+      // set(..., {merge:true}) instead of update(): `matched` can point at
+      // companies loaded from a cache up to 25 minutes stale
+      // (ensureFullDataset's cache path), so a company deleted since then
+      // would make update() throw -- and Firestore batches are all-or-
+      // nothing, so that fails the WHOLE chunk, not just that one doc.
+      // merge:true is the same single write per document but tolerates a
+      // missing doc (recreates it) instead of aborting the run partway
+      // through on a real mass update.
+      batch.set(doc(db,'searchCompanies', match.id), payload, { merge: true });
+      Object.assign(match, merged);
       return true;
     }, { onProgress: done => ImportProgress.tick('updating', done), cancelToken });
     ImportProgress.finishStage('updating', `${written.toLocaleString('de-DE')} companies updated`);
@@ -6968,6 +7055,20 @@ async function confirmCompaniesImport(){
     errEl.textContent = e.message; errEl.style.display = 'block';
     ImportProgress.fail(e.message);
   } finally {
+    // Detaching fullDatasetUnsub above (so the import's own writes don't
+    // storm the live listener) has a real side effect: the on-disk cache
+    // (readFullDatasetCache/writeFullDatasetCache) only ever gets refreshed
+    // from inside that listener's callback, so without this, the NEXT page
+    // load within the cache's TTL would serve a snapshot from BEFORE this
+    // import ran -- confirmed live: a company created in one run was
+    // invisible to matching on a fresh reload minutes later, purely because
+    // the listener that would have refreshed the cache had already been
+    // detached before that company's own write happened. `companies` is
+    // already fully current in memory at this point (every create/update
+    // above keeps it in sync as it goes), win or lose, cancelled or not --
+    // so just re-stamp the cache from it whenever this ran against the
+    // complete dataset (fullyLoaded), regardless of how the import exited.
+    if (fullyLoaded) writeFullDatasetCache(companies);
     btn.disabled = false; btn.textContent = 'Import';
     companiesImportInFlight = false;
   }
