@@ -1035,6 +1035,12 @@
       <label class="btn btn--ghost btn--sm" style="cursor:pointer;margin:0;">📂 Choose file<input type="file" id="companiesFileInput" accept=".xlsx,.csv,text/csv" style="display:none;"></label>
       <span id="companiesFileName" style="font-size:0.82rem;color:var(--text-light);"></span>
     </div>
+    <details id="companiesFieldMapWrap" style="display:none;margin-bottom:14px;" open>
+      <summary style="cursor:pointer;font-size:0.83rem;font-weight:600;">
+        Fields found in this file <span id="companiesFieldMapCount" style="font-weight:400;color:var(--text-light);"></span>
+      </summary>
+      <div id="companiesFieldMap" style="margin-top:10px;"></div>
+    </details>
     <div id="companiesShapeDetected" style="display:none;margin-bottom:14px;padding:10px 12px;background:#FAFAF8;border:1px solid var(--border);border-radius:var(--radius);font-size:0.83rem;"></div>
     <div id="companiesImportOpts" style="display:none;margin-bottom:14px;padding:12px;background:#FAFAF8;border:1px solid var(--border);border-radius:var(--radius);">
       <label class="check-item" style="font-weight:600;"><input type="checkbox" id="companiesCreateMissing"> Also create companies that aren't in the CRM</label>
@@ -1043,13 +1049,33 @@
       </div>
     </div>
     <div id="companiesImportPreview" style="display:none;">
-      <div style="font-size:0.83rem;font-weight:600;margin-bottom:10px;" id="companiesImportSummary"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+        <div style="font-size:0.83rem;font-weight:600;" id="companiesImportSummary"></div>
+        <label class="check-item" style="font-size:0.78rem;font-weight:400;white-space:nowrap;"><input type="checkbox" id="companiesImportOnlyIssues"> Only show new / duplicates / warnings</label>
+      </div>
       <div style="max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
         <table class="preview-table">
           <thead><tr><th>Company</th><th>NIF / BvD ID</th><th>Fields to update</th><th>Status</th></tr></thead>
           <tbody id="companiesImportBody"></tbody>
         </table>
       </div>
+      <details id="companiesImportDupWrap" style="display:none;margin-top:14px;">
+        <summary style="cursor:pointer;font-size:0.83rem;font-weight:600;color:#B45309;">
+          ⚠ Possible duplicates <span id="companiesImportDupCount" style="font-weight:400;color:var(--text-light);"></span>
+        </summary>
+        <div style="font-size:0.76rem;color:var(--text-light);margin:8px 0;">
+          Not auto-created. Click a company below to open its existing CRM record and compare by hand — same company (leave skipped, or copy this row's NIF/BvD onto it so future imports match automatically) or genuinely different (nothing to do).
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+          <button class="btn btn--ghost btn--sm" id="companiesImportDupCsvBtn">⬇ Download as CSV</button>
+        </div>
+        <div style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+          <table class="preview-table">
+            <thead><tr><th>Import row</th><th>NIF / BvD ID</th><th>Existing CRM company</th><th>Reason</th></tr></thead>
+            <tbody id="companiesImportDupBody"></tbody>
+          </table>
+        </div>
+      </details>
     </div>
     <div class="modal-err" id="companiesImportErr"></div>
     <div class="modal-actions">
@@ -2332,7 +2358,8 @@ function getFiltered(){
     if (search) {
       const nameHit = deburr(c.name).includes(search);
       const nifHit  = searchDigits && String(c.nif||'').replace(/[^a-z0-9]/gi,'').toLowerCase().includes(searchDigits);
-      if (!nameHit && !nifHit) return false;
+      const ftidHit = searchDigits && String(c.foreignTaxId||'').replace(/[^a-z0-9]/gi,'').toLowerCase().includes(searchDigits);
+      if (!nameHit && !nifHit && !ftidHit) return false;
     }
     if (stageF && c.stage !== stageF) return false;
     if (ownerF && c.owner !== ownerF) return false;
@@ -2788,10 +2815,12 @@ function renderOverview(c){
         <div class="sec-title">Company</div>
         <div class="info-row"><span class="k">Legal form</span><span class="v">${esc(c.legalForm||'—')}</span></div>
         <div class="info-row"><span class="k">NIF</span><span class="v">${esc(c.nif||'—')}</span></div>
+        ${c.foreignTaxId ? `<div class="info-row"><span class="k">${esc(c.foreignTaxIdType === 'BR-CNPJ' ? 'CNPJ' : 'Foreign tax ID')}</span><span class="v">${esc(c.foreignTaxId)}${c.foreignTaxIdCountry?' · '+esc(c.foreignTaxIdCountry):''}</span></div>` : ''}
         <div class="info-row"><span class="k">Founded</span><span class="v">${esc(c.yearFounded||'—')}</span></div>
         <div class="info-row"><span class="k">Sector</span><span class="v">${esc(c.sector||'—')}${c.subSector?' › '+esc(c.subSector):''}</span></div>
         <div class="info-row"><span class="k">NACE</span><span class="v">${esc(c.naceCode||'—')}${c.naceDescription?' · '+esc(c.naceDescription):''}</span></div>
         <div class="info-row"><span class="k">CAE</span><span class="v">${esc(c.caeCode||'—')}${c.caeDescription?' · '+esc(c.caeDescription):''}</span></div>
+        ${c.industryClassificationCode ? `<div class="info-row"><span class="k">${esc(c.industryClassificationSystem||'Other classification')}</span><span class="v">${esc(c.industryClassificationCode)}${c.industryClassificationDescription?' · '+esc(c.industryClassificationDescription):''}</span></div>` : ''}
         <div class="info-row"><span class="k">Ownership</span><span class="v">${OWNERSHIP_LABELS[c.ownershipType]||'—'}</span></div>
         <div class="info-row"><span class="k">Succession</span><span class="v">${SUCCESSION_LABELS[c.successionSit]||'—'}</span></div>
         <div class="info-row"><span class="k">Independence</span>${independenceBadge(c.independenceIndicator)}</div>
@@ -5735,6 +5764,7 @@ async function handlePeopleFile(file){
 let companiesImportInFlight = false;
 let companiesImportRows = [];
 let companiesImportStats = null;
+let companiesImportLastDup = []; // the dup bucket from the most recent renderCompaniesImportPreview(), for the CSV export button
 
 // Excel serial date (days since 1899-12-30, the same epoch quirk Excel
 // itself uses) -> 'YYYY-MM-DD'. Several Orbis fields across these exports
@@ -5928,6 +5958,179 @@ const COMPANY_SHAPE_LABELS = { profile: 'Company Profile', legal: 'Legal & Accou
 function companyShapesLabel(shapes){
   return shapes.map(s => COMPANY_SHAPE_LABELS[s] || s).join(' + ');
 }
+
+// Human labels for the COMPANY_ALIAS keys, for the "fields found in this
+// file" report below -- same purpose as FIELD_LABELS for the People importer.
+const COMPANY_FIELD_LABELS = {
+  companyName: 'Company name', bvdId: 'BvD ID', vatNumber: 'VAT/Tax number',
+  address: 'Address', postcode: 'Postcode', city: 'City', country: 'Country',
+  regionInCountry: 'Region in country', regionType: 'Type of region',
+  nuts1: 'NUTS I', nuts2: 'NUTS II', nuts3: 'NUTS III',
+  phone: 'Phone', fax: 'Fax', domain: 'Domain', website: 'Website', email: 'E-mail',
+  industryClassificationSystem: 'Industry classification system',
+  caeCode: 'CAE code', caeDescription: 'CAE description',
+  caeSecondaryCode: 'CAE secondary code', caeSecondaryDescription: 'CAE secondary description',
+  naceMainSection: 'NACE main section', naceCode: 'NACE code', naceDescription: 'NACE description',
+  nacePrimaryCode: 'NACE primary code', nacePrimaryDescription: 'NACE primary description',
+  naceSecondaryCode: 'NACE secondary code', naceSecondaryDescription: 'NACE secondary description',
+  bvdSector: 'BvD sector',
+  tradeDescriptionPt: 'Trade description', productsServices: 'Products & services',
+  fullOverview: 'Full overview', mainActivity: 'Main activity',
+  mainForeignCountries: 'Main foreign countries', mainProductionSites: 'Main production sites',
+  mainDistributionSites: 'Main distribution sites', mainCustomers: 'Main customers',
+  euid: 'EUID / other company ID', latitude: 'Latitude', longitude: 'Longitude',
+  standardizedLegalForm: 'Legal form (standardized)', nationalLegalForm: 'Legal form (national)',
+  status: 'Status', statusDate: 'Status date', statusUpdatedDate: 'Status updated date',
+  localStatus: 'Local status', localStatusDate: 'Local status date', localStatusChangeDate: 'Local status change date',
+  dateOfIncorporation: 'Date of incorporation', entityType: 'Type of entity',
+  branchIndicator: 'Branch indicator', sizeClassification: 'Size classification',
+  releaseDate: 'Release date', previousCompanyName: 'Previous company name', akaName: 'Also known as',
+  inWorldCompliance: 'In WorldCompliance',
+  legalEventDate: 'Legal event date', legalEventDescription: 'Legal event description',
+  legalEventSource: 'Legal event source', legalEventType: 'Legal event type', legalEventDetails: 'Legal event details',
+  latestAnnualAccountClosingDate: 'Latest annual account closing date', lastAvailYear: 'Last available year',
+  limitedFinancialIndicator: 'Limited financial indicator', noRecentFinancialIndicator: 'No recent financial indicator',
+  numberOfAvailableYears: 'Number of available years', originalCurrency: 'Original currency',
+  numberOfAdvisors: 'Number of advisors', numberOfCurrentAdvisors: 'Number of current advisors',
+  numberOfPreviousAdvisors: 'Number of previous advisors',
+  advFullName: 'Advisor name', advUci: 'Advisor UCI', advType: 'Advisor type', advRole: 'Advisor role',
+  advIndividualOrCompany: 'Advisor individual/company', advAppointmentDate: 'Advisor appointment date',
+  advResignationDate: 'Advisor resignation date', advCurrentOrPrevious: 'Advisor current/previous',
+  advLastReceivedDate: 'Advisor last received date', advNoOfCosCurrentRole: 'Advisor — other current roles',
+  lastUpdateCompanyName: 'Last update — company name', lastUpdateAddress: 'Last update — address',
+  lastUpdateTelephone: 'Last update — telephone', lastUpdateDomain: 'Last update — domain',
+  lastUpdateWebsite: 'Last update — website', lastUpdateEmail: 'Last update — e-mail',
+  lastUpdateStatus: 'Last update — status', lastUpdateSizeClassification: 'Last update — size classification',
+  lastUpdateIndustryClassifications: 'Last update — industry classification',
+  additionOfLastAnnualAccounts: 'Addition of last annual accounts', lastUpdateAnnualAccounts: 'Last update — annual accounts',
+  lastUpdateBvdIndependenceIndicator: 'Last update — BvD independence indicator',
+};
+
+// Grouped the same way as IMPORT_FIELD_GROUPS (People importer): one entry
+// per logical cluster, gated by which Orbis export shape it belongs to so a
+// group not covered by this file reads as "not in this file" rather than a
+// wall of misses. `shape: null` means shared across every shape (the
+// identity columns used for matching). `metricsGroup: true` marks the
+// Financials cluster, whose ~60 metrics x 10 years don't fit the
+// one-header-per-field shape the others use -- handled separately in
+// buildCompanyFieldReport() via idx.__yearSeries instead of per-key idx[].
+const COMPANY_FIELD_GROUPS = [
+  { title: 'Identity', shape: null,
+    fields: ['companyName', 'bvdId', 'vatNumber'] },
+  { title: 'Geography & contact', shape: 'profile',
+    fields: ['address', 'postcode', 'city', 'country', 'regionInCountry', 'regionType',
+             'nuts1', 'nuts2', 'nuts3', 'phone', 'fax', 'domain', 'website', 'email'] },
+  { title: 'Industry & classification', shape: 'profile',
+    fields: ['industryClassificationSystem', 'caeCode', 'caeDescription', 'caeSecondaryCode', 'caeSecondaryDescription',
+             'naceMainSection', 'naceCode', 'naceDescription', 'nacePrimaryCode', 'nacePrimaryDescription',
+             'naceSecondaryCode', 'naceSecondaryDescription', 'bvdSector'] },
+  { title: 'Business description', shape: 'profile',
+    fields: ['tradeDescriptionPt', 'productsServices', 'fullOverview', 'mainActivity', 'mainForeignCountries',
+             'mainProductionSites', 'mainDistributionSites', 'mainCustomers', 'euid', 'latitude', 'longitude'] },
+  { title: 'Legal status', shape: 'legal',
+    fields: ['standardizedLegalForm', 'nationalLegalForm', 'status', 'statusDate', 'statusUpdatedDate',
+             'localStatus', 'localStatusDate', 'localStatusChangeDate', 'dateOfIncorporation', 'entityType',
+             'branchIndicator', 'sizeClassification', 'releaseDate', 'previousCompanyName', 'akaName', 'inWorldCompliance'] },
+  { title: 'Legal events & filing flags', shape: 'legal',
+    fields: ['legalEventDate', 'legalEventDescription', 'legalEventSource', 'legalEventType', 'legalEventDetails',
+             'latestAnnualAccountClosingDate', 'lastAvailYear', 'limitedFinancialIndicator', 'noRecentFinancialIndicator',
+             'numberOfAvailableYears', 'originalCurrency'] },
+  { title: 'Advisors', shape: 'advisors',
+    fields: ['numberOfAdvisors', 'numberOfCurrentAdvisors', 'numberOfPreviousAdvisors', 'advFullName', 'advUci',
+             'advType', 'advRole', 'advIndividualOrCompany', 'advAppointmentDate', 'advResignationDate',
+             'advCurrentOrPrevious', 'advLastReceivedDate', 'advNoOfCosCurrentRole'] },
+  { title: 'Last-update tracking', shape: 'advisors',
+    fields: ['lastUpdateCompanyName', 'lastUpdateAddress', 'lastUpdateTelephone', 'lastUpdateDomain',
+             'lastUpdateWebsite', 'lastUpdateEmail', 'lastUpdateStatus', 'lastUpdateSizeClassification',
+             'lastUpdateIndustryClassifications', 'additionOfLastAnnualAccounts', 'lastUpdateAnnualAccounts',
+             'lastUpdateBvdIndependenceIndicator'] },
+  { title: 'Financials', shape: 'financials', metricsGroup: true, fields: [] },
+];
+
+// Same "is the column there, does it actually carry anything" question as
+// buildFieldReport() (People importer), adapted for Companies: keyed off the
+// merged idx built across every detected shape (parseCompaniesRows) instead
+// of one shape's idx, and with a dedicated path for the Financials
+// metric x year matrix instead of a flat idx[key] lookup.
+function buildCompanyFieldReport(dataRows, headers, idx, shapes){
+  const fill = key => {
+    const i = idx[key];
+    if (i == null || i === -1) return null;
+    let filled = 0;
+    for (const row of dataRows){
+      const v = String((row && row[i]) ?? '').trim();
+      if (v) filled++;
+    }
+    return dataRows.length ? Math.round(100 * filled / dataRows.length) : 0;
+  };
+  return COMPANY_FIELD_GROUPS.map(g => {
+    const absent = g.shape ? !shapes.includes(g.shape) : false;
+    if (g.metricsGroup){
+      let filledCells = 0, totalCells = 0;
+      if (!absent && idx.__yearSeries){
+        for (const row of dataRows){
+          for (const m of FINANCIALS_METRICS){
+            for (const year of FINANCIALS_YEARS){
+              const indices = idx.__yearSeries[m.key]?.[year] || [];
+              totalCells++;
+              if (financialsCellValue(row, indices)) filledCells++;
+            }
+          }
+        }
+      }
+      const pct = totalCells ? Math.round(100 * filledCells / totalCells) : 0;
+      return { ...g, fields: [], absent, foundCount: absent ? 0 : 1,
+                metricsPct: pct, metricsCount: FINANCIALS_METRICS.length, yearsCount: FINANCIALS_YEARS.length };
+    }
+    const fields = g.fields.map(key => ({
+      key, label: COMPANY_FIELD_LABELS[key] || key,
+      column: idx[key] != null && idx[key] !== -1 ? headers[idx[key]] : key,
+      found: idx[key] != null && idx[key] !== -1, pct: fill(key),
+    }));
+    return { ...g, fields, absent, foundCount: fields.filter(f => f.found).length };
+  });
+}
+
+function renderCompanyFieldReport(){
+  const groups = companiesImportStats?.fieldReport;
+  const el = document.getElementById('companiesFieldMap');
+  if (!groups){ showEl('companiesFieldMapWrap', false); return; }
+  showEl('companiesFieldMapWrap', true);
+
+  const dot = f => {
+    if (!f.found)   return '<span class="fm-dot fm-miss" title="Column not in this file">✕</span>';
+    if (f.pct === 0) return '<span class="fm-dot fm-empty" title="Column is present but Orbis left it blank for every company">○</span>';
+    return `<span class="fm-dot fm-ok" title="Present, ${f.pct}% of companies have a value">●</span>`;
+  };
+  document.getElementById('companiesFieldMapCount').textContent =
+    groups.filter(g => !g.absent).length + ' of ' + groups.length + ' sections in this file';
+
+  el.innerHTML = groups.map(g => {
+    const head = g.absent
+      ? '<span class="fm-tag fm-tag-off">not in this file</span>'
+      : '<span class="fm-tag fm-tag-ok">ready</span>';
+    if (g.metricsGroup){
+      const note = g.absent
+        ? `<div class="fm-note">No Financials columns in this file — nothing here to import.</div>`
+        : `<div class="fm-note">${g.metricsCount} metrics × up to ${g.yearsCount} years — ${g.metricsPct}% of metric/year cells have a value across the rows in this file.</div>`;
+      return `
+        <div class="fm-group${g.absent ? ' fm-group-off' : ''}">
+          <div class="fm-head"><strong>${esc(g.title)}</strong>${head}</div>
+          ${note}
+        </div>`;
+    }
+    return `
+      <div class="fm-group${g.absent ? ' fm-group-off' : ''}">
+        <div class="fm-head"><strong>${esc(g.title)}</strong>${head}
+          <span class="fm-count">${g.foundCount}/${g.fields.length}</span></div>
+        <div class="fm-fields">${g.fields.map(f => `
+          <div class="fm-field" title="Orbis column: ${esc(f.column)}">
+            ${dot(f)}<span class="fm-label">${esc(f.label)}</span>
+            <span class="fm-pct">${f.found ? (f.pct === 0 ? 'empty' : f.pct + '%') : '—'}</span>
+          </div>`).join('')}</div>
+      </div>`;
+  }).join('');
+}
 function companiesColIndex(headers, aliasMap, key){
   const want = aliasMap[key] || [];
   for (const w of want){ const i = headers.indexOf(w); if (i !== -1) return i; }
@@ -5987,34 +6190,70 @@ function detectCompanyExportShapes(headerRow){
   return shapes;
 }
 
-// Builds the write payload for one Company Profile row, applying the two
-// gating rules established while mapping this export: a non-Portuguese VAT
-// number is never forced through 9-digit-NIF validation, and an industry
-// code is only mapped into caeCode/caeDescription when the classification
-// system is actually CAE Rev. 3 (Portugal's own system) -- otherwise it's
-// flagged, not silently mis-filed, so a future non-PT company doesn't end up
-// with e.g. a Spanish CNAE code labelled as a Portuguese CAE code.
+// Shared by all four Orbis company-export shapes' row parsers. Two gating
+// rules, established while mapping real exports this session:
+//  - A shape with no Country column (Legal & Account / Advisors / Financials
+//    -- this list is Portugal-only, so those exports never carry one) trusts
+//    a clean 9-digit value as a NIF exactly as this app always has.
+//  - A shape that DOES carry Country (Company Profile) additionally requires
+//    it to actually say Portugal, because Orbis can label a row Portugal
+//    while still handing back a group sister-company's foreign tax ID in
+//    this same column -- confirmed against a real export where several
+//    Portugal-country rows carried a 14-digit Brazilian CNPJ here instead of
+//    a NIF. A CNPJ is recognized by that 14-digit shape regardless of what
+//    Country says (Orbis's own Country field isn't reliable evidence
+//    against a clear format match), and stored separately as foreignTaxId --
+//    never forced into `nif`, which every NIF-based match/search in this app
+//    assumes is a genuine validated Portuguese NIF.
+function parseVatNumber(vatRaw, country, hasCountryColumn){
+  const result = { nifDigits: '', foreignTaxId: '', payload: {}, warning: null };
+  if (!vatRaw) return result;
+  const digits = onlyDigits(vatRaw);
+  const isPT = /^portugal$/i.test(country || '');
+  const trustNif = hasCountryColumn ? isPT : true;
+  if (trustNif && digits.length === 9){
+    result.nifDigits = digits;
+    result.payload.nif = digits;
+  } else if (digits.length === 14){
+    result.foreignTaxId = digits;
+    result.payload.foreignTaxId = digits;
+    result.payload.foreignTaxIdType = 'BR-CNPJ';
+    result.payload.foreignTaxIdCountry = 'Brazil';
+    result.warning = (hasCountryColumn && isPT)
+      ? `VAT/Tax number "${vatRaw}" looks like a Brazilian CNPJ (14 digits), not a 9-digit PT NIF — stored as foreignTaxId`
+      : `VAT/Tax number "${vatRaw}" looks like a Brazilian CNPJ — stored as foreignTaxId`;
+  } else if (hasCountryColumn && isPT){
+    result.warning = `VAT/Tax number "${vatRaw}" is not a 9-digit PT NIF`;
+  } else if (hasCountryColumn && country){
+    result.foreignTaxId = digits || vatRaw;
+    result.payload.foreignTaxId = vatRaw;
+    result.payload.foreignTaxIdCountry = country;
+    result.warning = `Non-Portuguese VAT number (${country}) — stored as foreignTaxId, not validated as a NIF`;
+  }
+  return result;
+}
+
+// Builds the write payload for one Company Profile row, applying the
+// industry-code gating rule established while mapping this export: a code
+// is only mapped into caeCode/caeDescription when the classification system
+// is actually CAE Rev. 3 (Portugal's own system) -- otherwise it's stored
+// under the system-agnostic industryClassificationCode siblings instead, so
+// a future non-PT company doesn't end up with e.g. a Spanish CNAE code
+// labelled as a Portuguese CAE code.
 function parseCompanyProfileRow(idx, vals){
   const g = key => { const i = idx[key]; return (i == null || i === -1) ? '' : String(vals[i] || '').trim(); };
   const country = g('country');
-  const isPT = /^portugal$/i.test(country);
   const vatRaw = g('vatNumber');
   const payload = {};
   const warnings = [];
 
   const bvdId = g('bvdId');
   if (bvdId) payload.bvdId = bvdId;
-  let nifDigits = '';
-  if (vatRaw){
-    if (isPT){
-      nifDigits = onlyDigits(vatRaw);
-      if (nifDigits.length === 9) payload.nif = nifDigits;
-      else warnings.push(`VAT/Tax number "${vatRaw}" is not a 9-digit PT NIF`);
-    } else {
-      payload.foreignTaxId = vatRaw;
-      warnings.push(`Non-Portuguese VAT number (${country || 'unknown country'}) — stored as foreignTaxId, not validated as a NIF`);
-    }
-  }
+  const vatParsed = parseVatNumber(vatRaw, country, true);
+  const nifDigits = vatParsed.nifDigits;
+  const foreignTaxId = vatParsed.foreignTaxId;
+  Object.assign(payload, vatParsed.payload);
+  if (vatParsed.warning) warnings.push(vatParsed.warning);
 
   if (g('companyName')) payload.name = g('companyName');
   if (g('address')) payload.hqAddress = g('address');
@@ -6059,7 +6298,16 @@ function parseCompanyProfileRow(idx, vals){
       if (g('caeSecondaryCode')) payload.caeSecondaryCode = g('caeSecondaryCode');
       if (g('caeSecondaryDescription')) payload.caeSecondaryDescription = g('caeSecondaryDescription');
     } else {
-      warnings.push(`Industry classification system is "${system}", not CAE Rev. 3 — code not mapped into caeCode (that system isn't supported yet)`);
+      // caeCode/caeDescription stay CAE-only -- they feed sector
+      // auto-derivation (naceDerive) and the CAE prefix filter elsewhere in
+      // the app, so a non-CAE code (US SIC for banks, a foreign national
+      // system, ...) goes into these system-agnostic siblings instead,
+      // labelled by industryClassificationSystem rather than mis-filed as CAE.
+      warnings.push(`Industry classification system is "${system}", not CAE Rev. 3 — code stored as industryClassificationCode, not caeCode`);
+      if (g('caeCode')) payload.industryClassificationCode = g('caeCode');
+      if (g('caeDescription')) payload.industryClassificationDescription = g('caeDescription');
+      if (g('caeSecondaryCode')) payload.industryClassificationSecondaryCode = g('caeSecondaryCode');
+      if (g('caeSecondaryDescription')) payload.industryClassificationSecondaryDescription = g('caeSecondaryDescription');
     }
   }
   if (g('naceMainSection')) payload.naceMainSection = g('naceMainSection');
@@ -6077,7 +6325,7 @@ function parseCompanyProfileRow(idx, vals){
   if (g('mainCustomers')) payload.mainCustomers = g('mainCustomers');
   if (g('euid')) payload.euid = g('euid');
 
-  return { payload, warnings, nifDigits: isPT ? nifDigits : '', bvdId };
+  return { payload, warnings, nifDigits, foreignTaxId, bvdId };
 }
 
 // Builds the write payload for one Legal & Account row. Status sometimes
@@ -6097,11 +6345,15 @@ function parseLegalRow(idx, vals){
   const bvdId = g('bvdId');
   if (bvdId) payload.bvdId = bvdId;
   const vatRaw = g('vatNumber');
-  let nifDigits = '';
-  if (vatRaw){
-    nifDigits = onlyDigits(vatRaw);
-    if (nifDigits.length === 9) payload.nif = nifDigits;
-  }
+  // No Country column in this shape -- Legal & Account / Advisors /
+  // Financials exports are Portugal-only, so a clean 9-digit value is
+  // trusted as a NIF the same way this app always has (parseVatNumber's
+  // hasCountryColumn=false path). Still gains the 14-digit CNPJ detection.
+  const vatParsed = parseVatNumber(vatRaw, '', false);
+  const nifDigits = vatParsed.nifDigits;
+  const foreignTaxId = vatParsed.foreignTaxId;
+  Object.assign(payload, vatParsed.payload);
+  if (vatParsed.warning) warnings.push(vatParsed.warning);
   if (g('companyName')) payload.name = g('companyName');
 
   const releaseDate = excelSerialToDate(g('releaseDate'));
@@ -6170,7 +6422,7 @@ function parseLegalRow(idx, vals){
   if (legalEventTypes.length) payload.legalEventTypes = legalEventTypes;
   if (legalEventDetails.length) payload.legalEventDetails = legalEventDetails;
 
-  return { payload, warnings, nifDigits, bvdId };
+  return { payload, warnings, nifDigits, foreignTaxId, bvdId };
 }
 
 // Builds the write payload for one Advisors/Updates row. The per-advisor
@@ -6188,11 +6440,15 @@ function parseAdvisorsRow(idx, vals){
   const bvdId = g('bvdId');
   if (bvdId) payload.bvdId = bvdId;
   const vatRaw = g('vatNumber');
-  let nifDigits = '';
-  if (vatRaw){
-    nifDigits = onlyDigits(vatRaw);
-    if (nifDigits.length === 9) payload.nif = nifDigits;
-  }
+  // No Country column in this shape -- Legal & Account / Advisors /
+  // Financials exports are Portugal-only, so a clean 9-digit value is
+  // trusted as a NIF the same way this app always has (parseVatNumber's
+  // hasCountryColumn=false path). Still gains the 14-digit CNPJ detection.
+  const vatParsed = parseVatNumber(vatRaw, '', false);
+  const nifDigits = vatParsed.nifDigits;
+  const foreignTaxId = vatParsed.foreignTaxId;
+  Object.assign(payload, vatParsed.payload);
+  if (vatParsed.warning) warnings.push(vatParsed.warning);
   if (g('companyName')) payload.name = g('companyName');
 
   if (g('numberOfAdvisors')) payload.numberOfAdvisors = g('numberOfAdvisors');
@@ -6229,7 +6485,7 @@ function parseAdvisorsRow(idx, vals){
     if (iso) payload[key] = iso;
   }
 
-  return { payload, warnings, nifDigits, bvdId };
+  return { payload, warnings, nifDigits, foreignTaxId, bvdId };
 }
 
 // Financials shape: ~66 metrics x 10 kept years (2016-2025 -- the real
@@ -6361,11 +6617,15 @@ function parseFinancialsRow(idx, vals){
   const bvdId = g('bvdId');
   if (bvdId) payload.bvdId = bvdId;
   const vatRaw = g('vatNumber');
-  let nifDigits = '';
-  if (vatRaw){
-    nifDigits = onlyDigits(vatRaw);
-    if (nifDigits.length === 9) payload.nif = nifDigits;
-  }
+  // No Country column in this shape -- Legal & Account / Advisors /
+  // Financials exports are Portugal-only, so a clean 9-digit value is
+  // trusted as a NIF the same way this app always has (parseVatNumber's
+  // hasCountryColumn=false path). Still gains the 14-digit CNPJ detection.
+  const vatParsed = parseVatNumber(vatRaw, '', false);
+  const nifDigits = vatParsed.nifDigits;
+  const foreignTaxId = vatParsed.foreignTaxId;
+  Object.assign(payload, vatParsed.payload);
+  if (vatParsed.warning) warnings.push(vatParsed.warning);
   if (g('companyName')) payload.name = g('companyName');
 
   const yearSeries = idx.__yearSeries || {};
@@ -6384,7 +6644,7 @@ function parseFinancialsRow(idx, vals){
   }
   if (Object.keys(orbisFinancials).length) payload.orbisFinancials = orbisFinancials;
 
-  return { payload, warnings, nifDigits, bvdId };
+  return { payload, warnings, nifDigits, foreignTaxId, bvdId };
 }
 
 // One row-parser per implemented shape. detectCompanyExportShape() already
@@ -6420,10 +6680,11 @@ function parseCompaniesRows(rows){
     const payload = Object.assign({}, ...results.map(r => r.payload));
     const warnings = [].concat(...results.map(r => r.warnings));
     const nifDigits = results.map(r => r.nifDigits).find(Boolean) || '';
+    const foreignTaxId = results.map(r => r.foreignTaxId).find(Boolean) || '';
     const bvdId = results.map(r => r.bvdId).find(Boolean) || '';
-    return { payload, warnings, nifDigits, bvdId, name: payload.name || '(no name)' };
+    return { payload, warnings, nifDigits, foreignTaxId, bvdId, name: payload.name || '(no name)' };
   });
-  companiesImportStats = { shapes, rowsSeen: parsed.length };
+  companiesImportStats = { shapes, rowsSeen: parsed.length, fieldReport: buildCompanyFieldReport(dataRows, headers, idx, shapes) };
   return parsed;
 }
 
@@ -6434,28 +6695,40 @@ function parseCompaniesRows(rows){
 // creatable / a possible duplicate / uncreatable. A row only ever lands in
 // exactly one bucket -- matched.length + creatable.length + dup.length +
 // noId.length always equals rows.length.
+// A row's foreignTaxId (from parseVatNumber) is stored digit-normalized when
+// it's a confidently-detected CNPJ, but may still carry the raw string for
+// the generic "some other country, unknown format" case -- normalize both
+// sides the same way onlyDigits(c.nif) already does for NIF matching, so a
+// formatting difference (dots/dashes) never blocks a real match.
+const foreignTaxIdKey = v => onlyDigits(v) || v || '';
+
 function classifyCompaniesImportRows(rows){
   const existingByNif  = new Map(companies.filter(c => onlyDigits(c.nif)).map(c => [onlyDigits(c.nif), c]));
   const existingByBvd  = new Map(companies.filter(c => c.bvdId).map(c => [c.bvdId, c]));
+  const existingByFtid = new Map(companies.filter(c => c.foreignTaxId).map(c => [foreignTaxIdKey(c.foreignTaxId), c]));
   const existingByName = new Map(companies.filter(c => c.name).map(c => [normName(c.name), c]));
 
   const matched = [], unmatched = [];
   for (const r of rows){
-    const match = (r.nifDigits && existingByNif.get(r.nifDigits)) || (r.bvdId && existingByBvd.get(r.bvdId)) || null;
+    const match = (r.nifDigits && existingByNif.get(r.nifDigits))
+      || (r.bvdId && existingByBvd.get(r.bvdId))
+      || (r.foreignTaxId && existingByFtid.get(foreignTaxIdKey(r.foreignTaxId)))
+      || null;
     (match ? matched.push({ r, match }) : unmatched.push(r));
   }
 
-  // No NIF and no BvD ID -- no durable identifier to prevent duplicate
-  // creation on a future overlapping import. Also excludes rows with no
-  // parsed name (saveCompany() requires one too).
-  const noId = unmatched.filter(r => (!r.nifDigits && !r.bvdId) || !r.payload.name);
-  const candidates = unmatched.filter(r => (r.nifDigits || r.bvdId) && r.payload.name);
+  // No NIF, BvD ID or foreign tax ID -- no durable identifier to prevent
+  // duplicate creation on a future overlapping import. Also excludes rows
+  // with no parsed name (saveCompany() requires one too).
+  const noId = unmatched.filter(r => (!r.nifDigits && !r.bvdId && !r.foreignTaxId) || !r.payload.name);
+  const candidates = unmatched.filter(r => (r.nifDigits || r.bvdId || r.foreignTaxId) && r.payload.name);
 
-  const nifCount = new Map(), bvdCount = new Map(), nameCount = new Map();
+  const nifCount = new Map(), bvdCount = new Map(), ftidCount = new Map(), nameCount = new Map();
   const nameKeyOf = r => normName(r.payload.name);
   for (const r of candidates){
     if (r.nifDigits) nifCount.set(r.nifDigits, (nifCount.get(r.nifDigits)||0) + 1);
     if (r.bvdId)     bvdCount.set(r.bvdId, (bvdCount.get(r.bvdId)||0) + 1);
+    if (r.foreignTaxId){ const k = foreignTaxIdKey(r.foreignTaxId); ftidCount.set(k, (ftidCount.get(k)||0) + 1); }
     const nk = nameKeyOf(r); if (nk) nameCount.set(nk, (nameCount.get(nk)||0) + 1);
   }
 
@@ -6464,6 +6737,7 @@ function classifyCompaniesImportRows(rows){
     const nk = nameKeyOf(r);
     const batchCollision = (r.nifDigits && nifCount.get(r.nifDigits) > 1)
       || (r.bvdId && bvdCount.get(r.bvdId) > 1)
+      || (r.foreignTaxId && ftidCount.get(foreignTaxIdKey(r.foreignTaxId)) > 1)
       || (nk && nameCount.get(nk) > 1);
     const existingNameHit = nk && existingByName.get(nk);
     (batchCollision || existingNameHit ? dup : creatable).push({ r, existingNameHit, batchCollision });
@@ -6473,31 +6747,46 @@ function classifyCompaniesImportRows(rows){
 
 function renderCompaniesImportPreview(){
   const createMissing = document.getElementById('companiesCreateMissing').checked;
+  const onlyIssues = document.getElementById('companiesImportOnlyIssues').checked;
   const { matched, creatable, dup, noId } = classifyCompaniesImportRows(companiesImportRows);
   const creatableSet = new Map(creatable.map(x => [x.r, x]));
   const dupSet = new Map(dup.map(x => [x.r, x]));
 
+  let shownRows = 0;
   const body = companiesImportRows.map(r => {
     const m = matched.find(x => x.r === r);
     const fieldCount = Object.keys(r.payload).length;
-    let cls = '', status;
+    let cls = '', status, notable;
     if (m) {
-      status = r.warnings.length ? `<span style="color:#B45309">⚠ ${esc(r.warnings.join('; '))}</span>` : '<span class="row-ok">✓ Matched</span>';
+      // A matched row is only "notable" when its own parse warnings surface
+      // here -- a clean match is exactly the boring, working case this
+      // filter exists to hide.
+      notable = r.warnings.length > 0;
+      status = notable ? `<span style="color:#B45309">⚠ ${esc(r.warnings.join('; '))}</span>` : '<span class="row-ok">✓ Matched</span>';
     } else if (!createMissing) {
+      // With the checkbox off there's no "new" bucket to distinguish -- every
+      // unmatched row is just a plain, expected skip, so none of them count
+      // as notable here.
+      notable = false;
       cls = 'row-bad';
       status = '<span style="color:var(--text-light)">⊘ Not found in CRM — skipped</span>';
     } else if (creatableSet.has(r)) {
+      notable = true;
       status = '<span class="badge badge-green">+ Will be created</span>';
     } else if (dupSet.has(r)) {
+      notable = true;
       cls = 'row-warn';
       const d = dupSet.get(r);
       const why = d.existingNameHit ? `looks like "${esc(d.existingNameHit.name)}" already in the CRM` : 'NIF/BvD ID or name collides with another row in this file';
       status = `<span class="badge badge-warn">⚠ Possible duplicate — ${why}</span>`;
     } else {
+      notable = true;
       cls = 'row-bad';
       status = '<span style="color:var(--text-light)">⊘ No NIF/BvD ID — use ＋ New Company instead</span>';
     }
-    return `<tr class="${cls}"><td>${esc(r.name)}</td><td>${esc(r.nifDigits || r.bvdId || '—')}</td><td>${fieldCount}</td><td>${status}</td></tr>`;
+    if (onlyIssues && !notable) return '';
+    shownRows++;
+    return `<tr class="${cls}"><td>${esc(r.name)}</td><td>${esc(r.nifDigits || r.bvdId || r.foreignTaxId || '—')}</td><td>${fieldCount}</td><td>${status}</td></tr>`;
   }).join('');
   document.getElementById('companiesImportBody').innerHTML = body;
 
@@ -6510,12 +6799,55 @@ function renderCompaniesImportPreview(){
     const skipped = creatable.length + dup.length + noId.length;
     if (skipped) summary += ` &nbsp; <span style="color:var(--text-light)">⊘ ${skipped} not found in CRM — will be skipped</span>`;
   }
+  if (onlyIssues && shownRows < companiesImportRows.length) {
+    summary += ` &nbsp; <span style="color:var(--text-light)">(showing ${shownRows} of ${companiesImportRows.length} rows)</span>`;
+  }
   document.getElementById('companiesImportSummary').innerHTML = summary;
+  renderCompaniesDupPanel(createMissing ? dup : []);
 
   showEl('companiesImportOpts', true);
   showEl('companiesImportPreview', true);
   document.getElementById('companiesImportConfirmBtn').disabled = matched.length === 0 && !(createMissing && creatable.length > 0);
 }
+
+// The "Possible duplicates" review panel: every dup row is a name-based hit
+// against an existing CRM company (or a collision with another row in this
+// same file) that classifyCompaniesImportRows() deliberately excludes from
+// auto-creation. Never auto-resolved -- this just makes reviewing them by
+// hand fast: click through to the existing company, or export the list.
+function renderCompaniesDupPanel(dup){
+  companiesImportLastDup = dup;
+  const wrap = document.getElementById('companiesImportDupWrap');
+  if (!dup.length){ wrap.style.display = 'none'; wrap.open = false; return; }
+  wrap.style.display = '';
+  document.getElementById('companiesImportDupCount').textContent = `(${dup.length})`;
+  document.getElementById('companiesImportDupBody').innerHTML = dup.map(d => {
+    const why = d.existingNameHit ? 'Name matches an existing company' : 'NIF/BvD ID or name collides with another row in this file';
+    const existingCell = d.existingNameHit
+      ? `<span class="person-link" data-gotoco="${esc(d.existingNameHit.id)}">${esc(d.existingNameHit.name)}</span>`
+      : '<span style="color:var(--text-light)">— (only within this file)</span>';
+    return `<tr><td>${esc(d.r.name)}</td><td>${esc(d.r.nifDigits || d.r.bvdId || d.r.foreignTaxId || '—')}</td><td>${existingCell}</td><td>${esc(why)}</td></tr>`;
+  }).join('');
+}
+document.getElementById('companiesImportDupBody').addEventListener('click', e => {
+  const t = e.target.closest('[data-gotoco]');
+  if (!t) return;
+  showEl('companiesImportModal', false);
+  openDetail(t.dataset.gotoco);
+});
+function downloadCompaniesDupCsv(){
+  const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
+  const rows = [['Import row', 'NIF / BvD ID', 'Existing CRM company', 'Existing company ID', 'Reason'].map(esc2).join(',')]
+    .concat(companiesImportLastDup.map(d => [
+      d.r.name, d.r.nifDigits || d.r.bvdId || d.r.foreignTaxId || '',
+      d.existingNameHit ? d.existingNameHit.name : '', d.existingNameHit ? d.existingNameHit.id : '',
+      d.existingNameHit ? 'Name matches an existing company' : 'NIF/BvD ID or name collides with another row in this file',
+    ].map(esc2).join(',')));
+  const blob = new Blob(['﻿'+rows.join('\r\n')], { type:'text/csv;charset=utf-8;' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download:`companies-import-possible-duplicates-${todayStr()}.csv` });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+document.getElementById('companiesImportDupCsvBtn').addEventListener('click', downloadCompaniesDupCsv);
 
 async function handleCompaniesFile(file){
   const errEl = document.getElementById('companiesImportErr'); errEl.style.display = 'none';
@@ -6536,12 +6868,14 @@ async function handleCompaniesFile(file){
     document.getElementById('companiesFileName').textContent = `${file.name} — ${shapeLabel}, ${companiesImportStats.rowsSeen} compan${companiesImportStats.rowsSeen===1?'y':'ies'}`;
     document.getElementById('companiesShapeDetected').style.display = '';
     document.getElementById('companiesShapeDetected').textContent = `Detected: ${shapeLabel} export`;
+    renderCompanyFieldReport();
     renderCompaniesImportPreview();
   } catch(e){
     console.error(e);
     document.getElementById('companiesFileName').textContent = file.name;
     errEl.textContent = e.message; errEl.style.display = 'block';
-    showEl('companiesImportPreview', false); showEl('companiesShapeDetected', false); showEl('companiesImportOpts', false);
+    showEl('companiesImportPreview', false); showEl('companiesShapeDetected', false); showEl('companiesImportOpts', false); showEl('companiesFieldMapWrap', false);
+    renderCompaniesDupPanel([]);
     document.getElementById('companiesImportConfirmBtn').disabled = true;
   }
 }
@@ -8636,7 +8970,9 @@ document.getElementById('companiesImportBtn').addEventListener('click', async ()
   document.getElementById('companiesFileInput').value = '';
   document.getElementById('companiesFileInput').disabled = true;
   document.getElementById('companiesCreateMissing').checked = false;
-  showEl('companiesShapeDetected', false); showEl('companiesImportPreview', false); showEl('companiesImportOpts', false);
+  document.getElementById('companiesImportOnlyIssues').checked = false;
+  showEl('companiesShapeDetected', false); showEl('companiesImportPreview', false); showEl('companiesImportOpts', false); showEl('companiesFieldMapWrap', false);
+  renderCompaniesDupPanel([]);
   document.getElementById('companiesImportErr').style.display = 'none';
   const cbtn = document.getElementById('companiesImportConfirmBtn'); cbtn.disabled = true; cbtn.textContent = 'Import';
   showEl('companiesImportModal', true);
@@ -8647,6 +8983,9 @@ document.getElementById('companiesImportBtn').addEventListener('click', async ()
 document.getElementById('companiesImportCancelBtn').addEventListener('click', () => showEl('companiesImportModal', false));
 document.getElementById('companiesImportConfirmBtn').addEventListener('click', confirmCompaniesImport);
 document.getElementById('companiesCreateMissing').addEventListener('change', () => {
+  if (companiesImportRows.length) renderCompaniesImportPreview();
+});
+document.getElementById('companiesImportOnlyIssues').addEventListener('change', () => {
   if (companiesImportRows.length) renderCompaniesImportPreview();
 });
 document.getElementById('companiesFileInput').addEventListener('change', e => {
@@ -8755,19 +9094,27 @@ function triggerCompanySearch(){
   document.getElementById('nifSearchStatus').textContent = '';
   if (!raw || fullyLoaded) return;
   // NIFs are clean 9-digit strings (verified against a live sample) — a run
-  // of 3-9 digits is NIF-shaped; anything else is treated as a name.
-  return /^\d{3,9}$/.test(raw) ? searchNifSupplement(raw) : searchNameSupplement(raw);
+  // of 3-9 digits is NIF-shaped. Longer digit runs (10-14) are foreign tax
+  // IDs -- a Brazilian CNPJ is 14 digits -- searched the same way against
+  // foreignTaxId instead. Anything else is treated as a name.
+  if (/^\d{3,9}$/.test(raw)) return searchNifSupplement(raw);
+  if (/^\d{10,14}$/.test(raw)) return searchForeignTaxIdSupplement(raw);
+  return searchNameSupplement(raw);
 }
 document.getElementById('nifSearchBtn').addEventListener('click', triggerCompanySearch);
 document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') triggerCompanySearch(); });
 document.getElementById('searchInput').addEventListener('input', () => { document.getElementById('nifSearchStatus').textContent = ''; });
-async function searchNifSupplement(digits){
+async function searchIdFieldSupplement(field, digits){
   const statusEl = document.getElementById('nifSearchStatus');
   statusEl.textContent = 'Checking…';
   const seq = ++companySearchSeq;
   let snap;
   try {
-    snap = await getDocs(query(collection(db,'searchCompanies'), where('nif','>=',digits), where('nif','<',digits+''), limit(50)));
+    // '\uf8ff' sorts above every normal character, so [digits, digits+'\uf8ff')
+    // is the standard Firestore "starts with" prefix-range trick, already
+    // used here -- just parameterized on `field` so it works for both
+    // nif and foreignTaxId instead of being hardcoded to nif alone.
+    snap = await getDocs(query(collection(db,'searchCompanies'), where(field,'>=',digits), where(field,'<',digits+''), limit(50)));
   } catch(e){ console.error(e); if (seq === companySearchSeq) statusEl.textContent = 'Search failed — see console'; return; }
   addReads(snap.docs.length || 1);
   if (seq !== companySearchSeq) return; // a newer search already superseded this one
@@ -8781,6 +9128,8 @@ async function searchNifSupplement(digits){
   statusEl.textContent = added ? `${added} match${added===1?'':'es'} found` : (snap.docs.length ? 'Already loaded' : 'No match found');
   if (added) renderList();
 }
+function searchNifSupplement(digits){ return searchIdFieldSupplement('nif', digits); }
+function searchForeignTaxIdSupplement(digits){ return searchIdFieldSupplement('foreignTaxId', digits); }
 // Name search — same shape as searchNifSupplement above, but reaches
 // company-name tokens/prefixes (companySearchFields()) instead of a raw
 // field range, mirroring renderPeople()'s query pattern: a namePrefixes
