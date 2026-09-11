@@ -1917,12 +1917,29 @@ function ensureFullDataset(){
 // not just whatever the from-cache 8-second fallback above accepted so the
 // app doesn't hang if genuinely offline. Matching against that fallback's
 // partial view is exactly how a real mass import matched 25/1000 rows
-// instead of the true count. Gives up after maxWaitMs (a genuinely broken
-// connection, not just a slow one) and returns false rather than hanging
-// the modal open forever -- the caller decides what to do with that.
-async function waitForServerConfirmedDataset(maxWaitMs = 45000){
+// instead of the true count.
+//
+// The live server-confirmed onSnapshot itself can genuinely take well over
+// a minute to land for a collection this size (confirmed live -- 45s alone
+// wasn't enough, purely because the true full-collection listener is slow
+// here, not because anything was actually wrong). Rather than force every
+// import to sit through that in full, also accept a cheap, independent
+// cross-check each poll: cachedTotalCount is a real server aggregate count
+// (getCountFromServer, fetched once on page load, fast), so if the
+// fallback's `companies.length` already equals it exactly, that's strong
+// evidence the fallback's local-persistence data is already complete --
+// only a documented-impossible coincidence (the right COUNT but the wrong
+// SET of real, actually-fetched documents) could make that check lie.
+// Still gives up after maxWaitMs (a genuinely broken connection) and
+// returns false rather than hanging the modal open forever -- the caller
+// decides what to do with that.
+async function waitForServerConfirmedDataset(maxWaitMs = 90000){
   const start = Date.now();
   while (!fullDatasetServerConfirmed){
+    if (cachedTotalCount != null && companies.length === cachedTotalCount){
+      fullDatasetServerConfirmed = true;
+      break;
+    }
     if (Date.now() - start > maxWaitMs) return false;
     await sleepMs(500);
   }
