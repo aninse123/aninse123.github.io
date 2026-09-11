@@ -394,7 +394,7 @@
 <div id="resumeImportBanner"></div>
 <div id="importProgressBar" class="import-progress-bar" style="display:none;">
   <div class="ipb-top">
-    <span class="ipb-title">Importing people &amp; ownership</span>
+    <span class="ipb-title" id="ipbTitle">Importing people &amp; ownership</span>
     <span class="ipb-clock"><strong id="ipbElapsed">0s</strong> elapsed &middot; <span id="ipbEta">estimating…</span></span>
     <span class="ipb-quota" id="ipbQuota" title="Rough estimate of this browser's Firestore reads/writes today — resets at midnight, not billing-exact."></span>
     <button type="button" class="ipb-stop" id="ipbStopBtn">Stop</button>
@@ -582,6 +582,7 @@
       <button class="tab" data-tab="contacts">Contacts</button>
       <button class="tab" data-tab="activities">Activities</button>
       <button class="tab" data-tab="deal">Deal</button>
+      <button class="tab" data-tab="freshness">Data Freshness</button>
     </div>
 
     <div class="tab-panel active" id="panel-overview"></div>
@@ -593,6 +594,7 @@
     <div class="tab-panel" id="panel-contacts"></div>
     <div class="tab-panel" id="panel-activities"></div>
     <div class="tab-panel" id="panel-deal"></div>
+    <div class="tab-panel" id="panel-freshness"></div>
   </div>
 
   <!-- ══════════ PERSON VIEW ══════════ -->
@@ -940,6 +942,20 @@
       <button class="btn btn--ghost btn--sm" id="exportSelectNoneBtn">Select none</button>
     </div>
     <div id="exportFieldsBody" style="max-height:420px;overflow:auto;"></div>
+    <div class="fm-group" style="margin-top:6px;">
+      <div class="fm-head"><strong>Financials (Orbis) — multi-year</strong><span class="fm-count" id="exportFinCount"></span></div>
+      <div style="font-size:0.76rem;color:var(--text-light);margin:2px 0 8px;">Off by default. Pick metrics and years — every combination becomes its own column (e.g. "EBITDA 2023").</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <div style="font-size:0.72rem;font-weight:600;color:var(--text-light);margin-bottom:4px;">Metrics</div>
+          <div id="exportFinMetrics" class="fm-fields"></div>
+        </div>
+        <div>
+          <div style="font-size:0.72rem;font-weight:600;color:var(--text-light);margin-bottom:4px;">Years</div>
+          <div id="exportFinYears" class="fm-fields"></div>
+        </div>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn--ghost" id="exportFieldsCancelBtn">Cancel</button>
       <button class="btn btn--primary" id="exportFieldsConfirmBtn">⬇ Export CSV</button>
@@ -1781,21 +1797,33 @@ const FULL_CACHE_DB = 'searchCrmCache';
 const FULL_CACHE_STORE = 'fullDataset';
 const FULL_CACHE_KEY = 'all';
 const FULL_CACHE_TTL_MS = 25 * 60 * 1000; // 25 minutes
+// Sibling store for searchPeople, same DB -- see readFullPeopleCache() below
+// for why this exists (Statistics used to re-read the whole People
+// collection, uncached, on every open).
+const FULL_PEOPLE_CACHE_STORE = 'fullPeopleDataset';
 
 function openCacheDb(){
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(FULL_CACHE_DB, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(FULL_CACHE_STORE);
+    // v2: adds FULL_PEOPLE_CACHE_STORE alongside the original store. Guarded
+    // with objectStoreNames.contains() so a returning user's existing v1 db
+    // (and its still-fresh companies cache) upgrades in place rather than
+    // being recreated from scratch.
+    const req = indexedDB.open(FULL_CACHE_DB, 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(FULL_CACHE_STORE)) db.createObjectStore(FULL_CACHE_STORE);
+      if (!db.objectStoreNames.contains(FULL_PEOPLE_CACHE_STORE)) db.createObjectStore(FULL_PEOPLE_CACHE_STORE);
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
-async function readFullDatasetCache(){
+async function readCacheEntry(storeName){
   try {
     const db = await openCacheDb();
     const entry = await new Promise((resolve, reject) => {
-      const tx = db.transaction(FULL_CACHE_STORE, 'readonly');
-      const req = tx.objectStore(FULL_CACHE_STORE).get(FULL_CACHE_KEY);
+      const tx = db.transaction(storeName, 'readonly');
+      const req = tx.objectStore(storeName).get(FULL_CACHE_KEY);
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
     });
@@ -1803,20 +1831,33 @@ async function readFullDatasetCache(){
     return entry;
   } catch(e) { return null; } // any failure (quota, private mode, corrupt db) just falls back to a live fetch
 }
+function writeCacheEntry(storeName, docs){
+  openCacheDb().then(db => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).put({ docs, cachedAt: Date.now() }, FULL_CACHE_KEY);
+  }).catch(() => {}); // best-effort — a failed cache write just means no speedup next time
+}
+async function readFullDatasetCache(){ return readCacheEntry(FULL_CACHE_STORE); }
 // Timestamp fields are stored as plain epoch-ms numbers, not Firestore
 // Timestamp instances — tsToDate() (line 928) already handles both via
 // new Date(ts), so nothing downstream needs to change to read cached data.
 function writeFullDatasetCache(docs){
-  const plain = docs.map(d => ({
+  writeCacheEntry(FULL_CACHE_STORE, docs.map(d => ({
     ...d,
     updatedAt: tsToDate(d.updatedAt)?.getTime() ?? null,
     createdAt: tsToDate(d.createdAt)?.getTime() ?? null,
     lastTouchAt: tsToDate(d.lastTouchAt)?.getTime() ?? null,
-  }));
-  openCacheDb().then(db => {
-    const tx = db.transaction(FULL_CACHE_STORE, 'readwrite');
-    tx.objectStore(FULL_CACHE_STORE).put({ docs: plain, cachedAt: Date.now() }, FULL_CACHE_KEY);
-  }).catch(() => {}); // best-effort — a failed cache write just means no speedup next time
+  })));
+}
+// searchPeople docs carry only one Firestore Timestamp field (updatedAt --
+// confirmed against the People-import write payload, search.html ~5545);
+// birthDate etc. are already plain ISO date strings, not Timestamps.
+async function readFullPeopleCache(){ return readCacheEntry(FULL_PEOPLE_CACHE_STORE); }
+function writeFullPeopleCache(docs){
+  writeCacheEntry(FULL_PEOPLE_CACHE_STORE, docs.map(d => ({
+    ...d,
+    updatedAt: tsToDate(d.updatedAt)?.getTime() ?? null,
+  })));
 }
 
 let fullDatasetUnsub = null;
@@ -2153,6 +2194,8 @@ const PEOPLE_STAT_GROUPS = [
     { key: 'nif',                label: 'NIF',                    test: p => !!p.nif },
     { key: 'nationalId',         label: 'National ID',            test: p => !!p.nationalId },
     { key: 'matchedCompanyId',   label: 'Matched to a CRM company', test: p => !!p.matchedCompanyId },
+    { key: 'entityType',         label: 'Entity type (person/company)', test: p => !!p.entityType },
+    { key: 'source',             label: 'Source',                 test: p => !!p.source },
   ]},
   { title: 'Geography', fields: [
     { key: 'country',     label: 'Country',     test: p => !!p.country },
@@ -2176,8 +2219,9 @@ const PEOPLE_STAT_GROUPS = [
     return PERSON_CONTACT_FIELDS.map(f => ({ key: f.key, label: f.label, test: p => !!p[f.key] }));
   }},
   { title: 'Network', fields: [
-    { key: 'linkCount', label: 'Has a position', test: p => (p.linkCount || 0) > 0 },
-    { key: 'notes',     label: 'Notes',           test: p => !!p.notes },
+    { key: 'linkCount',      label: 'Has a position',        test: p => (p.linkCount || 0) > 0 },
+    { key: 'orbisRoleCount', label: 'Orbis role count',      test: p => p.orbisRoleCount != null },
+    { key: 'notes',          label: 'Notes',                 test: p => !!p.notes },
   ]},
 ];
 // Same shape/spirit as buildFieldReport() (the import panel), but against
@@ -2194,11 +2238,35 @@ function buildDocFieldReport(docs, groups){
     return { title: g.title, fields, foundCount: fields.filter(f => f.pct > 0).length };
   });
 }
+// Cell shading mirrors the fm-dot convention (empty vs ok) but as a
+// background tint, since a matrix has too many cells for a dot+label
+// treatment to stay legible -- the number itself carries the value, shading
+// just lets a thin/well-covered year jump out at a glance.
+function statMatrixCellStyle(pct){
+  if (pct === 0) return 'color:var(--text-light);';
+  const alpha = Math.min(0.55, 0.12 + pct / 200);
+  return `background:rgba(74,107,138,${alpha.toFixed(2)});font-weight:${pct >= 50 ? '600' : '400'};`;
+}
 function renderStatFieldGroups(groups){
   const dot = f => f.pct === 0
     ? '<span class="fm-dot fm-empty" title="No record has a value here yet">\u25cb</span>'
     : `<span class="fm-dot fm-ok" title="${f.n} of the total (${f.pct}%)">\u25cf</span>`;
-  return groups.map(g => `
+  return groups.map(g => {
+    if (g.grid){
+      return `
+        <div class="fm-group">
+          <div class="fm-head"><strong>${esc(g.title)}</strong><span class="fm-count">${g.metricsPct}% of metric\u00d7year cells</span></div>
+          <div style="font-size:0.72rem;color:var(--text-light);margin:2px 0 8px;">${g.metricsCount} metrics \u00d7 ${g.yearsCount} years, curated to what the Financials (Orbis) tab shows \u2014 the full raw Orbis export carries more line-item metrics than this.</div>
+          <div class="table-wrap" style="overflow-x:auto;">
+            <table class="fin-table" style="font-size:0.74rem;">
+              <thead><tr><th style="text-align:left;">Metric</th>${g.grid[0]?.years.map(y => `<th>${esc(y.year)}</th>`).join('') || ''}</tr></thead>
+              <tbody>${g.grid.map(row => `
+                <tr><td style="text-align:left;white-space:nowrap;">${esc(row.label)}</td>${row.years.map(y => `<td style="text-align:center;${statMatrixCellStyle(y.pct)}" title="${y.pct}% of companies have ${esc(row.label)} for ${esc(y.year)}">${y.pct}%</td>`).join('')}</tr>`).join('')}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+    return `
     <div class="fm-group">
       <div class="fm-head"><strong>${esc(g.title)}</strong><span class="fm-count">${g.foundCount}/${g.fields.length}</span></div>
       <div class="fm-fields">${g.fields.map(f => `
@@ -2206,7 +2274,8 @@ function renderStatFieldGroups(groups){
           ${dot(f)}<span class="fm-label">${esc(f.label)}</span>
           <span class="fm-pct">${f.pct}%</span>
         </div>`).join('')}</div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 // searchPersonLinks stays a cheap count-only read (same pattern as
 // fetchTotalCount()) -- nothing in PEOPLE_STAT_GROUPS needs link documents,
@@ -2220,16 +2289,21 @@ async function fetchPeopleOwnershipCounts(){
     return { links };
   } catch(e){ console.error(e); return { links: null }; }
 }
-// searchPeople is loaded in full (not just counted) so PEOPLE_STAT_GROUPS can
-// compute per-field completion the same way COMPANY_STAT_GROUPS does for
-// companies. At the current scale (people in the low hundreds, pending the
-// full Phase 5 population import) this is a small, one-time cost, same
-// spirit as ensureFullDataset() for companies -- but once Phase 5 runs
-// this becomes ~26,700 reads per Statistics open, the same order of cost as
-// loading every company. If that turns out to matter in practice, this is
-// the spot to add the same cache/progress treatment ensureFullDataset() and
-// the Load-all button already have for companies -- not built pre-emptively
-// for a collection that is currently a few hundred documents.
+// searchPeople is loaded in full so Statistics can compute per-field
+// completion the same way it does for companies. This used to re-read the
+// WHOLE collection every time Statistics was opened -- fine when People was
+// a few hundred docs, but ~26,700 reads per open once the full population
+// import ran (predicted in this comment before that happened; it has now).
+// Cached the same way ensureFullDataset() caches companies (same IndexedDB
+// db, same 25-minute TTL, see readFullPeopleCache/writeFullPeopleCache
+// above) -- opening Statistics twice in a row now costs the read once.
+async function fetchAllPeopleCached(){
+  const cached = await readFullPeopleCache();
+  if (cached) return cached.docs;
+  const docs = await fetchAllPeople();
+  writeFullPeopleCache(docs);
+  return docs;
+}
 async function fetchAllPeople(){
   try {
     const snap = await getDocs(collection(db, 'searchPeople'));
@@ -2255,9 +2329,17 @@ async function openStatistics(){
   document.getElementById('statisticsBody').innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);">Loading\u2026</div>';
   renderStatsSubsetBanner();
   const stats = computeStats(companies);
-  const [peopleOwnership, peopleDocs] = await Promise.all([fetchPeopleOwnershipCounts(), fetchAllPeople()]);
+  const [peopleOwnership, peopleDocs] = await Promise.all([fetchPeopleOwnershipCounts(), fetchAllPeopleCached()]);
   if (document.getElementById('statisticsModal').style.display === 'none') return; // closed while loading
+  // Two reports for companies, not one: COMPANY_STAT_GROUPS covers
+  // pipeline/CRM-native fields (fitScore, owner, ownership counts, ...) that
+  // never came from an Orbis import and have no equivalent in
+  // COMPANY_FIELD_GROUPS; buildLiveFieldReport(COMPANY_FIELD_GROUPS) covers
+  // the ~70-field Orbis import surface (legal, advisors, freshness, the
+  // financials matrix) that COMPANY_STAT_GROUPS never tracked. Neither
+  // subsumes the other.
   const companyGroups = buildDocFieldReport(companies, COMPANY_STAT_GROUPS);
+  const orbisGroups = buildLiveFieldReport(companies, COMPANY_FIELD_GROUPS);
   const peopleGroups = buildDocFieldReport(peopleDocs, PEOPLE_STAT_GROUPS);
   document.getElementById('statisticsBody').innerHTML = `
     <div class="modal-section-title">Pipeline</div>
@@ -2281,6 +2363,8 @@ async function openStatistics(){
     </div>
     <div class="modal-section-title">Company field completion</div>
     <div style="margin-bottom:18px;">${renderStatFieldGroups(companyGroups)}</div>
+    <div class="modal-section-title">Orbis import field completion</div>
+    <div style="margin-bottom:18px;">${renderStatFieldGroups(orbisGroups)}</div>
     <div class="modal-section-title">People field completion</div>
     <div style="font-size:0.82rem;color:var(--text-light);margin-bottom:10px;">
       ${peopleDocs.length.toLocaleString('en')} people/entities \u00b7 ${(peopleOwnership.links ?? '\u2014').toLocaleString?.('en') ?? peopleOwnership.links} links
@@ -2845,7 +2929,7 @@ function renderDetail(){
   menu.querySelectorAll('.stage-opt').forEach(o => o.addEventListener('click', () => changeStage(o.dataset.stage)));
 
   renderOverview(c); renderFinancials(c); renderOwnership(c); renderContacts(c); renderActivityLog(); renderDeal(c);
-  renderLegalCompliance(c); renderAdvisors(c); renderOrbisFinancials(c);
+  renderLegalCompliance(c); renderAdvisors(c); renderDataFreshness(c); renderOrbisFinancials(c);
 }
 
 function renderOverview(c){
@@ -3092,26 +3176,16 @@ function renderLegalCompliance(c){
     </div>`;
 }
 
-// Read-only tab for the Advisors/Updates import shape: auditor/banker
-// relationships (advisors[] is index-aligned across all its fields --
-// confirmed against real data, unlike the Legal shape's event arrays) plus
-// the 12 standalone "Last update" freshness dates, which are company-level
-// fields (not per-advisor) homed here because this is the shape that emits
-// them.
+// Read-only tab for the Advisors/Updates import shape's actual advisor
+// data: auditor/banker relationships (advisors[] is index-aligned across
+// all its fields -- confirmed against real data, unlike the Legal shape's
+// event arrays). The shape's other 12 fields (the "Last update" freshness
+// dates) are company-level, not about advisors at all despite arriving in
+// the same export -- they live in their own "Data Freshness" tab instead,
+// see renderDataFreshness() below.
 function renderAdvisors(c){
   const advisors = c.advisors || [];
-  const freshnessFields = [
-    ['lastUpdateCompanyName','Company name'], ['lastUpdateAddress','Address'],
-    ['lastUpdateTelephone','Telephone'], ['lastUpdateDomain','Domain'],
-    ['lastUpdateWebsite','Website'], ['lastUpdateEmail','Email'],
-    ['lastUpdateStatus','Status'], ['lastUpdateSizeClassification','Size classification'],
-    ['lastUpdateIndustryClassifications','Industry classifications'],
-    ['additionOfLastAnnualAccounts','Annual accounts added'],
-    ['lastUpdateAnnualAccounts','Annual accounts'],
-    ['lastUpdateBvdIndependenceIndicator','BvD independence indicator'],
-  ];
-  const hasFreshness = freshnessFields.some(([k]) => c[k]);
-  const hasAny = c.numberOfAdvisors != null || advisors.length || hasFreshness;
+  const hasAny = c.numberOfAdvisors != null || advisors.length;
   if (!hasAny){
     document.getElementById('panel-advisors').innerHTML = `<div class="card"><div class="sec-title">Advisors</div><div style="font-size:0.85rem;color:var(--text-light);">Not yet imported — run the Advisors/Updates import for this company to populate this tab.</div></div>`;
     return;
@@ -3124,7 +3198,6 @@ function renderAdvisors(c){
       <div class="contact-detail">Appointed ${a.appointmentDate?fmtDate(a.appointmentDate):'—'}${a.resignationDate?' · Resigned '+fmtDate(a.resignationDate):''}</div>
       <div class="contact-detail">Last received ${a.lastReceivedDate?fmtDate(a.lastReceivedDate):'—'}</div>
     </div>`).join('') : '<div style="font-size:0.85rem;color:var(--text-light);">No advisors on record.</div>';
-  const freshnessRows = freshnessFields.map(([k,label]) => `<div class="info-row"><span class="k">${esc(label)}</span><span class="v">${c[k]?fmtDate(c[k]):'—'}</span></div>`).join('');
 
   document.getElementById('panel-advisors').innerHTML = `
     <div class="card">
@@ -3138,10 +3211,34 @@ function renderAdvisors(c){
     <div class="card">
       <div class="sec-title">Advisors</div>
       ${advisorCards}
-    </div>
+    </div>`;
+}
+
+// Read-only tab for the Advisors/Updates shape's 12 standalone "Last
+// update" fields -- when Orbis last saw a change to each field, company-
+// level and unrelated to the advisors/auditors/bankers renderAdvisors()
+// above shows, despite both arriving in the same export.
+function renderDataFreshness(c){
+  const freshnessFields = [
+    ['lastUpdateCompanyName','Company name'], ['lastUpdateAddress','Address'],
+    ['lastUpdateTelephone','Telephone'], ['lastUpdateDomain','Domain'],
+    ['lastUpdateWebsite','Website'], ['lastUpdateEmail','Email'],
+    ['lastUpdateStatus','Status'], ['lastUpdateSizeClassification','Size classification'],
+    ['lastUpdateIndustryClassifications','Industry classifications'],
+    ['additionOfLastAnnualAccounts','Annual accounts added'],
+    ['lastUpdateAnnualAccounts','Annual accounts'],
+    ['lastUpdateBvdIndependenceIndicator','BvD independence indicator'],
+  ];
+  const hasFreshness = freshnessFields.some(([k]) => c[k]);
+  if (!hasFreshness){
+    document.getElementById('panel-freshness').innerHTML = `<div class="card"><div class="sec-title">Data Freshness</div><div style="font-size:0.85rem;color:var(--text-light);">Not yet imported — run the Advisors/Updates import for this company to populate this tab.</div></div>`;
+    return;
+  }
+  const freshnessRows = freshnessFields.map(([k,label]) => `<div class="info-row"><span class="k">${esc(label)}</span><span class="v">${c[k]?fmtDate(c[k]):'—'}</span></div>`).join('');
+  document.getElementById('panel-freshness').innerHTML = `
     <div class="card">
       <div class="sec-title">Data Freshness</div>
-      <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px;">When Orbis last saw a change to each field — not about the advisors themselves.</div>
+      <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:10px;">When Orbis last saw a change to each field.</div>
       ${freshnessRows}
     </div>`;
 }
@@ -5273,11 +5370,12 @@ const ImportProgress = (() => {
     notify(kind === 'complete' ? 'Import finished' : kind === 'stopped' ? 'Import stopped' : 'Import failed', summaryText);
   }
   return {
-    start(stageDefs){
+    start(stageDefs, title){
       stages = stageDefs.map(d => ({ ...d, total: d.total ?? null, done: 0, startedAt: null, finishedAt: null }));
       curId = null; startedAt = Date.now();
       totalEtaSnapshotMs = null; totalEtaSnapshotAt = null;
       cancelToken = { cancelled: false };
+      el('ipbTitle').textContent = title || 'Importing people & ownership';
       el('importProgressBar').style.display = '';
       el('ipbSummary').style.display = 'none';
       el('ipbCurrent').style.display = '';
@@ -6171,6 +6269,88 @@ function buildCompanyFieldReport(dataRows, headers, idx, shapes){
   });
 }
 
+// COMPANY_FIELD_GROUPS' field keys are the import-time alias/column-lookup
+// key space (built for buildCompanyFieldReport() above, which tests parsed
+// import ROWS via idx[key]) -- verified key-by-key against every parser's
+// `payload.KEY = ...` assignment and every renderOverview/renderLegalCompliance/
+// renderAdvisors/renderDataFreshness read of a LIVE company doc. Most keys
+// are written through unchanged, but a handful diverge because they predate
+// the Orbis import (matching the pre-existing manual-entry schema: name,
+// nif, hqAddress, companyPhone, companyEmail) or get renamed/pluralized on
+// the way into the stored document (orbisReleaseDate, legalEventDates,
+// regionInCountry/regionType collapsing into distrito/distritoType). Used by
+// buildLiveFieldReport() below (Statistics, against real Firestore docs) --
+// buildCompanyFieldReport() above needs no equivalent since it already reads
+// straight off idx[], the alias key space itself.
+const COMPANY_LIVE_FIELD_KEYMAP = {
+  companyName: 'name',
+  vatNumber: ['nif', 'foreignTaxId'],
+  address: 'hqAddress',
+  phone: 'companyPhone',
+  email: 'companyEmail',
+  regionInCountry: 'distrito',
+  regionType: 'distritoType',
+  releaseDate: 'orbisReleaseDate',
+  legalEventDate: 'legalEventDates',
+  legalEventDescription: 'legalEventDescriptions',
+  legalEventSource: 'legalEventSources',
+  legalEventType: 'legalEventTypes',
+};
+// The Advisors group's per-advisor fields (everything except the 3
+// numberOfXxxAdvisors counts, which ARE top-level) live nested inside each
+// company's advisors[] array (renderAdvisors()), not as top-level company
+// fields -- completeness for these means "does at least one advisor entry
+// carry this field", not "does the company doc carry this field".
+const COMPANY_ADVISOR_NESTED_KEYMAP = {
+  advFullName: 'name', advUci: 'uci', advType: 'type', advRole: 'role',
+  advIndividualOrCompany: 'individualOrCompany', advAppointmentDate: 'appointmentDate',
+  advResignationDate: 'resignationDate', advCurrentOrPrevious: 'currentOrPrevious',
+  advLastReceivedDate: 'lastReceivedDate', advNoOfCosCurrentRole: 'noOfCosCurrentRole',
+};
+function liveFieldFilled(d, key){
+  const nested = COMPANY_ADVISOR_NESTED_KEYMAP[key];
+  if (nested) return (d.advisors || []).some(a => a[nested] != null && a[nested] !== '');
+  const mapped = COMPANY_LIVE_FIELD_KEYMAP[key] ?? key;
+  return (Array.isArray(mapped) ? mapped : [mapped]).some(lk => {
+    const v = d[lk];
+    return v != null && v !== '' && !(Array.isArray(v) && v.length === 0);
+  });
+}
+// Same "is it actually populated" question as buildDocFieldReport() (the
+// original, small curated stat groups), but against COMPANY_FIELD_GROUPS'
+// much larger Orbis-derived field set instead -- reusing that taxonomy (with
+// COMPANY_LIVE_FIELD_KEYMAP correcting for live-doc key drift) rather than
+// hand-maintaining a second ~70-field list that would only ever drift from
+// the import-time one. The Financials group gets its own branch: a real
+// metric x year completeness grid (mirroring buildCompanyFieldReport's grid
+// above, scoped to ORBIS_FIN_DISPLAY_METRICS -- the 14 curated EUR/count
+// metrics the Financials (Orbis) detail tab already shows -- rather than the
+// full raw 66, most of which are balance-sheet line items nobody scans in a
+// completeness view) instead of one flat percentage per field.
+function buildLiveFieldReport(docs, groups){
+  const total = docs.length;
+  return groups.map(g => {
+    if (g.metricsGroup){
+      let filledCells = 0, totalCells = 0;
+      const grid = ORBIS_FIN_DISPLAY_METRICS.map(([key, label]) => {
+        const years = FINANCIALS_YEARS.map(year => {
+          const filled = docs.filter(d => d.orbisFinancials?.[year]?.[key] != null).length;
+          totalCells += total; filledCells += filled;
+          return { year, pct: total ? Math.round(100 * filled / total) : 0 };
+        });
+        return { key, label, years };
+      });
+      const pct = totalCells ? Math.round(100 * filledCells / totalCells) : 0;
+      return { title: g.title, fields: [], metricsPct: pct, metricsCount: ORBIS_FIN_DISPLAY_METRICS.length, yearsCount: FINANCIALS_YEARS.length, grid };
+    }
+    const fields = g.fields.map(key => {
+      const n = total ? docs.filter(d => liveFieldFilled(d, key)).length : 0;
+      return { key, label: COMPANY_FIELD_LABELS[key] || key, n, pct: total ? Math.round(100 * n / total) : 0 };
+    });
+    return { title: g.title, fields, foundCount: fields.filter(f => f.pct > 0).length };
+  });
+}
+
 function renderCompanyFieldReport(){
   const groups = companiesImportStats?.fieldReport;
   const el = document.getElementById('companiesFieldMap');
@@ -6781,6 +6961,12 @@ function parseCompaniesRows(rows){
 // sides the same way onlyDigits(c.nif) already does for NIF matching, so a
 // formatting difference (dots/dashes) never blocks a real match.
 const foreignTaxIdKey = v => onlyDigits(v) || v || '';
+// bvdId is never digit-only (it's "PT" + digits), so it can't reuse
+// onlyDigits -- but it's still just an ID, and a stray case or whitespace
+// difference between what's stored and what a fresh Orbis export carries
+// (or a manually-typed value in the CRM) must not silently demote a real
+// match to a name-based "possible duplicate".
+const bvdIdKey = v => (v || '').trim().toUpperCase();
 
 // Used by confirmCompaniesImport()'s updating stage to send only the fields
 // that actually changed, instead of a matched row's entire parsed payload
@@ -6804,14 +6990,14 @@ function fieldsEqual(a, b){
 
 function classifyCompaniesImportRows(rows){
   const existingByNif  = new Map(companies.filter(c => onlyDigits(c.nif)).map(c => [onlyDigits(c.nif), c]));
-  const existingByBvd  = new Map(companies.filter(c => c.bvdId).map(c => [c.bvdId, c]));
+  const existingByBvd  = new Map(companies.filter(c => c.bvdId).map(c => [bvdIdKey(c.bvdId), c]));
   const existingByFtid = new Map(companies.filter(c => c.foreignTaxId).map(c => [foreignTaxIdKey(c.foreignTaxId), c]));
   const existingByName = new Map(companies.filter(c => c.name).map(c => [normName(c.name), c]));
 
   const matched = [], unmatched = [];
   for (const r of rows){
     const match = (r.nifDigits && existingByNif.get(r.nifDigits))
-      || (r.bvdId && existingByBvd.get(r.bvdId))
+      || (r.bvdId && existingByBvd.get(bvdIdKey(r.bvdId)))
       || (r.foreignTaxId && existingByFtid.get(foreignTaxIdKey(r.foreignTaxId)))
       || null;
     (match ? matched.push({ r, match }) : unmatched.push(r));
@@ -6827,7 +7013,7 @@ function classifyCompaniesImportRows(rows){
   const nameKeyOf = r => normName(r.payload.name);
   for (const r of candidates){
     if (r.nifDigits) nifCount.set(r.nifDigits, (nifCount.get(r.nifDigits)||0) + 1);
-    if (r.bvdId)     bvdCount.set(r.bvdId, (bvdCount.get(r.bvdId)||0) + 1);
+    if (r.bvdId)     { const k = bvdIdKey(r.bvdId); bvdCount.set(k, (bvdCount.get(k)||0) + 1); }
     if (r.foreignTaxId){ const k = foreignTaxIdKey(r.foreignTaxId); ftidCount.set(k, (ftidCount.get(k)||0) + 1); }
     const nk = nameKeyOf(r); if (nk) nameCount.set(nk, (nameCount.get(nk)||0) + 1);
   }
@@ -6836,7 +7022,7 @@ function classifyCompaniesImportRows(rows){
   for (const r of candidates){
     const nk = nameKeyOf(r);
     const batchCollision = (r.nifDigits && nifCount.get(r.nifDigits) > 1)
-      || (r.bvdId && bvdCount.get(r.bvdId) > 1)
+      || (r.bvdId && bvdCount.get(bvdIdKey(r.bvdId)) > 1)
       || (r.foreignTaxId && ftidCount.get(foreignTaxIdKey(r.foreignTaxId)) > 1)
       || (nk && nameCount.get(nk) > 1);
     const existingNameHit = nk && existingByName.get(nk);
@@ -6991,7 +7177,17 @@ async function confirmCompaniesImport(){
   const stageDefs = [{ id:'matching', label:'Matching to CRM companies' }];
   if (createMissing) stageDefs.push({ id:'creating', label:'Creating new companies' });
   stageDefs.push({ id:'updating', label:'Updating companies' });
-  const cancelToken = ImportProgress.start(stageDefs);
+  const cancelToken = ImportProgress.start(stageDefs, 'Importing companies');
+  // Close the picker/preview dialog now, not at the end: from here on its
+  // content (file input, preview table, checkboxes) is frozen and
+  // irrelevant, while the sticky top progress bar is the one live surface
+  // that actually tracks the run -- leaving both on screen at once (one
+  // centered, one pinned to the top) read as two stacked, redundant
+  // pop-ups for a single import. Every exit path below (success, a
+  // mid-stage Stop, or a caught error) now finds the modal already closed;
+  // errors still surface via ImportProgress.fail()'s summary line in the
+  // progress bar itself, so nothing is lost by closing this early.
+  showEl('companiesImportModal', false);
   try {
     // A mass import writes hundreds-to-thousands of documents into
     // searchCompanies. If the full-dataset live listener (ensureFullDataset's
@@ -7096,6 +7292,21 @@ async function confirmCompaniesImport(){
       // new name until the next full recompute). Free: same one write per
       // company, just a fuller payload.
       const merged = computeFields({ ...match, ...r.payload, ...companySearchFields(r.payload.name || match.name) });
+      // Same rule as everywhere else in this file that sets sector from a
+      // NACE/CAE code (the creating stage above, backfillSectors(),
+      // saveCompany()'s manual "＋ New Company" autofill): only fill it in
+      // when the company doesn't have one yet. sector is a user-editable
+      // field (Edit form), so re-deriving it unconditionally on every mass
+      // update would silently overwrite a manual correction across
+      // potentially hundreds of companies at once -- this only reaches
+      // companies still missing a sector, exactly like the backfill it
+      // preempts (backfillSectors() would otherwise do the same derivation
+      // for these rows, unannounced, on the next full-dataset load).
+      let derivedSector = null;
+      if (!match.sector && (r.payload.naceCode || r.payload.caeCode)) {
+        const d = naceDerive(r.payload.naceCode || r.payload.caeCode);
+        if (d.sector) derivedSector = d;
+      }
       // Only send fields that actually differ from what's already stored --
       // for a real mass update most rows change a handful of fields (a
       // refreshed financial year, a status update, ...) while dozens of
@@ -7104,6 +7315,7 @@ async function confirmCompaniesImport(){
       // per byte), this only cuts how much has to go over the wire.
       const candidate = {
         ...r.payload,
+        ...(derivedSector ? { sector: derivedSector.sector, ...(derivedSector.subSector ? { subSector: derivedSector.subSector } : {}) } : {}),
         nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes,
         computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
         computedEBITDAMargin: merged.computedEBITDAMargin,
@@ -7122,24 +7334,41 @@ async function confirmCompaniesImport(){
       // missing doc (recreates it) instead of aborting the run partway
       // through on a real mass update.
       batch.set(doc(db,'searchCompanies', match.id), payload, { merge: true });
-      Object.assign(match, merged);
+      // merged doesn't carry derivedSector (computeFields never touches
+      // sector), so assigning merged alone would immediately revert the
+      // sector this write just set -- keep the in-memory row consistent
+      // with what was actually written, same as every other field here.
+      Object.assign(match, merged, derivedSector ? { sector: derivedSector.sector, ...(derivedSector.subSector ? { subSector: derivedSector.subSector } : {}) } : {});
       return true;
     }, { onProgress: done => ImportProgress.tick('updating', done), cancelToken });
     ImportProgress.finishStage('updating', `${written.toLocaleString('de-DE')} companies updated`);
     if (cancelToken.cancelled){ ImportProgress.stopped('Stopped during "Updating companies".'); return; }
 
+    // Buckets from classifyCompaniesImportRows (matched / creatable / dup /
+    // noId) are disjoint and always sum to companiesImportRows.length -- each
+    // row must appear in exactly one bit below. Previously `notFound` was
+    // `rows - matched (- created)`, which is everything NOT matched or
+    // created -- that silently included every `dup` row too, so a row
+    // reported as a "possible duplicate" was ALSO counted as "not found",
+    // overstating both the not-found and (via double-reporting the same
+    // rows) the effective skipped count. `noId.length` is the true
+    // "nothing usable to match or create on" count; `eligibleNotCreated`
+    // separately surfaces creatable rows left uncreated because "Also
+    // create companies" was off, which previously vanished into the same
+    // over-broad `notFound` number with no way to tell the two apart.
+    const eligibleNotCreated = creatable.length - created;
     await logPortal('companies_import', {
       shapes: companiesImportStats.shapes, rowsSeen: companiesImportRows.length,
-      matched: written, notFound: companiesImportRows.length - matched.length,
-      created, possibleDuplicates: dup.length, noIdentifier: noId.length,
+      matched: written, notFound: noId.length,
+      created, possibleDuplicates: dup.length, noIdentifier: noId.length, eligibleNotCreated,
     });
-    showEl('companiesImportModal', false);
     const shapeLabelDone = companyShapesLabel(companiesImportStats.shapes);
-    const notFound = companiesImportRows.length - matched.length - created;
+    const notFound = noId.length;
     const bits = [`${written.toLocaleString('de-DE')} compan${written===1?'y':'ies'} updated from ${/^[aeiou]/i.test(shapeLabelDone) ? 'an' : 'a'} ${shapeLabelDone} export.`];
     if (created) bits.push(`${created.toLocaleString('de-DE')} new compan${created===1?'y':'ies'} created.`);
     if (dup.length) bits.push(`${dup.length.toLocaleString('de-DE')} possible duplicate${dup.length===1?'':'s'} skipped.`);
-    if (notFound) bits.push(`${notFound.toLocaleString('de-DE')} row${notFound===1?'':'s'} not found in the CRM — skipped.`);
+    if (eligibleNotCreated) bits.push(`${eligibleNotCreated.toLocaleString('de-DE')} new compan${eligibleNotCreated===1?'y':'ies'} found but not created — tick "Also create companies" to include them.`);
+    if (notFound) bits.push(`${notFound.toLocaleString('de-DE')} row${notFound===1?'':'s'} had no usable identifier — skipped.`);
     ImportProgress.complete(bits.join(' '));
     ranToCompletion = true;
     if (viewMode === 'list') renderList();
@@ -8630,11 +8859,71 @@ const COMPANY_EXPORT_FIELDS = [
     { key: 'shareholderCount', label: 'Shareholders (count)', get: c => c.peopleCounts?.sh ?? '' },
     { key: 'managerCount',     label: 'Managers (count)',     get: c => c.peopleCounts?.mgmt ?? '' },
   ]},
+  // Everything below is new this session, added to cover the Orbis fields
+  // that arrived with the Companies-import feature but were never added to
+  // the export picker. Field names here are the LIVE company-doc keys --
+  // verified against every parser's payload.KEY assignment and every
+  // renderOverview/renderLegalCompliance/renderAdvisors/renderDataFreshness
+  // call this session (see COMPANY_LIVE_FIELD_KEYMAP's comment, ~line 6146,
+  // for the full list of places this differs from the raw Orbis column-alias
+  // name -- e.g. the stored field is legalEventDates, plural, not
+  // legalEventDate; releaseDate is stored as orbisReleaseDate).
+  { title: 'Business description (Orbis)', fields: [
+    { key: 'tradeDescriptionPt',    label: 'Trade description',        get: c => c.tradeDescriptionPt },
+    { key: 'productsServices',      label: 'Products & services',      get: c => c.productsServices },
+    { key: 'fullOverview',          label: 'Full overview',            get: c => c.fullOverview },
+    { key: 'mainActivity',          label: 'Main activity',            get: c => c.mainActivity },
+    { key: 'mainForeignCountries',  label: 'Main foreign countries',   get: c => c.mainForeignCountries },
+    { key: 'mainCustomers',         label: 'Main customers',           get: c => c.mainCustomers },
+    { key: 'euid',                  label: 'EUID / other company ID',  get: c => c.euid },
+  ]},
+  { title: 'Legal status (Orbis)', fields: [
+    { key: 'standardizedLegalForm', label: 'Legal form (standardized)', get: c => c.standardizedLegalForm },
+    { key: 'status',                label: 'Status',                    get: c => c.status },
+    { key: 'statusDate',            label: 'Status date',               get: c => c.statusDate ? fmtDate(c.statusDate) : '' },
+    { key: 'localStatus',           label: 'Local status',              get: c => c.localStatus },
+    { key: 'dateOfIncorporation',   label: 'Date of incorporation',     get: c => c.dateOfIncorporation ? fmtDate(c.dateOfIncorporation) : '' },
+    { key: 'entityType',            label: 'Entity type',               get: c => c.entityType },
+    { key: 'sizeClassification',    label: 'Size classification',       get: c => c.sizeClassification },
+    { key: 'previousCompanyName',   label: 'Previous company name',     get: c => c.previousCompanyName },
+    { key: 'inWorldCompliance',     label: 'In WorldCompliance',        get: c => c.inWorldCompliance === true ? 'Yes' : c.inWorldCompliance === false ? 'No' : '' },
+  ]},
+  { title: 'Legal events (Orbis)', fields: [
+    { key: 'legalEventDates',        label: 'Legal event dates',        get: c => (c.legalEventDates||[]).join('; ') },
+    { key: 'legalEventDescriptions', label: 'Legal event descriptions', get: c => (c.legalEventDescriptions||[]).join('; ') },
+    { key: 'legalEventTypes',        label: 'Legal event type tags',    get: c => (c.legalEventTypes||[]).join('; ') },
+    { key: 'latestAnnualAccountClosingDate', label: 'Latest accounts closing date', get: c => c.latestAnnualAccountClosingDate ? fmtDate(c.latestAnnualAccountClosingDate) : '' },
+    { key: 'limitedFinancialIndicator',   label: 'Limited financial data',  get: c => c.limitedFinancialIndicator === true ? 'Yes' : c.limitedFinancialIndicator === false ? 'No' : '' },
+    { key: 'noRecentFinancialIndicator',  label: 'No recent financials',    get: c => c.noRecentFinancialIndicator === true ? 'Yes' : c.noRecentFinancialIndicator === false ? 'No' : '' },
+  ]},
+  { title: 'Advisors (Orbis)', fields: [
+    { key: 'numberOfAdvisors',        label: 'Advisors (total)',    get: c => c.numberOfAdvisors ?? '' },
+    { key: 'numberOfCurrentAdvisors', label: 'Advisors (current)',  get: c => c.numberOfCurrentAdvisors ?? '' },
+    // Per-advisor fields joined across every advisor on record -- a company
+    // routinely has more than one (auditor + banker + ...), so unlike every
+    // other field in this export a single cell can't hold "the" value.
+    { key: 'advisorNames', label: 'Advisor names',          get: c => (c.advisors||[]).map(a=>a.name).filter(Boolean).join('; ') },
+    { key: 'advisorTypes', label: 'Advisor types',          get: c => (c.advisors||[]).map(a=>a.type).filter(Boolean).join('; ') },
+    { key: 'advisorCurrent', label: 'Advisor current/previous', get: c => (c.advisors||[]).map(a=>a.currentOrPrevious).filter(Boolean).join('; ') },
+  ]},
+  { title: 'Data Freshness (Orbis)', fields: [
+    { key: 'lastUpdateCompanyName', label: 'Last update — company name', get: c => c.lastUpdateCompanyName ? fmtDate(c.lastUpdateCompanyName) : '' },
+    { key: 'lastUpdateAddress',     label: 'Last update — address',     get: c => c.lastUpdateAddress ? fmtDate(c.lastUpdateAddress) : '' },
+    { key: 'lastUpdateStatus',      label: 'Last update — status',      get: c => c.lastUpdateStatus ? fmtDate(c.lastUpdateStatus) : '' },
+    { key: 'lastUpdateAnnualAccounts', label: 'Last update — annual accounts', get: c => c.lastUpdateAnnualAccounts ? fmtDate(c.lastUpdateAnnualAccounts) : '' },
+  ]},
 ];
 // Today's export columns, in today's order — the default selection, so
 // someone who never opens the picker gets exactly what they always got.
 const COMPANY_EXPORT_DEFAULT_KEYS = ['name','sector','subSector','naceCode','caeCode','stage','priority','fitScore','owner','sourceType','concelho','postcode','nuts2','nuts3','hqAddress','primaryContact','revenueY1','ebitdaY1','ebitdaMargin','growthRecent','employees','lastTouch','attempts','reason'];
 const EXPORT_FIELD_KEYS_STORAGE_KEY = 'exportFieldKeys';
+// Separate storage keys from EXPORT_FIELD_KEYS_STORAGE_KEY, and no default
+// selection (empty array) -- same "safe default" reasoning as
+// COMPANY_EXPORT_DEFAULT_KEYS: up to 140 extra columns (14 metrics x 10
+// years) should never appear in someone's export without them explicitly
+// asking, including on their very first time opening this dialog.
+const EXPORT_FIN_YEARS_STORAGE_KEY = 'exportFinYears';
+const EXPORT_FIN_METRICS_STORAGE_KEY = 'exportFinMetrics';
 
 function openExportFields(){
   let saved = null;
@@ -8647,8 +8936,19 @@ function openExportFields(){
         ${g.fields.map(f => `<label class="check-item"><input type="checkbox" class="exportFieldChk" data-key="${esc(f.key)}" ${selected.has(f.key) ? 'checked' : ''}> ${esc(f.label)}</label>`).join('')}
       </div>
     </div>`).join('');
+
+  let savedYears = null, savedMetrics = null;
+  try { savedYears = JSON.parse(localStorage.getItem(EXPORT_FIN_YEARS_STORAGE_KEY) || 'null'); } catch(e){}
+  try { savedMetrics = JSON.parse(localStorage.getItem(EXPORT_FIN_METRICS_STORAGE_KEY) || 'null'); } catch(e){}
+  const selYears = new Set(Array.isArray(savedYears) ? savedYears : []);
+  const selMetrics = new Set(Array.isArray(savedMetrics) ? savedMetrics : []);
+  document.getElementById('exportFinMetrics').innerHTML = ORBIS_FIN_DISPLAY_METRICS.map(([key, label]) =>
+    `<label class="check-item"><input type="checkbox" class="exportFinMetricChk" data-key="${esc(key)}" ${selMetrics.has(key) ? 'checked' : ''}> ${esc(label)}</label>`).join('');
+  document.getElementById('exportFinYears').innerHTML = FINANCIALS_YEARS.map(year =>
+    `<label class="check-item"><input type="checkbox" class="exportFinYearChk" data-year="${esc(year)}" ${selYears.has(year) ? 'checked' : ''}> ${esc(year)}</label>`).join('');
+
   updateExportFieldsCount();
-  document.querySelectorAll('.exportFieldChk').forEach(chk => chk.addEventListener('change', updateExportFieldsCount));
+  document.querySelectorAll('.exportFieldChk, .exportFinMetricChk, .exportFinYearChk').forEach(chk => chk.addEventListener('change', updateExportFieldsCount));
   showEl('exportFieldsModal', true);
 }
 function updateExportFieldsCount(){
@@ -8656,14 +8956,29 @@ function updateExportFieldsCount(){
   const n = document.querySelectorAll('.exportFieldChk:checked').length;
   document.getElementById('exportFieldsCount').textContent = `${n} of ${total} selected`;
   document.getElementById('exportFieldsConfirmBtn').disabled = n === 0;
+  const nMetrics = document.querySelectorAll('.exportFinMetricChk:checked').length;
+  const nYears = document.querySelectorAll('.exportFinYearChk:checked').length;
+  document.getElementById('exportFinCount').textContent = (nMetrics && nYears) ? `${nMetrics * nYears} extra columns` : '';
 }
 
-async function exportCsv(keys){
+// finMetrics/finYears: arrays of selected ORBIS_FIN_DISPLAY_METRICS keys /
+// FINANCIALS_YEARS strings. Every combination becomes its own dynamically-
+// built field def (not a COMPANY_EXPORT_FIELDS entry -- 14x10 possible
+// combinations is too many to list as static checkboxes), appended after the
+// picked static fields so the multi-year columns land at the end of the row.
+async function exportCsv(keys, finMetrics = [], finYears = []){
   await ensureFullDataset();
   const list = sortList(getFiltered());
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
   const fieldByKey = new Map(COMPANY_EXPORT_FIELDS.flatMap(g => g.fields).map(f => [f.key, f]));
-  const fields = keys.map(k => fieldByKey.get(k)).filter(Boolean);
+  const metricByKey = new Map(ORBIS_FIN_DISPLAY_METRICS.map(([key, label]) => [key, label]));
+  const fields = [
+    ...keys.map(k => fieldByKey.get(k)).filter(Boolean),
+    ...finMetrics.flatMap(mKey => finYears.map(year => ({
+      label: `${metricByKey.get(mKey) || mKey} ${year} (Orbis)`,
+      get: c => c.orbisFinancials?.[year]?.[mKey] ?? '',
+    }))),
+  ];
   const headers = fields.map(f => f.label);
   const rows = list.map(c => fields.map(f => f.get(c)).map(esc2).join(','));
   const csv = [headers.map(esc2).join(','), ...rows].join('\r\n');
@@ -9112,14 +9427,20 @@ document.getElementById('exportFieldsCancelBtn').addEventListener('click', () =>
 document.getElementById('exportFieldsConfirmBtn').addEventListener('click', async () => {
   const keys = [...document.querySelectorAll('.exportFieldChk:checked')].map(c => c.dataset.key);
   if (!keys.length) return;
-  try { localStorage.setItem(EXPORT_FIELD_KEYS_STORAGE_KEY, JSON.stringify(keys)); } catch(e){}
+  const finMetrics = [...document.querySelectorAll('.exportFinMetricChk:checked')].map(c => c.dataset.key);
+  const finYears = [...document.querySelectorAll('.exportFinYearChk:checked')].map(c => c.dataset.year);
+  try {
+    localStorage.setItem(EXPORT_FIELD_KEYS_STORAGE_KEY, JSON.stringify(keys));
+    localStorage.setItem(EXPORT_FIN_METRICS_STORAGE_KEY, JSON.stringify(finMetrics));
+    localStorage.setItem(EXPORT_FIN_YEARS_STORAGE_KEY, JSON.stringify(finYears));
+  } catch(e){}
   // Same spinner-on-the-button treatment "Recalculate All" already uses —
   // a fire-and-forget download doesn't need a whole loading modal, but it
   // does need SOMETHING visible while ensureFullDataset() runs inside
   // exportCsv(). The modal only closes once the export is actually ready.
   const btn = document.getElementById('exportFieldsConfirmBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Preparing…';
-  try { await exportCsv(keys); }
+  try { await exportCsv(keys, finMetrics, finYears); }
   finally { btn.disabled = false; btn.innerHTML = '⬇ Export CSV'; showEl('exportFieldsModal', false); }
 });
 document.getElementById('bulkImportBtn').addEventListener('click', async () => {
