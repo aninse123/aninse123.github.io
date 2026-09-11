@@ -7153,17 +7153,34 @@ async function handleCompaniesFile(file){
   const errEl = document.getElementById('companiesImportErr'); errEl.style.display = 'none';
   document.getElementById('companiesFileName').textContent = file.name + ' — reading…';
   try {
-    let rows;
     if (/\.xlsx$/i.test(file.name)){
       const { readXlsx } = await import('./vendor/xlsx-lite.js');
       const wb = await readXlsx(file);
-      const name = wb.sheetNames.includes('Results') ? 'Results'
-        : wb.sheetNames.reduce((a,b) => (wb.sheets[b].length > (wb.sheets[a]?.length||0) ? b : a), wb.sheetNames[0]);
-      rows = wb.sheets[name];
+      // Try every sheet, not just one picked up front by a naming/size
+      // heuristic -- a real workbook hit this: its data lived on a tab
+      // named "Sheet1" instead of Orbis's usual "Results", the old code
+      // committed to whichever sheet that heuristic liked best and never
+      // looked at the others, and the file was rejected as "doesn't look
+      // like an Orbis company export" even though a valid export sat right
+      // there on the only other tab. 'Results' still goes first when
+      // present (the common case, cheapest to try, matches today's
+      // default), then every remaining sheet by descending row count --
+      // whichever one's header row actually detects a shape wins; nothing
+      // is rejected until every sheet has had a real shot.
+      const candidates = [...wb.sheetNames].sort((a, b) => {
+        if (a === 'Results') return -1;
+        if (b === 'Results') return 1;
+        return (wb.sheets[b]?.length || 0) - (wb.sheets[a]?.length || 0);
+      });
+      let lastErr = null;
+      for (const name of candidates){
+        try { companiesImportRows = parseCompaniesRows(wb.sheets[name]); lastErr = null; break; }
+        catch(e){ lastErr = e; }
+      }
+      if (lastErr) throw lastErr;
     } else {
-      rows = parseCSV(await file.text());
+      companiesImportRows = parseCompaniesRows(parseCSV(await file.text()));
     }
-    companiesImportRows = parseCompaniesRows(rows);
     const shapeLabel = companyShapesLabel(companiesImportStats.shapes);
     document.getElementById('companiesFileName').textContent = `${file.name} — ${shapeLabel}, ${companiesImportStats.rowsSeen} compan${companiesImportStats.rowsSeen===1?'y':'ies'}`;
     document.getElementById('companiesShapeDetected').style.display = '';
