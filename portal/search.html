@@ -423,7 +423,8 @@
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn--ghost" id="settingsBtn">⚙ Settings</button>
-        <button class="btn btn--ghost" id="statisticsBtn">📊 Statistics</button>
+        <button class="btn btn--ghost" id="companyStatsBtn">📊 Company Stats</button>
+        <button class="btn btn--ghost" id="peopleStatsBtn">👥 People Stats</button>
         <button class="btn btn--ghost" id="exportBtn">⬇ Export CSV</button>
         <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
         <button class="btn btn--ghost" id="peopleImportBtn">🧑‍💼 Import People</button>
@@ -835,7 +836,7 @@
 <!-- Settings modal -->
 <div class="overlay" id="statisticsModal" style="display:none;">
   <div class="modal modal--lg">
-    <div class="modal-title">Statistics</div>
+    <div class="modal-title" id="statisticsModalTitle">Statistics</div>
     <div id="statsSubsetBanner" class="subset-banner" style="display:none;"></div>
     <div id="statisticsBody"><div style="font-size:0.85rem;color:var(--text-light);">Loading…</div></div>
     <div class="modal-actions">
@@ -2321,26 +2322,29 @@ function renderStatsSubsetBanner(){
   el.innerHTML = `<span>\u26a0 Based on ${esc(loadedNote)} \u2014 totals below are partial.</span><button class="btn btn--ghost btn--sm" id="statsSubsetBannerLoadBtn">\u2b07 Load all companies</button>`;
   document.getElementById('statsSubsetBannerLoadBtn').addEventListener('click', async () => {
     await loadAllWithProgress();
-    if (document.getElementById('statisticsModal').style.display !== 'none') openStatistics();
+    if (document.getElementById('statisticsModal').style.display !== 'none') openCompanyStatistics();
   });
 }
-async function openStatistics(){
+// Split into two independent entry points (Company Stats / People Stats,
+// two toolbar buttons) rather than one combined modal: opening one no
+// longer waits on the other's fetch. This matters a lot for People now that
+// the collection has grown to six figures (135,779 at last count) -- a
+// company-only stats check used to pay that same full-collection read/cache
+// cost every time, for no reason.
+async function openCompanyStatistics(){
+  document.getElementById('statisticsModalTitle').textContent = 'Company Statistics';
   showEl('statisticsModal', true);
   document.getElementById('statisticsBody').innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);">Loading\u2026</div>';
   renderStatsSubsetBanner();
   const stats = computeStats(companies);
-  const [peopleOwnership, peopleDocs] = await Promise.all([fetchPeopleOwnershipCounts(), fetchAllPeopleCached()]);
-  if (document.getElementById('statisticsModal').style.display === 'none') return; // closed while loading
-  // Two reports for companies, not one: COMPANY_STAT_GROUPS covers
-  // pipeline/CRM-native fields (fitScore, owner, ownership counts, ...) that
-  // never came from an Orbis import and have no equivalent in
-  // COMPANY_FIELD_GROUPS; buildLiveFieldReport(COMPANY_FIELD_GROUPS) covers
-  // the ~70-field Orbis import surface (legal, advisors, freshness, the
-  // financials matrix) that COMPANY_STAT_GROUPS never tracked. Neither
-  // subsumes the other.
+  // Two reports, not one: COMPANY_STAT_GROUPS covers pipeline/CRM-native
+  // fields (fitScore, owner, ownership counts, ...) that never came from an
+  // Orbis import and have no equivalent in COMPANY_FIELD_GROUPS;
+  // buildLiveFieldReport(COMPANY_FIELD_GROUPS) covers the ~70-field Orbis
+  // import surface (legal, advisors, freshness, the financials matrix) that
+  // COMPANY_STAT_GROUPS never tracked. Neither subsumes the other.
   const companyGroups = buildDocFieldReport(companies, COMPANY_STAT_GROUPS);
   const orbisGroups = buildLiveFieldReport(companies, COMPANY_FIELD_GROUPS);
-  const peopleGroups = buildDocFieldReport(peopleDocs, PEOPLE_STAT_GROUPS);
   document.getElementById('statisticsBody').innerHTML = `
     <div class="modal-section-title">Pipeline</div>
     <div style="font-size:0.85rem;margin-bottom:14px;">
@@ -2364,11 +2368,21 @@ async function openStatistics(){
     <div class="modal-section-title">Company field completion</div>
     <div style="margin-bottom:18px;">${renderStatFieldGroups(companyGroups)}</div>
     <div class="modal-section-title">Orbis import field completion</div>
-    <div style="margin-bottom:18px;">${renderStatFieldGroups(orbisGroups)}</div>
-    <div class="modal-section-title">People field completion</div>
-    <div style="font-size:0.82rem;color:var(--text-light);margin-bottom:10px;">
+    <div>${renderStatFieldGroups(orbisGroups)}</div>`;
+}
+async function openPeopleStatistics(){
+  document.getElementById('statisticsModalTitle').textContent = 'People Statistics';
+  showEl('statisticsModal', true);
+  document.getElementById('statsSubsetBanner').style.display = 'none'; // companies-partial-load banner doesn't apply here
+  document.getElementById('statisticsBody').innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);">Loading\u2026</div>';
+  const [peopleOwnership, peopleDocs] = await Promise.all([fetchPeopleOwnershipCounts(), fetchAllPeopleCached()]);
+  if (document.getElementById('statisticsModal').style.display === 'none') return; // closed while loading
+  const peopleGroups = buildDocFieldReport(peopleDocs, PEOPLE_STAT_GROUPS);
+  document.getElementById('statisticsBody').innerHTML = `
+    <div style="font-size:0.85rem;margin-bottom:14px;">
       ${peopleDocs.length.toLocaleString('en')} people/entities \u00b7 ${(peopleOwnership.links ?? '\u2014').toLocaleString?.('en') ?? peopleOwnership.links} links
     </div>
+    <div class="modal-section-title">People field completion</div>
     <div>${peopleDocs.length ? renderStatFieldGroups(peopleGroups) : '<div style="font-size:0.85rem;color:var(--text-light);">No people yet \u2014 import ownership data or add a person from a company\u2019s Ownership tab.</div>'}</div>`;
 }
 
@@ -9414,7 +9428,8 @@ document.getElementById('addonCancelBtn').addEventListener('click', () => showEl
 document.getElementById('addonSaveBtn').addEventListener('click', saveAddon);
 document.getElementById('settingsBtn').addEventListener('click', openSettings);
 document.getElementById('settingsCancelBtn').addEventListener('click', () => showEl('settingsModal', false));
-document.getElementById('statisticsBtn').addEventListener('click', openStatistics);
+document.getElementById('companyStatsBtn').addEventListener('click', openCompanyStatistics);
+document.getElementById('peopleStatsBtn').addEventListener('click', openPeopleStatistics);
 document.getElementById('statisticsCloseBtn').addEventListener('click', () => showEl('statisticsModal', false));
 document.getElementById('settingsSaveBtn').addEventListener('click', saveSettings);
 document.getElementById('recalcBtn').addEventListener('click', recalcAll);
