@@ -1321,6 +1321,21 @@ let groupedDataCache = {};
 let groupedExpandedFull = new Set();
 let companiesUnsub = null;
 let fullyLoaded = false;
+// `fullyLoaded` alone isn't a strong enough signal that `companies` is safe
+// to run bulk-import MATCHING against: ensureFullDataset()'s from-cache
+// 8-second fallback (below) also sets fullyLoaded=true, from whatever
+// partial local-persistence subset happened to be on disk, specifically so
+// the app doesn't hang forever if genuinely offline. For a collection this
+// size, the real server-confirmed snapshot can legitimately take longer
+// than 8 seconds, so that fallback firing first is not a corner case --
+// confirmed live: an Import Companies run matched only 25/1000 rows against
+// the fallback's partial view, then self-corrected to the real count once
+// the server snapshot landed and something happened to re-render the
+// preview. This flag is true only once `companies` is known-complete (a
+// server-confirmed snapshot, or a cache read -- which is itself only ever
+// written from a server-confirmed snapshot) -- never from the offline
+// fallback -- so Import Companies can gate on it instead of on fullyLoaded.
+let fullDatasetServerConfirmed = false;
 const DEFAULT_FETCH_LIMIT = 300;
 // null = data is live (an onSnapshot listener is attached and current — true
 // for the bounded default view, and true for the full set right after a
@@ -1822,6 +1837,7 @@ function ensureFullDataset(){
       const have = new Set(companies.map(c => c.id));
       cached.docs.forEach(raw => { if (!have.has(raw.id)) companies.push(computeFields({ ...raw })); });
       fullyLoaded = true;
+      fullDatasetServerConfirmed = true; // the cache is only ever written from a server-confirmed snapshot below
       dataAsOf = new Date(cached.cachedAt); // served from cache, not live — no Firestore reads spent
       // Same reasoning as the live-fetch path below: a stale bounded
       // listener left attached after the full set is loaded would
@@ -1879,6 +1895,7 @@ function ensureFullDataset(){
           const raw = snap.docs.map(d => ({ id: d.id, ...d.data() }));
           companies = raw.map(r => computeFields({ ...r }));
           fullyLoaded = true;
+          fullDatasetServerConfirmed = true;
           dataAsOf = null; // live listener — stays current for the rest of the session
           if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
           writeFullDatasetCache(raw);
@@ -1894,6 +1911,22 @@ function ensureFullDataset(){
     });
   })();
   return fullDatasetPromise;
+}
+// Companies-import specific: waits past ensureFullDataset()'s own resolve()
+// for `companies` to actually be the real, server-confirmed complete list --
+// not just whatever the from-cache 8-second fallback above accepted so the
+// app doesn't hang if genuinely offline. Matching against that fallback's
+// partial view is exactly how a real mass import matched 25/1000 rows
+// instead of the true count. Gives up after maxWaitMs (a genuinely broken
+// connection, not just a slow one) and returns false rather than hanging
+// the modal open forever -- the caller decides what to do with that.
+async function waitForServerConfirmedDataset(maxWaitMs = 45000){
+  const start = Date.now();
+  while (!fullDatasetServerConfirmed){
+    if (Date.now() - start > maxWaitMs) return false;
+    await sleepMs(500);
+  }
+  return true;
 }
 // "Load all companies" button — same end state as ensureFullDataset()'s live
 // path, but reached by a paginated getDocs() walk instead of one opaque
@@ -1936,6 +1969,7 @@ async function loadAllWithProgress(){
       const have = new Set(companies.map(c => c.id));
       cached.docs.forEach(raw => { if (!have.has(raw.id)) companies.push(computeFields({ ...raw })); });
       fullyLoaded = true;
+      fullDatasetServerConfirmed = true;
       dataAsOf = new Date(cached.cachedAt);
       if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
       refreshSectorOptions(); renderSummary(); renderReadsAndFreshness();
@@ -1960,6 +1994,7 @@ async function loadAllWithProgress(){
     }
     companies = raw.map(r => computeFields({ ...r }));
     fullyLoaded = true;
+    fullDatasetServerConfirmed = true;
     // A paginated getDocs walk is a snapshot at the moment it finished, not
     // an ongoing subscription -- mark it as such (same as the cache path),
     // not "live" (null), which is reserved for the onSnapshot path that
@@ -6081,20 +6116,34 @@ function buildCompanyFieldReport(dataRows, headers, idx, shapes){
     const absent = g.shape ? !shapes.includes(g.shape) : false;
     if (g.metricsGroup){
       let filledCells = 0, totalCells = 0;
+      // Per (metric, year) breakdown, not just one aggregate percentage --
+      // a metric x year table reads the same way the Orbis export itself is
+      // shaped, and shows AT A GLANCE which specific years/metrics this file
+      // is thin on instead of one number that hides that entirely.
+      const grid = FINANCIALS_METRICS.map(m => ({
+        key: m.key,
+        label: m.header.charAt(0).toUpperCase() + m.header.slice(1),
+        years: FINANCIALS_YEARS.map(year => ({ year, found: false, pct: null })),
+      }));
       if (!absent && idx.__yearSeries){
-        for (const row of dataRows){
-          for (const m of FINANCIALS_METRICS){
-            for (const year of FINANCIALS_YEARS){
-              const indices = idx.__yearSeries[m.key]?.[year] || [];
+        FINANCIALS_METRICS.forEach((m, mi) => {
+          FINANCIALS_YEARS.forEach((year, yi) => {
+            const indices = idx.__yearSeries[m.key]?.[year] || [];
+            const cell = grid[mi].years[yi];
+            cell.found = indices.length > 0;
+            if (!cell.found) return;
+            let filled = 0;
+            for (const row of dataRows){
               totalCells++;
-              if (financialsCellValue(row, indices)) filledCells++;
+              if (financialsCellValue(row, indices)) { filled++; filledCells++; }
             }
-          }
-        }
+            cell.pct = dataRows.length ? Math.round(100 * filled / dataRows.length) : 0;
+          });
+        });
       }
       const pct = totalCells ? Math.round(100 * filledCells / totalCells) : 0;
       return { ...g, fields: [], absent, foundCount: absent ? 0 : 1,
-                metricsPct: pct, metricsCount: FINANCIALS_METRICS.length, yearsCount: FINANCIALS_YEARS.length };
+                metricsPct: pct, metricsCount: FINANCIALS_METRICS.length, yearsCount: FINANCIALS_YEARS.length, grid };
     }
     const fields = g.fields.map(key => ({
       key, label: COMPANY_FIELD_LABELS[key] || key,
@@ -7068,7 +7117,7 @@ async function confirmCompaniesImport(){
     // above keeps it in sync as it goes), win or lose, cancelled or not --
     // so just re-stamp the cache from it whenever this ran against the
     // complete dataset (fullyLoaded), regardless of how the import exited.
-    if (fullyLoaded) writeFullDatasetCache(companies);
+    if (fullDatasetServerConfirmed) writeFullDatasetCache(companies);
     btn.disabled = false; btn.textContent = 'Import';
     companiesImportInFlight = false;
   }
@@ -9078,8 +9127,17 @@ document.getElementById('companiesImportBtn').addEventListener('click', async ()
   const cbtn = document.getElementById('companiesImportConfirmBtn'); cbtn.disabled = true; cbtn.textContent = 'Import';
   showEl('companiesImportModal', true);
   await ensureFullDataset();
+  // Don't unlock file selection on ensureFullDataset() resolving alone --
+  // see waitForServerConfirmedDataset()'s comment for why that can still be
+  // a partial view. Matching a bulk import against that would show far
+  // fewer matches than actually exist, and with "Also create companies"
+  // ticked, would create duplicates of real companies instead of updating
+  // them.
+  document.getElementById('companiesFileName').textContent = 'Confirming full company list…';
+  const confirmed = await waitForServerConfirmedDataset();
   document.getElementById('companiesFileInput').disabled = false;
-  document.getElementById('companiesFileName').textContent = '';
+  document.getElementById('companiesFileName').textContent = confirmed ? '' :
+    '⚠ Could not confirm the full company list after 45s — matches below may be incomplete. Close and reopen this dialog to retry before importing.';
 });
 document.getElementById('companiesImportCancelBtn').addEventListener('click', () => showEl('companiesImportModal', false));
 document.getElementById('companiesImportConfirmBtn').addEventListener('click', confirmCompaniesImport);
