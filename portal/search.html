@@ -441,7 +441,7 @@
           <div class="summary-stats" id="summaryStats">—</div>
           <div id="loadAllRow" style="margin-top:6px;display:flex;align-items:center;gap:10px;">
             <button class="btn btn--ghost btn--sm" id="loadAllBtn">⬇ Load all companies</button>
-            <div id="loadAllProgress" style="display:none;flex:1;max-width:240px;align-items:center;gap:8px;">
+            <div id="loadAllProgress" style="display:none;flex:1;max-width:520px;align-items:center;gap:8px;">
               <div style="flex:1;height:5px;border-radius:3px;overflow:hidden;background:var(--border);">
                 <div id="loadAllFill" style="height:100%;width:0%;background:var(--primary);border-radius:3px;transition:width .2s ease;"></div>
               </div>
@@ -1062,7 +1062,7 @@
     <div id="companiesImportOpts" style="display:none;margin-bottom:14px;padding:12px;background:#FAFAF8;border:1px solid var(--border);border-radius:var(--radius);">
       <label class="check-item" style="font-weight:600;"><input type="checkbox" id="companiesCreateMissing"> Also create companies that aren't in the CRM</label>
       <div style="font-size:0.76rem;color:var(--text-light);margin-top:8px;font-weight:400;text-transform:none;letter-spacing:0;">
-        Off by default. When on, rows with a NIF or BvD ID and no match in the CRM are created as full company profiles — everything this row carries. Rows that look like a possible duplicate, or that carry no NIF/BvD ID, are never auto-created.
+        Off by default. When on, rows with a NIF or BvD ID and no match in the CRM are created as full company profiles — everything this row carries. Rows that look like a possible duplicate, or that carry no NIF/BvD ID, are never auto-created. A similar name alone isn't a duplicate when both companies have different Portuguese NIFs (e.g. a holding and its operating company).
       </div>
     </div>
     <div id="companiesImportPreview" style="display:none;">
@@ -1430,13 +1430,17 @@ function riskFlagBadge(flag, labelYes, labelNo){
 function getCompany(){ return companies.find(c => c.id === currentCoId); }
 
 // ── Pre-computation ──────────────────────────────────────────────────────────
-function computeFields(co){
-  const f = co.financials || {};
+// The old 5-year grid (financials.Y1-Y5, Y1 = most recent), from the original
+// database import. Only a fallback now: computeFields() uses it just for
+// companies with no Orbis financials yet, and it's retired once Orbis covers
+// every company.
+function legacyFinMetrics(f){
+  const m = {};
   const y1 = f.Y1 || {};
-  co.computedRevenue = num(y1.revenue) || null;
-  co.computedEBITDA  = (y1.ebitda!=null && y1.ebitda!=='') ? num(y1.ebitda) : null;
-  co.computedEmployees = num(y1.employees) || null;
-  co.computedEBITDAMargin = (co.computedRevenue && co.computedEBITDA!=null) ? (co.computedEBITDA / co.computedRevenue) : null;
+  m.computedRevenue = num(y1.revenue) || null;
+  m.computedEBITDA  = (y1.ebitda!=null && y1.ebitda!=='') ? num(y1.ebitda) : null;
+  m.computedEmployees = num(y1.employees) || null;
+  m.computedEBITDAMargin = (m.computedRevenue && m.computedEBITDA!=null) ? (m.computedEBITDA / m.computedRevenue) : null;
 
   const FY = ['Y1','Y2','Y3','Y4','Y5'];
   const weightedAvg = (getter) => {
@@ -1445,20 +1449,20 @@ function computeFields(co){
     return wsum>0 ? vsum/wsum : null;
   };
   // EBITDA Size dimension: recency-weighted avg EBITDA over whatever years are present (graceful degradation).
-  co.computedEBITDAWeighted = weightedAvg(yr => (yr && yr.ebitda!=null) ? num(yr.ebitda) : null);
+  m.computedEBITDAWeighted = weightedAvg(yr => (yr && yr.ebitda!=null) ? num(yr.ebitda) : null);
   // EBITDA Margin dimension: recency-weighted avg of per-year margin; a year only counts if both EBITDA and positive Revenue exist.
   {
     let wsum=0, vsum=0;
-    for (const y of FY) { const yr=f[y]; if (yr && yr.ebitda!=null && num(yr.revenue)>0) { const m=num(yr.ebitda)/num(yr.revenue); wsum+=FIT_RECENCY_WEIGHTS[y]; vsum+=FIT_RECENCY_WEIGHTS[y]*m; } }
-    co.computedEBITDAMarginWeighted = wsum>0 ? vsum/wsum : null;
+    for (const y of FY) { const yr=f[y]; if (yr && yr.ebitda!=null && num(yr.revenue)>0) { const mg=num(yr.ebitda)/num(yr.revenue); wsum+=FIT_RECENCY_WEIGHTS[y]; vsum+=FIT_RECENCY_WEIGHTS[y]*mg; } }
+    m.computedEBITDAMarginWeighted = wsum>0 ? vsum/wsum : null;
   }
   // Growth Recent (CAGR Y1→Y3) and Growth Sustained (CAGR Y1→Y5): strict gate — full window
   // of positive revenue required, or null (scores 0 in calcFit). No partial-window degrading:
   // a thin sample could otherwise make one lucky year look like a durable trend.
   const posRev = (y) => num((f[y]||{}).revenue) > 0 ? num(f[y].revenue) : null;
   const r1=posRev('Y1'), r2=posRev('Y2'), r3=posRev('Y3'), r4=posRev('Y4'), r5=posRev('Y5');
-  co.computedGrowthRecent = (r1!=null && r2!=null && r3!=null) ? (Math.pow(r1/r3, 1/2) - 1) : null;
-  co.computedGrowthSustained = (r1!=null && r2!=null && r3!=null && r4!=null && r5!=null) ? (Math.pow(r1/r5, 1/4) - 1) : null;
+  m.computedGrowthRecent = (r1!=null && r2!=null && r3!=null) ? (Math.pow(r1/r3, 1/2) - 1) : null;
+  m.computedGrowthSustained = (r1!=null && r2!=null && r3!=null && r4!=null && r5!=null) ? (Math.pow(r1/r5, 1/4) - 1) : null;
   // EBITDA Stability: std. dev. of year-over-year EBITDA growth rates (not raw levels, so a
   // smooth fast-growing company isn't penalized). Strict gate — full Y1-Y5 EBITDA required;
   // zero-filling a gap would fabricate a false volatility signal ("the backfire").
@@ -1470,10 +1474,46 @@ function computeFields(co){
       if (gr.length) {
         const mean = gr.reduce((s,v)=>s+v,0)/gr.length;
         const variance = gr.reduce((s,v)=>s+(v-mean)*(v-mean),0)/gr.length;
-        co.computedEBITDAStability = Math.sqrt(variance);
-      } else co.computedEBITDAStability = null;
-    } else co.computedEBITDAStability = null;
+        m.computedEBITDAStability = Math.sqrt(variance);
+      } else m.computedEBITDAStability = null;
+    } else m.computedEBITDAStability = null;
   }
+  m.computedFinSource = (m.computedRevenue != null || m.computedEBITDA != null) ? 'legacy' : null;
+  m.computedFinYear = null;
+  return m;
+}
+// Headline figures (revenue/EBITDA/margin/employees) come from the most
+// recent Orbis year with real data; the multi-year dimensions (growth,
+// stability, weighted size/margin) come from the same 5-year window the fit
+// score uses, so the list and the Fit Score Breakdown always agree.
+function orbisFinMetrics(co, orbis){
+  const of = co.orbisFinancials || {};
+  const year = Object.keys(of).filter(y => hasOrbisFinData(of[y])).sort().pop() || null;
+  const rec = (year && of[year]) || {};
+  const eur = v => (v == null || v === '' || !isFinite(Number(v))) ? null : Number(v) * 1000; // stored in th EUR
+  const revenue = eur(rec.operatingRevenue);
+  const m = {
+    computedRevenue: revenue > 0 ? revenue : null,
+    computedEBITDA: eur(rec.ebitda),
+    computedEmployees: Number(rec.numberOfEmployees) > 0 ? Number(rec.numberOfEmployees) : null,
+    computedEBITDAWeighted: orbis.dims.size.value,
+    computedEBITDAMarginWeighted: orbis.dims.margin.value,
+    computedGrowthRecent: orbis.dims.growthRecent.value,
+    computedGrowthSustained: orbis.dims.growthSustained.value,
+    computedEBITDAStability: orbis.dims.stability.value,
+    computedFinSource: 'orbis',
+    computedFinYear: year,
+  };
+  m.computedEBITDAMargin = (m.computedRevenue && m.computedEBITDA != null) ? (m.computedEBITDA / m.computedRevenue) : null;
+  return m;
+}
+function computeFields(co){
+  // Orbis first, the old grid only as fallback -- the same rule calcFit()
+  // applies to fitScore, so the list columns, filters, sorting, CSV and the
+  // fit score all read one source per company. Both helpers set every
+  // computed* key, so no value from the other source can linger.
+  const orbis = computeOrbisFit(co);
+  Object.assign(co, orbis ? orbisFinMetrics(co, orbis) : legacyFinMetrics(co.financials || {}));
   co.fitScore = calcFit(co);
   // Geocode via the static PT postcode lookup tables. Postcode is free text
   // (manual entry / bulk import, no format enforcement), so pull out the first
@@ -1512,7 +1552,17 @@ function trapezoid(x, a,b,c,d){
   if (x<d) return 100-(x-c)/(d-c)*100;
   return 0;
 }
-function fitAge(co){ return co.yearFounded ? (new Date().getFullYear() - co.yearFounded) : null; }
+// Orbis's dateOfIncorporation (always "YYYY-MM-DD") first, the old yearFounded
+// as fallback -- they agree for 12,911 of 12,913 companies that have both.
+function foundedYear(co){
+  const doi = String(co.dateOfIncorporation || '');
+  const y = /^\d{4}/.test(doi) ? Number(doi.slice(0, 4)) : null;
+  return y || (co.yearFounded ? Number(co.yearFounded) : null);
+}
+function fitAge(co){ const y = foundedYear(co); return y ? (new Date().getFullYear() - y) : null; }
+// Orbis's nationalLegalForm is exactly what the old legalForm field held
+// (identical for 12,932 of 12,965 companies that have both).
+function legalFormOf(co){ return co.nationalLegalForm || co.legalForm || ''; }
 function calcFit(co){
   // Cutover: prefer the Orbis-based score when this company has real
   // orbisFinancials data (computeOrbisFit returns strictly null otherwise,
@@ -1987,44 +2037,19 @@ async function waitForServerConfirmedDataset(maxWaitMs = 90000){
   }
   return true;
 }
-// "Load all companies" button — same end state as ensureFullDataset()'s live
-// path, but reached by a paginated getDocs() walk instead of one opaque
-// onSnapshot, so progress is real ("7,000 of 20,682") rather than a spinner
+// Full company list via a paginated getDocs() walk instead of one opaque
+// onSnapshot, so progress is real ("7,000 of 31,514") rather than a spinner
 // with nothing to report until the whole thing lands. Same total read cost
-// either way (~20,682 reads chunked into ~21 requests of 1,000 instead of
-// one unscoped listener). Deliberately a separate function rather than a
-// rewrite of ensureFullDataset() -- that function was only just hardened
-// against the fromCache bug, and touching it again for an unrelated UI
-// affordance is exactly how a regression like that comes back.
+// either way (one read per company). Deliberately separate from
+// ensureFullDataset() -- that function was hardened against the fromCache
+// bug, and touching it for a UI affordance is how such regressions return.
+// onPage({ loaded, total, fromCache }) fires once per page.
 const LOAD_ALL_PAGE_SIZE = 1000;
-async function loadAllWithProgress(){
-  const btn = document.getElementById('loadAllBtn');
-  const progressWrap = document.getElementById('loadAllProgress');
-  const fill = document.getElementById('loadAllFill');
-  const label = document.getElementById('loadAllLabel');
-  if (fullyLoaded){ label.textContent = 'Already loaded'; return; }
-  btn.disabled = true;
-  progressWrap.style.display = 'flex';
-  fill.style.width = '0%';
-  label.textContent = 'Starting…';
-  // Someone else (search, a filter, Grouped/Map, ...) may already be mid-load
-  // -- await that instead of starting a redundant second full walk. No real
-  // progress to show for that path (a single onSnapshot gives none), so this
-  // stays an indeterminate "Loading…" rather than a fake percentage.
-  if (fullDatasetPromise){
-    label.textContent = 'Loading…';
-    await fullDatasetPromise;
-    fill.style.width = '100%';
-    label.textContent = `${companies.length.toLocaleString('en')} loaded`;
-    btn.disabled = false;
-    setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
-    return;
-  }
-  fullDatasetPromise = (async () => {
+function walkFullDataset(onPage){
+  return (async () => {
     const cached = await readFullDatasetCache();
     if (cached){
-      label.textContent = `${cached.docs.length.toLocaleString('en')} loaded from cache`;
-      fill.style.width = '100%';
+      onPage({ loaded: cached.docs.length, total: cached.docs.length, fromCache: true });
       const have = new Set(companies.map(c => c.id));
       cached.docs.forEach(raw => { if (!have.has(raw.id)) companies.push(computeFields({ ...raw })); });
       fullyLoaded = true;
@@ -2039,15 +2064,14 @@ async function loadAllWithProgress(){
     const total = cachedTotalCount || 0;
     const raw = [];
     let lastDoc = null;
+    onPage({ loaded: 0, total });
     while (true){
       let q = query(collection(db, 'searchCompanies'), orderBy(documentId()), limit(LOAD_ALL_PAGE_SIZE));
       if (lastDoc) q = query(collection(db, 'searchCompanies'), orderBy(documentId()), startAfter(lastDoc), limit(LOAD_ALL_PAGE_SIZE));
       const snap = await getDocs(q);
       addReads(snap.docs.length || 1);
       snap.docs.forEach(d => raw.push({ id: d.id, ...d.data() }));
-      const pct = total ? Math.min(100, Math.round((raw.length / total) * 100)) : 0;
-      fill.style.width = pct + '%';
-      label.textContent = `${raw.length.toLocaleString('en')}${total ? ' of ' + total.toLocaleString('en') : ''} companies`;
+      onPage({ loaded: raw.length, total });
       if (snap.docs.length < LOAD_ALL_PAGE_SIZE) break; // last page
       lastDoc = snap.docs[snap.docs.length - 1];
     }
@@ -2065,14 +2089,97 @@ async function loadAllWithProgress(){
     if (document.getElementById('listView').style.display !== 'none') renderList();
     await runBackfillsOnce();
   })();
+}
+// Load-progress durations: "45s", "3m 05s", "1h 02m".
+function fmtLoadDur(ms){
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+// "12,000 of 31,514 · 1m 20s elapsed · ~2m 05s left"
+function fmtLoadProgress(p){
+  if (p.phase === 'waiting') return `${fmtLoadDur(p.elapsedMs)} elapsed`;
+  if (p.phase === 'cache') return 'from cache…';
+  const parts = [];
+  if (p.loaded != null) parts.push(`${p.loaded.toLocaleString('en')}${p.total ? ' of ' + p.total.toLocaleString('en') : ''}`);
+  parts.push(`${fmtLoadDur(p.elapsedMs)} elapsed`);
+  parts.push(p.etaMs != null ? `~${fmtLoadDur(p.etaMs)} left` : 'estimating time left…');
+  return parts.join(' · ');
+}
+// Loads the full company list and reports onProgress({ phase, loaded, total,
+// elapsedMs, etaMs }) -- after every page and once a second in between,
+// since one page can take many seconds: elapsed keeps counting and the
+// estimate (a snapshot of the rate at the last page, counted down live, same
+// idea as ImportProgress) keeps moving instead of freezing between pages.
+// Shared by the "Load all companies" button and the import dialogs.
+async function loadCompaniesWithProgress(onProgress = () => {}){
+  if (fullyLoaded){ onProgress({ phase: 'done', loaded: companies.length, total: companies.length, elapsedMs: 0, etaMs: 0 }); return; }
+  const startedAt = Date.now();
+  const st = { phase: 'loading', loaded: null, total: cachedTotalCount || null, etaMs: null, etaAt: 0 };
+  const emit = () => onProgress({
+    phase: st.phase, loaded: st.loaded, total: st.total, elapsedMs: Date.now() - startedAt,
+    etaMs: st.etaMs == null ? null : Math.max(0, st.etaMs - (Date.now() - st.etaAt)),
+  });
+  const ticker = setInterval(emit, 1000);
   try {
+    // Something else (search, a filter, Grouped/Map, ...) may already be
+    // loading through ensureFullDataset()'s single onSnapshot -- await that
+    // rather than start a redundant second walk. It reports nothing until it
+    // lands, so only elapsed time is shown, never a made-up percentage.
+    if (fullDatasetPromise) st.phase = 'waiting';
+    else fullDatasetPromise = walkFullDataset(page => {
+      st.loaded = page.loaded;
+      if (page.total) st.total = page.total;
+      if (page.fromCache) st.phase = 'cache';
+      if (st.total && page.loaded > 0 && page.loaded < st.total){
+        st.etaMs = (Date.now() - startedAt) / page.loaded * (st.total - page.loaded);
+        st.etaAt = Date.now();
+      }
+      emit();
+    });
+    emit();
     await fullDatasetPromise;
+    st.phase = 'done'; st.loaded = companies.length; st.etaMs = 0; st.etaAt = Date.now();
+    emit();
+  } catch(e){
+    fullDatasetPromise = null; // let the next attempt start fresh instead of re-awaiting a rejected promise
+    throw e;
+  } finally {
+    clearInterval(ticker);
+  }
+}
+async function loadAllWithProgress(){
+  const btn = document.getElementById('loadAllBtn');
+  const progressWrap = document.getElementById('loadAllProgress');
+  const fill = document.getElementById('loadAllFill');
+  const label = document.getElementById('loadAllLabel');
+  if (fullyLoaded){ label.textContent = 'Already loaded'; return; }
+  btn.disabled = true;
+  progressWrap.style.display = 'flex';
+  fill.style.width = '0%';
+  label.textContent = 'Starting…';
+  let viaCache = false;
+  try {
+    await loadCompaniesWithProgress(p => {
+      if (p.phase === 'cache') viaCache = true;
+      if (p.total && p.loaded != null) fill.style.width = Math.min(100, Math.round(p.loaded / p.total * 100)) + '%';
+      label.textContent = p.phase === 'done'
+        ? `${companies.length.toLocaleString('en')} loaded${viaCache ? ' from cache' : ''}`
+        : (p.phase === 'waiting' ? 'Loading… · ' : '') + fmtLoadProgress(p);
+    });
+    fill.style.width = '100%';
   } catch(e){
     console.error(e);
     label.textContent = 'Failed — see console';
   }
   btn.disabled = false;
   setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
+}
+// Import dialogs: the same live progress in the dialog's own status line.
+function companyListLoadStatus(el){
+  return p => { if (p.phase !== 'done') el.textContent = 'Loading company list — ' + fmtLoadProgress(p); };
 }
 
 // Cached total company count, shown while only the bounded default window is
@@ -2149,8 +2256,8 @@ const COMPANY_STAT_GROUPS = [
   { title: 'Identity', fields: [
     { key: 'nif',         label: 'NIF',         test: c => !!c.nif },
     { key: 'bvdId',       label: 'BvD ID',      test: c => !!c.bvdId },
-    { key: 'legalForm',   label: 'Legal form',  test: c => !!c.legalForm },
-    { key: 'yearFounded', label: 'Year founded',test: c => !!c.yearFounded },
+    { key: 'legalForm',   label: 'Legal form',  test: c => !!legalFormOf(c) },
+    { key: 'yearFounded', label: 'Year founded',test: c => !!foundedYear(c) },
   ]},
   { title: 'Geography', fields: [
     { key: 'postcode',  label: 'Postcode',            test: c => !!c.postcode },
@@ -2172,8 +2279,12 @@ const COMPANY_STAT_GROUPS = [
     { key: 'linkedinUrl',  label: 'LinkedIn',   test: c => !!c.linkedinUrl },
   ]},
   { title: 'Financials', fields: [
-    { key: 'y1Revenue',    label: 'Revenue (Y1)',  test: c => !!c.financials?.Y1?.revenue },
-    { key: 'y1Ebitda',     label: 'EBITDA (Y1)',   test: c => !!c.financials?.Y1?.ebitda },
+    { key: 'y1Revenue',    label: 'Revenue (latest year)', test: c => c.computedRevenue != null },
+    { key: 'y1Ebitda',     label: 'EBITDA (latest year)',  test: c => c.computedEBITDA != null },
+    // Tracks the move to Orbis-only financials: the second one should fall
+    // to 0% before the old Y1-Y5 fields are deleted.
+    { key: 'finOrbis',      label: 'Financials from Orbis',  test: c => c.computedFinSource === 'orbis' },
+    { key: 'finLegacyOnly', label: 'Only old Y1 financials', test: c => c.computedFinSource === 'legacy' },
     { key: 'auditingFirm', label: 'Auditing firm', test: c => !!c.auditingFirm },
   ]},
   { title: 'Pipeline', fields: [
@@ -2614,7 +2725,7 @@ function rowHtml(c){
     <td>${fitBadge(c.fitScore)}</td>
     <td>${stagePill(c.stage||'universe')}</td>
     <td>${OWNER_LABELS[c.owner]||'—'}</td>
-    <td class="num">${fmtEurShort(c.computedRevenue)}</td>
+    <td class="num" title="${c.computedFinSource === 'orbis' ? 'Orbis ' + esc(c.computedFinYear || '') : c.computedFinSource === 'legacy' ? 'Old import (Y1)' : ''}">${fmtEurShort(c.computedRevenue)}</td>
     <td class="num">${fmtEurShort(c.computedEBITDA)}</td>
     <td class="num">${c.computedEBITDAMargin!=null?fmtPct(c.computedEBITDAMargin):'—'}</td>
     <td class="num">${c.computedGrowthRecent!=null?fmtPct(c.computedGrowthRecent):'—'}</td>
@@ -2796,7 +2907,7 @@ async function exportMapCsv(){
   const base = sortList(getFiltered());
   const list = mapMode === 'custom' ? base.filter(c => mapSelection.has(c.id)) : base;
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
-  const headers = ['Name','Sector','Sub-sector','Stage','Owner','Concelho','Postcode','NUTS2','NUTS3','Latitude','Longitude','Revenue Y1','EBITDA Y1','EBITDA%'];
+  const headers = ['Name','Sector','Sub-sector','Stage','Owner','Concelho','Postcode','NUTS2','NUTS3','Latitude','Longitude','Revenue (latest year)','EBITDA (latest year)','EBITDA%'];
   const rows = list.map(c => [
     c.name, c.sector, c.subSector, STAGES[c.stage]?.label||c.stage, OWNER_LABELS[c.owner]||'',
     c.concelho, c.postcode, c.nuts2, c.nuts3, c.computedLat??'', c.computedLng??'',
@@ -2963,10 +3074,10 @@ function renderOverview(c){
     <div class="detail-grid">
       <div class="card">
         <div class="sec-title">Company</div>
-        <div class="info-row"><span class="k">Legal form</span><span class="v">${esc(c.legalForm||'—')}</span></div>
+        <div class="info-row"><span class="k">Legal form</span><span class="v">${esc(legalFormOf(c)||'—')}</span></div>
         <div class="info-row"><span class="k">NIF</span><span class="v">${esc(c.nif||'—')}</span></div>
         ${c.foreignTaxId ? `<div class="info-row"><span class="k">${esc(c.foreignTaxIdType === 'BR-CNPJ' ? 'CNPJ' : 'Foreign tax ID')}</span><span class="v">${esc(c.foreignTaxId)}${c.foreignTaxIdCountry?' · '+esc(c.foreignTaxIdCountry):''}</span></div>` : ''}
-        <div class="info-row"><span class="k">Founded</span><span class="v">${esc(c.yearFounded||'—')}</span></div>
+        <div class="info-row"><span class="k">Founded</span><span class="v">${esc(foundedYear(c)||'—')}</span></div>
         <div class="info-row"><span class="k">Sector</span><span class="v">${esc(c.sector||'—')}${c.subSector?' › '+esc(c.subSector):''}</span></div>
         <div class="info-row"><span class="k">NACE</span><span class="v">${esc(c.naceCode||'—')}${c.naceDescription?' · '+esc(c.naceDescription):''}</span></div>
         <div class="info-row"><span class="k">CAE</span><span class="v">${esc(c.caeCode||'—')}${c.caeDescription?' · '+esc(c.caeDescription):''}</span></div>
@@ -3096,6 +3207,7 @@ function renderAddonSection(c){
 
 function renderFinancials(c){
   const f = c.financials || {};
+  const lg = legacyFinMetrics(f);
   const yrs = ['Y1','Y2','Y3','Y4','Y5'];
   const head = `<tr><th>Metric</th>${yrs.map(y=>`<th><input class="fin-input" style="width:64px;text-align:center;" data-fy="${y}" value="${esc((f[y]||{}).year||'')}" placeholder="Year"></th>`).join('')}</tr>`;
   const rowFor = (metric, label, fmt) => `<tr><td>${label}</td>${yrs.map(y=>`<td><input class="fin-input" data-fm="${y}.${metric}" value="${esc((f[y]||{})[metric]??'')}"></td>`).join('')}</tr>`;
@@ -3117,11 +3229,12 @@ function renderFinancials(c){
         </tbody>
       </table></div>
       <div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
-        <div class="summary-stat">Revenue (Y1) <strong>${fmtEur(c.computedRevenue)}</strong></div>
-        <div class="summary-stat">EBITDA (Y1) <strong>${fmtEur(c.computedEBITDA)}</strong></div>
-        <div class="summary-stat">EBITDA margin <strong>${c.computedEBITDAMargin!=null?fmtPct(c.computedEBITDAMargin):'—'}</strong></div>
-        <div class="summary-stat">Growth (Recent) <strong>${c.computedGrowthRecent!=null?fmtPct(c.computedGrowthRecent):'—'}</strong></div>
+        <div class="summary-stat">Revenue (Y1) <strong>${fmtEur(lg.computedRevenue)}</strong></div>
+        <div class="summary-stat">EBITDA (Y1) <strong>${fmtEur(lg.computedEBITDA)}</strong></div>
+        <div class="summary-stat">EBITDA margin <strong>${lg.computedEBITDAMargin!=null?fmtPct(lg.computedEBITDAMargin):'—'}</strong></div>
+        <div class="summary-stat">Growth (Recent) <strong>${lg.computedGrowthRecent!=null?fmtPct(lg.computedGrowthRecent):'—'}</strong></div>
       </div>
+      ${c.computedFinSource === 'orbis' ? `<div style="font-size:0.76rem;color:var(--text-light);margin-top:10px;">These are the old imported figures. The list, filters and fit score use this company's Orbis financials (${esc(c.computedFinYear||'')}) — see the Financials (Orbis) tab.</div>` : ''}
     </div>`;
   document.getElementById('saveFinBtn').addEventListener('click', saveFinancials);
 }
@@ -7002,11 +7115,29 @@ function fieldsEqual(a, b){
   return false;
 }
 
+// A company's Portuguese legal identity for duplicate checks: its 9-digit
+// NIF, or the NIF inside a PT BvD ID ("PT" + NIF). Two different values mean
+// two different legal entities however alike the names -- e.g. "PIZARRO -
+// SGPS, S.A." and "PIZARRO, S.A.", a holding and its operating company.
+// Anything else (no identifier, or a foreign one such as a Brazilian CNPJ
+// that some old records carry in their NIF field) proves nothing, so a
+// name match against it still goes to review.
+function ptIdentity(nifish, bvdId){
+  const n = onlyDigits(nifish);
+  if (n.length === 9) return n;
+  const b = bvdIdKey(bvdId);
+  return /^PT\d{9}$/.test(b) ? b.slice(2) : '';
+}
+const provablyDistinct = (a, b) => !!(a && b && a !== b);
+
 function classifyCompaniesImportRows(rows){
   const existingByNif  = new Map(companies.filter(c => onlyDigits(c.nif)).map(c => [onlyDigits(c.nif), c]));
   const existingByBvd  = new Map(companies.filter(c => c.bvdId).map(c => [bvdIdKey(c.bvdId), c]));
   const existingByFtid = new Map(companies.filter(c => c.foreignTaxId).map(c => [foreignTaxIdKey(c.foreignTaxId), c]));
-  const existingByName = new Map(companies.filter(c => c.name).map(c => [normName(c.name), c]));
+  // Every existing company per normalized name, not just the last one --
+  // one name can belong to several real companies.
+  const existingByName = new Map();
+  for (const c of companies) if (c.name){ const k = normName(c.name); (existingByName.get(k) || existingByName.set(k, []).get(k)).push(c); }
 
   const matched = [], unmatched = [];
   for (const r of rows){
@@ -7023,23 +7154,26 @@ function classifyCompaniesImportRows(rows){
   const noId = unmatched.filter(r => (!r.nifDigits && !r.bvdId && !r.foreignTaxId) || !r.payload.name);
   const candidates = unmatched.filter(r => (r.nifDigits || r.bvdId || r.foreignTaxId) && r.payload.name);
 
-  const nifCount = new Map(), bvdCount = new Map(), ftidCount = new Map(), nameCount = new Map();
+  const nifCount = new Map(), bvdCount = new Map(), ftidCount = new Map(), nameGroup = new Map();
   const nameKeyOf = r => normName(r.payload.name);
+  const rowPt = r => ptIdentity(r.nifDigits, r.bvdId);
   for (const r of candidates){
     if (r.nifDigits) nifCount.set(r.nifDigits, (nifCount.get(r.nifDigits)||0) + 1);
     if (r.bvdId)     { const k = bvdIdKey(r.bvdId); bvdCount.set(k, (bvdCount.get(k)||0) + 1); }
     if (r.foreignTaxId){ const k = foreignTaxIdKey(r.foreignTaxId); ftidCount.set(k, (ftidCount.get(k)||0) + 1); }
-    const nk = nameKeyOf(r); if (nk) nameCount.set(nk, (nameCount.get(nk)||0) + 1);
+    const nk = nameKeyOf(r); if (nk) (nameGroup.get(nk) || nameGroup.set(nk, []).get(nk)).push(r);
   }
 
   const dup = [], creatable = [];
   for (const r of candidates){
-    const nk = nameKeyOf(r);
+    const nk = nameKeyOf(r), pt = rowPt(r);
+    // The same identifier twice in one file is always a collision; a shared
+    // name only is when the other row isn't provably a different entity.
     const batchCollision = (r.nifDigits && nifCount.get(r.nifDigits) > 1)
       || (r.bvdId && bvdCount.get(bvdIdKey(r.bvdId)) > 1)
       || (r.foreignTaxId && ftidCount.get(foreignTaxIdKey(r.foreignTaxId)) > 1)
-      || (nk && nameCount.get(nk) > 1);
-    const existingNameHit = nk && existingByName.get(nk);
+      || (nk && (nameGroup.get(nk) || []).some(o => o !== r && !provablyDistinct(pt, rowPt(o))));
+    const existingNameHit = (nk && (existingByName.get(nk) || []).find(c => !provablyDistinct(pt, ptIdentity(c.nif, c.bvdId)))) || null;
     (batchCollision || existingNameHit ? dup : creatable).push({ r, existingNameHit, batchCollision });
   }
   return { matched, creatable, dup, noId };
@@ -7157,16 +7291,14 @@ async function handleCompaniesFile(file){
       const { readXlsx } = await import('./vendor/xlsx-lite.js');
       const wb = await readXlsx(file);
       // Try every sheet, not just one picked up front by a naming/size
-      // heuristic -- a real workbook hit this: its data lived on a tab
-      // named "Sheet1" instead of Orbis's usual "Results", the old code
-      // committed to whichever sheet that heuristic liked best and never
-      // looked at the others, and the file was rejected as "doesn't look
-      // like an Orbis company export" even though a valid export sat right
-      // there on the only other tab. 'Results' still goes first when
-      // present (the common case, cheapest to try, matches today's
-      // default), then every remaining sheet by descending row count --
-      // whichever one's header row actually detects a shape wins; nothing
-      // is rejected until every sheet has had a real shot.
+      // heuristic: in a workbook with several tabs (say a notes tab that is
+      // larger than the data), the old pick could land on the wrong one and
+      // reject a valid export as "doesn't look like an Orbis company
+      // export" without ever looking at the other tabs. (A single-sheet
+      // file was always fine whatever its tab is called.) 'Results' still
+      // goes first when present, then every remaining sheet by descending
+      // row count -- whichever one's header row actually detects a shape
+      // wins; nothing is rejected until every sheet has had a real shot.
       const candidates = [...wb.sheetNames].sort((a, b) => {
         if (a === 'Results') return -1;
         if (b === 'Results') return 1;
@@ -8308,7 +8440,8 @@ async function saveFinancials(){
       computedGrowthRecent:c.computedGrowthRecent, computedGrowthSustained:c.computedGrowthSustained, computedEBITDAStability:c.computedEBITDAStability,
       computedEmployees:c.computedEmployees, fitScore:c.fitScore, updatedAt: serverTimestamp(),
     });
-    await logAuto(c.id, 'financials_updated', `Financials updated — Y1 rev ${c.computedRevenue?fmtEurShort(c.computedRevenue):'—'}, EBITDA ${c.computedEBITDA?fmtEurShort(c.computedEBITDA):'—'}, fit ${c.fitScore!=null?Number(c.fitScore).toFixed(1):'—'}`);
+    const lg = legacyFinMetrics(fin);
+    await logAuto(c.id, 'financials_updated', `Financials updated — Y1 rev ${lg.computedRevenue?fmtEurShort(lg.computedRevenue):'—'}, EBITDA ${lg.computedEBITDA?fmtEurShort(lg.computedEBITDA):'—'}, fit ${c.fitScore!=null?Number(c.fitScore).toFixed(1):'—'}`);
     cacheCompanies();
     renderFinancials(c); renderDetail();
   } catch(e){ alert('Error: '+e.message); }
@@ -8841,8 +8974,8 @@ const COMPANY_EXPORT_FIELDS = [
     { key: 'name',        label: 'Name',         get: c => c.name },
     { key: 'nif',         label: 'NIF',          get: c => c.nif },
     { key: 'bvdId',       label: 'BvD ID',       get: c => c.bvdId },
-    { key: 'legalForm',   label: 'Legal form',   get: c => c.legalForm },
-    { key: 'yearFounded', label: 'Year founded', get: c => c.yearFounded },
+    { key: 'legalForm',   label: 'Legal form',   get: c => legalFormOf(c) },
+    { key: 'yearFounded', label: 'Year founded', get: c => foundedYear(c) ?? '' },
   ]},
   { title: 'Geography', fields: [
     { key: 'concelho',  label: 'Concelho', get: c => c.concelho },
@@ -8867,8 +9000,9 @@ const COMPANY_EXPORT_FIELDS = [
     { key: 'primaryContact', label: 'Primary contact', get: c => ((c.contacts||[]).find(x=>x.isPrimary) || (c.contacts||[])[0])?.name },
   ]},
   { title: 'Financials', fields: [
-    { key: 'revenueY1',    label: 'Revenue (Y1)',    get: c => c.computedRevenue ?? '' },
-    { key: 'ebitdaY1',     label: 'EBITDA (Y1)',     get: c => c.computedEBITDA ?? '' },
+    { key: 'revenueY1',    label: 'Revenue (latest year)', get: c => c.computedRevenue ?? '' },
+    { key: 'ebitdaY1',     label: 'EBITDA (latest year)',  get: c => c.computedEBITDA ?? '' },
+    { key: 'finYear',      label: 'Financials year',  get: c => c.computedFinSource === 'orbis' ? (c.computedFinYear || '') : (c.computedFinSource === 'legacy' ? 'Y1 (old import)' : '') },
     { key: 'ebitdaMargin', label: 'EBITDA %',        get: c => c.computedEBITDAMargin != null ? (c.computedEBITDAMargin * 100).toFixed(1) : '' },
     { key: 'growthRecent', label: 'Growth (recent)', get: c => c.computedGrowthRecent != null ? (c.computedGrowthRecent * 100).toFixed(1) : '' },
     { key: 'employees',    label: 'Employees',       get: c => c.computedEmployees ?? '' },
@@ -9479,9 +9613,11 @@ document.getElementById('bulkImportBtn').addEventListener('click', async () => {
   // Open the modal immediately with a visible loading state, rather than the
   // button silently sitting there for however long ensureFullDataset() takes.
   showEl('bulkModal', true);
-  document.getElementById('bulkFileName').textContent = 'Loading company data…';
+  const status = document.getElementById('bulkFileName');
+  status.textContent = 'Loading company list…';
   document.getElementById('bulkFileInput').disabled = true;
-  await ensureFullDataset();
+  try { await loadCompaniesWithProgress(companyListLoadStatus(status)); }
+  catch(e){ console.error(e); status.textContent = '⚠ Could not load the company list — close and reopen this dialog to retry.'; return; }
   document.getElementById('bulkFileInput').disabled = false;
   openBulk();
 });
@@ -9498,9 +9634,11 @@ document.querySelectorAll('input[name=bulkMode]').forEach(r => r.addEventListene
 document.getElementById('peopleImportBtn').addEventListener('click', async () => {
   if (peopleImportInFlight){ alert('An import is already running — try again once it finishes.'); return; }
   showEl('peopleImportModal', true);
-  document.getElementById('peopleFileName').textContent = 'Loading company data…';
+  const status = document.getElementById('peopleFileName');
+  status.textContent = 'Loading company list…';
   document.getElementById('peopleFileInput').disabled = true;
-  await ensureFullDataset();
+  try { await loadCompaniesWithProgress(companyListLoadStatus(status)); }
+  catch(e){ console.error(e); status.textContent = '⚠ Could not load the company list — close and reopen this dialog to retry.'; return; }
   document.getElementById('peopleFileInput').disabled = false;
   openPeopleImport();
 });
@@ -9514,7 +9652,7 @@ document.getElementById('peopleFileInput').addEventListener('change', e => {
 document.getElementById('companiesImportBtn').addEventListener('click', async () => {
   if (companiesImportInFlight){ alert('An import is already running — try again once it finishes.'); return; }
   companiesImportRows = []; companiesImportStats = null;
-  document.getElementById('companiesFileName').textContent = 'Loading company data…';
+  document.getElementById('companiesFileName').textContent = 'Loading company list…';
   document.getElementById('companiesFileInput').value = '';
   document.getElementById('companiesFileInput').disabled = true;
   document.getElementById('companiesCreateMissing').checked = false;
@@ -9524,18 +9662,21 @@ document.getElementById('companiesImportBtn').addEventListener('click', async ()
   document.getElementById('companiesImportErr').style.display = 'none';
   const cbtn = document.getElementById('companiesImportConfirmBtn'); cbtn.disabled = true; cbtn.textContent = 'Import';
   showEl('companiesImportModal', true);
-  await ensureFullDataset();
-  // Don't unlock file selection on ensureFullDataset() resolving alone --
-  // see waitForServerConfirmedDataset()'s comment for why that can still be
-  // a partial view. Matching a bulk import against that would show far
-  // fewer matches than actually exist, and with "Also create companies"
-  // ticked, would create duplicates of real companies instead of updating
-  // them.
-  document.getElementById('companiesFileName').textContent = 'Confirming full company list…';
+  const status = document.getElementById('companiesFileName');
+  try { await loadCompaniesWithProgress(companyListLoadStatus(status)); }
+  catch(e){ console.error(e); status.textContent = '⚠ Could not load the company list — close and reopen this dialog to retry.'; return; }
+  // Don't unlock file selection on the load resolving alone -- if it was an
+  // in-flight ensureFullDataset() (the 'waiting' path), see
+  // waitForServerConfirmedDataset()'s comment for why that can still be a
+  // partial view. Matching a bulk import against that would show far fewer
+  // matches than actually exist, and with "Also create companies" ticked,
+  // would create duplicates of real companies instead of updating them.
+  // After a full paginated walk this returns immediately.
+  status.textContent = 'Confirming full company list…';
   const confirmed = await waitForServerConfirmedDataset();
   document.getElementById('companiesFileInput').disabled = false;
-  document.getElementById('companiesFileName').textContent = confirmed ? '' :
-    '⚠ Could not confirm the full company list after 45s — matches below may be incomplete. Close and reopen this dialog to retry before importing.';
+  status.textContent = confirmed ? '' :
+    '⚠ Could not confirm the full company list after 90s — matches below may be incomplete. Close and reopen this dialog to retry before importing.';
 });
 document.getElementById('companiesImportCancelBtn').addEventListener('click', () => showEl('companiesImportModal', false));
 document.getElementById('companiesImportConfirmBtn').addEventListener('click', confirmCompaniesImport);
