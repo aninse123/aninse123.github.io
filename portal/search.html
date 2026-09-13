@@ -2024,35 +2024,94 @@ function restFieldsToJs(fields){
   for (const k in fields) out[k] = restValueToJs(fields[k]);
   return out;
 }
-// Firestore's REST documents.list endpoint, paginated, instead of the SDK's
-// getDocs()/onSnapshot() -- both of those go through the SDK's
-// persistentLocalCache (firebase-config.js), which writes every fetched
-// document into IndexedDB as it arrives; that write-through is what makes a
-// bulk pull of thousands of documents ~20x slower than a plain fetch (measured
-// live: 300 docs in ~1s over REST vs ~22s through the SDK). A REST call
-// bypasses that layer entirely -- normal single-document reads/writes and the
-// bounded default-view listener (startCompaniesListener, above) keep using
-// the SDK as before, so offline resilience and cross-tab real-time sync for
-// everyday use are unaffected; this is only for "give me every document"
-// bulk loads. The server caps each page at 300 regardless of the requested
-// pageSize.
-const REST_PAGE_SIZE = 300;
+// Firestore's REST API, instead of the SDK's getDocs()/onSnapshot() -- both
+// of those go through the SDK's persistentLocalCache (firebase-config.js),
+// which writes every fetched document into IndexedDB as it arrives; that
+// write-through is what makes a bulk pull of thousands of documents ~20x
+// slower than a plain fetch (measured live: 300 docs in ~1s over REST vs
+// ~22s through the SDK). A REST call bypasses that layer entirely -- normal
+// single-document reads/writes and the bounded default-view listener
+// (startCompaniesListener, above) keep using the SDK as before, so offline
+// resilience and cross-tab real-time sync for everyday use are unaffected;
+// this is only for "give me every document" bulk loads.
+const REST_PAGE_SIZE = 300; // the server caps each page at 300 regardless of the requested pageSize
+// Firestore auto-generates every document ID in this app (doc(collection(db,
+// ...)) or addDoc()), each of the 20 characters picked uniformly at random
+// from exactly this 62-character, already-ASCII-sorted alphabet -- confirmed
+// live against searchCompanies (34,842 docs split into 6 ranges by this same
+// method landed within 5,497-6,289 each, a ~13% spread around the 5,807
+// average). Used only to slice the ID space into that many roughly-equal
+// ranges for parallel fetching below; doesn't need to be exact, just close
+// enough that no one partition ends up doing most of the work.
+const FIRESTORE_ID_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+function idRangeBoundaries(n){
+  const bounds = [];
+  for (let i = 1; i < n; i++) bounds.push(FIRESTORE_ID_ALPHABET[Math.round(i * FIRESTORE_ID_ALPHABET.length / n)]);
+  return bounds; // n-1 single-character cut points, e.g. 5 for 6 partitions
+}
+// One page of a document-ID range, via Firestore's :runQuery endpoint
+// (documents.list, used before this, has no filtering -- only :runQuery
+// supports a `where` clause, needed here to bound each parallel partition to
+// its own slice of the ID space). Paginates the same way the SDK's
+// startAfter() does: `startAt` with `before:false` means "strictly after
+// this document", verified live against real data alongside the range
+// filter itself. Response body is a JSON array of one entry per document
+// (confirmed live) -- not a single object with a `documents` key, unlike
+// documents.list.
+async function restRunQueryPage(collectionName, token, { gte, lt, startAfterName, pageSize }){
+  const parent = `projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents`;
+  const nameRef = id => `${parent}/${collectionName}/${id}`;
+  const filters = [];
+  if (gte != null) filters.push({ fieldFilter: { field: { fieldPath: '__name__' }, op: 'GREATER_THAN_OR_EQUAL', value: { referenceValue: nameRef(gte) } } });
+  if (lt != null) filters.push({ fieldFilter: { field: { fieldPath: '__name__' }, op: 'LESS_THAN', value: { referenceValue: nameRef(lt) } } });
+  const structuredQuery = {
+    from: [{ collectionId: collectionName }],
+    orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+    limit: pageSize,
+  };
+  if (filters.length === 1) structuredQuery.where = filters[0];
+  else if (filters.length === 2) structuredQuery.where = { compositeFilter: { op: 'AND', filters } };
+  if (startAfterName != null) structuredQuery.startAt = { values: [{ referenceValue: nameRef(startAfterName) }], before: false };
+  const res = await fetch(`https://firestore.googleapis.com/v1/${parent}:runQuery`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery }),
+  });
+  if (!res.ok) throw new Error(`Firestore REST query of ${collectionName} failed (${res.status})`);
+  const rows = await res.json();
+  return (rows || []).filter(r => r.document).map(r => r.document);
+}
+// Splits the collection into REST_PARALLEL_PARTITIONS document-ID ranges and
+// fetches all of them concurrently instead of one long serial chain of
+// pages -- each page is a full network round-trip, so N ranges in parallel
+// cuts wall-clock time by roughly N (measured live: ~2m50s for 34,842
+// companies serially; expected ~30-45s across 6 partitions). Safe to run
+// concurrently: JS is single-threaded, so the shared `raw` array and
+// `loadedTotal` counter below are never actually written to by two
+// partitions at once, only interleaved between their own awaits. If any
+// partition's fetch throws, this whole function rejects (Promise.all) the
+// same way a single failed page always has -- no partial dataset is ever
+// handed back to the caller.
+const REST_PARALLEL_PARTITIONS = 6;
 async function restFetchAllDocs(collectionName, onProgress){
   const token = await auth.currentUser.getIdToken();
-  const base = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents/${collectionName}`;
+  const cuts = idRangeBoundaries(REST_PARALLEL_PARTITIONS);
+  const bounds = [null, ...cuts, null]; // REST_PARALLEL_PARTITIONS+1 markers -> that many ranges [bounds[i], bounds[i+1])
   const raw = [];
-  let pageToken = null;
-  do {
-    const url = `${base}?pageSize=${REST_PAGE_SIZE}` + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`Firestore REST fetch of ${collectionName} failed (${res.status})`);
-    const data = await res.json();
-    const docs = data.documents || [];
-    for (const d of docs) raw.push({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) });
-    addReads(docs.length || 1);
-    onProgress(raw.length);
-    pageToken = data.nextPageToken || null;
-  } while (pageToken);
+  let loadedTotal = 0;
+  async function fetchPartition(gte, lt){
+    let after = null;
+    while (true){
+      const docs = await restRunQueryPage(collectionName, token, { gte, lt, startAfterName: after, pageSize: REST_PAGE_SIZE });
+      for (const d of docs) raw.push({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) });
+      loadedTotal += docs.length;
+      addReads(docs.length || 1);
+      onProgress(loadedTotal);
+      if (docs.length < REST_PAGE_SIZE) break; // last page of this partition
+      after = docs[docs.length - 1].name.slice(docs[docs.length - 1].name.lastIndexOf('/') + 1);
+    }
+  }
+  await Promise.all(bounds.slice(0, -1).map((gte, i) => fetchPartition(gte, bounds[i + 1])));
   return raw;
 }
 // Full company list via a paginated REST walk (restFetchAllDocs, above)
