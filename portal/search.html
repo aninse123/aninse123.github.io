@@ -1131,13 +1131,13 @@
 <script src="./vendor/leaflet/leaflet.markercluster.js"></script>
 <script src="./vendor/pt-postcodes.js?v=cp7-nominatim-1"></script>
 <script type="module">
-import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES } from './firebase-config.js';
+import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES, FIRESTORE_PROJECT_ID } from './firebase-config.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
   collection, doc,
   getDocs, getDoc, query, where, orderBy, limit, serverTimestamp, Timestamp,
-  onSnapshot, arrayUnion, arrayRemove, getCountFromServer, documentId, startAfter
+  onSnapshot, arrayUnion, arrayRemove, getCountFromServer, documentId
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -1338,20 +1338,16 @@ let groupedDataCache = {};
 let groupedExpandedFull = new Set();
 let companiesUnsub = null;
 let fullyLoaded = false;
-// `fullyLoaded` alone isn't a strong enough signal that `companies` is safe
-// to run bulk-import MATCHING against: ensureFullDataset()'s from-cache
-// 8-second fallback (below) also sets fullyLoaded=true, from whatever
-// partial local-persistence subset happened to be on disk, specifically so
-// the app doesn't hang forever if genuinely offline. For a collection this
-// size, the real server-confirmed snapshot can legitimately take longer
-// than 8 seconds, so that fallback firing first is not a corner case --
-// confirmed live: an Import Companies run matched only 25/1000 rows against
-// the fallback's partial view, then self-corrected to the real count once
-// the server snapshot landed and something happened to re-render the
-// preview. This flag is true only once `companies` is known-complete (a
-// server-confirmed snapshot, or a cache read -- which is itself only ever
-// written from a server-confirmed snapshot) -- never from the offline
-// fallback -- so Import Companies can gate on it instead of on fullyLoaded.
+// `fullyLoaded` alone used to not be a strong enough signal that `companies`
+// was safe to run bulk-import MATCHING against: an old offline fallback (an
+// 8-second timer that accepted whatever partial local-persistence subset
+// happened to be on disk) also set fullyLoaded=true -- confirmed live, an
+// Import Companies run once matched only 25/1000 rows against that partial
+// view. walkFullDataset() (the only full-load path now) has no such
+// fallback -- both its branches (cache hit, full REST fetch) only ever
+// complete with a truly complete `companies` -- but Import Companies still
+// gates on this flag rather than fullyLoaded, as cheap insurance against that
+// ever regressing.
 let fullDatasetServerConfirmed = false;
 const DEFAULT_FETCH_LIMIT = 300;
 // null = data is live (an onSnapshot listener is attached and current — true
@@ -1760,7 +1756,7 @@ async function loadAll(){
   fetchTotalCount(); // async, non-blocking — corrects the "total" stat while only a bounded page is loaded
 }
 // Backfill Sector/Sub-sector from NACE/CAE for companies imported before derivation existed.
-// Needs the full dataset to know what's missing, so only runs from ensureFullDataset().
+// Needs the full dataset to know what's missing, so only runs from runBackfillsOnce() (walkFullDataset()).
 async function backfillSectors(){
   const need = companies.filter(c => !c.sector && (c.naceCode || c.caeCode) && naceDerive(c.naceCode || c.caeCode).sector);
   if (!need.length) return;
@@ -1780,7 +1776,7 @@ async function backfillSectors(){
 // write — a doc missing the field entirely (not just null) is silently excluded
 // from the bounded default view's orderBy('lastTouchAt') query, so this closes
 // that gap once. Needs the full dataset to find every straggler, not just the
-// bounded 300, so only runs from ensureFullDataset().
+// bounded 300, so only runs from runBackfillsOnce() (walkFullDataset()).
 async function backfillLastTouch(){
   const need = companies.filter(c => !('lastTouchAt' in c));
   if (!need.length) return;
@@ -1798,8 +1794,13 @@ function cacheCompanies(){}
 // Live listener, bounded to the DEFAULT_FETCH_LIMIT most recently-touched
 // companies — the common case (checking in, logging an activity) only ever
 // pays for this bounded window, not the whole collection. Anything that
-// genuinely needs the full dataset (search/filter/sort/Grouped/Map/export/bulk
-// import) calls ensureFullDataset() first, which does a one-time full read.
+// genuinely needs the full dataset (Export CSV, Recalculate all fit scores,
+// Rebuild name index, ...) calls loadCompaniesWithProgress() first, which does
+// a one-time full read (see walkFullDataset()) — none of those are ongoing
+// views, so a one-time snapshot is enough; no full-collection live listener
+// exists any more (removed: it re-materialized the entire collection on every
+// write during a mass import, causing multi-minute freezes — see the comment
+// in runCompaniesImport()).
 function startCompaniesListener(){
   return new Promise(resolve => {
     let done = false;
@@ -1911,7 +1912,6 @@ function writeFullPeopleCache(docs){
   })));
 }
 
-let fullDatasetUnsub = null;
 let fullDatasetPromise = null;
 let fullDatasetBackfilled = false;
 async function runBackfillsOnce(){
@@ -1920,111 +1920,18 @@ async function runBackfillsOnce(){
   await backfillSectors();
   await backfillLastTouch();
 }
-function ensureFullDataset(){
-  if (fullyLoaded) return Promise.resolve();
-  if (fullDatasetPromise) return fullDatasetPromise;
-  fullDatasetPromise = (async () => {
-    const cached = await readFullDatasetCache();
-    if (cached) {
-      const have = new Set(companies.map(c => c.id));
-      cached.docs.forEach(raw => { if (!have.has(raw.id)) companies.push(computeFields({ ...raw })); });
-      fullyLoaded = true;
-      fullDatasetServerConfirmed = true; // the cache is only ever written from a server-confirmed snapshot below
-      dataAsOf = new Date(cached.cachedAt); // served from cache, not live — no Firestore reads spent
-      // Same reasoning as the live-fetch path below: a stale bounded
-      // listener left attached after the full set is loaded would
-      // double-bill any doc that changes from here on.
-      if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
-      refreshSectorOptions();
-      renderSummary();
-      renderReadsAndFreshness();
-      if (document.getElementById('listView').style.display !== 'none') renderList();
-      await runBackfillsOnce();
-      return;
-    }
-    await new Promise(resolve => {
-      let done = false;
-      // Firestore's local persistence cache can deliver this listener's
-      // FIRST snapshot from disk (metadata.fromCache:true) before the server
-      // round-trip lands — and that cache can hold an arbitrary partial
-      // subset (the bounded 300-window, whichever company detail pages were
-      // opened this session, ...), not "everything". Treating it as complete
-      // showed a wrong pipeline total (307 instead of 20,682) for the second
-      // or so until the real snapshot arrived. So a from-cache snapshot is
-      // never rendered, cached, or used to resolve this promise — only a
-      // server-confirmed one (metadata.fromCache:false) sets fullyLoaded.
-      // Everything waiting on ensureFullDataset() (search, filters, sort,
-      // Grouped/Map, export, bulk import) keeps waiting for data we can
-      // vouch for. A short fallback timer still resolves with whatever the
-      // cache last held if we're genuinely offline, so the app doesn't hang
-      // forever with no server to confirm against.
-      let cacheTimeout = null;
-      let lastCacheDocs = null;
-      fullDatasetUnsub = onSnapshot(
-        collection(db, 'searchCompanies'),
-        async snap => {
-          addReads(done ? snap.docChanges().length : snap.docs.length);
-          if (snap.metadata.fromCache){
-            lastCacheDocs = snap.docs;
-            if (!done && !cacheTimeout){
-              cacheTimeout = setTimeout(() => {
-                if (done) return;
-                const raw = lastCacheDocs.map(d => ({ id: d.id, ...d.data() }));
-                companies = raw.map(r => computeFields({ ...r }));
-                fullyLoaded = true;
-                dataAsOf = null;
-                if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
-                refreshSectorOptions();
-                renderSummary();
-                renderReadsAndFreshness();
-                if (document.getElementById('listView').style.display !== 'none') renderList();
-                done = true; resolve();
-              }, 8000);
-            }
-            return;
-          }
-          if (cacheTimeout){ clearTimeout(cacheTimeout); cacheTimeout = null; }
-          const raw = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          companies = raw.map(r => computeFields({ ...r }));
-          fullyLoaded = true;
-          fullDatasetServerConfirmed = true;
-          dataAsOf = null; // live listener — stays current for the rest of the session
-          if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
-          writeFullDatasetCache(raw);
-          refreshSectorOptions();
-          renderSummary();
-          renderReadsAndFreshness();
-          if (document.getElementById('listView').style.display !== 'none') renderList();
-          await runBackfillsOnce();
-          if (!done) { done = true; resolve(); }
-        },
-        err => { console.error('full dataset listener error:', err); if (!done) { done = true; resolve(); } }
-      );
-    });
-  })();
-  return fullDatasetPromise;
-}
-// Companies-import specific: waits past ensureFullDataset()'s own resolve()
-// for `companies` to actually be the real, server-confirmed complete list --
-// not just whatever the from-cache 8-second fallback above accepted so the
-// app doesn't hang if genuinely offline. Matching against that fallback's
-// partial view is exactly how a real mass import matched 25/1000 rows
-// instead of the true count.
-//
-// The live server-confirmed onSnapshot itself can genuinely take well over
-// a minute to land for a collection this size (confirmed live -- 45s alone
-// wasn't enough, purely because the true full-collection listener is slow
-// here, not because anything was actually wrong). Rather than force every
-// import to sit through that in full, also accept a cheap, independent
-// cross-check each poll: cachedTotalCount is a real server aggregate count
-// (getCountFromServer, fetched once on page load, fast), so if the
-// fallback's `companies.length` already equals it exactly, that's strong
-// evidence the fallback's local-persistence data is already complete --
-// only a documented-impossible coincidence (the right COUNT but the wrong
-// SET of real, actually-fetched documents) could make that check lie.
-// Still gives up after maxWaitMs (a genuinely broken connection) and
-// returns false rather than hanging the modal open forever -- the caller
-// decides what to do with that.
+// Companies-import specific: a defensive check that `companies` is really the
+// full, server-confirmed set before matching a mass import against it --
+// historically there was a partial-view fallback (an offline cache snapshot)
+// that could resolve loadCompaniesWithProgress() without `companies` actually
+// being complete, and matching against that partial view is exactly how a
+// real mass import once matched 25/1000 rows instead of the true count.
+// walkFullDataset() (below) no longer has such a fallback -- both its
+// branches (cache hit, full REST fetch) set fullDatasetServerConfirmed before
+// returning -- so by the time loadCompaniesWithProgress() resolves this is
+// normally already true and returns instantly. Kept as a cheap independent
+// cross-check (cachedTotalCount is a real server aggregate count, fetched
+// once on page load) and a maxWaitMs timeout, in case that ever stops holding.
 async function waitForServerConfirmedDataset(maxWaitMs = 90000){
   const start = Date.now();
   while (!fullDatasetServerConfirmed){
@@ -2037,14 +1944,66 @@ async function waitForServerConfirmedDataset(maxWaitMs = 90000){
   }
   return true;
 }
-// Full company list via a paginated getDocs() walk instead of one opaque
-// onSnapshot, so progress is real ("7,000 of 31,514") rather than a spinner
-// with nothing to report until the whole thing lands. Same total read cost
-// either way (one read per company). Deliberately separate from
-// ensureFullDataset() -- that function was hardened against the fromCache
-// bug, and touching it for a UI affordance is how such regressions return.
+// Converts one Firestore REST API field value into the same plain JS shape
+// the SDK's doc.data() would give. timestampValue is left as its RFC3339
+// string rather than reconstructed into a Firestore Timestamp instance --
+// tsToDate() already accepts either via `new Date(ts)`, and every consumer in
+// this file goes through tsToDate(), so nothing downstream needs to change.
+function restValueToJs(v){
+  if (v == null || 'nullValue' in v) return null;
+  if ('stringValue' in v) return v.stringValue;
+  if ('integerValue' in v) return Number(v.integerValue);
+  if ('doubleValue' in v) return v.doubleValue;
+  if ('booleanValue' in v) return v.booleanValue;
+  if ('timestampValue' in v) return v.timestampValue;
+  if ('geoPointValue' in v) return { latitude: v.geoPointValue.latitude, longitude: v.geoPointValue.longitude };
+  if ('referenceValue' in v) return v.referenceValue;
+  if ('bytesValue' in v) return v.bytesValue;
+  if ('arrayValue' in v) return (v.arrayValue.values || []).map(restValueToJs);
+  if ('mapValue' in v) return restFieldsToJs(v.mapValue.fields || {});
+  return null;
+}
+function restFieldsToJs(fields){
+  const out = {};
+  for (const k in fields) out[k] = restValueToJs(fields[k]);
+  return out;
+}
+// Firestore's REST documents.list endpoint, paginated, instead of the SDK's
+// getDocs()/onSnapshot() -- both of those go through the SDK's
+// persistentLocalCache (firebase-config.js), which writes every fetched
+// document into IndexedDB as it arrives; that write-through is what makes a
+// bulk pull of thousands of documents ~20x slower than a plain fetch (measured
+// live: 300 docs in ~1s over REST vs ~22s through the SDK). A REST call
+// bypasses that layer entirely -- normal single-document reads/writes and the
+// bounded default-view listener (startCompaniesListener, above) keep using
+// the SDK as before, so offline resilience and cross-tab real-time sync for
+// everyday use are unaffected; this is only for "give me every document"
+// bulk loads. The server caps each page at 300 regardless of the requested
+// pageSize.
+const REST_PAGE_SIZE = 300;
+async function restFetchAllDocs(collectionName, onProgress){
+  const token = await auth.currentUser.getIdToken();
+  const base = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents/${collectionName}`;
+  const raw = [];
+  let pageToken = null;
+  do {
+    const url = `${base}?pageSize=${REST_PAGE_SIZE}` + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Firestore REST fetch of ${collectionName} failed (${res.status})`);
+    const data = await res.json();
+    const docs = data.documents || [];
+    for (const d of docs) raw.push({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) });
+    addReads(docs.length || 1);
+    onProgress(raw.length);
+    pageToken = data.nextPageToken || null;
+  } while (pageToken);
+  return raw;
+}
+// Full company list via a paginated REST walk (restFetchAllDocs, above)
+// instead of one opaque onSnapshot, so progress is real ("7,000 of 31,514")
+// rather than a spinner with nothing to report until the whole thing lands.
+// Same total read cost either way (one read per company).
 // onPage({ loaded, total, fromCache }) fires once per page.
-const LOAD_ALL_PAGE_SIZE = 1000;
 function walkFullDataset(onPage){
   return (async () => {
     const cached = await readFullDatasetCache();
@@ -2062,26 +2021,15 @@ function walkFullDataset(onPage){
       return;
     }
     const total = cachedTotalCount || 0;
-    const raw = [];
-    let lastDoc = null;
     onPage({ loaded: 0, total });
-    while (true){
-      let q = query(collection(db, 'searchCompanies'), orderBy(documentId()), limit(LOAD_ALL_PAGE_SIZE));
-      if (lastDoc) q = query(collection(db, 'searchCompanies'), orderBy(documentId()), startAfter(lastDoc), limit(LOAD_ALL_PAGE_SIZE));
-      const snap = await getDocs(q);
-      addReads(snap.docs.length || 1);
-      snap.docs.forEach(d => raw.push({ id: d.id, ...d.data() }));
-      onPage({ loaded: raw.length, total });
-      if (snap.docs.length < LOAD_ALL_PAGE_SIZE) break; // last page
-      lastDoc = snap.docs[snap.docs.length - 1];
-    }
+    const raw = await restFetchAllDocs('searchCompanies', loaded => onPage({ loaded, total }));
     companies = raw.map(r => computeFields({ ...r }));
     fullyLoaded = true;
     fullDatasetServerConfirmed = true;
-    // A paginated getDocs walk is a snapshot at the moment it finished, not
-    // an ongoing subscription -- mark it as such (same as the cache path),
-    // not "live" (null), which is reserved for the onSnapshot path that
-    // actually keeps receiving updates.
+    // A REST walk is a snapshot at the moment it finished, not an ongoing
+    // subscription -- mark it as such (same as the cache path), not "live"
+    // (null), which is reserved for the bounded default-view listener
+    // (startCompaniesListener, above) that actually keeps receiving updates.
     dataAsOf = new Date();
     if (companiesUnsub) { companiesUnsub(); companiesUnsub = null; }
     writeFullDatasetCache(raw);
@@ -2124,10 +2072,11 @@ async function loadCompaniesWithProgress(onProgress = () => {}){
   });
   const ticker = setInterval(emit, 1000);
   try {
-    // Something else (search, a filter, Grouped/Map, ...) may already be
-    // loading through ensureFullDataset()'s single onSnapshot -- await that
-    // rather than start a redundant second walk. It reports nothing until it
-    // lands, so only elapsed time is shown, never a made-up percentage.
+    // Another call to this function (a different button, a concurrent import
+    // dialog, ...) may already have a walk in flight -- await that shared
+    // promise rather than start a redundant second walk. That other call's
+    // onPage callback reports progress to ITS OWN caller, not this one, so
+    // this caller has nothing to report but elapsed time until it resolves.
     if (fullDatasetPromise) st.phase = 'waiting';
     else fullDatasetPromise = walkFullDataset(page => {
       st.loaded = page.loaded;
@@ -2251,7 +2200,7 @@ function computeStats(companies){
 // Every field worth tracking on a company, grouped the same way the Company
 // Data Model doc groups them. `test` looks at the already-computed company
 // object (same shape rowHtml()/renderDetail() already use), so this is free
-// once companies are loaded -- no extra reads beyond ensureFullDataset().
+// once companies are loaded -- no extra reads beyond the full-dataset load itself.
 const COMPANY_STAT_GROUPS = [
   { title: 'Identity', fields: [
     { key: 'nif',         label: 'NIF',         test: c => !!c.nif },
@@ -2406,7 +2355,7 @@ async function fetchPeopleOwnershipCounts(){
 // WHOLE collection every time Statistics was opened -- fine when People was
 // a few hundred docs, but ~26,700 reads per open once the full population
 // import ran (predicted in this comment before that happened; it has now).
-// Cached the same way ensureFullDataset() caches companies (same IndexedDB
+// Cached the same way walkFullDataset() caches companies (same IndexedDB
 // db, same 25-minute TTL, see readFullPeopleCache/writeFullPeopleCache
 // above) -- opening Statistics twice in a row now costs the read once.
 async function fetchAllPeopleCached(){
@@ -2417,10 +2366,11 @@ async function fetchAllPeopleCached(){
   return docs;
 }
 async function fetchAllPeople(){
+  // Same REST bypass as walkFullDataset() (see restFetchAllDocs, above) --
+  // searchPeople is large enough now (~26,700 docs) to hit the same SDK
+  // persistentLocalCache slowdown as searchCompanies did.
   try {
-    const snap = await getDocs(collection(db, 'searchPeople'));
-    addReads(snap.docs.length || 1);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return await restFetchAllDocs('searchPeople', () => {});
   } catch(e){ console.error(e); return []; }
 }
 function renderStatsSubsetBanner(){
@@ -2903,7 +2853,7 @@ function updateMapMarkers(){
 async function exportMapCsv(){
   const btn = document.getElementById('mapExportBtn');
   btn.disabled = true; const origLabel = btn.innerHTML; btn.innerHTML = '<span class="spin-sm"></span>Preparing…';
-  try { await ensureFullDataset(); } finally { btn.disabled = false; btn.innerHTML = origLabel; }
+  try { await loadCompaniesWithProgress(); } finally { btn.disabled = false; btn.innerHTML = origLabel; }
   const base = sortList(getFiltered());
   const list = mapMode === 'custom' ? base.filter(c => mapSelection.has(c.id)) : base;
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
@@ -4811,7 +4761,7 @@ function parsePeopleRows(rows){
   const mode = facets.length === 2 ? 'both' : facets[0];
   if (idx.companyName === -1) throw new Error('No "Company name" column found.');
 
-  // Company lookup tables (ensureFullDataset() has already run).
+  // Company lookup tables (the full dataset has already been loaded).
   const byNif = new Map(), byName = new Map();
   for (const c of companies){
     const n = onlyDigits(c.nif) || nifFromAny('', c.bvdId);
@@ -5624,13 +5574,13 @@ async function confirmPeopleImport(){
         }, { onProgress: done => ImportProgress.tick('createCompanies', done), cancelToken });
         ImportProgress.finishStage('createCompanies', `${tally.companiesAdded.toLocaleString('de-DE')} compan${tally.companiesAdded===1?'y':'ies'} created`);
         if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Creating missing companies')); return; }
-        // ensureFullDataset() has no real progress to report (one opaque
-        // listener, not a chunked walk) -- caught live: this used to run
-        // silently between two stage chips with nothing of its own on the
-        // bar, so it looked stalled for however long it took. An
-        // indeterminate stage at least says what's happening right now.
+        // Caught live: this used to run silently between two stage chips with
+        // nothing of its own on the bar, so it looked stalled for however
+        // long it took. An indeterminate stage at least says what's
+        // happening right now (loadCompaniesWithProgress()'s own onProgress
+        // isn't wired to this bar -- could be, as a follow-up).
         ImportProgress.beginStage('refreshCompanies');
-        fullyLoaded = false; await ensureFullDataset(); // pull the new docs into memory
+        fullyLoaded = false; await loadCompaniesWithProgress(); // pull the new docs into memory
         ImportProgress.finishStage('refreshCompanies', 'done');
       } else {
         ImportProgress.finishStage('createCompanies', 'nothing unmatched — nothing to create'); // nothing was unmatched — nothing to do
@@ -7353,18 +7303,16 @@ async function confirmCompaniesImport(){
   showEl('companiesImportModal', false);
   try {
     // A mass import writes hundreds-to-thousands of documents into
-    // searchCompanies. If the full-dataset live listener (ensureFullDataset's
-    // onSnapshot path) is still attached, EVERY one of those writes bounces
-    // back through it and re-materializes the ENTIRE company collection --
-    // computeFields() over all of them plus an IndexedDB cache rewrite --
-    // once per write burst. Confirmed as the real cause of the multi-minute
-    // "stuck at 0%, then jumps" freezes seen on a real ~1,000-row import, far
-    // more than write-batch size alone. The in-memory `companies` array is
-    // already kept correct by this function's own push/assign calls below,
-    // so detaching costs nothing during the run -- the only trade-off is no
-    // live cross-tab updates for the rest of this session, same as the
-    // cached-load path already behaves.
-    if (fullDatasetUnsub) { fullDatasetUnsub(); fullDatasetUnsub = null; }
+    // searchCompanies. There used to be a full-dataset LIVE listener
+    // (a since-removed onSnapshot over the whole collection) that every one
+    // of those writes bounced back through, re-materializing the ENTIRE
+    // company collection -- computeFields() over all of them plus an
+    // IndexedDB cache rewrite -- once per write burst. Confirmed as the real
+    // cause of the multi-minute "stuck at 0%, then jumps" freezes seen on a
+    // real ~1,000-row import, far more than write-batch size alone. Full
+    // loads are now always a one-time walk (walkFullDataset(), no ongoing
+    // subscription), so this can no longer happen -- nothing to detach here
+    // any more.
     ImportProgress.beginStage('matching', companiesImportRows.length);
     const { matched, creatable, dup, noId } = classifyCompaniesImportRows(companiesImportRows);
     ImportProgress.tick('matching', companiesImportRows.length);
@@ -7490,7 +7438,7 @@ async function confirmCompaniesImport(){
       for (const [k, v] of Object.entries(candidate)) if (!fieldsEqual(v, match[k])) payload[k] = v;
       // set(..., {merge:true}) instead of update(): `matched` can point at
       // companies loaded from a cache up to 25 minutes stale
-      // (ensureFullDataset's cache path), so a company deleted since then
+      // (walkFullDataset's cache path), so a company deleted since then
       // would make update() throw -- and Firestore batches are all-or-
       // nothing, so that fails the WHOLE chunk, not just that one doc.
       // merge:true is the same single write per document but tolerates a
@@ -7541,19 +7489,18 @@ async function confirmCompaniesImport(){
     errEl.textContent = e.message; errEl.style.display = 'block';
     ImportProgress.fail(e.message);
   } finally {
-    // Detaching fullDatasetUnsub above (so the import's own writes don't
-    // storm the live listener) has a real side effect: the on-disk cache
-    // (readFullDatasetCache/writeFullDatasetCache) only ever gets refreshed
-    // from inside that listener's callback, so without this, the NEXT page
-    // load within the cache's TTL would serve a snapshot from BEFORE this
-    // import ran -- confirmed live: a company created in one run was
-    // invisible to matching on a fresh reload minutes later, purely because
-    // the listener that would have refreshed the cache had already been
-    // detached before that company's own write happened. `companies` is
-    // already fully current in memory at this point (every create/update
-    // above keeps it in sync as it goes), win or lose, cancelled or not --
-    // so just re-stamp the cache from it whenever this ran against the
-    // complete dataset (fullyLoaded), regardless of how the import exited.
+    // The on-disk cache (readFullDatasetCache/writeFullDatasetCache) only
+    // ever gets refreshed from inside walkFullDataset()'s own completion --
+    // there's no live listener that refreshes it as individual writes land --
+    // so without this, the NEXT page load within the cache's TTL would serve
+    // a snapshot from BEFORE this import ran. Confirmed live: a company
+    // created in one run was invisible to matching on a fresh reload minutes
+    // later, purely because nothing had re-stamped the cache after this
+    // import's writes. `companies` is already fully current in memory at
+    // this point (every create/update above keeps it in sync as it goes),
+    // win or lose, cancelled or not -- so just re-stamp the cache from it
+    // whenever this ran against the complete dataset (fullyLoaded),
+    // regardless of how the import exited.
     if (fullDatasetServerConfirmed) writeFullDatasetCache(companies);
     btn.disabled = false; btn.textContent = 'Import';
     companiesImportInFlight = false;
@@ -8407,7 +8354,7 @@ async function saveCompany(){
       // snapshot update would silently drop it from view (replace-mode, since
       // it's absent from the bounded query's results) even while its detail
       // page is still open.
-      await ensureFullDataset();
+      await loadCompaniesWithProgress();
     }
     cacheCompanies();
     showEl('companyModal', false);
@@ -8906,7 +8853,10 @@ async function recalcAll(){
   // First save current criteria
   fitCriteria = { ...fitCriteria, ...readFitCriteriaFromForm() };
   await setDoc(doc(db,'searchConfig','fitCriteria'), fitCriteria);
-  await ensureFullDataset(); // "Recalculate all" must mean all, not just the bounded default window
+  // "Recalculate all" must mean all, not just the bounded default window.
+  await loadCompaniesWithProgress(p => {
+    btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Loading… ${fmtLoadProgress(p)}`;
+  });
   try {
     // Always write, unconditionally -- comparing against c.fitScore here would compare
     // the new formula's output against itself (companies[] is already computeFields()'d
@@ -8943,7 +8893,9 @@ async function recalcAll(){
 // recalcAll() just above: full load first, batched writes, live progress.
 async function rebuildNameIndex(){
   const btn = document.getElementById('rebuildNameIndexBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm" style="border-top-color:var(--primary);"></span>Rebuilding…';
-  await ensureFullDataset();
+  await loadCompaniesWithProgress(p => {
+    btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Loading… ${fmtLoadProgress(p)}`;
+  });
   try {
     const CHUNK = 450;
     let done = 0;
@@ -9131,8 +9083,8 @@ function updateExportFieldsCount(){
 // built field def (not a COMPANY_EXPORT_FIELDS entry -- 14x10 possible
 // combinations is too many to list as static checkboxes), appended after the
 // picked static fields so the multi-year columns land at the end of the row.
-async function exportCsv(keys, finMetrics = [], finYears = []){
-  await ensureFullDataset();
+async function exportCsv(keys, finMetrics = [], finYears = [], onProgress){
+  await loadCompaniesWithProgress(onProgress);
   const list = sortList(getFiltered());
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
   const fieldByKey = new Map(COMPANY_EXPORT_FIELDS.flatMap(g => g.fields).map(f => [f.key, f]));
@@ -9602,16 +9554,20 @@ document.getElementById('exportFieldsConfirmBtn').addEventListener('click', asyn
   } catch(e){}
   // Same spinner-on-the-button treatment "Recalculate All" already uses —
   // a fire-and-forget download doesn't need a whole loading modal, but it
-  // does need SOMETHING visible while ensureFullDataset() runs inside
+  // does need SOMETHING visible while the full dataset loads inside
   // exportCsv(). The modal only closes once the export is actually ready.
   const btn = document.getElementById('exportFieldsConfirmBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Preparing…';
-  try { await exportCsv(keys, finMetrics, finYears); }
+  try {
+    await exportCsv(keys, finMetrics, finYears, p => {
+      btn.innerHTML = `<span class="spin-sm"></span>Loading… ${fmtLoadProgress(p)}`;
+    });
+  }
   finally { btn.disabled = false; btn.innerHTML = '⬇ Export CSV'; showEl('exportFieldsModal', false); }
 });
 document.getElementById('bulkImportBtn').addEventListener('click', async () => {
   // Open the modal immediately with a visible loading state, rather than the
-  // button silently sitting there for however long ensureFullDataset() takes.
+  // button silently sitting there for however long the full dataset load takes.
   showEl('bulkModal', true);
   const status = document.getElementById('bulkFileName');
   status.textContent = 'Loading company list…';
@@ -9666,9 +9622,9 @@ document.getElementById('companiesImportBtn').addEventListener('click', async ()
   try { await loadCompaniesWithProgress(companyListLoadStatus(status)); }
   catch(e){ console.error(e); status.textContent = '⚠ Could not load the company list — close and reopen this dialog to retry.'; return; }
   // Don't unlock file selection on the load resolving alone -- if it was an
-  // in-flight ensureFullDataset() (the 'waiting' path), see
-  // waitForServerConfirmedDataset()'s comment for why that can still be a
-  // partial view. Matching a bulk import against that would show far fewer
+  // in-flight loadCompaniesWithProgress() call from elsewhere (the 'waiting'
+  // path), see waitForServerConfirmedDataset()'s comment for why that's worth
+  // double-checking. Matching a bulk import against a partial view would show far fewer
   // matches than actually exist, and with "Also create companies" ticked,
   // would create duplicates of real companies instead of updating them.
   // After a full paginated walk this returns immediately.

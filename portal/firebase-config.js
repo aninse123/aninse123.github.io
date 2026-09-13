@@ -19,6 +19,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const auth        = getAuth(app);
+// Shared with any page that talks to Firestore's REST API directly (bulk
+// full-collection loads bypass the SDK's slow persistentLocalCache write-through
+// — see search.html's restFetchAllDocs) instead of hardcoding the id twice.
+export const FIRESTORE_PROJECT_ID = firebaseConfig.projectId;
 // Firestore with offline persistence (IndexedDB) + multi-tab support.
 // Serves repeat page loads from local cache and only fetches changed docs from
 // the server — keeps reads low at scale and makes navigation fast. Falls back
