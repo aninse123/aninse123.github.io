@@ -2178,6 +2178,33 @@ function fmtLoadProgress(p){
   parts.push(p.etaMs != null ? `~${fmtLoadDur(p.etaMs)} left` : 'estimating time left…');
   return parts.join(' · ');
 }
+// Same "snapshot the rate at the last update, count it down live between
+// updates" ETA as loadCompaniesWithProgress() above, factored out for the
+// WRITE phase of bulk admin actions (Recalculate all fit scores, Rebuild
+// name index) -- both run commitInChunks() over the same ~35k-company set
+// and want the same elapsed/left treatment the read phase already has.
+// update(loaded, total) call it after each chunk commits; stop() clears the
+// ticker (call from a finally so a thrown error doesn't leave it running).
+function makeEtaTicker(onTick){
+  const startedAt = Date.now();
+  const st = { loaded: 0, total: 0, etaMs: null, etaAt: 0 };
+  const emit = () => onTick({
+    loaded: st.loaded, total: st.total, elapsedMs: Date.now() - startedAt,
+    etaMs: st.etaMs == null ? null : Math.max(0, st.etaMs - (Date.now() - st.etaAt)),
+  });
+  const timer = setInterval(emit, 1000);
+  return {
+    update(loaded, total){
+      st.loaded = loaded; st.total = total;
+      if (total && loaded > 0 && loaded < total){
+        st.etaMs = (Date.now() - startedAt) / loaded * (total - loaded);
+        st.etaAt = Date.now();
+      }
+      emit();
+    },
+    stop(){ clearInterval(timer); },
+  };
+}
 // Loads the full company list and reports onProgress({ phase, loaded, total,
 // elapsedMs, etaMs }) -- after every page and once a second in between,
 // since one page can take many seconds: elapsed keeps counting and the
@@ -9043,33 +9070,33 @@ async function recalcAll(){
   await loadCompaniesWithProgress(p => {
     btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Loading… ${fmtLoadProgress(p)}`;
   });
+  const ticker = makeEtaTicker(p => {
+    btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Recalculating… ${fmtLoadProgress({ phase:'writing', ...p })}`;
+  });
   try {
     // Always write, unconditionally -- comparing against c.fitScore here would compare
     // the new formula's output against itself (companies[] is already computeFields()'d
     // at load time), never against what's actually persisted, so a diff-check silently
-    // no-ops the very first time this runs after a formula change. Batched (not one
-    // updateDoc per company) since this is a "recalculate all" ~20k-company op.
+    // no-ops the very first time this runs after a formula change. commitInChunks()
+    // (above) runs WRITE_CONCURRENCY batches at once instead of one at a time -- each
+    // batch touches a disjoint slice of `companies`, so there's no correctness reason
+    // to serialise them, only the same latency cost the read side had before its own
+    // parallel-fetch fix.
     const CHUNK = 450;
-    let done = 0;
-    for (let i = 0; i < companies.length; i += CHUNK) {
-      const batch = writeBatch(db);
-      const slice = companies.slice(i, i + CHUNK);
-      for (const c of slice) {
-        computeFields(c);
-        batch.update(doc(db,'searchCompanies',c.id), {
-          computedRevenue:c.computedRevenue, computedEBITDA:c.computedEBITDA, computedEBITDAMargin:c.computedEBITDAMargin,
-          computedEBITDAWeighted:c.computedEBITDAWeighted, computedEBITDAMarginWeighted:c.computedEBITDAMarginWeighted,
-          computedGrowthRecent:c.computedGrowthRecent, computedGrowthSustained:c.computedGrowthSustained, computedEBITDAStability:c.computedEBITDAStability,
-          computedEmployees:c.computedEmployees, fitScore: c.fitScore,
-        });
-      }
-      await batch.commit();
-      done += slice.length;
-      btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Recalculating… ${done}/${companies.length}`;
-    }
+    await commitInChunks(companies, CHUNK, (batch, c) => {
+      computeFields(c);
+      batch.update(doc(db,'searchCompanies',c.id), {
+        computedRevenue:c.computedRevenue, computedEBITDA:c.computedEBITDA, computedEBITDAMargin:c.computedEBITDAMargin,
+        computedEBITDAWeighted:c.computedEBITDAWeighted, computedEBITDAMarginWeighted:c.computedEBITDAMarginWeighted,
+        computedGrowthRecent:c.computedGrowthRecent, computedGrowthSustained:c.computedGrowthSustained, computedEBITDAStability:c.computedEBITDAStability,
+        computedEmployees:c.computedEmployees, fitScore: c.fitScore,
+      });
+      return true;
+    }, { onProgress: (done, total) => ticker.update(done, total) });
     cacheCompanies(); renderSummary(); renderList();
     btn.innerHTML='✓ Done'; setTimeout(()=>{ btn.innerHTML='↻ Recalculate all fit scores'; btn.disabled=false; }, 1500);
   } catch(e){ alert('Error: '+e.message); btn.disabled=false; btn.innerHTML='↻ Recalculate all fit scores'; }
+  finally { ticker.stop(); }
 }
 
 // One-time (or after a bulk rename) backfill of nameKey/nameTokens/namePrefixes
@@ -9082,24 +9109,21 @@ async function rebuildNameIndex(){
   await loadCompaniesWithProgress(p => {
     btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Loading… ${fmtLoadProgress(p)}`;
   });
+  const ticker = makeEtaTicker(p => {
+    btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Rebuilding… ${fmtLoadProgress({ phase:'writing', ...p })}`;
+  });
   try {
     const CHUNK = 450;
-    let done = 0;
-    for (let i = 0; i < companies.length; i += CHUNK) {
-      const batch = writeBatch(db);
-      const slice = companies.slice(i, i + CHUNK);
-      for (const c of slice) {
-        const fields = companySearchFields(c.name);
-        Object.assign(c, fields);
-        batch.update(doc(db,'searchCompanies',c.id), fields);
-      }
-      await batch.commit();
-      done += slice.length;
-      btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Rebuilding… ${done}/${companies.length}`;
-    }
+    await commitInChunks(companies, CHUNK, (batch, c) => {
+      const fields = companySearchFields(c.name);
+      Object.assign(c, fields);
+      batch.update(doc(db,'searchCompanies',c.id), fields);
+      return true;
+    }, { onProgress: (done, total) => ticker.update(done, total) });
     cacheCompanies();
     btn.innerHTML='✓ Done'; setTimeout(()=>{ btn.innerHTML='↻ Rebuild company name search index'; btn.disabled=false; }, 1500);
   } catch(e){ alert('Error: '+e.message); btn.disabled=false; btn.innerHTML='↻ Rebuild company name search index'; }
+  finally { ticker.stop(); }
 }
 
 // ── Export CSV ───────────────────────────────────────────────────────────────
