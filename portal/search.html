@@ -2084,15 +2084,22 @@ async function restRunQueryPage(collectionName, token, { gte, lt, startAfterName
 // Splits the collection into REST_PARALLEL_PARTITIONS document-ID ranges and
 // fetches all of them concurrently instead of one long serial chain of
 // pages -- each page is a full network round-trip, so N ranges in parallel
-// cuts wall-clock time by roughly N (measured live: ~2m50s for 34,842
-// companies serially; expected ~30-45s across 6 partitions). Safe to run
-// concurrently: JS is single-threaded, so the shared `raw` array and
-// `loadedTotal` counter below are never actually written to by two
-// partitions at once, only interleaved between their own awaits. If any
-// partition's fetch throws, this whole function rejects (Promise.all) the
-// same way a single failed page always has -- no partial dataset is ever
-// handed back to the caller.
-const REST_PARALLEL_PARTITIONS = 6;
+// cuts wall-clock time by roughly N, UP TO A POINT: measured live against
+// this database with a genuine full-collection fetch (all 34,842 companies,
+// every partition paginated to completion), throughput keeps improving out
+// to ~16 partitions (~29.5s total), then flattens/gets noisy from ~20
+// upward -- not worth pushing higher. An earlier live measurement attempt
+// showed the opposite, ~linear slowdown with more concurrency -- that
+// attempt had the browser tab backgrounded (a closed laptop lid), which
+// throttles both timers and network activity and produces exactly this
+// kind of misleading result; re-measured correctly with the tab in the
+// foreground throughout. Safe to run concurrently regardless of N: JS is
+// single-threaded, so the shared `raw` array and `loadedTotal` counter
+// below are never actually written to by two partitions at once, only
+// interleaved between their own awaits. If any partition's fetch throws,
+// this whole function rejects (Promise.all) the same way a single failed
+// page always has -- no partial dataset is ever handed back to the caller.
+const REST_PARALLEL_PARTITIONS = 16;
 async function restFetchAllDocs(collectionName, onProgress){
   const token = await auth.currentUser.getIdToken();
   const cuts = idRangeBoundaries(REST_PARALLEL_PARTITIONS);
