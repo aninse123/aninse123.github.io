@@ -439,14 +439,14 @@
         <div class="summary-header-left">
           <h2>Pipeline Overview <span id="dataFreshness" class="freshness-badge"></span></h2>
           <div class="summary-stats" id="summaryStats">—</div>
-          <div id="loadAllRow" style="margin-top:6px;display:flex;align-items:center;gap:10px;">
+          <div id="loadAllRow" style="margin-top:6px;">
             <button class="btn btn--ghost btn--sm" id="loadAllBtn">⬇ Load all companies</button>
-            <div id="loadAllProgress" style="display:none;flex:1;max-width:520px;align-items:center;gap:8px;">
-              <div style="flex:1;height:5px;border-radius:3px;overflow:hidden;background:var(--border);">
-                <div id="loadAllFill" style="height:100%;width:0%;background:var(--primary);border-radius:3px;transition:width .2s ease;"></div>
-              </div>
-              <span id="loadAllLabel" style="font-size:0.74rem;color:var(--text-light);white-space:nowrap;"></span>
+          </div>
+          <div id="loadAllProgress" style="display:none;margin-top:8px;max-width:520px;align-items:center;gap:8px;">
+            <div style="flex:1;height:5px;border-radius:3px;overflow:hidden;background:var(--border);">
+              <div id="loadAllFill" style="height:100%;width:0%;background:var(--primary);border-radius:3px;transition:width .2s ease;"></div>
             </div>
+            <span id="loadAllLabel" style="font-size:0.74rem;color:var(--text-light);white-space:nowrap;"></span>
           </div>
         </div>
       </div>
