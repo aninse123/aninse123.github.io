@@ -7680,6 +7680,14 @@ async function confirmCompaniesImport(){
       };
       const payload = { updatedAt: serverTimestamp() };
       for (const [k, v] of Object.entries(candidate)) if (!fieldsEqual(v, match[k])) payload[k] = v;
+      // Nothing but updatedAt in the payload means this row changed literally
+      // nothing -- skip the write entirely rather than paying a full write
+      // just to bump a timestamp with no real change behind it. A re-import
+      // of an unchanged file used to cost one write per matched company
+      // regardless (34,842 unchanged companies -> 34,842 writes, most of a
+      // day's free write quota for a file that changed nothing); same fix
+      // already applied to the People importer's no-op re-import case.
+      if (Object.keys(payload).length === 1) return false;
       // set(..., {merge:true}) instead of update(): `matched` can point at
       // companies loaded from a cache up to 25 minutes stale
       // (walkFullDataset's cache path), so a company deleted since then
