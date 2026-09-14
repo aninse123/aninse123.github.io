@@ -1122,14 +1122,18 @@
           ⚠ Possible duplicates <span id="companiesImportDupCount" style="font-weight:400;color:var(--text-light);"></span>
         </summary>
         <div style="font-size:0.76rem;color:var(--text-light);margin:8px 0;">
-          Not auto-created. Click a company below to open its existing CRM record and compare by hand — same company (leave skipped, or copy this row's NIF/BvD onto it so future imports match automatically) or genuinely different (nothing to do).
+          Not auto-created. Tick "Same company" for a row that's genuinely the same company under a
+          different identifier — this attaches the row's NIF/BvD ID and data to the existing record,
+          the same as a normal matched update. Click a company name to open its record and compare by
+          hand instead. Leave unticked if genuinely a different company — nothing happens to those.
         </div>
-        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+          <button class="btn btn--primary btn--sm" id="companiesImportDupResolveBtn" disabled>✓ Attach selected as matches (<span id="companiesImportDupResolveCount">0</span>)</button>
           <button class="btn btn--ghost btn--sm" id="companiesImportDupCsvBtn">⬇ Download as CSV</button>
         </div>
         <div style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
           <table class="preview-table">
-            <thead><tr><th>Import row</th><th>NIF / BvD ID</th><th>Existing CRM company</th><th>Reason</th></tr></thead>
+            <thead><tr><th style="width:28px;"><input type="checkbox" id="companiesImportDupSelectAll" title="Select all resolvable rows"></th><th>Import row</th><th>NIF / BvD ID</th><th>Existing CRM company</th><th>Reason</th><th></th></tr></thead>
             <tbody id="companiesImportDupBody"></tbody>
           </table>
         </div>
@@ -6155,6 +6159,11 @@ let companiesImportInFlight = false;
 let companiesImportRows = [];
 let companiesImportStats = null;
 let companiesImportLastDup = []; // the dup bucket from the most recent renderCompaniesImportPreview(), for the CSV export button
+// Import row (by reference) -> the existing company confirmed, via the
+// "Possible duplicates" panel's "Same company" action, to be the same real
+// company under a different identifier. Scoped to one file's review session
+// -- reset wherever companiesImportRows is (re)loaded.
+let companiesResolvedDups = new Map();
 
 // Excel serial date (days since 1899-12-30, the same epoch quirk Excel
 // itself uses) -> 'YYYY-MM-DD'. Several Orbis fields across these exports
@@ -7277,11 +7286,30 @@ function classifyCompaniesImportRows(rows){
   }
   return { matched, creatable, dup, noId };
 }
+// classifyCompaniesImportRows() stays pure and knows nothing about the UI --
+// this layers the "Possible duplicates" panel's per-row resolutions on top: a
+// dup the user has confirmed (via the panel's "Same company" action) really
+// is companiesResolvedDups.get(r) moves into `matched`, in exactly the shape
+// the updating stage already expects ({r, match}) -- so a resolved dup and a
+// row that matched cleanly by NIF go through the identical write path (same
+// field-diffing, same computeFields recompute) from here on. Both
+// renderCompaniesImportPreview() and confirmCompaniesImport() call this
+// instead of classifyCompaniesImportRows() directly, so the preview and the
+// actual write can never disagree about which rows are resolved.
+function classifyCompaniesImportRowsResolved(rows){
+  const { matched, creatable, dup, noId } = classifyCompaniesImportRows(rows);
+  const stillDup = [], resolved = [];
+  for (const d of dup){
+    const target = companiesResolvedDups.get(d.r);
+    (target ? resolved.push({ r: d.r, match: target }) : stillDup.push(d));
+  }
+  return { matched: [...matched, ...resolved], creatable, dup: stillDup, noId };
+}
 
 function renderCompaniesImportPreview(){
   const createMissing = document.getElementById('companiesCreateMissing').checked;
   const onlyIssues = document.getElementById('companiesImportOnlyIssues').checked;
-  const { matched, creatable, dup, noId } = classifyCompaniesImportRows(companiesImportRows);
+  const { matched, creatable, dup, noId } = classifyCompaniesImportRowsResolved(companiesImportRows);
   const creatableSet = new Map(creatable.map(x => [x.r, x]));
   const dupSet = new Map(dup.map(x => [x.r, x]));
 
@@ -7346,27 +7374,74 @@ function renderCompaniesImportPreview(){
 // The "Possible duplicates" review panel: every dup row is a name-based hit
 // against an existing CRM company (or a collision with another row in this
 // same file) that classifyCompaniesImportRows() deliberately excludes from
-// auto-creation. Never auto-resolved -- this just makes reviewing them by
-// hand fast: click through to the existing company, or export the list.
+// auto-creation. Never auto-resolved BY THE ALGORITHM -- a human still has to
+// decide each one -- but a row with an existingNameHit (a real CRM company,
+// not just a within-file collision with no existing record to attach to) can
+// now be resolved with one click ("Same company") or in bulk (checkboxes +
+// select-all), instead of only "click through and edit the record by hand."
+// Resolving stages the row into classifyCompaniesImportRowsResolved()'s
+// `matched` bucket (companiesResolvedDups, above) -- it still goes through
+// the exact same field-diff/write path as a row that matched cleanly by NIF,
+// it's just a human confirming the match instead of an exact key lookup
+// finding it. `dup`'s index in this array is what data-idx refers to below;
+// it's rebuilt (and re-indexed) on every renderCompaniesImportPreview() call.
 function renderCompaniesDupPanel(dup){
   companiesImportLastDup = dup;
   const wrap = document.getElementById('companiesImportDupWrap');
   if (!dup.length){ wrap.style.display = 'none'; wrap.open = false; return; }
   wrap.style.display = '';
   document.getElementById('companiesImportDupCount').textContent = `(${dup.length})`;
-  document.getElementById('companiesImportDupBody').innerHTML = dup.map(d => {
+  document.getElementById('companiesImportDupBody').innerHTML = dup.map((d, i) => {
     const why = d.existingNameHit ? 'Name matches an existing company' : 'NIF/BvD ID or name collides with another row in this file';
     const existingCell = d.existingNameHit
       ? `<span class="person-link" data-gotoco="${esc(d.existingNameHit.id)}">${esc(d.existingNameHit.name)}</span>`
       : '<span style="color:var(--text-light)">— (only within this file)</span>';
-    return `<tr><td>${esc(d.r.name)}</td><td>${esc(d.r.nifDigits || d.r.bvdId || d.r.foreignTaxId || '—')}</td><td>${existingCell}</td><td>${esc(why)}</td></tr>`;
+    // Only a name hit against a real existing company can be "resolved" this
+    // way -- a pure within-file collision has no existing record to attach to.
+    const checkbox = d.existingNameHit ? `<input type="checkbox" class="dupResolveChk" data-idx="${i}">` : '';
+    const actionBtn = d.existingNameHit ? `<button class="btn btn--ghost btn--sm" data-resolvedup="${i}">✓ Same company</button>` : '';
+    return `<tr><td>${checkbox}</td><td>${esc(d.r.name)}</td><td>${esc(d.r.nifDigits || d.r.bvdId || d.r.foreignTaxId || '—')}</td><td>${existingCell}</td><td>${esc(why)}</td><td>${actionBtn}</td></tr>`;
   }).join('');
+  updateCompaniesDupResolveUi();
+}
+function updateCompaniesDupResolveUi(){
+  const boxes = [...document.querySelectorAll('.dupResolveChk')];
+  const checked = boxes.filter(b => b.checked).length;
+  document.getElementById('companiesImportDupResolveCount').textContent = checked;
+  document.getElementById('companiesImportDupResolveBtn').disabled = checked === 0;
+  const selectAll = document.getElementById('companiesImportDupSelectAll');
+  selectAll.checked = boxes.length > 0 && checked === boxes.length;
+  selectAll.indeterminate = checked > 0 && checked < boxes.length;
+}
+// Marks the given dup rows (by their current index into companiesImportLastDup)
+// as confirmed matches, then re-renders the whole preview -- classifyCompanies-
+// ImportRowsResolved() picks them up from companiesResolvedDups on the next
+// call, so they move out of "Possible duplicates" and into the normal
+// "Matched" bucket (and its write path) everywhere at once: the summary line,
+// the main preview table, and the dup panel itself shrinking or disappearing.
+function resolveCompaniesDups(indices){
+  for (const i of indices){
+    const d = companiesImportLastDup[i];
+    if (d?.existingNameHit) companiesResolvedDups.set(d.r, d.existingNameHit);
+  }
+  renderCompaniesImportPreview();
 }
 document.getElementById('companiesImportDupBody').addEventListener('click', e => {
-  const t = e.target.closest('[data-gotoco]');
-  if (!t) return;
-  showEl('companiesImportModal', false);
-  openDetail(t.dataset.gotoco);
+  const goto = e.target.closest('[data-gotoco]');
+  if (goto) { showEl('companiesImportModal', false); openDetail(goto.dataset.gotoco); return; }
+  const resolveBtn = e.target.closest('[data-resolvedup]');
+  if (resolveBtn) resolveCompaniesDups([Number(resolveBtn.dataset.idx)]);
+});
+document.getElementById('companiesImportDupBody').addEventListener('change', e => {
+  if (e.target.classList.contains('dupResolveChk')) updateCompaniesDupResolveUi();
+});
+document.getElementById('companiesImportDupSelectAll').addEventListener('change', e => {
+  document.querySelectorAll('.dupResolveChk').forEach(chk => { chk.checked = e.target.checked; });
+  updateCompaniesDupResolveUi();
+});
+document.getElementById('companiesImportDupResolveBtn').addEventListener('click', () => {
+  const indices = [...document.querySelectorAll('.dupResolveChk:checked')].map(chk => Number(chk.dataset.idx));
+  resolveCompaniesDups(indices);
 });
 function downloadCompaniesDupCsv(){
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
@@ -7385,6 +7460,10 @@ document.getElementById('companiesImportDupCsvBtn').addEventListener('click', do
 async function handleCompaniesFile(file){
   const errEl = document.getElementById('companiesImportErr'); errEl.style.display = 'none';
   document.getElementById('companiesFileName').textContent = file.name + ' — reading…';
+  // A resolution ("this dup IS that existing company") is scoped to reviewing
+  // one file -- a fresh file means a fresh review, not stale decisions from
+  // whatever was open before carrying over onto different rows.
+  companiesResolvedDups = new Map();
   try {
     if (/\.xlsx$/i.test(file.name)){
       const { readXlsx } = await import('./vendor/xlsx-lite.js');
@@ -7463,7 +7542,7 @@ async function confirmCompaniesImport(){
     // subscription), so this can no longer happen -- nothing to detach here
     // any more.
     ImportProgress.beginStage('matching', companiesImportRows.length);
-    const { matched, creatable, dup, noId } = classifyCompaniesImportRows(companiesImportRows);
+    const { matched, creatable, dup, noId } = classifyCompaniesImportRowsResolved(companiesImportRows);
     ImportProgress.tick('matching', companiesImportRows.length);
     ImportProgress.finishStage('matching', `${matched.length.toLocaleString('de-DE')} matched, ${(companiesImportRows.length - matched.length).toLocaleString('de-DE')} not found in CRM`);
     if (cancelToken.cancelled){ ImportProgress.stopped('Stopped during "Matching to CRM companies".'); return; }
@@ -9818,7 +9897,7 @@ document.getElementById('peopleFileInput').addEventListener('change', e => {
 });
 document.getElementById('companiesImportBtn').addEventListener('click', async () => {
   if (companiesImportInFlight){ alert('An import is already running — try again once it finishes.'); return; }
-  companiesImportRows = []; companiesImportStats = null;
+  companiesImportRows = []; companiesImportStats = null; companiesResolvedDups = new Map();
   document.getElementById('companiesFileName').textContent = 'Loading company list…';
   document.getElementById('companiesFileInput').value = '';
   document.getElementById('companiesFileInput').disabled = true;
