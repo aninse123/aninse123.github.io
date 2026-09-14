@@ -6670,7 +6670,14 @@ function financialsCellValue(vals, indices){
 // in every export regardless of shape -- using it would flag every file as
 // (at least) profile. "Address line 1 latin alphabet" is unique to the
 // Company Profile shape's alias map (none of legal/advisors/financials
-// import an address column), so it's the correct signature.
+// import an address column), so it's the correct signature -- but Orbis lets
+// a list export be configured with only a subset of a shape's columns, and a
+// real export carrying every other Profile column (trade description,
+// products & services, industry classification, full overview, ...) but NOT
+// address/contact columns was rejected outright until this was added.
+// "Trade description in original language" / "Products & services" are
+// exclusively Profile-shape columns too (confirmed against all four alias
+// maps), so either is just as valid a signature as the address column.
 function detectCompanyExportShapes(headerRow){
   const norm = headerRow.map(h => String(h == null ? '' : h).replace(/\s+/g,' ').trim().toLowerCase());
   const shapes = [];
@@ -6681,7 +6688,7 @@ function detectCompanyExportShapes(headerRow){
   // unit suffix is required too.
   if (norm.some(h => h.startsWith('operating revenue (turnover) th eur') || h.startsWith('operating revenue (turnover) th usd'))) shapes.push('financials');
   if (norm.some(h => h === 'advfull name' || h === 'number of advisors')) shapes.push('advisors');
-  if (norm.includes('address line 1 latin alphabet')) shapes.push('profile');
+  if (norm.includes('address line 1 latin alphabet') || norm.includes('trade description in original language') || norm.includes('products & services')) shapes.push('profile');
   return shapes;
 }
 
@@ -6744,7 +6751,16 @@ function parseCompanyProfileRow(idx, vals){
 
   const bvdId = g('bvdId');
   if (bvdId) payload.bvdId = bvdId;
-  const vatParsed = parseVatNumber(vatRaw, country, true);
+  // A narrower Profile export (industry/description columns only, no
+  // address/contact block) can genuinely lack a Country column at all --
+  // g('country') can't tell "column missing" from "column present but blank
+  // on this row", so hasCountryColumn has to be checked separately. Passing
+  // true unconditionally here (as this always did before) would tell
+  // parseVatNumber() a Country value it never actually saw was "blank",
+  // which reads the same as "present but not Portugal" and would have
+  // dropped a genuine 9-digit NIF from this shape with no warning at all.
+  const hasCountryColumn = idx.country !== -1 && idx.country != null;
+  const vatParsed = parseVatNumber(vatRaw, country, hasCountryColumn);
   const nifDigits = vatParsed.nifDigits;
   const foreignTaxId = vatParsed.foreignTaxId;
   Object.assign(payload, vatParsed.payload);
