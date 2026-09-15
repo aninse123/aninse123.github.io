@@ -36,9 +36,23 @@ export const ADMIN_EMAILS = [
   'antonio.carvalho@douropartners.pt'
 ];
 
+// Firestore's free-tier daily quotas reset once a day at Pacific-time
+// midnight (Firebase's own docs: "Quotas are applied daily and reset around
+// midnight Pacific time") -- not at each browser's own local midnight. Every
+// counter below (local-estimate AND the shared cross-browser Firestore docs)
+// keys off this one function, so it used to roll over ~7-9 hours off from
+// the real reset for anyone outside Pacific time (e.g. Lisbon's local
+// midnight is late morning/afternoon the previous day in California) --
+// showing "0" for hours while Firestore's own quota was still the previous
+// day's, or the reverse. Uses Intl's IANA tz database rather than a fixed
+// UTC offset so California's own DST transitions (which don't line up with
+// Europe's) are handled automatically; en-CA is just the locale whose
+// default date format happens to already be YYYY-MM-DD.
+const PACIFIC_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit'
+});
 function todayDateStr(){
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  return PACIFIC_DATE_FORMATTER.format(new Date());
 }
 
 // ── Reads ─────────────────────────────────────────────────────────────────

@@ -65,9 +65,9 @@ export function initNav(activeKey, opts = {}) {
           <button class="nav__avatar" id="navAvatarBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Account"></button>
           <div class="nav__dropdown" id="navDropdown" hidden>
             <span class="nav__email" id="navEmail"></span>
-            <span class="nav__reads" id="navReads" title="Rough estimate of Firestore reads today — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day."></span>
+            <span class="nav__reads" id="navReads" title="Rough estimate of Firestore reads today — resets at Pacific-time midnight (Firestore's own quota reset), not billing-exact. Firestore free tier: 50.000 reads/day."></span>
             <div class="nav__quota-bar"><div class="nav__quota-fill" id="navQuotaFill"></div></div>
-            <span class="nav__writes" id="navWrites" title="Rough estimate of Firestore writes today — resets at midnight, not billing-exact. Firestore free tier: 20.000 writes/day."></span>
+            <span class="nav__writes" id="navWrites" title="Rough estimate of Firestore writes today — resets at Pacific-time midnight (Firestore's own quota reset), not billing-exact. Firestore free tier: 20.000 writes/day."></span>
             <div class="nav__quota-bar"><div class="nav__quota-fill" id="navWriteQuotaFill"></div></div>
             <span class="nav__deletes" id="navDeletes" title="Rough estimate of Firestore deletes today — a separate quota from writes. Firestore free tier: 20.000 deletes/day."></span>
             <span class="nav__cost" id="navCost" title="Very rough estimate: $0.06/100k reads, $0.18/100k writes and $0.02/100k deletes beyond the free tier, converted to EUR at a fixed approximate rate. Not billing-exact — check the Firebase Console for the real number."></span>
@@ -167,7 +167,7 @@ export function refreshReads() {
   const local = getTodayReads();
   const shown = sharedReads != null ? sharedReads : local;
   el.textContent = `${shown.toLocaleString('de-DE')} est./${FREE_TIER_DAILY_READS.toLocaleString('de-DE')} free reads`;
-  el.title = `Rough estimate of Firestore reads today — resets at midnight, not billing-exact. Firestore free tier: 50.000 reads/day. This browser: ${local.toLocaleString('de-DE')}.`;
+  el.title = `Rough estimate of Firestore reads today — resets at Pacific-time midnight (Firestore's own quota reset), not billing-exact. Firestore free tier: 50.000 reads/day. This browser: ${local.toLocaleString('de-DE')}.`;
 
   const { pct, isFull } = fillBar('navQuotaFill', shown, FREE_TIER_DAILY_READS);
   const fillColor = isFull ? '#B33A3A' : '#F59E0B';
@@ -216,7 +216,7 @@ export function refreshWrites() {
 
   if (wEl) {
     wEl.textContent = `${shownW.toLocaleString('de-DE')} est./${FREE_TIER_DAILY_WRITES.toLocaleString('de-DE')} free writes`;
-    wEl.title = `Rough estimate of Firestore writes today — resets at midnight, not billing-exact. Firestore free tier: 20.000 writes/day. This browser: ${localW.toLocaleString('de-DE')}.`;
+    wEl.title = `Rough estimate of Firestore writes today — resets at Pacific-time midnight (Firestore's own quota reset), not billing-exact. Firestore free tier: 20.000 writes/day. This browser: ${localW.toLocaleString('de-DE')}.`;
   }
   fillBar('navWriteQuotaFill', shownW, FREE_TIER_DAILY_WRITES);
 
