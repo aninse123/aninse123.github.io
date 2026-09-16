@@ -940,6 +940,10 @@
     <p class="hint" style="margin-top:14px;">One-time: builds the search index every company needs so name search can find companies that aren't currently loaded, by any word, not just an exact substring. Safe to re-run; only needed once, or after a bulk rename.</p>
     <button class="btn btn--ghost btn--sm" id="rebuildNameIndexBtn" style="margin-top:8px;">↻ Rebuild company name search index</button>
 
+    <p class="hint" style="margin-top:14px;">Finds companies whose NIF field holds something other than a genuine 9-digit Portuguese NIF — most often a 14-digit Brazilian CNPJ picked up by an older, now-fixed import bug — and moves it to Foreign tax ID instead, clearing NIF so it's no longer mistaken for a validated Portuguese identity. Nothing is discarded. Safe to re-run — scans fresh each time rather than a fixed list.</p>
+    <button class="btn btn--ghost btn--sm" id="scanBadNifBtn" style="margin-top:8px;">🔍 Scan for corrupted NIF values</button>
+    <div id="badNifResult" style="margin-top:10px;font-size:0.82rem;"></div>
+
     <div class="modal-section-title">Brokers</div>
     <div id="brokerList" style="margin-bottom:10px;"></div>
     <div class="form-row">
@@ -9433,6 +9437,86 @@ async function rebuildNameIndex(){
   finally { ticker.stop(); }
 }
 
+// A NIF field should always be exactly 9 digits (Portugal's own format) --
+// two now-fixed import bugs (Import Companies' parseVatNumber() before
+// `8ed01714`, Import People's nifFromAny() before `9b9fd09`) trusted any
+// digit string outright, so a handful of companies ended up with a 14-digit
+// Brazilian CNPJ sitting in `nif` instead of a real Portuguese one.
+// Confirmed live 2026-09-16: 151 of 39,064 companies, every one matching the
+// CNPJ branch-code shape (8-digit root + "0001" + 2 check digits), including
+// well-known real Portuguese companies (Brisa, Delta Cafés, Millennium BCP,
+// Inetum, Gallo Worldwide among them) -- not a hypothetical edge case. Both
+// import paths are already fixed against writing this going forward; this is
+// the one-off cleanup for what they already wrote. Recomputes the affected
+// set fresh on every scan rather than acting off a fixed list, so it's safe
+// to re-run and will also catch anything similar surfacing later.
+function isGenuineNif(nif){ return /^\d{9}$/.test(String(nif || '')); }
+let badNifScanResults = [];
+async function scanBadNif(){
+  const btn = document.getElementById('scanBadNifBtn');
+  const resultEl = document.getElementById('badNifResult');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm" style="border-top-color:var(--primary);"></span>Scanning…';
+  resultEl.innerHTML = '';
+  await loadCompaniesWithProgress(p => {
+    btn.innerHTML = `<span class="spin-sm" style="border-top-color:var(--primary);"></span>Loading… ${fmtLoadProgress(p)}`;
+  });
+  badNifScanResults = companies.filter(c => c.nif && !isGenuineNif(c.nif));
+  btn.disabled = false; btn.innerHTML = '🔍 Scan for corrupted NIF values';
+  if (!badNifScanResults.length){
+    resultEl.innerHTML = '<span style="color:var(--text-light);">None found — every company\'s NIF is a genuine 9-digit value.</span>';
+    return;
+  }
+  // A company that already carries its own Foreign tax ID (none do as of
+  // 2026-09-16, but a re-run later might see one added by hand) is never
+  // clobbered -- only NIF is cleared for it, and the row says so, rather than
+  // silently overwriting a value someone already tracked down.
+  resultEl.innerHTML = `
+    <div style="color:#B45309;margin-bottom:8px;">⚠ ${badNifScanResults.length} compan${badNifScanResults.length===1?'y':'ies'} found with a non-9-digit value in NIF:</div>
+    <div style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;">
+      <table class="preview-table">
+        <thead><tr><th>Company</th><th>Current NIF value</th><th>Action</th></tr></thead>
+        <tbody>${badNifScanResults.map(c => {
+          const isCnpj = /^\d{14}$/.test(c.nif);
+          const action = c.foreignTaxId
+            ? 'Clear NIF only — already has a Foreign tax ID'
+            : (isCnpj ? 'Move to Foreign tax ID as a Brazilian CNPJ, clear NIF' : 'Move to Foreign tax ID (unknown type), clear NIF');
+          return `<tr><td><span class="person-link" data-gotoco="${esc(c.id)}">${esc(c.name)}</span></td><td>${esc(c.nif)}</td><td>${esc(action)}</td></tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    <button class="btn btn--primary btn--sm" id="fixBadNifBtn">Fix ${badNifScanResults.length} compan${badNifScanResults.length===1?'y':'ies'}</button>
+  `;
+  document.getElementById('fixBadNifBtn').addEventListener('click', fixBadNif);
+}
+async function fixBadNif(){
+  const btn = document.getElementById('fixBadNifBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Fixing…';
+  try {
+    const written = await commitInChunks(badNifScanResults, 450, (batch, c) => {
+      const badValue = c.nif;
+      const isCnpj = /^\d{14}$/.test(badValue);
+      const payload = { nif: null, updatedAt: serverTimestamp() };
+      if (!c.foreignTaxId){
+        payload.foreignTaxId = badValue;
+        if (isCnpj){ payload.foreignTaxIdType = 'BR-CNPJ'; payload.foreignTaxIdCountry = 'Brazil'; }
+      }
+      batch.update(doc(db,'searchCompanies', c.id), payload);
+      Object.assign(c, payload);
+      return true;
+    });
+    cacheCompanies();
+    document.getElementById('badNifResult').innerHTML = `✓ Fixed ${written.toLocaleString('de-DE')} compan${written===1?'y':'ies'}.`;
+    badNifScanResults = [];
+  } catch(e){
+    alert('Error: '+e.message);
+    btn.disabled = false; btn.innerHTML = `Fix ${badNifScanResults.length} compan${badNifScanResults.length===1?'y':'ies'}`;
+  }
+}
+document.getElementById('badNifResult').addEventListener('click', e => {
+  const goto = e.target.closest('[data-gotoco]');
+  if (goto){ showEl('settingsModal', false); openDetail(goto.dataset.gotoco); }
+});
+
 // ── Export CSV ───────────────────────────────────────────────────────────────
 // One entry per exportable column; `get` returns the raw cell value (before
 // exportCsv's CSV-injection guard/quoting runs on it). Grouped the same way
@@ -10055,6 +10139,7 @@ document.getElementById('settingsSaveBtn').addEventListener('click', saveSetting
 document.getElementById('recalcBtn').addEventListener('click', recalcAll);
 document.querySelectorAll('.fitWeightInput').forEach(el => el.addEventListener('input', updateFitFormulaPreview));
 document.getElementById('rebuildNameIndexBtn').addEventListener('click', rebuildNameIndex);
+document.getElementById('scanBadNifBtn').addEventListener('click', scanBadNif);
 document.getElementById('addBrokerBtn').addEventListener('click', addBroker);
 document.getElementById('exportBtn').addEventListener('click', openExportFields);
 document.getElementById('exportSelectAllBtn').addEventListener('click', () => { document.querySelectorAll('.exportFieldChk').forEach(c => c.checked = true); updateExportFieldsCount(); });
