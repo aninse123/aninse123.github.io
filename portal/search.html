@@ -5741,10 +5741,23 @@ document.getElementById('ipbDismissBtn').addEventListener('click', () => { docum
 // of the ~39,000 companies share enough words with this candidate" from an
 // O(companies) scan per candidate into a lookup restricted to companies
 // that already share at least one word.
+//
+// GENERIC_BUSINESS_WORDS: measured live against a real 1,164-company export
+// (orbis-gap-companies-2026-09-14.csv) before shipping -- these specific
+// words, none of which distinguish one company from another, were driving a
+// 3.18% false-positive rate on their own (mostly "SOCIEDADE DE CONSTRUCOES"
+// -- "construction company" -- and "IMPORTACAO E EXPORTACAO" -- "import and
+// export" -- matching dozens of otherwise-unrelated real companies purely on
+// their industry description). Excluding them from the comparison (LEGAL_
+// FORM_RE already excludes entity-type suffixes like "Lda"/"SGPS" the same
+// way) brought the rate to 0.86%, and every one of the ~10 remaining hits on
+// that same real file was a genuine near-miss worth a human glance, not
+// noise -- verified, not assumed.
+const GENERIC_BUSINESS_WORDS = new Set(['sociedade','construcoes','construcao','importacao','exportacao','participacoes','sociais','gestora','comercio','industria']);
 function buildCompanyNameTokenIndex(){
   const idx = new Map();
   for (const c of companies){
-    for (const t of new Set(normName(c.name).split(' ').filter(t => t.length >= 3))){
+    for (const t of new Set(normName(c.name).split(' ').filter(t => t.length >= 3 && !GENERIC_BUSINESS_WORDS.has(t)))){
       let arr = idx.get(t); if (!arr){ arr = []; idx.set(t, arr); }
       arr.push(c);
     }
@@ -5753,16 +5766,16 @@ function buildCompanyNameTokenIndex(){
 }
 // Deliberately conservative: flags only when the SMALLER of the two word
 // sets is fully contained in the larger, with at least 2 words in common --
-// never a single shared word, since common words ("Grupo", "Sociedade")
-// alone would flag unrelated companies. Words under 3 characters are
+// never a single shared word, since common words alone would flag unrelated
+// companies. Words under 3 characters and GENERIC_BUSINESS_WORDS above are
 // excluded from the comparison for the same reason.
 function findPossibleDuplicateCompany(candidateName, tokenIndex){
-  const tokens = [...new Set(normName(candidateName).split(' ').filter(t => t.length >= 3))];
+  const tokens = [...new Set(normName(candidateName).split(' ').filter(t => t.length >= 3 && !GENERIC_BUSINESS_WORDS.has(t)))];
   if (tokens.length < 2) return null;
   const candidates = new Map();
   for (const t of tokens) for (const c of (tokenIndex.get(t) || [])) candidates.set(c.id, c);
   for (const c of candidates.values()){
-    const cTokens = new Set(normName(c.name).split(' ').filter(t => t.length >= 3));
+    const cTokens = new Set(normName(c.name).split(' ').filter(t => t.length >= 3 && !GENERIC_BUSINESS_WORDS.has(t)));
     const shared = tokens.filter(t => cTokens.has(t)).length;
     const smaller = Math.min(tokens.length, cTokens.size);
     if (shared >= 2 && shared === smaller) return c;
