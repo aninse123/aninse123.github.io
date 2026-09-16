@@ -5924,10 +5924,11 @@ async function confirmPeopleImport(){
         ImportProgress.beginStage('createCompanies', toCreate.length);
         const col = collection(db,'searchCompanies');
         const entries = toCreate.map(({ key, r }) => ({ key, r, ref: doc(col) }));
+        const baseCompanyFields = r => ({ name: r.fileCompanyName, ...companySearchFields(r.fileCompanyName), nif: r.companyNif || null, stage:'universe',
+          sourceType:'ownership_import', financials:{}, contacts:[], addOnTo:[], addOns:[],
+          lastTouchAt:null, outreachAttempts:0, createdBy: currentUser });
         tally.companiesAdded = await commitInChunks(entries, 450, (batch, { key, r, ref }) => {
-          batch.set(ref, { name: r.fileCompanyName, ...companySearchFields(r.fileCompanyName), nif: r.companyNif || null, stage:'universe',
-            sourceType:'ownership_import', financials:{}, contacts:[], addOnTo:[], addOns:[],
-            lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
+          batch.set(ref, { ...baseCompanyFields(r), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
           for (const rr of rows) if (rr.unmatched && (rr.companyNif || normName(rr.fileCompanyName)) === key){
             rr.companyId = ref.id; rr.unmatched = false;
           }
@@ -5935,14 +5936,23 @@ async function confirmPeopleImport(){
         }, { onProgress: done => ImportProgress.tick('createCompanies', done), cancelToken });
         ImportProgress.finishStage('createCompanies', `${tally.companiesAdded.toLocaleString('de-DE')} compan${tally.companiesAdded===1?'y':'ies'} created${skippedNote}`);
         if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Creating missing companies')); return; }
-        // Caught live: this used to run silently between two stage chips with
-        // nothing of its own on the bar, so it looked stalled for however
-        // long it took. An indeterminate stage at least says what's
-        // happening right now (loadCompaniesWithProgress()'s own onProgress
-        // isn't wired to this bar -- could be, as a follow-up).
+        // Add the newly-created companies straight into the in-memory list
+        // instead of re-fetching. This used to call loadCompaniesWithProgress()
+        // here, but that's a no-op for exactly this purpose whenever the
+        // 25-minute full-dataset cache (walkFullDataset(), above) is still
+        // fresh: that path merges CACHED docs into `companies`, and a cache
+        // written before this import started can never contain a company
+        // created moments ago -- the new docs then silently never appeared in
+        // memory until the cache next expired (up to 25 minutes later), even
+        // though this stage reported "done". Every field needed is already
+        // known locally (the same payload just staged to Firestore, above),
+        // so no read is needed at all -- cheaper than the old approach and no
+        // longer dependent on cache state for correctness.
         ImportProgress.beginStage('refreshCompanies');
-        fullyLoaded = false; await loadCompaniesWithProgress(); // pull the new docs into memory
-        ImportProgress.finishStage('refreshCompanies', 'done');
+        const createdAtNow = new Date();
+        for (const { r, ref } of entries) companies.push(computeFields({ id: ref.id, ...baseCompanyFields(r), createdAt: createdAtNow, updatedAt: createdAtNow }));
+        cacheCompanies();
+        ImportProgress.finishStage('refreshCompanies', `${entries.length.toLocaleString('de-DE')} new compan${entries.length===1?'y':'ies'} added directly — no reload needed`);
       } else {
         ImportProgress.finishStage('createCompanies', flagged.length ? `nothing created${skippedNote}` : 'nothing unmatched — nothing to create');
         ImportProgress.finishStage('refreshCompanies', 'not needed — no new companies created');
