@@ -5259,7 +5259,13 @@ function parsePeopleRows(rows){
     // "Highest executive" beats "Unspecified executive" as a description.
     if (/highest/i.test(o.mgmtLevel || '')) prev.mgmtLevel = o.mgmtLevel;
   }
-  out.length = 0; out.push(...merged.values());
+  // Not out.push(...merged.values()) -- spreading a Map's values into a
+  // function call's arguments hits the JS engine's argument-count limit
+  // (V8: ~65,536) once a file has enough unique person+company rows, and
+  // throws "Maximum call stack size exceeded" -- hit live on a large real
+  // management export. A plain loop has no such ceiling.
+  out.length = 0;
+  for (const v of merged.values()) out.push(v);
 
   // Treasury is discovered in the person loop, after the meta was built, so
   // fold it in here rather than duplicating the scan.
