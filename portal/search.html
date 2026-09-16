@@ -1056,7 +1056,7 @@
     </details>
     <div id="peopleImportOpts" style="display:none;margin-bottom:14px;padding:12px;background:#FAFAF8;border:1px solid var(--border);border-radius:var(--radius);">
       <label class="check-item" style="font-weight:600;"><input type="checkbox" id="peopleCreateMissing"> Also create companies that aren't in the CRM</label>
-      <div style="font-size:0.76rem;color:var(--text-light);margin-top:8px;font-weight:400;text-transform:none;letter-spacing:0;">Off by default. When on, missing companies are created with just name + NIF and tagged <code>ownership_import</code> so you can find or remove them later.</div>
+      <div style="font-size:0.76rem;color:var(--text-light);margin-top:8px;font-weight:400;text-transform:none;letter-spacing:0;">Off by default. When on, missing companies are created with just name + NIF and tagged <code>ownership_import</code> so you can find or remove them later. A candidate whose name looks like an existing company under a reordered or extended name is never auto-created — reviewed separately below.</div>
       <div id="peoplePrevRow" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
         <label class="check-item" style="font-weight:600;"><input type="checkbox" id="peopleAllPrevious"> This file lists <em>previous</em> directors / managers</label>
         <div style="font-size:0.76rem;color:var(--text-light);margin-top:8px;font-weight:400;text-transform:none;letter-spacing:0;">Shown because the file has no current/previous column. Leave off for a current-management export; tick it for a "Previous directors &amp; managers" export so they're recorded as past roles instead of current ones.</div>
@@ -1070,6 +1070,28 @@
           <tbody id="peopleImportBody"></tbody>
         </table>
       </div>
+      <details id="peopleImportDupWrap" style="display:none;margin-top:14px;">
+        <summary style="cursor:pointer;font-size:0.83rem;font-weight:600;color:#B45309;">
+          ⚠ Possible duplicate companies <span id="peopleImportDupCount" style="font-weight:400;color:var(--text-light);"></span>
+        </summary>
+        <div style="font-size:0.76rem;color:var(--text-light);margin:8px 0;">
+          These companies aren't in the CRM under this exact name, but their name closely matches an
+          existing company (reordered words, or one name contained in the other) — never auto-created,
+          even with the box above ticked. Tick "Same company" if it's genuinely the same one, which
+          attaches this file's people/links to the existing record instead of creating a duplicate.
+          Click a company name to open its record and compare by hand. Leave unticked if genuinely a
+          different company — nothing happens to those unless the box above is also ticked.
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+          <button class="btn btn--primary btn--sm" id="peopleImportDupResolveBtn" disabled>✓ Attach selected as matches (<span id="peopleImportDupResolveCount">0</span>)</button>
+        </div>
+        <div style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+          <table class="preview-table">
+            <thead><tr><th style="width:28px;"><input type="checkbox" id="peopleImportDupSelectAll" title="Select all"></th><th>Company in file</th><th>Existing CRM company</th><th></th></tr></thead>
+            <tbody id="peopleImportDupBody"></tbody>
+          </table>
+        </div>
+      </details>
     </div>
     <div id="peopleDemotionCheck" style="display:none;margin-bottom:14px;">
       <button class="btn btn--ghost btn--sm" id="peopleCheckDemotionsBtn">Check what this will demote</button>
@@ -4458,6 +4480,14 @@ async function renderPeople(){
 // person.
 let peopleImportRows = [];   // flat, one entry per person↔company edge
 let peopleImportStats = null;
+// A row confirmed ("✓ Same company") to attach to an existing company
+// instead of creating a duplicate -- see computePeopleCreationCandidates()
+// below. Keyed the same way as the creation dedup itself (companyNif, or
+// normName(fileCompanyName) when the row carries none). Reset per file, same
+// reasoning as companiesResolvedDups: a resolution is scoped to reviewing
+// one file, not carried over onto a different one.
+let peopleResolvedCreationDups = new Map();
+let peopleImportLastFlagged = [];  // last-rendered "possible duplicate" candidates, for the resolve-button click handler's index lookups
 // True for the ENTIRE duration of a people import, start to genuine finish —
 // including its trailing "Refreshing totals" background tail. Needed because
 // the file-picker modal is dismissible mid-run (its own Cancel button, and a
@@ -4876,11 +4906,29 @@ function ownClean(v){
 }
 // Portuguese BvD IDs are 'PT' + NIF (verified 51/51 against live CRM data),
 // so either identifier collapses to the same key.
+//
+// Two validation gaps fixed 2026-09-16, the same bug class already found and
+// fixed in the Companies importer's parseVatNumber() but unaddressed here:
+//  - `nif` had no length check at all -- onlyDigits() of a 14-digit Brazilian
+//    CNPJ (a real, confirmed pattern: a PT group's Brazilian subsidiary can
+//    share the group's Orbis record) would have been trusted outright as a
+//    9-digit NIF, both for company-row matching (byNif below) and, worse,
+//    written straight into a newly-created company's own `nif` field --
+//    which every NIF-based match/search in this app assumes is genuine.
+//  - the BvD-ID pattern accepted ANY 2-letter country prefix + 6-12 digits,
+//    not just PT + exactly 9 -- inconsistent with the stricter ptIdentity()
+//    helper used for Companies-import duplicate detection, and could in
+//    principle extract a 9-digit-shaped number from a foreign corporate
+//    holder's BvD ID (e.g. "US123456789") and wrongly cross-link it to an
+//    unrelated Portuguese company whose real NIF happens to match those
+//    digits. The isCorp detection above (SGPS gerentes) was always intended
+//    to be PT-specific per its own comment -- this regex was just broader
+//    than that intent.
 function nifFromAny(nif, bvd){
   const a = onlyDigits(nif);
-  if (a) return a;
+  if (a.length === 9) return a;
   const b = String(bvd || '').trim().toUpperCase();
-  const m = b.match(/^[A-Z]{2}(\d{6,12})$/);
+  const m = b.match(/^PT(\d{9})$/);
   return m ? m[1] : '';
 }
 // Stable person id: Orbis UCI when present (removes homonym risk entirely),
@@ -5314,6 +5362,9 @@ function renderPeopleImportPreview(){
   document.getElementById('peopleImportSummary').innerHTML = bits.join(' · ') + warn;
   showEl('peoplePrevRow', needsPrevToggle);
 
+  const { flagged } = computePeopleCreationCandidates(peopleImportRows);
+  renderPeopleDupPanel(flagged);
+
   document.getElementById('peopleImportBody').innerHTML = peopleImportRows.slice(0, 200).map(r => `
     <tr${r.unmatched ? ' style="opacity:.55;"' : ''}>
       <td>${esc(r.fileCompanyName)}</td>
@@ -5332,7 +5383,11 @@ function renderPeopleImportPreview(){
 }
 function updatePeopleImportBtn(){
   const create = document.getElementById('peopleCreateMissing').checked;
-  const n = peopleImportRows.filter(r => create || !r.unmatched).length;
+  // A flagged-and-unresolved row's company is never created, so it never
+  // actually gets a write either -- excluded here too, so the button's own
+  // count can't promise more than confirmPeopleImport() will really do.
+  const blockedKeys = new Set(peopleImportLastFlagged.map(f => f.key));
+  const n = peopleImportRows.filter(r => !r.unmatched || (create && !blockedKeys.has(r.companyNif || normName(r.fileCompanyName)))).length;
   const btn = document.getElementById('peopleImportConfirmBtn');
   btn.disabled = n === 0;
   btn.textContent = n ? `Import ${n} link${n===1?'':'s'}` : 'Nothing to import';
@@ -5673,6 +5728,127 @@ document.getElementById('ipbDismissBtn').addEventListener('click', () => { docum
   } catch {}
 })();
 
+// Catches a "new" company that's actually an existing one under a
+// differently-ordered or slightly-extended name -- normName() (used by the
+// primary NIF/name match above) already strips accents, punctuation and
+// legal-form suffixes, but it compares full strings, so word REORDERING
+// ("Douro Partners" vs "Partners Douro") or one name being a longer variant
+// of another ("ABC Distribuição" vs "ABC Distribuição Norte") both produce a
+// different string and slip through as "not in the CRM" -- exactly where
+// Import People's "create missing companies" step used to create a
+// duplicate outright, with no review step at all (unlike Import Companies'
+// own "possible duplicates" panel). An inverted word index turns "does any
+// of the ~39,000 companies share enough words with this candidate" from an
+// O(companies) scan per candidate into a lookup restricted to companies
+// that already share at least one word.
+function buildCompanyNameTokenIndex(){
+  const idx = new Map();
+  for (const c of companies){
+    for (const t of new Set(normName(c.name).split(' ').filter(t => t.length >= 3))){
+      let arr = idx.get(t); if (!arr){ arr = []; idx.set(t, arr); }
+      arr.push(c);
+    }
+  }
+  return idx;
+}
+// Deliberately conservative: flags only when the SMALLER of the two word
+// sets is fully contained in the larger, with at least 2 words in common --
+// never a single shared word, since common words ("Grupo", "Sociedade")
+// alone would flag unrelated companies. Words under 3 characters are
+// excluded from the comparison for the same reason.
+function findPossibleDuplicateCompany(candidateName, tokenIndex){
+  const tokens = [...new Set(normName(candidateName).split(' ').filter(t => t.length >= 3))];
+  if (tokens.length < 2) return null;
+  const candidates = new Map();
+  for (const t of tokens) for (const c of (tokenIndex.get(t) || [])) candidates.set(c.id, c);
+  for (const c of candidates.values()){
+    const cTokens = new Set(normName(c.name).split(' ').filter(t => t.length >= 3));
+    const shared = tokens.filter(t => cTokens.has(t)).length;
+    const smaller = Math.min(tokens.length, cTokens.size);
+    if (shared >= 2 && shared === smaller) return c;
+  }
+  return null;
+}
+// Shared by renderPeopleImportPreview() (to show what WOULD be created) and
+// confirmPeopleImport() (to actually create it), so the two can never
+// disagree about which candidates are safe to create outright versus
+// flagged for review -- same reasoning as computeFacetScope() above for the
+// demotion preview/real-import pair. A row carrying a real NIF that matched
+// no existing company is always safe to create regardless of name
+// similarity (this session's own "different NIFs = different companies"
+// rule) -- the name-similarity check only ever applies to a candidate with
+// no NIF at all, where name is the only signal available.
+function computePeopleCreationCandidates(rows){
+  const need = new Map();
+  for (const r of rows) if (r.unmatched){
+    const key = r.companyNif || normName(r.fileCompanyName);
+    if (!need.has(key)) need.set(key, r);
+  }
+  const tokenIndex = buildCompanyNameTokenIndex();
+  const creatable = [], flagged = [];
+  for (const [key, r] of need){
+    const attachTo = peopleResolvedCreationDups.get(key);
+    if (attachTo){ creatable.push({ key, r, attachTo }); continue; }
+    const dup = r.companyNif ? null : findPossibleDuplicateCompany(r.fileCompanyName, tokenIndex);
+    if (dup) flagged.push({ key, r, dup });
+    else creatable.push({ key, r, attachTo: null });
+  }
+  return { creatable, flagged };
+}
+function renderPeopleDupPanel(flagged){
+  peopleImportLastFlagged = flagged;
+  const wrap = document.getElementById('peopleImportDupWrap');
+  if (!wrap) return;
+  if (!flagged.length){ wrap.style.display = 'none'; wrap.open = false; return; }
+  wrap.style.display = '';
+  document.getElementById('peopleImportDupCount').textContent = `(${flagged.length})`;
+  document.getElementById('peopleImportDupBody').innerHTML = flagged.map((f, i) => `<tr>
+      <td><input type="checkbox" class="peopleDupResolveChk" data-idx="${i}"></td>
+      <td>${esc(f.r.fileCompanyName)}</td>
+      <td><span class="person-link" data-gotoco="${esc(f.dup.id)}">${esc(f.dup.name)}</span></td>
+      <td><button class="btn btn--ghost btn--sm" data-resolvepdup="${i}">✓ Same company</button></td>
+    </tr>`).join('');
+  updatePeopleDupResolveUi();
+}
+function updatePeopleDupResolveUi(){
+  const boxes = [...document.querySelectorAll('.peopleDupResolveChk')];
+  const checked = boxes.filter(b => b.checked).length;
+  document.getElementById('peopleImportDupResolveCount').textContent = checked;
+  document.getElementById('peopleImportDupResolveBtn').disabled = checked === 0;
+  const selectAll = document.getElementById('peopleImportDupSelectAll');
+  if (selectAll){ selectAll.checked = boxes.length > 0 && checked === boxes.length; selectAll.indeterminate = checked > 0 && checked < boxes.length; }
+}
+// Marks the given flagged candidates (by their current index into
+// peopleImportLastFlagged) as confirmed matches, then re-renders the whole
+// preview -- computePeopleCreationCandidates() picks them up from
+// peopleResolvedCreationDups on the next call, so they move out of
+// "Possible duplicates" and are attached to the existing company instead of
+// creating a new one, everywhere at once.
+function resolvePeopleDups(indices){
+  for (const i of indices){
+    const f = peopleImportLastFlagged[i];
+    if (f) peopleResolvedCreationDups.set(f.key, f.dup);
+  }
+  renderPeopleImportPreview();
+}
+document.getElementById('peopleImportDupBody').addEventListener('click', e => {
+  const goto = e.target.closest('[data-gotoco]');
+  if (goto){ showEl('peopleImportModal', false); openDetail(goto.dataset.gotoco); return; }
+  const resolveBtn = e.target.closest('[data-resolvepdup]');
+  if (resolveBtn) resolvePeopleDups([Number(resolveBtn.dataset.idx)]);
+});
+document.getElementById('peopleImportDupBody').addEventListener('change', e => {
+  if (e.target.classList.contains('peopleDupResolveChk')) updatePeopleDupResolveUi();
+});
+document.getElementById('peopleImportDupSelectAll').addEventListener('change', e => {
+  document.querySelectorAll('.peopleDupResolveChk').forEach(chk => { chk.checked = e.target.checked; });
+  updatePeopleDupResolveUi();
+});
+document.getElementById('peopleImportDupResolveBtn').addEventListener('click', () => {
+  const indices = [...document.querySelectorAll('.peopleDupResolveChk:checked')].map(chk => Number(chk.dataset.idx));
+  resolvePeopleDups(indices);
+});
+
 async function confirmPeopleImport(){
   const btn = document.getElementById('peopleImportConfirmBtn');
   const errEl = document.getElementById('peopleImportErr'); errEl.style.display = 'none';
@@ -5710,22 +5886,37 @@ async function confirmPeopleImport(){
     // but parallel commits (commitInChunks) still cut wall-clock time when
     // there are many.
     if (createMissing){
-      const need = new Map();
-      for (const r of rows) if (r.unmatched) need.set(r.companyNif || normName(r.fileCompanyName), r);
-      if (need.size){
-        ImportProgress.beginStage('createCompanies', need.size);
+      // computePeopleCreationCandidates() is the SAME function the preview
+      // panel used to show what would happen -- a candidate whose name looks
+      // like an existing company (reordered or extended name) is never
+      // auto-created here either, unless the preview's "✓ Same company" was
+      // used to resolve it (peopleResolvedCreationDups), same principle as
+      // Import Companies' own possible-duplicates panel.
+      const { creatable, flagged } = computePeopleCreationCandidates(rows);
+      // An "attach" candidate needs no write of its own -- just redirect
+      // every row sharing this key onto the company confirmed to be the
+      // same one, exactly like a normal NIF/name match would.
+      for (const { key, attachTo } of creatable) if (attachTo){
+        for (const rr of rows) if (rr.unmatched && (rr.companyNif || normName(rr.fileCompanyName)) === key){
+          rr.companyId = attachTo.id; rr.companyName = attachTo.name; rr.unmatched = false;
+        }
+      }
+      const toCreate = creatable.filter(c => !c.attachTo);
+      const skippedNote = flagged.length ? ` — ${flagged.length} possible duplicate${flagged.length===1?'':'s'} skipped, review in the preview` : '';
+      if (toCreate.length){
+        ImportProgress.beginStage('createCompanies', toCreate.length);
         const col = collection(db,'searchCompanies');
-        const entries = [...need.values()].map(r => ({ r, ref: doc(col) }));
-        tally.companiesAdded = await commitInChunks(entries, 450, (batch, { r, ref }) => {
+        const entries = toCreate.map(({ key, r }) => ({ key, r, ref: doc(col) }));
+        tally.companiesAdded = await commitInChunks(entries, 450, (batch, { key, r, ref }) => {
           batch.set(ref, { name: r.fileCompanyName, ...companySearchFields(r.fileCompanyName), nif: r.companyNif || null, stage:'universe',
             sourceType:'ownership_import', financials:{}, contacts:[], addOnTo:[], addOns:[],
             lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
-          for (const rr of rows) if (rr.unmatched && (rr.companyNif || normName(rr.fileCompanyName)) === (r.companyNif || normName(r.fileCompanyName))){
+          for (const rr of rows) if (rr.unmatched && (rr.companyNif || normName(rr.fileCompanyName)) === key){
             rr.companyId = ref.id; rr.unmatched = false;
           }
           return true;
         }, { onProgress: done => ImportProgress.tick('createCompanies', done), cancelToken });
-        ImportProgress.finishStage('createCompanies', `${tally.companiesAdded.toLocaleString('de-DE')} compan${tally.companiesAdded===1?'y':'ies'} created`);
+        ImportProgress.finishStage('createCompanies', `${tally.companiesAdded.toLocaleString('de-DE')} compan${tally.companiesAdded===1?'y':'ies'} created${skippedNote}`);
         if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Creating missing companies')); return; }
         // Caught live: this used to run silently between two stage chips with
         // nothing of its own on the bar, so it looked stalled for however
@@ -5736,7 +5927,7 @@ async function confirmPeopleImport(){
         fullyLoaded = false; await loadCompaniesWithProgress(); // pull the new docs into memory
         ImportProgress.finishStage('refreshCompanies', 'done');
       } else {
-        ImportProgress.finishStage('createCompanies', 'nothing unmatched — nothing to create'); // nothing was unmatched — nothing to do
+        ImportProgress.finishStage('createCompanies', flagged.length ? `nothing created${skippedNote}` : 'nothing unmatched — nothing to create');
         ImportProgress.finishStage('refreshCompanies', 'not needed — no new companies created');
       }
     }
@@ -6098,7 +6289,7 @@ async function confirmPeopleImport(){
 }
 
 async function openPeopleImport(){
-  peopleImportRows = []; peopleImportStats = null;
+  peopleImportRows = []; peopleImportStats = null; peopleResolvedCreationDups = new Map(); peopleImportLastFlagged = [];
   document.getElementById('peopleFileName').textContent = '';
   document.getElementById('peopleFileInput').value = '';
   document.getElementById('peopleCreateMissing').checked = false;
