@@ -6960,6 +6960,36 @@ function parseVatNumber(vatRaw, country, hasCountryColumn){
 // under the system-agnostic industryClassificationCode siblings instead, so
 // a future non-PT company doesn't end up with e.g. a Spanish CNAE code
 // labelled as a Portuguese CAE code.
+// Orbis's Company Profile export writes coordinates in DMS format
+// (38° 44' 4.5" N), not plain decimal -- a bare parseFloat() stops at the
+// "°" and silently keeps only the whole-degree part, which is what this
+// field used to do. Confirmed live against a real 37,938-row export:
+// 86.5% of its coordinates are DMS, so that bug was throwing away the
+// minutes/seconds for the vast majority of rows that had a value at all --
+// e.g. "38° 44' 4.5" N" (38.7346°) was silently stored as "38", an error of
+// ~82km in that specific case, up to ~110km worst case. Handles both DMS
+// and plain decimal (still accepted as-is, unaffected by this change) since
+// which one a given Orbis export uses isn't consistent across files.
+function parseDmsOrDecimal(raw){
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (/^-?\d+(\.\d+)?$/.test(s)){
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  const m = s.match(/^(-?\d+(?:\.\d+)?)\s*[°º]\s*(?:(\d+(?:\.\d+)?)\s*['′]\s*)?(?:(\d+(?:\.\d+)?)\s*["″]\s*)?([NSEWnsew])?\s*$/);
+  if (!m) return null;
+  const deg = parseFloat(m[1]);
+  const min = m[2] ? parseFloat(m[2]) : 0;
+  const sec = m[3] ? parseFloat(m[3]) : 0;
+  let value = Math.abs(deg) + min / 60 + sec / 3600;
+  const hemi = m[4] ? m[4].toUpperCase() : null;
+  // A hemisphere letter (S/W) decides the sign; with none, the sign already
+  // on the degrees themselves (a plain -9.14 with no letter) is trusted.
+  if (hemi === 'S' || hemi === 'W') value = -value;
+  else if (deg < 0) value = -value;
+  return Number.isFinite(value) ? value : null;
+}
 function parseCompanyProfileRow(idx, vals){
   const g = key => { const i = idx[key]; return (i == null || i === -1) ? '' : String(vals[i] || '').trim(); };
   const country = g('country');
@@ -6989,8 +7019,8 @@ function parseCompanyProfileRow(idx, vals){
   if (g('postcode')) payload.postcode = g('postcode');
   if (g('city')) payload.city = g('city');
   if (country) payload.country = country;
-  const lat = parseFloat(g('latitude')); if (Number.isFinite(lat)) payload.latitude = lat;
-  const lon = parseFloat(g('longitude')); if (Number.isFinite(lon)) payload.longitude = lon;
+  const lat = parseDmsOrDecimal(g('latitude')); if (lat != null) payload.latitude = lat;
+  const lon = parseDmsOrDecimal(g('longitude')); if (lon != null) payload.longitude = lon;
 
   // "Region in country" is a two-part multi-value cell: District/Município
   // for the mainland, but Autonomous region/Município for Madeira & Açores
