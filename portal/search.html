@@ -2151,6 +2151,65 @@ async function restFetchAllDocs(collectionName, onProgress){
   await Promise.all(bounds.slice(0, -1).map((gte, i) => fetchPartition(gte, bounds[i + 1])));
   return raw;
 }
+// Same REST-bypass reasoning as restFetchAllDocs above, but for a targeted
+// `field IN [<=30 values]` lookup instead of a full-collection range walk --
+// the People importer's own "checking what changed" and "refreshing totals"
+// stages, plus "Check what this will demote" and the network graph's ring-2
+// expansion, all used to call the SDK's getDocs()/query()/where('field','in',
+// chunk) directly, paying the SDK's persistentLocalCache write-through cost
+// on every single 30-item chunk. Confirmed live 2026-09-16: a very large real
+// import (thousands of touched people/companies) that should finish in
+// minutes instead ran over 10 hours, crawling at roughly one chunk every
+// 10+ seconds even with the browser tab in the foreground and 40-way
+// mapPool concurrency -- the SDK's local cache write-through has to
+// serialize its IndexedDB writes, so 40 "concurrent" slow SDK calls funnel
+// into one bottlenecked write queue, worse than plain sequential REST calls
+// would have been. No pagination here (unlike restRunQueryPage): capped at
+// 30 keys by Firestore's own IN-operator limit, and the realistic per-key
+// document count (a person's links, a company's shareholders) stays well
+// under what a single unpaginated REST response can hold.
+async function restFetchWhereIn(collectionName, field, values){
+  if (!values.length) return [];
+  const token = await auth.currentUser.getIdToken();
+  const parent = `projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents`;
+  const structuredQuery = {
+    from: [{ collectionId: collectionName }],
+    where: { fieldFilter: { field: { fieldPath: field }, op: 'IN', value: { arrayValue: { values: values.map(v => ({ stringValue: v })) } } } },
+  };
+  const res = await fetch(`https://firestore.googleapis.com/v1/${parent}:runQuery`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery }),
+  });
+  if (!res.ok) throw new Error(`Firestore REST IN-query of ${collectionName}.${field} failed (${res.status})`);
+  const rows = await res.json();
+  const docs = (rows || []).filter(r => r.document).map(r => r.document);
+  addReads(docs.length || 1);
+  return docs.map(d => ({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) }));
+}
+// Same as restFetchWhereIn above, but for a documentId() IN [ids] lookup --
+// Firestore represents that as an IN filter on the special "__name__" field
+// path, whose values are document references, not plain strings.
+async function restFetchByIdsIn(collectionName, ids){
+  if (!ids.length) return [];
+  const token = await auth.currentUser.getIdToken();
+  const parent = `projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents`;
+  const nameRef = id => `${parent}/${collectionName}/${id}`;
+  const structuredQuery = {
+    from: [{ collectionId: collectionName }],
+    where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values: ids.map(id => ({ referenceValue: nameRef(id) })) } } } },
+  };
+  const res = await fetch(`https://firestore.googleapis.com/v1/${parent}:runQuery`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery }),
+  });
+  if (!res.ok) throw new Error(`Firestore REST id-IN-query of ${collectionName} failed (${res.status})`);
+  const rows = await res.json();
+  const docs = (rows || []).filter(r => r.document).map(r => r.document);
+  addReads(docs.length || 1);
+  return docs.map(d => ({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) }));
+}
 // Full company list via a paginated REST walk (restFetchAllDocs, above)
 // instead of one opaque onSnapshot, so progress is real ("7,000 of 31,514")
 // rather than a spinner with nothing to report until the whole thing lands.
@@ -3870,10 +3929,8 @@ async function fetchManyCompanyLinks(companyIds){
     const byCid = new Map(need.map(cid => [cid, []]));
     for (let i = 0; i < need.length; i += PERSON_IN_CHUNK){
       const chunk = need.slice(i, i + PERSON_IN_CHUNK);
-      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','in', chunk)));
-      addReads(snap.docs.length || 1);
-      for (const d of snap.docs){
-        const l = { id:d.id, ...d.data() };
+      const docs = await restFetchWhereIn('searchPersonLinks', 'companyId', chunk);
+      for (const l of docs){
         let arr = byCid.get(l.companyId);
         if (!arr){ arr = []; byCid.set(l.companyId, arr); }
         arr.push(l);
@@ -3894,10 +3951,8 @@ async function fetchManyPersonLinks(personIds){
     const byPid = new Map(need.map(pid => [pid, []]));
     for (let i = 0; i < need.length; i += PERSON_IN_CHUNK){
       const chunk = need.slice(i, i + PERSON_IN_CHUNK);
-      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in', chunk)));
-      addReads(snap.docs.length || 1);
-      for (const d of snap.docs){
-        const l = { id:d.id, ...d.data() };
+      const docs = await restFetchWhereIn('searchPersonLinks', 'personId', chunk);
+      for (const l of docs){
         let arr = byPid.get(l.personId);
         if (!arr){ arr = []; byPid.set(l.personId, arr); }
         arr.push(l);
@@ -5452,13 +5507,11 @@ async function checkPeopleImportDemotions(){
     for (let i = 0; i < touched.length; i += PERSON_IN_CHUNK) touchedChunks.push(touched.slice(i, i + PERSON_IN_CHUNK));
     let done = 0;
     await mapPool(touchedChunks, async chunk => {
-      const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','in', chunk)));
-      addReads(snap.docs.length || 1);
-      for (const d of snap.docs){
-        const l = d.data();
+      const docs = await restFetchWhereIn('searchPersonLinks', 'companyId', chunk);
+      for (const l of docs){
         for (const facet of ['shCurrent','mgmtCurrent']){
           const scope = facetScope[facet];
-          if (!scope.touched.has(l.companyId) || scope.keep.has(d.id)) continue;
+          if (!scope.touched.has(l.companyId) || scope.keep.has(l.id)) continue;
           if (l[facet] === true) found.push({ name: l.personName, company: l.companyName, facet: facet === 'shCurrent' ? 'shareholder' : 'management' });
         }
       }
@@ -6007,15 +6060,12 @@ async function confirmPeopleImport(){
     const tickChecking = () => ImportProgress.tick('checking', checkingDoneA + checkingDoneB);
     await Promise.all([
       mapPool(personIdChunks, async ch => {
-        const snap = await getDocs(query(collection(db,'searchPeople'), where(documentId(),'in', ch)));
-        addReads(snap.docs.length || 1);
-        for (const d of snap.docs) existingPeople.set(d.id, d.data());
+        const docs = await restFetchByIdsIn('searchPeople', ch);
+        for (const p of docs) existingPeople.set(p.id, p);
       }, READ_CONCURRENCY, done => { checkingDoneA = done; tickChecking(); }, cancelToken),
       mapPool(touchedChunks, async chunk => {
-        const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','in', chunk)));
-        addReads(snap.docs.length || 1);
-        for (const d of snap.docs){
-          const l = { id: d.id, ...d.data() };
+        const docs = await restFetchWhereIn('searchPersonLinks', 'companyId', chunk);
+        for (const l of docs){
           let arr = linksByCo.get(l.companyId);
           if (!arr){ arr = []; linksByCo.set(l.companyId, arr); }
           arr.push(l);
@@ -6268,10 +6318,8 @@ async function confirmPeopleImport(){
       ImportProgress.beginStage('refresh', refreshIdChunks.length + refreshWriteChunkEstimate);
       const counts = new Map(personIdsToRefresh.map(id => [id, { total: 0, current: 0 }]));
       await mapPool(refreshIdChunks, async ch => {
-        const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in',ch)));
-        addReads(snap.docs.length || 1);
-        for (const d of snap.docs){
-          const l = d.data();
+        const docs = await restFetchWhereIn('searchPersonLinks', 'personId', ch);
+        for (const l of docs){
           const c = counts.get(l.personId);
           if (!c) continue;                       // a link whose person is not in this import
           c.total++;
