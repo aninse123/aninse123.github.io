@@ -479,6 +479,7 @@
       <select class="filter-sel" id="nuts2Filter"><option value="">All NUTS II</option></select>
       <select class="filter-sel" id="nuts3Filter"><option value="">All NUTS III</option></select>
       <select class="filter-sel" id="sourceFilter"><option value="">All Sources</option></select>
+      <select class="filter-sel" id="legalFormFilter"><option value="">All Legal Forms</option></select>
       <div class="filter-group">NACE <input type="text" class="num-filter" id="naceFilter" placeholder="e.g. 62"> <span class="nace-label" id="naceLabel"></span></div>
       <div class="filter-group">CAE <input type="text" class="num-filter" id="caeFilter" placeholder="e.g. 620"> <span class="nace-label" id="caeLabel"></span></div>
       <div class="filter-group">Rev € <input type="number" class="num-filter" id="revMin" placeholder="min"> – <input type="number" class="num-filter" id="revMax" placeholder="max"></div>
@@ -2725,6 +2726,13 @@ function refreshSectorOptions(){
   document.getElementById('nuts3Filter').innerHTML = '<option value="">All NUTS III</option>' + nuts3.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   if ([...document.getElementById('nuts2Filter').options].some(o=>o.value===keepN2)) document.getElementById('nuts2Filter').value = keepN2;
   if ([...document.getElementById('nuts3Filter').options].some(o=>o.value===keepN3)) document.getElementById('nuts3Filter').value = keepN3;
+  // Legal form filter — data-derived like sector/NUTS above, not a fixed
+  // enum (Orbis's nationalLegalForm carries whatever real Portuguese legal
+  // forms actually show up, e.g. "Limited liability company - LDA").
+  const keepLegal = document.getElementById('legalFormFilter').value;
+  const legalForms = [...new Set(companies.map(c=>legalFormOf(c)).filter(Boolean))].sort();
+  document.getElementById('legalFormFilter').innerHTML = '<option value="">All Legal Forms</option>' + legalForms.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  if ([...document.getElementById('legalFormFilter').options].some(o=>o.value===keepLegal)) document.getElementById('legalFormFilter').value = keepLegal;
 }
 // Wrapper kept for call sites (saveCompany / confirmBulk) that run after a modal closes.
 function buildFilterOptions(){ buildStaticOptions(); refreshSectorOptions(); }
@@ -2763,7 +2771,7 @@ function renderSummary(){
 // Shared with the filter-input listeners near the bottom of the file and with
 // the subset-of-loaded disclaimer banner below — one list, so a filter added
 // in one place is never silently missing from the other two.
-const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'];
+const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'];
 // Always states the true total (not just what's loaded) whenever the two
 // differ, right where people are actually looking — the results count next
 // to the table — rather than a separate banner that's easy to scan past.
@@ -2790,6 +2798,7 @@ function getFiltered(){
   const nuts2F = document.getElementById('nuts2Filter').value;
   const nuts3F = document.getElementById('nuts3Filter').value;
   const srcF   = document.getElementById('sourceFilter').value;
+  const legalFormF = document.getElementById('legalFormFilter').value;
   const naceF  = (document.getElementById('naceFilter').value||'').trim();
   const caeF   = (document.getElementById('caeFilter').value||'').trim();
   const revMin = parseFloat(document.getElementById('revMin').value);
@@ -2820,6 +2829,11 @@ function getFiltered(){
     if (nuts2F && c.nuts2 !== nuts2F) return false;
     if (nuts3F && c.nuts3 !== nuts3F) return false;
     if (srcF && c.sourceType !== srcF) return false;
+    // Same "effective legal form" the Legal & Account detail panel and CSV
+    // export already use (legalFormOf()) -- Orbis's nationalLegalForm first,
+    // falling back to the pre-Orbis legacy legalForm field, so a company
+    // imported before the Legal shape existed still filters correctly.
+    if (legalFormF && legalFormOf(c) !== legalFormF) return false;
     if (naceF && !String(c.naceCode||'').startsWith(naceF)) return false;
     if (caeF && !String(c.caeCode||'').startsWith(caeF)) return false;
     if (!isNaN(revMin) && (c.computedRevenue==null || c.computedRevenue < revMin)) return false;
