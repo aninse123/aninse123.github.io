@@ -27,3 +27,29 @@
     Strict-Transport-Security = "max-age=31536000; includeSubDomains"
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
     Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.googletagmanager.com https://www.clarity.ms https://*.clarity.ms; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com https://*.firebasestorage.app https://api.web3forms.com https://www.google-analytics.com https://*.google-analytics.com https://*.clarity.ms; frame-src 'self' https://*.clarity.ms; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://api.web3forms.com; object-src 'none'"
+
+# Extra domains (Valesintemporais LDA) -> douropartners.pt
+[[redirects]]
+  from = "https://valesintemporais.pt/*"
+  to = "https://douropartners.pt/"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://www.valesintemporais.pt/*"
+  to = "https://douropartners.pt/"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://valesintemorais.pt/*"
+  to = "https://douropartners.pt/"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://www.valesintemorais.pt/*"
+  to = "https://douropartners.pt/"
+  status = 301
+  force = true
+
