@@ -57,10 +57,22 @@ function listReceivedAttachments(key, id) {
   return call(key, "GET", `/emails/receiving/${encodeURIComponent(id)}/attachments?limit=100`);
 }
 
-// Cheapest authenticated call, used only to read the quota headers (V7 checks
-// that this endpoint returns them).
-function pingForUsage(key) {
-  return call(key, "GET", "/domains");
+// Cheap read-only calls, used only for their quota headers. /domains does NOT
+// return them (V7, 2026-09-24), so try the email endpoints first and report
+// which one answered.
+const USAGE_PROBES = ["/emails?limit=1", "/emails/receiving?limit=1", "/domains"];
+async function pingForUsage(key) {
+  let last = null;
+  for (const path of USAGE_PROBES) {
+    try {
+      const r = await call(key, "GET", path);
+      last = { ...r, path };
+      if (r.quota.daily != null || r.quota.monthly != null) return last;
+    } catch (e) {
+      if (e.quota && (e.quota.daily != null || e.quota.monthly != null)) return { data: null, quota: e.quota, path };
+    }
+  }
+  return last || { data: null, quota: { daily: null, monthly: null }, path: null };
 }
 
 module.exports = { ResendError, sendEmail, getEmail, getReceivedEmail, listReceivedAttachments, pingForUsage };

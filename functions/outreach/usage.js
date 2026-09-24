@@ -10,11 +10,12 @@ const store = require("./store");
 
 exports.outreachUsageRefresh = onSchedule({ schedule: "every 15 minutes", region: REGION, secrets: [RESEND_READ_KEY] }, async () => {
   try {
-    const { quota } = await pingForUsage(RESEND_READ_KEY.value());
+    const { quota, path } = await pingForUsage(RESEND_READ_KEY.value());
     if (quota.daily == null && quota.monthly == null) {
-      logger.warn("outreachUsageRefresh: Resend returned no quota headers on /domains (see V7)");
+      logger.warn("outreachUsageRefresh: no Resend endpoint returned quota headers (V7)");
       return;
     }
+    logger.info("outreachUsageRefresh: quota read", { path, daily: quota.daily, monthly: quota.monthly });
     await store.recordQuota(quota, "scheduled");
   } catch (e) {
     logger.error("outreachUsageRefresh failed", { message: e.message, status: e.status });
