@@ -138,7 +138,7 @@ async function handleReceived(data) {
     // Rule 3 (same company, new thread) or unmatched (manual assignment).
     threadRef = db().collection("outreachThreads").doc();
     thread = {
-      companyId: match?.data?.companyId || null,
+      companyId: match?.data?.companyId || null, companyName: match?.data?.companyName || null,
       contactEmail: from.email, contactDomain: domainOf(from.email), contactName: from.name || "",
       senderId: sender?.id || match?.data?.senderId || null,
       owner: sender?.owner || match?.data?.owner || null,
@@ -163,7 +163,8 @@ async function handleReceived(data) {
   const attachments = hasAttachments ? await saveAttachments(emailId, threadRef.id, messageRef.id) : [];
 
   await messageRef.set({
-    threadId: threadRef.id, direction: "in", via: "email", resendId: emailId, rfcMessageId,
+    threadId: threadRef.id, companyId: thread.companyId || null, companyName: thread.companyName || null,
+    direction: "in", via: "email", resendId: emailId, rfcMessageId,
     inReplyTo, references,
     from: fromHeader, to: data.to || [], cc: data.cc || [], deliveredTo: headerValue(headers, "to") || null,
     subject, text, html, htmlStoragePath, snippet,

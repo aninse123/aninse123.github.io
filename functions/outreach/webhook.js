@@ -67,7 +67,8 @@ async function maybeRecordGmailReply(data) {
   const now = Timestamp.now();
   const messageRef = db().collection("outreachMessages").doc();
   await messageRef.set({
-    threadId: threadDoc ? threadDoc.id : null, direction: "out", via: "gmail",
+    threadId: threadDoc ? threadDoc.id : null, companyId: thread?.companyId || null, companyName: thread?.companyName || null,
+    direction: "out", via: "gmail",
     resendId: data.email_id, rfcMessageId: data.message_id || null, inReplyTo: null, references: null,
     from: data.from, to: data.to || [], cc: data.cc || [], subject: data.subject || full.subject || "",
     text: text || null, html: full.html || null, snippet: stripQuoted(text || "").slice(0, 500),

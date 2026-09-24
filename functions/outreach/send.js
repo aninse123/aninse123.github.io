@@ -172,7 +172,7 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
   const batch = db().batch();
   if (!isReply) {
     batch.set(threadRef, {
-      companyId, contactEmail: to, contactDomain: toDomain, contactName: "",
+      companyId, companyName: company?.name || null, contactEmail: to, contactDomain: toDomain, contactName: "",
       senderId, owner, subject: subject.text, status: "open", unread: false, unmatched: false,
       lastMessageAt: now, lastDirection: "out", rfcIds: [rfcMessageId], lastInboundRfcId: null,
       templateId, variantKey, campaignId: null, firstTouchAt: now, repliedAt: null,
@@ -180,7 +180,8 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
     });
   }
   batch.set(messageRef, {
-    threadId: threadRef.id, direction: "out", via: "portal", resendId: null, rfcMessageId,
+    threadId: threadRef.id, companyId, companyName: company?.name || thread?.companyName || null,
+    direction: "out", via: "portal", resendId: null, rfcMessageId,
     inReplyTo: headers["In-Reply-To"] || null, references: headers["References"] || null,
     from: `${sender.displayName} <${senderId}>`, to: [to], cc: [],
     subject: subject.text, text, html, snippet: body.text.slice(0, 500),
