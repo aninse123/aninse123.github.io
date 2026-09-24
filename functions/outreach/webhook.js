@@ -115,8 +115,9 @@ async function handleDeliveryEvent(type, data) {
   if (type === "email.opened" && plausibleHuman && !msg.firstOpenedAt) upd.firstOpenedAt = at;
   if (type === "email.clicked" && plausibleHuman && !msg.firstClickedAt) upd.firstClickedAt = at;
 
-  // Resend's real Message-ID, in case it replaced ours (V1): keep threading working.
-  if (data.message_id && data.message_id !== msg.rfcMessageId) upd.resendMessageId = data.message_id;
+  // Resend assigns the Message-ID (V1); the delivery events carry it. Store it
+  // so a reply's In-Reply-To/References match this thread.
+  if (data.message_id && data.message_id !== msg.rfcMessageId) upd.rfcMessageId = data.message_id;
   await msgSnap.ref.update(upd);
 
   const threadRef = msg.threadId ? db().doc(`outreachThreads/${msg.threadId}`) : null;

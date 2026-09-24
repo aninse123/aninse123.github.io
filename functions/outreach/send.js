@@ -152,10 +152,11 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
   const footer = renderTemplate(footerSrc, ctx).text;
   const { text, html } = buildPlainEmail({ bodyText: body.text, signature: sender.signature, footerText: footer, unsubscribeUrl });
 
-  // ── Headers: our own Message-ID (spec §7.4), threading on replies, one-click unsubscribe ──
-  const rfcMessageId = `<om-${messageId}@${domainOf(senderId)}>`;
+  // ── Headers: threading on replies, one-click unsubscribe ──
+  // No custom Message-ID: Resend silently replaces it with its own (V1,
+  // 2026-09-24). The real ID arrives with the delivery webhook, which stores it
+  // on the message and the thread so replies still match by header.
   const headers = {
-    "Message-ID": rfcMessageId,
     "List-Unsubscribe": `<${unsubscribeUrl}>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
   };
@@ -174,14 +175,14 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
     batch.set(threadRef, {
       companyId, companyName: company?.name || null, contactEmail: to, contactDomain: toDomain, contactName: "",
       senderId, owner, subject: subject.text, status: "open", unread: false, unmatched: false,
-      lastMessageAt: now, lastDirection: "out", rfcIds: [rfcMessageId], lastInboundRfcId: null,
+      lastMessageAt: now, lastDirection: "out", rfcIds: [], lastInboundRfcId: null,
       templateId, variantKey, campaignId: null, firstTouchAt: now, repliedAt: null,
       responseCategory: null, isTest, createdAt: now, createdBy: callerEmail,
     });
   }
   batch.set(messageRef, {
     threadId: threadRef.id, companyId, companyName: company?.name || thread?.companyName || null,
-    direction: "out", via: "portal", resendId: null, rfcMessageId,
+    direction: "out", via: "portal", resendId: null, rfcMessageId: null,
     inReplyTo: headers["In-Reply-To"] || null, references: headers["References"] || null,
     from: `${sender.displayName} <${senderId}>`, to: [to], cc: [],
     subject: subject.text, text, html, snippet: body.text.slice(0, 500),
@@ -191,29 +192,17 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
   await batch.commit();
 
   // ── Send ──
-  const payload = (hdrs) => ({
-    from: `${sender.displayName} <${senderId}>`,
-    to: [to],
-    subject: subject.text,
-    text,
-    html,
-    headers: hdrs,
-    tags: [{ name: "om", value: messageId }],
-  });
   let result;
-  let ownMessageId = true;
   try {
-    try {
-      result = await sendEmail(RESEND_SEND_KEY.value(), payload(headers), messageId);
-    } catch (e) {
-      // If Resend refuses a custom Message-ID (V1 unverified), send without it:
-      // threading then relies on the real ID from the delivery webhook.
-      if (!(e instanceof ResendError && e.status === 422 && /message-?id/i.test(e.message))) throw e;
-      const { "Message-ID": _dropped, ...rest } = headers;
-      ownMessageId = false;
-      logger.warn("outreachSend: Resend rejected custom Message-ID, retrying without it", { messageId, message: e.message });
-      result = await sendEmail(RESEND_SEND_KEY.value(), payload(rest), `${messageId}-r`);
-    }
+    result = await sendEmail(RESEND_SEND_KEY.value(), {
+      from: `${sender.displayName} <${senderId}>`,
+      to: [to],
+      subject: subject.text,
+      text,
+      html,
+      headers,
+      tags: [{ name: "om", value: messageId }],
+    }, messageId);
   } catch (e) {
     const quotaHit = e instanceof ResendError && e.resendName === "daily_quota_exceeded";
     await messageRef.update({ status: "failed", error: e.message, events: FieldValue.arrayUnion({ type: "failed", at: Timestamp.now(), detail: e.resendName || null }) });
@@ -229,12 +218,11 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
   const sentAt = Timestamp.now();
   await messageRef.update({
     status: "sent", resendId, sentAt, events: FieldValue.arrayUnion({ type: "sent", at: sentAt }),
-    ...(ownMessageId ? {} : { rfcMessageId: null }),
   });
   await threadRef.update({
     lastMessageAt: sentAt, lastDirection: "out",
     status: isReply ? "waiting" : "open",
-    ...(isReply ? { rfcIds: FieldValue.arrayUnion(rfcMessageId), unread: false } : {}),
+    ...(isReply ? { unread: false } : {}),
   });
   await store.writeActivity({
     companyId, direction: "out", subject: subject.text, content: body.text, threadId: threadRef.id,
