@@ -16,6 +16,12 @@
 }
 .nav__link:hover { color: #fff; }
 .nav__link.active { color: #fff; border-bottom-color: rgba(255,255,255,0.9); }
+.nav__badge {
+  display: inline-block; margin-left: 5px; min-width: 17px; padding: 1px 5px;
+  border-radius: 9px; background: #F59E0B; color: #1E2A38;
+  font-size: 0.66rem; font-weight: 700; line-height: 1.35; text-align: center; vertical-align: 1px;
+}
+.nav__badge[hidden] { display: none; }
 
 .nav__status { position: relative; display: flex; align-items: center; padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.15); }
 

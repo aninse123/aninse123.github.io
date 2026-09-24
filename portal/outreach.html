@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Outreach — Douro Partners</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="icon" href="/assets/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./nav.css">
+  <style>
+    :root {
+      --primary:      #4A6B8A;
+      --primary-dark: #3A5570;
+      --secondary:    #3D6430;
+      --danger:       #B33A3A;
+      --amber:        #F59E0B;
+      --bg:           #F7F3EC;
+      --bg-dark:      #1E2A38;
+      --text:         #2C2C2C;
+      --text-light:   #6B7280;
+      --border:       #D8D3C8;
+      --white:        #FFFFFF;
+      --tint:         #FAFAF8;
+      --font-serif:   'Playfair Display', Georgia, serif;
+      --font-sans:    'Inter', sans-serif;
+      --radius:       8px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+    #siteNav { --nav-width: 1280px; }
+
+    #loadingScreen { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    .spinner-sm { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.4); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 4px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner, .spinner-sm { animation-duration: 2.4s; } }
+
+    .main { max-width: 1280px; margin: 0 auto; padding: 32px 24px 60px; }
+
+    /* Header: title, test-mode pill, usage bars */
+    .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; flex-wrap: wrap; margin-bottom: 22px; }
+    .top h1 { font-family: var(--font-serif); font-size: 1.7rem; color: var(--primary); font-weight: 600; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .test-pill { font-family: var(--font-sans); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; background: #FDF3DC; color: #8A5A00; border: 1px solid #F0D597; padding: 4px 10px; border-radius: 100px; }
+    .test-pill[hidden] { display: none; }
+
+    .usage { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; min-width: 320px; flex: 0 1 420px; }
+    .usage__row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.8rem; }
+    .usage__label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); }
+    .usage__num { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .usage__bar { height: 8px; background: #EEEAE2; border-radius: 4px; overflow: hidden; margin: 6px 0 4px; display: flex; }
+    .usage__bar--thin { height: 4px; }
+    .usage__seg { height: 100%; transition: width 0.3s; }
+    .seg-out { background: var(--primary); }
+    .seg-rep { background: #7FA0BE; }
+    .seg-in  { background: #A9C4A0; }
+    .seg-oth { background: #CFC7B8; }
+    .usage__bar.over .usage__seg { background: var(--danger); }
+    .usage__fill-month { height: 100%; background: var(--amber); }
+    .usage__legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.7rem; color: var(--text-light); margin-top: 4px; }
+    .usage__legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
+    .usage__meta { font-size: 0.7rem; color: var(--text-light); margin-top: 6px; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+    .tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 10px 14px; font: 600 0.88rem var(--font-sans); color: var(--text-light); cursor: pointer; margin-bottom: -1px; }
+    .tab:hover { color: var(--primary); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab:focus-visible, .btn:focus-visible, .chip:focus-visible, .thread:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    .tab .count { font-size: 0.7rem; background: var(--amber); color: var(--bg-dark); border-radius: 9px; padding: 1px 6px; margin-left: 4px; }
+    .panel[hidden] { display: none; }
+
+    /* Buttons, chips, pills */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: var(--radius); font: 600 0.85rem var(--font-sans); cursor: pointer; border: none; transition: 0.2s; }
+    .btn--primary { background: var(--primary); color: white; }
+    .btn--primary:hover { background: var(--primary-dark); }
+    .btn--primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn--ghost { background: none; border: 1px solid var(--border); color: var(--text-light); }
+    .btn--ghost:hover { border-color: var(--primary); color: var(--primary); }
+    .btn--danger { background: none; border: 1px solid #E6B8B8; color: var(--danger); }
+    .btn--danger:hover { background: #FBEDED; }
+    .btn--sm { padding: 5px 10px; font-size: 0.76rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { background: var(--white); border: 1px solid var(--border); color: var(--text-light); border-radius: 100px; padding: 5px 11px; font: 600 0.74rem var(--font-sans); cursor: pointer; }
+    .chip:hover { color: var(--primary); border-color: var(--primary); }
+    .chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 100px; font-size: 0.68rem; font-weight: 600; white-space: nowrap; background: #F0EDE8; color: var(--text-light); }
+    .pill--good { background: #EBF5EB; color: var(--secondary); }
+    .pill--info { background: #E8F0F8; color: var(--primary-dark); }
+    .pill--warn { background: #FDF3DC; color: #8A5A00; }
+    .pill--bad  { background: #FBEDED; color: var(--danger); }
+    .pill--test { background: #FDF3DC; color: #8A5A00; letter-spacing: 0.04em; }
+
+    .card { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); }
+    .note { font-size: 0.8rem; color: var(--text-light); line-height: 1.5; }
+    .banner { border-radius: var(--radius); padding: 10px 14px; font-size: 0.82rem; line-height: 1.45; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .banner--warn { background: #FDF3DC; border: 1px solid #F0D597; color: #6B4700; }
+    .banner--bad  { background: #FBEDED; border: 1px solid #E6B8B8; color: var(--danger); }
+    .banner--ok   { background: #EBF5EB; border: 1px solid #BFD9BA; color: var(--secondary); }
+    .banner[hidden] { display: none; }
+
+    /* Inbox */
+    .inbox { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 16px; align-items: start; }
+    .inbox__list { overflow: hidden; }
+    .inbox__filters { padding: 12px; border-bottom: 1px solid var(--border); background: var(--tint); display: flex; flex-direction: column; gap: 8px; }
+    .threads { max-height: calc(100vh - 330px); min-height: 300px; overflow-y: auto; }
+    .thread { display: block; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid var(--border); padding: 11px 14px; cursor: pointer; font-family: var(--font-sans); color: var(--text); }
+    .thread:hover { background: var(--tint); }
+    .thread.sel { background: #EEF3F8; box-shadow: inset 3px 0 0 var(--primary); }
+    .thread__top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .thread__who { font-size: 0.86rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .thread.unread .thread__who { font-weight: 700; }
+    .thread.unread .thread__who::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--amber); margin-right: 6px; vertical-align: 1px; }
+    .thread__time { font-size: 0.7rem; color: var(--text-light); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .thread__subj { font-size: 0.78rem; color: var(--text-light); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .thread__meta { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+    .thread__alias { font-size: 0.68rem; color: var(--text-light); }
+    .empty { padding: 40px 20px; text-align: center; color: var(--text-light); font-size: 0.85rem; line-height: 1.5; }
+
+    .view { min-height: 420px; }
+    .view__head { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+    .view__title { font-family: var(--font-serif); font-size: 1.2rem; color: var(--text); text-wrap: balance; }
+    .view__sub { font-size: 0.8rem; color: var(--text-light); display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; }
+    .view__sub a { color: var(--primary); }
+    .classify { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .classify__label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); margin-right: 4px; }
+    .msgs { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+    .msg { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--white); }
+    .msg--out { background: #F5F8FB; border-color: #D6E1EC; margin-left: 40px; }
+    .msg--in { margin-right: 40px; }
+    .msg__head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 0.76rem; color: var(--text-light); margin-bottom: 8px; }
+    .msg__from { font-weight: 600; color: var(--text); }
+    .msg__body { font-size: 0.87rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .msg__actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .msg__frame { width: 100%; min-height: 260px; border: 1px solid var(--border); border-radius: 6px; margin-top: 10px; background: #fff; }
+    .atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .att { display: inline-flex; align-items: center; gap: 6px; background: #F0EDE8; border: none; border-radius: 100px; padding: 4px 10px; font: 500 0.74rem var(--font-sans); color: var(--primary-dark); cursor: pointer; }
+    .att:hover { background: #E6E1D8; }
+    .att--flag { background: #FBEDED; color: var(--danger); }
+    .att--skip { cursor: default; color: var(--text-light); }
+    .reply { border-top: 1px solid var(--border); padding: 14px 20px 18px; background: var(--tint); border-radius: 0 0 var(--radius) var(--radius); }
+    .reply textarea { width: 100%; min-height: 110px; }
+
+    /* Forms */
+    .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+    .field label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text); }
+    input[type="text"], input[type="email"], input[type="search"], select, textarea {
+      padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius);
+      font: 0.88rem var(--font-sans); color: var(--text); background: var(--white); width: 100%;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(74,107,138,0.12); }
+    textarea { resize: vertical; line-height: 1.5; }
+    .hint { font-size: 0.74rem; color: var(--text-light); line-height: 1.45; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* Compose */
+    .compose { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+    .compose .card { padding: 18px 20px; }
+    .compose h2, .settings h2 { font-family: var(--font-serif); font-size: 1.1rem; color: var(--primary); margin-bottom: 14px; font-weight: 600; }
+    .picker { position: relative; }
+    .picker__list { position: absolute; left: 0; right: 0; top: calc(100% + 2px); background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 10px 28px rgba(30,42,56,0.12); max-height: 280px; overflow-y: auto; z-index: 20; }
+    .picker__list[hidden] { display: none; }
+    .picker__item { display: block; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid #F0EDE8; padding: 8px 12px; cursor: pointer; font: 0.84rem var(--font-sans); color: var(--text); }
+    .picker__item:hover, .picker__item:focus { background: #EEF3F8; outline: none; }
+    .picker__item small { display: block; color: var(--text-light); font-size: 0.72rem; }
+    .co-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; font-size: 0.8rem; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin-bottom: 14px; background: var(--tint); }
+    .co-card dt { color: var(--text-light); }
+    .co-card dd { overflow-wrap: anywhere; }
+    .vars { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .var { background: #EEF3F8; border: none; border-radius: 5px; padding: 2px 7px; font: 500 0.7rem ui-monospace, Menlo, Consolas, monospace; color: var(--primary-dark); cursor: pointer; }
+    .preview { border: 1px solid var(--border); border-radius: var(--radius); background: #fff; padding: 16px 18px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; color: #222; }
+    .preview__subj { font-weight: 700; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #EEE; }
+    .preview__body { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .preview__footer { margin-top: 18px; font-size: 11px; color: #888; white-space: pre-wrap; }
+    .preview mark { background: #FBEDED; color: var(--danger); border-radius: 3px; padding: 0 3px; }
+    .preview__meta { font-size: 0.74rem; color: var(--text-light); margin-bottom: 10px; font-family: var(--font-sans); }
+
+    /* Tables */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); padding: 10px 14px; text-align: left; border-bottom: 2px solid var(--border); background: var(--tint); white-space: nowrap; }
+    td { padding: 10px 14px; font-size: 0.84rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:hover td { background: var(--tint); }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.clip { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--tint); }
+    .toolbar select { width: auto; }
+
+    /* Settings */
+    .settings { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    .settings .card { padding: 18px 20px; }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 0.84rem; margin-bottom: 14px; }
+    .kv dt { color: var(--text-light); }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--bg-dark); color: #fff; padding: 10px 18px; border-radius: var(--radius); font-size: 0.85rem; box-shadow: 0 10px 28px rgba(0,0,0,0.3); z-index: 300; max-width: calc(100% - 32px); }
+    .toast[hidden] { display: none; }
+
+    @media (max-width: 960px) {
+      .inbox, .compose { grid-template-columns: 1fr; }
+      .threads { max-height: 360px; }
+      .msg--out { margin-left: 0; } .msg--in { margin-right: 0; }
+    }
+    @media (max-width: 600px) {
+      .main { padding: 20px 16px 48px; }
+      .usage { min-width: 0; flex-basis: 100%; }
+      .row2 { grid-template-columns: 1fr; }
+      .tabs { overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="loadingScreen"><div class="spinner"></div></div>
+
+  <div id="app" style="display:none;">
+    <nav class="nav" id="siteNav"></nav>
+
+    <main class="main">
+      <div class="top">
+        <h1>Outreach <span class="test-pill" id="testPill" hidden title="Only approved test addresses can receive email until test mode is switched off (go-live checklist).">Test mode</span></h1>
+
+        <section class="usage" aria-label="Resend usage today">
+          <div class="usage__row">
+            <span class="usage__label">Emails today</span>
+            <span class="usage__num" id="usageToday">— / 100</span>
+          </div>
+          <div class="usage__bar" id="usageBar" role="img" aria-label="Today's Resend usage">
+            <div class="usage__seg seg-out" id="segOut"></div>
+            <div class="usage__seg seg-rep" id="segRep"></div>
+            <div class="usage__seg seg-in"  id="segIn"></div>
+            <div class="usage__seg seg-oth" id="segOth"></div>
+          </div>
+          <div class="usage__legend" id="usageLegend"></div>
+          <div class="usage__row" style="margin-top:8px;">
+            <span class="usage__label">This month</span>
+            <span class="usage__num" id="usageMonth">— / 3,000</span>
+          </div>
+          <div class="usage__bar usage__bar--thin"><div class="usage__fill-month" id="monthFill" style="width:0%"></div></div>
+          <div class="usage__meta" id="usageMeta">Waiting for the first reading from Resend…</div>
+        </section>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" role="tab" data-tab="inbox" aria-selected="true">Inbox<span class="count" id="unreadCount" hidden></span></button>
+        <button class="tab" role="tab" data-tab="sent" aria-selected="false">Sent</button>
+        <button class="tab" role="tab" data-tab="compose" aria-selected="false">Compose</button>
+        <button class="tab" role="tab" data-tab="settings" aria-selected="false">Settings</button>
+      </div>
+
+      <!-- ── Inbox ─────────────────────────────────────────────── -->
+      <section class="panel" id="panel-inbox">
+        <div class="inbox">
+          <div class="card inbox__list">
+            <div class="inbox__filters">
+              <div class="chips" id="ownerChips"></div>
+              <div class="chips" id="stateChips"></div>
+            </div>
+            <div class="threads" id="threadList"><div class="empty">Loading…</div></div>
+          </div>
+          <div class="card view" id="threadView">
+            <div class="empty">Select a conversation.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Sent ──────────────────────────────────────────────── -->
+      <section class="panel" id="panel-sent" hidden>
+        <div class="card">
+          <div class="toolbar">
+            <select id="sentSender" aria-label="Filter by sender"><option value="">All senders</option></select>
+            <select id="sentStatus" aria-label="Filter by status">
+              <option value="">All statuses</option>
+              <option value="sent">Sent</option><option value="delivered">Delivered</option>
+              <option value="delayed">Delayed</option><option value="bounced">Bounced</option>
+              <option value="complained">Complained</option><option value="failed">Failed</option>
+            </select>
+            <span class="note" id="sentCount"></span>
+            <button class="btn btn--ghost btn--sm" id="sentRefresh" style="margin-left:auto;">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Company</th><th>To</th><th>From</th><th>Subject</th><th>Status</th></tr></thead>
+              <tbody id="sentBody"><tr><td colspan="6" class="empty">Open this tab to load sent emails.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Compose ───────────────────────────────────────────── -->
+      <section class="panel" id="panel-compose" hidden>
+        <div class="compose">
+          <div class="card">
+            <h2>New email</h2>
+            <div class="banner banner--warn" id="composeTestBanner" hidden style="margin-bottom:14px;">
+              <span>Test mode is on: the email can only go to an approved test address. The company is used for the variables and the history.</span>
+            </div>
+
+            <div class="field picker">
+              <label for="coSearch">Company</label>
+              <input type="search" id="coSearch" placeholder="Search by name, NIF or email…" autocomplete="off">
+              <div class="picker__list" id="coResults" hidden></div>
+              <span class="hint" id="coHint"></span>
+            </div>
+            <label class="hint" id="noCompanyWrap" hidden style="display:flex;gap:6px;align-items:center;margin:-6px 0 14px;">
+              <input type="checkbox" id="noCompany"> Test send without a company
+            </label>
+
+            <dl class="co-card" id="coCard" hidden></dl>
+            <div class="banner banner--warn" id="twiceWarn" hidden style="margin-bottom:14px;"></div>
+
+            <div class="row2">
+              <div class="field">
+                <label for="cTo">To</label>
+                <input type="email" id="cTo" list="testList" autocomplete="off">
+                <datalist id="testList"></datalist>
+              </div>
+              <div class="field">
+                <label for="cFrom">From</label>
+                <select id="cFrom"></select>
+              </div>
+            </div>
+
+            <div class="field" id="tplField" hidden>
+              <label for="cTpl">Template</label>
+              <select id="cTpl"><option value="">— Write from scratch —</option></select>
+            </div>
+
+            <div class="field">
+              <label for="cSubject">Subject</label>
+              <input type="text" id="cSubject" maxlength="200">
+            </div>
+            <div class="field">
+              <label for="cBody">Message</label>
+              <textarea id="cBody" rows="10"></textarea>
+              <span class="hint">Plain text. Your signature and the legal footer are added automatically. Insert a field:</span>
+              <div class="vars" id="varButtons"></div>
+            </div>
+
+            <div class="banner banner--bad" id="composeErr" hidden style="margin-bottom:12px;"></div>
+            <div class="actions">
+              <button class="btn btn--primary" id="sendBtn">Send email</button>
+              <button class="btn btn--ghost" id="clearBtn" type="button">Clear</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Preview</h2>
+            <div class="preview__meta" id="pvMeta"></div>
+            <div class="preview">
+              <div class="preview__subj" id="pvSubject"></div>
+              <div class="preview__body" id="pvBody"></div>
+              <div class="preview__footer" id="pvFooter"></div>
+            </div>
+            <p class="hint" style="margin-top:10px;">The server renders the final email the same way and refuses to send if a field is empty and has no fallback — write <code>{{contact.firstName|Olá}}</code> to give one.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Settings ──────────────────────────────────────────── -->
+      <section class="panel" id="panel-settings" hidden>
+        <div class="settings">
+          <div class="card">
+            <h2>Status</h2>
+            <dl class="kv" id="settingsKv"></dl>
+            <div class="actions">
+              <button class="btn btn--ghost" id="seedBtn">Set up settings &amp; addresses</button>
+              <button class="btn btn--danger" id="clearTestBtn">Clear test data</button>
+            </div>
+            <p class="hint" style="margin-top:10px;">"Set up" only creates what's missing and never overwrites. "Clear test data" deletes every conversation, message and activity created while test mode was on.</p>
+          </div>
+          <div class="card" style="padding:0;">
+            <div style="padding:18px 20px 6px;"><h2 style="margin:0;">Sender addresses</h2>
+              <p class="hint" style="margin-top:6px;">An address becomes <b>active</b> after three steps: stop its warm-up in Instantly, add <code>&lt;alias&gt;@…resend.app</code> as a second destination in ImprovMX, then set it active here (editing arrives in the next update).</p></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Address</th><th>Owner</th><th>Status</th><th class="num">Sent today</th><th class="num">Daily cap</th></tr></thead>
+                <tbody id="sendersBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
+
+  <script type="module">
+    import { auth, db, storage, ADMIN_EMAILS, addReads, updateDoc, setDoc } from './firebase-config.js';
+    import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
+    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+    import {
+      collection, doc, query, where, orderBy, limit, onSnapshot, getDocs, serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+    import { ref, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
+    import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
+
+    // ── Constants ──────────────────────────────────────────────
+    const OWNER_BY_EMAIL = { 'andre.rocha@douropartners.pt': 'andre', 'antonio.carvalho@douropartners.pt': 'antonio' };
+    const OWNER_LABEL = { andre: 'André', antonio: 'António' };
+    const MONTHLY_QUOTA = 3000; // Resend free plan
+    // Same taxonomy as searchActivities.responseCategory; "excluded" also
+    // adds the address to the suppression list.
+    const CATEGORIES = [
+      ['interested', 'Interested'], ['callback_later', 'Call back later'], ['not_now', 'Not now'],
+      ['not_interested', 'Not interested'], ['referred', 'Referred'], ['wrong_contact', 'Wrong contact'],
+      ['excluded', 'Unsubscribe / exclude'],
+    ];
+    const STATUS_PILL = {
+      queued: ['Queued', ''], sent: ['Sent', 'info'], delivered: ['Delivered', 'good'], delayed: ['Delayed', 'warn'],
+      bounced: ['Bounced', 'bad'], complained: ['Spam complaint', 'bad'], failed: ['Failed', 'bad'],
+      suppressed: ['Suppressed', 'bad'], received: ['Received', 'info'],
+    };
+    const THREAD_PILL = {
+      open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
+      bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
+    };
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName'];
+
+    const fns = getFunctions(auth.app, 'us-central1');
+    const callSend = httpsCallable(fns, 'outreachSend');
+    const callAdmin = httpsCallable(fns, 'outreachAdmin');
+
+    // ── State ──────────────────────────────────────────────────
+    let me = '', myOwner = null;
+    let settings = null;
+    let senders = [];
+    let threads = [];
+    let selectedId = null;
+    let msgUnsub = null;
+    let threadMessages = [];
+    let usageDoc = {}, dailyDoc = {};
+    let ownerFilter = 'mine', stateFilter = 'all';
+    let companies = null;          // from the Search CRM's IndexedDB cache (lazy)
+    let picked = null;             // company chosen in Compose
+    let dayUnsubs = [];
+
+    initNav('outreach');
+
+    // ── Helpers ────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+    function tsMs(t) { if (!t) return 0; if (typeof t === 'number') return t; if (t.toMillis) return t.toMillis(); if (t.seconds != null) return t.seconds * 1000; return new Date(t).getTime() || 0; }
+    const dtFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const dayFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
+    const timeFmt = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' });
+    function when(t) {
+      const ms = tsMs(t); if (!ms) return '';
+      const d = new Date(ms), now = new Date();
+      return d.toDateString() === now.toDateString() ? timeFmt.format(d) : dayFmt.format(d);
+    }
+    const num = (n) => Number(n || 0).toLocaleString('en-GB');
+    function utcDay() { return new Date().toISOString().slice(0, 10); }
+    function senderKey(id) { return String(id || '').replace(/[.@]/g, '_'); }
+    function localPart(e) { return String(e || '').split('@')[0]; }
+    function pill(map, key) { const [label, kind] = map[key] || [key || '—', '']; return `<span class="pill${kind ? ' pill--' + kind : ''}">${esc(label)}</span>`; }
+    function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; }, 4200); }
+    function requestId() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/-/g, '').slice(0, 32); }
+    function countSnap(snap, first) { addReads(first ? snap.docs.length : snap.docChanges().length); refreshReads(); }
+
+    // Callable errors carry the server's plain-language message and a reason code.
+    function errText(e) {
+      return e?.message?.replace(/^(FirebaseError:\s*)?/, '') || 'Something went wrong.';
+    }
+
+    // ── Auth guard ─────────────────────────────────────────────
+    onAuthStateChanged(auth, async (user) => {
+      if (!user || !ADMIN_EMAILS.includes(user.email)) { window.location.href = '/portal/login.html'; return; }
+      me = user.email; myOwner = OWNER_BY_EMAIL[me] || null;
+      setNavEmail(me);
+      startSharedReadsWatch();
+      $('loadingScreen').style.display = 'none';
+      $('app').style.display = 'block';
+      setupTabs(); setupFilters(); setupCompose(); setupSettings();
+      watchSettings(); watchSenders(); watchUsage(); watchThreads();
+      setInterval(() => { if (dayUnsubs.day !== utcDay()) watchUsage(); }, 5 * 60 * 1000); // re-point at the new UTC day
+    });
+
+    // ── Tabs ───────────────────────────────────────────────────
+    function setupTabs() {
+      document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => showTab(tab.dataset.tab)));
+    }
+    function showTab(name) {
+      document.querySelectorAll('.tab').forEach(t => { const on = t.dataset.tab === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
+      document.querySelectorAll('.panel').forEach(p => { p.hidden = p.id !== 'panel-' + name; });
+      if (name === 'sent') loadSent();
+      if (name === 'compose') ensureCompanies();
+    }
+
+    // ── Live data ──────────────────────────────────────────────
+    function watchSettings() {
+      let first = true;
+      onSnapshot(doc(db, 'outreachSettings', 'global'), (snap) => {
+        addReads(1); refreshReads(); first = false;
+        settings = snap.exists() ? snap.data() : null;
+        const test = !settings || settings.testMode !== false;
+        $('testPill').hidden = !test;
+        $('composeTestBanner').hidden = !test;
+        $('noCompanyWrap').hidden = !test;
+        $('testList').innerHTML = (settings?.testRecipients || []).map(e => `<option value="${esc(e)}">`).join('');
+        renderSettings(); renderUsage(); renderPreview();
+      }, (e) => console.warn('settings', e));
+    }
+
+    function watchSenders() {
+      let first = true;
+      onSnapshot(collection(db, 'outreachSenders'), (snap) => {
+        countSnap(snap, first); first = false;
+        senders = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (a.owner || '').localeCompare(b.owner || '') || a.id.localeCompare(b.id));
+        renderSenders(); renderFromOptions(); renderSentSenderFilter();
+      }, (e) => console.warn('senders', e));
+    }
+
+    function watchUsage() {
+      dayUnsubs.forEach(u => u());
+      const day = utcDay();
+      let f1 = true, f2 = true;
+      const u1 = onSnapshot(doc(db, 'outreachUsage', day), (s) => { addReads(1); refreshReads(); f1 = false; usageDoc = s.exists() ? s.data() : {}; renderUsage(); });
+      const u2 = onSnapshot(doc(db, 'outreachDaily', day), (s) => { addReads(1); refreshReads(); f2 = false; dailyDoc = s.exists() ? s.data() : {}; renderUsage(); renderSenders(); });
+      dayUnsubs = [u1, u2]; dayUnsubs.day = day;
+    }
+
+    function watchThreads() {
+      let first = true;
+      onSnapshot(query(collection(db, 'outreachThreads'), orderBy('lastMessageAt', 'desc'), limit(150)), (snap) => {
+        countSnap(snap, first); first = false;
+        threads = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const unread = threads.filter(t => t.unread).length;
+        $('unreadCount').textContent = unread; $('unreadCount').hidden = !unread;
+        setOutreachBadge(unread);
+        renderThreads();
+        if (selectedId) renderThreadHead();
+      }, (e) => { $('threadList').innerHTML = `<div class="empty">Couldn't load conversations: ${esc(e.message)}</div>`; });
+    }
+
+    // ── Usage bar (spec §8.0) ──────────────────────────────────
+    function renderUsage() {
+      const target = settings?.dailyTarget || 100;
+      const used = usageDoc.resendDailyUsed;
+      const out = dailyDoc.outreachSent || 0, rep = dailyDoc.repliesSent || 0, rin = dailyDoc.received || 0;
+      const total = used != null ? used : out + rep + rin;
+      const other = Math.max(0, total - out - rep - rin);
+      const scale = Math.max(target, total) || 1;
+      const w = (n) => (n / scale * 100) + '%';
+      $('segOut').style.width = w(out); $('segRep').style.width = w(rep); $('segIn').style.width = w(rin); $('segOth').style.width = w(other);
+      $('usageBar').classList.toggle('over', total >= target);
+      $('usageToday').textContent = `${num(total)} / ${num(target)}`;
+      $('usageToday').style.color = total >= target ? 'var(--danger)' : '';
+      $('usageLegend').innerHTML =
+        `<span><i class="seg-out"></i>Outreach ${num(out)}</span><span><i class="seg-rep"></i>Replies ${num(rep)}</span>` +
+        `<span><i class="seg-in"></i>Received ${num(rin)}</span><span><i class="seg-oth"></i>Other ${num(other)}</span>`;
+      $('usageBar').title = `Resend account today: ${total} of ${target}. Outreach ${out} · replies ${rep} · received ${rin} · other (warm-up, investor emails) ${other}. Automations limit: ${settings?.automationBudget || 80}/day.`;
+      const month = usageDoc.resendMonthlyUsed;
+      $('usageMonth').textContent = `${month != null ? num(month) : '—'} / ${num(MONTHLY_QUOTA)}`;
+      $('monthFill').style.width = month != null ? Math.min(100, month / MONTHLY_QUOTA * 100) + '%' : '0%';
+      const nextReset = new Date(); nextReset.setUTCHours(24, 0, 0, 0);
+      const updated = usageDoc.updatedAt ? `Updated ${timeFmt.format(new Date(tsMs(usageDoc.updatedAt)))}` : 'No reading from Resend yet today';
+      $('usageMeta').textContent = `${updated} · resets at ${timeFmt.format(nextReset)} (Lisbon) · above ${target} every send asks for confirmation`;
+    }
+
+    // ── Inbox ──────────────────────────────────────────────────
+    function setupFilters() {
+      const other = myOwner === 'andre' ? 'antonio' : 'andre';
+      const owners = [['mine', 'Mine'], [other, OWNER_LABEL[other]], ['all', 'All']];
+      $('ownerChips').innerHTML = owners.map(([k, l]) => `<button class="chip${k === ownerFilter ? ' on' : ''}" data-owner="${k}">${esc(l)}</button>`).join('');
+      const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['unmatched', 'Unmatched']];
+      $('stateChips').innerHTML = states.map(([k, l]) => `<button class="chip${k === stateFilter ? ' on' : ''}" data-state="${k}">${esc(l)}</button>`).join('');
+      $('ownerChips').addEventListener('click', (e) => { const b = e.target.closest('[data-owner]'); if (!b) return; ownerFilter = b.dataset.owner; $('ownerChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
+      $('stateChips').addEventListener('click', (e) => { const b = e.target.closest('[data-state]'); if (!b) return; stateFilter = b.dataset.state; $('stateChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
+    }
+
+    function filteredThreads() {
+      return threads.filter(t => {
+        if (ownerFilter === 'mine' && t.owner && t.owner !== myOwner) return false;
+        if (ownerFilter !== 'mine' && ownerFilter !== 'all' && t.owner !== ownerFilter) return false;
+        if (stateFilter === 'unread' && !t.unread) return false;
+        if (stateFilter === 'needs' && !(t.lastDirection === 'in' && t.status === 'replied')) return false;
+        if (stateFilter === 'unmatched' && !t.unmatched) return false;
+        return true;
+      });
+    }
+
+    function renderThreads() {
+      const list = filteredThreads();
+      if (!list.length) {
+        $('threadList').innerHTML = `<div class="empty">${threads.length ? 'No conversations match these filters.' : 'No conversations yet. Send the first email from Compose.'}</div>`;
+        return;
+      }
+      $('threadList').innerHTML = list.map(t => {
+        const who = t.companyName || (t.unmatched ? 'Unmatched' : '') || t.contactEmail;
+        return `<button class="thread${t.unread ? ' unread' : ''}${t.id === selectedId ? ' sel' : ''}" data-id="${esc(t.id)}">
+          <div class="thread__top"><span class="thread__who">${esc(who)}</span><span class="thread__time">${esc(when(t.lastMessageAt))}</span></div>
+          <div class="thread__subj">${esc(t.subject || '(no subject)')}</div>
+          <div class="thread__meta">${pill(THREAD_PILL, t.status)}${t.responseCategory ? `<span class="pill">${esc(catLabel(t.responseCategory))}</span>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}<span class="thread__alias">${esc(t.contactEmail || '')}${t.senderId ? ' · ' + esc(localPart(t.senderId)) : ''}</span></div>
+        </button>`;
+      }).join('');
+      $('threadList').querySelectorAll('.thread').forEach(b => b.addEventListener('click', () => openThread(b.dataset.id)));
+    }
+    const catLabel = (k) => (CATEGORIES.find(c => c[0] === k) || [k, k])[1];
+
+    function openThread(id) {
+      selectedId = id;
+      renderThreads();
+      if (msgUnsub) msgUnsub();
+      threadMessages = [];
+      $('threadView').innerHTML = '<div class="view__head" id="viewHead"></div><div class="msgs" id="msgs"><div class="empty">Loading…</div></div><div id="replyBox"></div>';
+      renderThreadHead();
+      const t = threads.find(x => x.id === id);
+      if (t?.unread) updateDoc(doc(db, 'outreachThreads', id), { unread: false }).catch(() => {});
+      let first = true;
+      msgUnsub = onSnapshot(query(collection(db, 'outreachMessages'), where('threadId', '==', id), orderBy('createdAt', 'asc')), (snap) => {
+        countSnap(snap, first); first = false;
+        threadMessages = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderMessages();
+      }, (e) => { $('msgs').innerHTML = `<div class="empty">Couldn't load messages: ${esc(e.message)}</div>`; });
+      renderReplyBox();
+    }
+
+    function renderThreadHead() {
+      const t = threads.find(x => x.id === selectedId); if (!t || !$('viewHead')) return;
+      const company = t.companyId
+        ? `<a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}">${esc(t.companyName || 'Company')}</a>`
+        : `<span class="pill pill--warn">Unmatched</span> <button class="btn btn--ghost btn--sm" id="assignBtn">Assign to company</button>`;
+      $('viewHead').innerHTML = `
+        <div class="view__title">${esc(t.subject || '(no subject)')}</div>
+        <div class="view__sub">${company}<span>${esc(t.contactEmail || '')}</span>
+          <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
+          ${pill(THREAD_PILL, t.status)}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}</div>
+        <div class="classify"><span class="classify__label">Classify</span>${CATEGORIES.map(([k, l]) =>
+          `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}">${esc(l)}</button>`).join('')}</div>`;
+      $('viewHead').querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => classify(t, b.dataset.cat)));
+      $('assignBtn')?.addEventListener('click', () => assignCompany(t));
+    }
+
+    function renderMessages() {
+      const t = threads.find(x => x.id === selectedId);
+      if (!threadMessages.length) { $('msgs').innerHTML = '<div class="empty">No messages.</div>'; return; }
+      $('msgs').innerHTML = threadMessages.map(m => {
+        const out = m.direction === 'out';
+        const tags = [out ? pill(STATUS_PILL, m.status) : '', m.via === 'gmail' ? '<span class="pill">from Gmail</span>' : '',
+          m.isAutoReply ? '<span class="pill pill--warn">Auto-reply</span>' : '', m.error ? `<span class="pill pill--bad" title="${esc(m.error)}">Error</span>` : ''].join(' ');
+        const unsub = (!out && m.suggestUnsubscribe && t && t.status !== 'closed')
+          ? `<div class="banner banner--warn" style="margin-top:10px;"><span>This reply looks like a removal request.</span><button class="btn btn--ghost btn--sm" data-unsub="${esc(m.id)}">Add to suppression list</button></div>` : '';
+        const atts = (m.attachments || []).length ? `<div class="atts">${m.attachments.map((a, i) => attChip(m, a, i)).join('')}</div>` : '';
+        const body = out ? (m.snippet || m.text || '') : (m.snippet || m.text || '');
+        const canFull = (m.html || m.htmlStoragePath || (m.text && m.text !== body));
+        return `<article class="msg ${out ? 'msg--out' : 'msg--in'}">
+          <div class="msg__head"><span><span class="msg__from">${esc(out ? 'You' : (m.from || ''))}</span>${out ? ' → ' + esc((m.to || []).join(', ')) : ''}</span>
+            <span>${tags} <span style="font-variant-numeric:tabular-nums;">${esc(m.createdAt ? dtFmt.format(new Date(tsMs(m.createdAt))) : '')}</span></span></div>
+          <div class="msg__body">${esc(body)}</div>
+          ${atts}${unsub}
+          ${canFull ? `<div class="msg__actions"><button class="btn btn--ghost btn--sm" data-full="${esc(m.id)}">Show full email</button></div><div id="full-${esc(m.id)}"></div>` : ''}
+        </article>`;
+      }).join('');
+      $('msgs').querySelectorAll('[data-full]').forEach(b => b.addEventListener('click', () => toggleFull(b)));
+      $('msgs').querySelectorAll('[data-att]').forEach(b => b.addEventListener('click', () => openAttachment(b)));
+      $('msgs').querySelectorAll('[data-unsub]').forEach(b => b.addEventListener('click', () => suppressThreadContact(threads.find(x => x.id === selectedId), 'reply')));
+    }
+
+    function attChip(m, a, i) {
+      const size = a.size ? ` · ${a.size > 1048576 ? (a.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(a.size / 1024)) + ' KB'}` : '';
+      if (!a.storagePath) {
+        const why = a.skippedReason === 'too_large' ? 'too large — open it in Gmail' : 'not copied — open it in Gmail';
+        return `<span class="att att--skip" title="${esc(why)}">📎 ${esc(a.filename)}${size} (${esc(why)})</span>`;
+      }
+      return `<button class="att${a.flagged ? ' att--flag' : ''}" data-att="${esc(m.id)}:${i}" title="${a.flagged ? 'Risky file type — download only' : 'Download'}">${a.flagged ? '⚠️' : '📎'} ${esc(a.filename)}${size}</button>`;
+    }
+
+    async function openAttachment(btn) {
+      const [mid, idx] = btn.dataset.att.split(':');
+      const m = threadMessages.find(x => x.id === mid); const a = m?.attachments?.[Number(idx)]; if (!a) return;
+      if (a.flagged && !confirm(`"${a.filename}" is a file type that can carry malware (macros, scripts, archives). Download it anyway? Only open it if you trust the sender.`)) return;
+      try { window.open(await getDownloadURL(ref(storage, a.storagePath)), '_blank', 'noopener'); }
+      catch (e) { toast('Could not open the file: ' + e.message); }
+    }
+
+    // Full email: received HTML is untrusted — sandboxed iframe (no scripts,
+    // no same-origin) plus a CSP inside it that blocks remote images and any
+    // network access (spec §11).
+    async function toggleFull(btn) {
+      const m = threadMessages.find(x => x.id === btn.dataset.full); const box = $('full-' + btn.dataset.full);
+      if (box.innerHTML) { box.innerHTML = ''; btn.textContent = 'Show full email'; return; }
+      btn.textContent = 'Hide full email';
+      let html = m.html;
+      if (!html && m.htmlStoragePath) {
+        try { html = await (await fetch(await getDownloadURL(ref(storage, m.htmlStoragePath)))).text(); } catch (e) { html = null; }
+      }
+      if (html) {
+        const guard = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">`;
+        const frame = document.createElement('iframe');
+        frame.className = 'msg__frame'; frame.setAttribute('sandbox', ''); frame.setAttribute('referrerpolicy', 'no-referrer');
+        frame.srcdoc = guard + html;
+        box.appendChild(frame);
+        box.insertAdjacentHTML('beforeend', '<p class="hint" style="margin-top:4px;">Remote images and links are blocked in this view for safety.</p>');
+      } else {
+        box.innerHTML = `<div class="msg__body" style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">${esc(m.text || '')}</div>`;
+      }
+    }
+
+    function renderReplyBox() {
+      const t = threads.find(x => x.id === selectedId); const box = $('replyBox'); if (!box || !t) return;
+      box.className = 'reply';
+      box.innerHTML = `
+        <div class="field" style="margin-bottom:10px;"><label for="replyText">Reply from ${esc(t.senderId || '—')}</label>
+          <textarea id="replyText" placeholder="Write your reply…"></textarea>
+          <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature and the legal footer.</span></div>
+        <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
+        <button class="btn btn--primary" id="replyBtn">Send reply</button>`;
+      $('replyBtn').addEventListener('click', () => sendReply(t));
+    }
+
+    async function sendReply(t) {
+      const body = $('replyText').value.trim();
+      const err = $('replyErr'); err.hidden = true;
+      if (!body) { err.textContent = 'Write the reply first.'; err.hidden = false; return; }
+      const btn = $('replyBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
+      try {
+        const res = await sendWithConfirm({ threadId: t.id, body, requestId: requestId() });
+        if (res) { $('replyText').value = ''; toast(res.warnings?.length ? 'Reply sent. ' + res.warnings[0] : 'Reply sent.'); }
+      } catch (e) { err.textContent = errText(e); err.hidden = false; }
+      finally { btn.disabled = false; btn.textContent = 'Send reply'; }
+    }
+
+    // Above the daily target the server asks for confirmation (soft limit, spec §7.6).
+    async function sendWithConfirm(payload) {
+      try {
+        return (await callSend(payload)).data;
+      } catch (e) {
+        if (e?.details?.reason === 'over_target') {
+          if (!confirm(`${errText(e)}\n\nSend anyway?`)) return null;
+          return (await callSend({ ...payload, confirmOverTarget: true })).data;
+        }
+        throw e;
+      }
+    }
+
+    async function classify(t, cat) {
+      try {
+        await updateDoc(doc(db, 'outreachThreads', t.id), { responseCategory: cat, ...(cat === 'excluded' ? { status: 'closed' } : {}) });
+        // Mirror on the latest inbound activity, so the Search CRM's response stats see it.
+        const lastIn = [...threadMessages].reverse().find(m => m.direction === 'in');
+        if (lastIn) {
+          const snap = await getDocs(query(collection(db, 'searchActivities'), where('outreachMessageId', '==', lastIn.id), limit(1)));
+          addReads(snap.size || 1);
+          if (!snap.empty) await updateDoc(snap.docs[0].ref, { responseCategory: cat });
+        }
+        if (cat === 'excluded') await suppressThreadContact(t, 'manual', true);
+        toast(`Marked "${catLabel(cat)}".`);
+      } catch (e) { toast('Could not save: ' + e.message); }
+    }
+
+    async function suppressThreadContact(t, source, silent) {
+      if (!t?.contactEmail) return;
+      if (!silent && !confirm(`Add ${t.contactEmail} to the suppression list? No address will email it again.`)) return;
+      const email = t.contactEmail.toLowerCase();
+      await setDoc(doc(db, 'outreachSuppression', email), {
+        email, domain: email.split('@')[1] || '', scope: 'address', reason: 'unsubscribed', source,
+        companyId: t.companyId || null, by: me, at: serverTimestamp(),
+      }, { merge: true });
+      await updateDoc(doc(db, 'outreachThreads', t.id), { status: 'closed' });
+      if (t.companyId && !t.isTest) await updateDoc(doc(db, 'searchCompanies', t.companyId), { outreachStatus: 'unsubscribed' }).catch(() => {});
+      if (!silent) toast(`${email} won't be emailed again.`);
+    }
+
+    async function assignCompany(t) {
+      await ensureCompanies();
+      if (!companies) { toast('Open the Search CRM once so this browser has the company list, then try again.'); return; }
+      const q = prompt('Company name or email domain to assign this conversation to:', (t.contactEmail || '').split('@')[1] || '');
+      if (!q) return;
+      const hits = searchCompanies(q, 8);
+      if (!hits.length) { toast('No company matches that.'); return; }
+      const choice = hits.length === 1 ? hits[0] : hits[Number(prompt(hits.map((c, i) => `${i + 1}. ${c.name} (${c.companyEmail || 'no email'})`).join('\n') + '\n\nNumber:')) - 1];
+      if (!choice) return;
+      await updateDoc(doc(db, 'outreachThreads', t.id), { companyId: choice.id, companyName: choice.name || null, unmatched: false });
+      toast(`Assigned to ${choice.name}.`);
+    }
+
+    // ── Sent ───────────────────────────────────────────────────
+    let sentRows = [];
+    async function loadSent() {
+      $('sentBody').innerHTML = '<tr><td colspan="6" class="empty">Loading…</td></tr>';
+      try {
+        const snap = await getDocs(query(collection(db, 'outreachMessages'), where('direction', '==', 'out'), orderBy('createdAt', 'desc'), limit(200)));
+        addReads(snap.size || 1); refreshReads();
+        sentRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderSent();
+      } catch (e) { $('sentBody').innerHTML = `<tr><td colspan="6" class="empty">Couldn't load: ${esc(e.message)}</td></tr>`; }
+    }
+    function renderSentSenderFilter() {
+      const cur = $('sentSender').value;
+      $('sentSender').innerHTML = '<option value="">All senders</option>' + senders.map(s => `<option value="${esc(s.id)}">${esc(s.id)}</option>`).join('');
+      $('sentSender').value = cur;
+    }
+    function renderSent() {
+      const sf = $('sentSender').value, st = $('sentStatus').value;
+      const rows = sentRows.filter(m => (!sf || m.senderId === sf) && (!st || m.status === st));
+      $('sentCount').textContent = `${rows.length} of the last ${sentRows.length} emails`;
+      $('sentBody').innerHTML = rows.length ? rows.map(m => `<tr>
+          <td style="white-space:nowrap;font-variant-numeric:tabular-nums;">${esc(m.createdAt ? dtFmt.format(new Date(tsMs(m.createdAt))) : '')}</td>
+          <td class="clip">${esc(m.companyName || '—')}${m.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
+          <td class="clip">${esc((m.to || []).join(', '))}</td>
+          <td class="clip">${esc(localPart(m.senderId))}${m.via === 'gmail' ? ' <span class="pill">Gmail</span>' : ''}</td>
+          <td class="clip" title="${esc(m.subject)}">${esc(m.subject)}</td>
+          <td>${pill(STATUS_PILL, m.status)}</td></tr>`).join('')
+        : '<tr><td colspan="6" class="empty">No sent emails match.</td></tr>';
+    }
+    $('sentSender').addEventListener('change', renderSent);
+    $('sentStatus').addEventListener('change', renderSent);
+    $('sentRefresh').addEventListener('click', loadSent);
+
+    // ── Compose ────────────────────────────────────────────────
+    // Companies come from the Search CRM's own IndexedDB cache (same origin),
+    // so opening Compose never re-reads 39k documents. Staleness is fine for
+    // picking a company; the server re-reads the chosen one when sending.
+    function readCompanyCache() {
+      return new Promise((resolve) => {
+        let req;
+        try { req = indexedDB.open('searchCrmCache'); } catch (e) { resolve(null); return; }
+        req.onerror = () => resolve(null);
+        req.onsuccess = () => {
+          const idb = req.result;
+          if (!idb.objectStoreNames.contains('fullDataset')) { idb.close(); resolve(null); return; }
+          const g = idb.transaction('fullDataset', 'readonly').objectStore('fullDataset').get('all');
+          g.onsuccess = () => { resolve(g.result?.docs || null); idb.close(); };
+          g.onerror = () => { resolve(null); idb.close(); };
+        };
+        req.onupgradeneeded = () => { req.transaction.abort(); resolve(null); };
+      });
+    }
+    async function ensureCompanies() {
+      if (companies) return;
+      const docs = await readCompanyCache();
+      companies = docs && docs.length ? docs : null;
+      $('coHint').textContent = companies
+        ? `${num(companies.length)} companies from this browser's Search CRM list.`
+        : 'Company list not found in this browser — open the Search CRM once (it caches the list here), then come back.';
+    }
+    const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    function searchCompanies(q, max = 12) {
+      if (!companies) return [];
+      const n = norm(q).trim(); if (n.length < 2) return [];
+      const out = [];
+      for (const c of companies) {
+        if (norm(c.name).includes(n) || norm(c.companyEmail).includes(n) || String(c.nif || '').includes(n)) {
+          out.push(c); if (out.length >= max) break;
+        }
+      }
+      return out;
+    }
+
+    function setupCompose() {
+      $('varButtons').innerHTML = VARS.map(v => `<button type="button" class="var" data-var="${esc(v)}">{{${esc(v)}}}</button>`).join('');
+      $('varButtons').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-var]'); if (!b) return;
+        const ta = $('cBody'); const ins = `{{${b.dataset.var}}}`;
+        const s = ta.selectionStart ?? ta.value.length;
+        ta.value = ta.value.slice(0, s) + ins + ta.value.slice(ta.selectionEnd ?? s);
+        ta.focus(); ta.selectionStart = ta.selectionEnd = s + ins.length; renderPreview();
+      });
+      $('coSearch').addEventListener('input', () => {
+        const hits = searchCompanies($('coSearch').value);
+        const list = $('coResults');
+        list.innerHTML = hits.map(c => `<button type="button" class="picker__item" data-id="${esc(c.id)}">${esc(c.name)}<small>${esc(c.companyEmail || 'no email')}${c.concelho ? ' · ' + esc(c.concelho) : ''}${c.owner ? ' · ' + esc(OWNER_LABEL[c.owner] || c.owner) : ''}</small></button>`).join('');
+        list.hidden = !hits.length;
+      });
+      $('coResults').addEventListener('click', (e) => { const b = e.target.closest('[data-id]'); if (b) pickCompany(companies.find(c => c.id === b.dataset.id)); });
+      document.addEventListener('click', (e) => { if (!e.target.closest('.picker')) $('coResults').hidden = true; });
+      $('noCompany').addEventListener('change', () => { if ($('noCompany').checked) pickCompany(null); renderPreview(); });
+      ['cSubject', 'cBody', 'cTo'].forEach(id => $(id).addEventListener('input', renderPreview));
+      $('cFrom').addEventListener('change', renderPreview);
+      $('cTpl').addEventListener('change', applyTemplate);
+      $('sendBtn').addEventListener('click', sendNew);
+      $('clearBtn').addEventListener('click', () => { pickCompany(null); $('coSearch').value = ''; $('cSubject').value = ''; $('cBody').value = ''; $('composeErr').hidden = true; renderPreview(); });
+      loadTemplates();
+      renderPreview();
+    }
+
+    let templates = [];
+    async function loadTemplates() {
+      try {
+        const snap = await getDocs(query(collection(db, 'outreachTemplates'), where('status', '==', 'active')));
+        addReads(snap.size || 1);
+        templates = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const opts = templates.flatMap(t => (t.variants || []).map(v => `<option value="${esc(t.id)}::${esc(v.key)}">${esc(t.name)} — variant ${esc(v.key)}</option>`));
+        $('cTpl').innerHTML = '<option value="">— Write from scratch —</option>' + opts.join('');
+        $('tplField').hidden = !opts.length;
+      } catch (e) { /* templates arrive with the Settings editor */ }
+    }
+    function applyTemplate() {
+      const [tid, key] = $('cTpl').value.split('::');
+      const t = templates.find(x => x.id === tid); const v = t?.variants?.find(x => x.key === key);
+      if (v) { $('cSubject').value = v.subject || ''; $('cBody').value = v.body || ''; }
+      renderPreview();
+    }
+
+    async function pickCompany(c) {
+      picked = c || null;
+      $('coResults').hidden = true;
+      if (c) { $('coSearch').value = c.name || ''; $('noCompany').checked = false; }
+      const test = !settings || settings.testMode !== false;
+      if (!c) {
+        $('coCard').hidden = true; $('twiceWarn').hidden = true;
+        if (test && !$('cTo').value) $('cTo').value = defaultTestAddress();
+        renderFromOptions(); renderPreview(); return;
+      }
+      $('coCard').hidden = false;
+      $('coCard').innerHTML = `<dt>Email</dt><dd>${esc(c.companyEmail || '— none —')}</dd>
+        <dt>Owner</dt><dd>${esc(OWNER_LABEL[c.owner] || 'Unassigned')}</dd>
+        <dt>Location</dt><dd>${esc(c.concelho || c.city || '—')}</dd>
+        <dt>Last touch</dt><dd>${c.lastTouchAt ? esc(dayFmt.format(new Date(tsMs(c.lastTouchAt)))) : '—'}</dd>`;
+      $('cTo').value = test ? defaultTestAddress() : (c.companyEmail || '');
+      renderFromOptions();
+      // Contact-twice guard: warn only (spec §7.7).
+      const warn = [];
+      const THIRTY = 30 * 86400000;
+      if (c.lastTouchAt && Date.now() - tsMs(c.lastTouchAt) < THIRTY) warn.push(`last outreach activity on ${dayFmt.format(new Date(tsMs(c.lastTouchAt)))}`);
+      try {
+        const snap = await getDocs(query(collection(db, 'outreachThreads'), where('companyId', '==', c.id), orderBy('lastMessageAt', 'desc'), limit(5)));
+        addReads(snap.size || 1); refreshReads();
+        const recent = snap.docs.map(d => d.data()).find(t => Date.now() - tsMs(t.lastMessageAt) < THIRTY && !['closed', 'bounced'].includes(t.status));
+        if (recent) warn.push(`an open conversation ("${recent.subject}") from ${dayFmt.format(new Date(tsMs(recent.lastMessageAt)))}`);
+      } catch (e) { /* index still building — skip the check */ }
+      $('twiceWarn').hidden = !warn.length;
+      $('twiceWarn').innerHTML = warn.length ? `<span>Heads up: this company has ${warn.map(esc).join(' and ')}. You can still send.</span>` : '';
+      renderPreview();
+    }
+    function defaultTestAddress() {
+      return myOwner === 'antonio' ? 'amobnc92@gmail.com' : 'andrenorocha@gmail.com';
+    }
+
+    function renderFromOptions() {
+      const el = $('cFrom'); if (!el) return;
+      const cur = el.value;
+      const preferOwner = picked?.owner || myOwner;
+      const usable = senders.filter(s => s.status === 'active');
+      el.innerHTML = senders.map(s => `<option value="${esc(s.id)}"${s.status !== 'active' ? ' disabled' : ''}>${esc(s.displayName)} · ${esc(s.id)}${s.status !== 'active' ? ` (${esc(s.status)})` : ''}</option>`).join('')
+        || '<option value="">No sender addresses yet — Settings → Set up</option>';
+      const keep = usable.find(s => s.id === cur);
+      const pick = keep || usable.find(s => s.owner === preferOwner) || usable[0];
+      if (pick) el.value = pick.id;
+    }
+
+    // Mirrors functions/outreach/render.js for the preview only — the server
+    // renders the real email.
+    function shortName(n) { return String(n || '').replace(/[\s,]*(,?\s*(unipessoal|sociedade unipessoal)?\s*,?\s*(lda\.?|limitada|s\.?\s?a\.?|sgps|crl|ace)\.?)+\s*$/i, '').replace(/[\s,-]+$/, '').trim() || n || ''; }
+    function ctxFor() {
+      const s = senders.find(x => x.id === $('cFrom').value) || {};
+      const c = picked || {};
+      return {
+        company: { name: c.name || '', shortName: shortName(c.name), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '' },
+        contact: { firstName: '' },
+        sender: { firstName: String(s.displayName || '').split(' ')[0], signature: s.signature || '' },
+        unsubscribeUrl: 'https://douropartners.pt/u/…',
+      };
+    }
+    function renderVars(str, ctx) {
+      const missing = [];
+      const html = esc(str).replace(/\{\{\s*([\w.]+)\s*(?:\|([^}]*))?\}\}/g, (all, path, fb) => {
+        const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), ctx);
+        if (v != null && String(v).trim()) return esc(v);
+        if (fb != null) return esc(fb.trim());
+        missing.push(path); return `<mark>{{${esc(path)}}}</mark>`;
+      });
+      return { html, missing };
+    }
+    function renderPreview() {
+      if (!$('pvSubject')) return;
+      const ctx = ctxFor();
+      const s = renderVars($('cSubject').value, ctx), b = renderVars($('cBody').value, ctx);
+      $('pvSubject').innerHTML = s.html || '<span style="color:#aaa">Subject</span>';
+      $('pvBody').innerHTML = (b.html || '<span style="color:#aaa">Message</span>') + (ctx.sender.signature ? '\n\n' + esc(ctx.sender.signature) : '');
+      const test = !settings || settings.testMode !== false;
+      $('pvFooter').textContent = settings?.complianceBlockId ? '— legal footer (from Settings) —' : (test ? '--\n[TESTE] Rodapé legal ainda por configurar. Remover: https://douropartners.pt/u/…' : '— legal footer missing: sending is blocked —');
+      const missing = [...new Set([...s.missing, ...b.missing])];
+      $('pvMeta').innerHTML = `From <b>${esc($('cFrom').value || '—')}</b> to <b>${esc($('cTo').value || '—')}</b>` +
+        (missing.length ? ` · <span style="color:var(--danger)">empty: ${missing.map(esc).join(', ')}</span>` : '');
+    }
+
+    async function sendNew() {
+      const err = $('composeErr'); err.hidden = true;
+      const payload = {
+        companyId: picked?.id || null, senderId: $('cFrom').value, to: $('cTo').value.trim(),
+        subject: $('cSubject').value, body: $('cBody').value, requestId: requestId(),
+      };
+      const [tid, key] = $('cTpl').value.split('::');
+      if (tid) { payload.templateId = tid; payload.variantKey = key; }
+      if (!payload.companyId && !$('noCompany').checked) { err.textContent = 'Choose a company (or tick "Test send without a company").'; err.hidden = false; return; }
+      if (!payload.senderId) { err.textContent = 'No active sender address — see Settings.'; err.hidden = false; return; }
+      const btn = $('sendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
+      try {
+        const res = await sendWithConfirm(payload);
+        if (res) {
+          toast(res.warnings?.length ? 'Email sent. ' + res.warnings[0] : `Email sent${res.isTest ? ' (test)' : ''}.`);
+          $('cSubject').value = ''; $('cBody').value = ''; renderPreview();
+          selectedId = res.threadId; showTab('inbox'); openThread(res.threadId);
+        }
+      } catch (e) { err.textContent = errText(e); err.hidden = false; }
+      finally { btn.disabled = false; btn.textContent = 'Send email'; }
+    }
+
+    // ── Settings (read-only in this update; editing comes with block C) ──
+    function setupSettings() {
+      $('seedBtn').addEventListener('click', async () => {
+        const b = $('seedBtn'); b.disabled = true;
+        try { const r = (await callAdmin({ action: 'seed' })).data; toast(r.created.length ? `Created ${r.created.length}: settings and sender addresses.` : 'Everything was already set up.'); }
+        catch (e) { toast('Setup failed: ' + errText(e)); }
+        finally { b.disabled = false; }
+      });
+      $('clearTestBtn').addEventListener('click', async () => {
+        if (!confirm('Delete every conversation, message and activity created in test mode? Real data is not touched.')) return;
+        const b = $('clearTestBtn'); b.disabled = true;
+        try { const r = (await callAdmin({ action: 'clearTestData' })).data; toast(`Removed ${r.threads} conversations, ${r.messages} messages, ${r.activities} activities.`); selectedId = null; $('threadView').innerHTML = '<div class="empty">Select a conversation.</div>'; }
+        catch (e) { toast('Could not clear: ' + errText(e)); }
+        finally { b.disabled = false; }
+      });
+    }
+    function renderSettings() {
+      const s = settings;
+      $('settingsKv').innerHTML = s ? `
+        <dt>Test mode</dt><dd>${s.testMode !== false ? '<span class="pill pill--warn">On</span> only approved test addresses can receive email' : '<span class="pill pill--good">Off</span> live'}</dd>
+        <dt>Approved test addresses</dt><dd>${(s.testRecipients || []).length}</dd>
+        <dt>Daily target (whole account)</dt><dd>${num(s.dailyTarget)} — soft: above it, sends ask for confirmation</dd>
+        <dt>Automations limit</dt><dd>${num(s.automationBudget)} per day (used from Phase 2)</dd>
+        <dt>Personal email domains</dt><dd>${s.blockPersonalDomains ? 'Blocked (gmail, sapo, hotmail…)' : 'Allowed'}</dd>
+        <dt>Legal footer</dt><dd>${s.complianceBlockId ? 'Configured' : '<span class="pill pill--warn">Not configured</span> required before test mode is switched off'}</dd>`
+        : '<dt>Status</dt><dd>Not set up yet — click "Set up settings &amp; addresses".</dd>';
+    }
+    function renderSenders() {
+      const body = $('sendersBody'); if (!body) return;
+      const kind = { active: 'good', paused: 'warn', warming: 'info', retired: '' };
+      body.innerHTML = senders.length ? senders.map(s => `<tr>
+          <td>${esc(s.id)}</td><td>${esc(OWNER_LABEL[s.owner] || s.owner || '—')}</td>
+          <td><span class="pill${kind[s.status] ? ' pill--' + kind[s.status] : ''}">${esc(s.status)}</span></td>
+          <td class="num">${num(dailyDoc.bySender?.[senderKey(s.id)] || 0)}</td><td class="num">${num(s.dailyCap || 25)}</td></tr>`).join('')
+        : '<tr><td colspan="5" class="empty">No sender addresses yet — click "Set up settings &amp; addresses" above.</td></tr>';
+    }
+  </script>
+</body>
+</html>

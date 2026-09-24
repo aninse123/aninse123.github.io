@@ -5,8 +5,9 @@
 // duplication that caused real drift (spacing fixed on one page but not
 // another, an overlap bug, container widths desyncing from body width).
 import { signOut } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+import { collection, query, where, getCountFromServer } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import {
-  auth, getTodayReads, FREE_TIER_DAILY_READS, watchSharedReads,
+  auth, db, addReads, getTodayReads, FREE_TIER_DAILY_READS, watchSharedReads,
   getTodayWrites, getTodayDeletes, FREE_TIER_DAILY_WRITES, FREE_TIER_DAILY_DELETES,
   watchSharedWriteCounters, onWriteCountChange
 } from './firebase-config.js';
@@ -22,6 +23,7 @@ const PAGES = [
   { key: 'admin',    href: '/portal/admin.html',    label: 'Admin' },
   { key: 'crm',      href: '/portal/crm.html',      label: 'Investor CRM' },
   { key: 'search',   href: '/portal/search.html',   label: 'Search CRM' },
+  { key: 'outreach', href: '/portal/outreach.html', label: 'Outreach', badge: 'navOutreachBadge' },
   { key: 'network',  href: '/portal/network.html',  label: 'Network' },
   { key: 'budget',   href: '/portal/budget.html',   label: 'Budget' },
   { key: 'log',      href: '/portal/log.html',      label: 'Activity Log' },
@@ -49,7 +51,7 @@ export function initNav(activeKey, opts = {}) {
   if (!mount) return;
 
   const links = PAGES.map(p =>
-    `<a href="${p.href}" class="nav__link${p.key === activeKey ? ' active' : ''}">${p.label}</a>`
+    `<a href="${p.href}" class="nav__link${p.key === activeKey ? ' active' : ''}">${p.label}${p.badge ? `<span class="nav__badge" id="${p.badge}" hidden></span>` : ''}</a>`
   ).join('\n        ');
 
   mount.innerHTML = `
@@ -233,4 +235,23 @@ export function refreshWrites() {
 export function startSharedReadsWatch() {
   watchSharedReads(n => { sharedReads = n; refreshReads(); });
   watchSharedWriteCounters(({ writes, deletes }) => { sharedWrites = writes; sharedDeletes = deletes; refreshWrites(); });
+  refreshOutreachBadge();
+}
+
+// Unread-replies count on the Outreach tab. One count aggregation per page
+// load (billed as a single read), not a live listener on every admin page;
+// outreach.html calls setOutreachBadge() itself with its live number.
+export async function refreshOutreachBadge() {
+  try {
+    const snap = await getCountFromServer(query(collection(db, 'outreachThreads'), where('unread', '==', true)));
+    addReads(1);
+    setOutreachBadge(snap.data().count);
+  } catch (e) { /* the badge is a convenience — never block a page on it */ }
+}
+export function setOutreachBadge(n) {
+  const el = document.getElementById('navOutreachBadge');
+  if (!el) return;
+  el.textContent = n > 99 ? '99+' : String(n);
+  el.hidden = !n;
+  el.title = `${n} unread repl${n === 1 ? 'y' : 'ies'}`;
 }
