@@ -7,7 +7,7 @@
 
 const { defineSecret } = require("firebase-functions/params");
 
-const REGION = "us-central1"; // same default region as the auth blocking functions
+const REGION = "us-central1"; // matches the /u/* rewrite in netlify.toml (the auth blocking functions run in us-east1)
 
 // Same two admins as index.js, firestore.rules and storage.rules — keep in sync.
 const ADMIN_EMAILS = ["andre.rocha@douropartners.pt", "antonio.carvalho@douropartners.pt"];
