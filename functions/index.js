@@ -68,3 +68,7 @@ exports.beforeCreate = beforeUserCreated(async (event) => {
     throw new HttpsError("permission-denied", REJECTION_MESSAGE);
   }
 });
+
+// Outreach module (Phase 1) — required after initializeApp() above, since its
+// modules call getFirestore()/getStorage(). See functions/outreach/.
+Object.assign(exports, require("./outreach"));

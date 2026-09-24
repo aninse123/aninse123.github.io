@@ -1,6 +1,6 @@
 {
   "name": "functions",
-  "description": "Auth blocking functions for douropartners.pt (server-side login allow-list)",
+  "description": "Cloud Functions for douropartners.pt: auth blocking (login allow-list) and the Outreach module",
   "engines": {
     "node": "20"
   },

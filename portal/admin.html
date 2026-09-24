@@ -770,7 +770,7 @@
 
     // Notify modal state
     let notifyDocId    = null;
-    let notifySecret   = '';   // read from Firestore config/portal
+    let notifySecret   = '';   // read from the admin-only adminConfig/notify doc
 
     // ── Admin identity ─────────────────────────────────────────
     let adminEmail = '';
@@ -850,7 +850,6 @@
         if (snap.exists()) {
           const d = snap.data();
           currentStage = d.currentStage || 1;
-          notifySecret = d.notifySecret  || '';   // transitional fallback — safe to remove field from config/portal once adminConfig/notify is set
           document.getElementById('meetingLink').value = d.meetingLink || '';
         }
       } catch (e) {
@@ -862,7 +861,7 @@
         if (secretSnap.exists() && secretSnap.data().notifySecret) {
           notifySecret = secretSnap.data().notifySecret;
         }
-      } catch (e) { /* keep transitional fallback above */ }
+      } catch (e) { /* Notify/Blast will show the config-needed alert */ }
       renderAdminStageBar();
     }
 

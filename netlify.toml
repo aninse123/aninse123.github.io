@@ -53,3 +53,13 @@
   status = 301
   force = true
 
+# Outreach unsubscribe links (List-Unsubscribe header + email footer) are
+# served from our own domain and proxied to the outreachUnsubscribe Cloud
+# Function (status 200 = rewrite, so POSTs from one-click unsubscribe pass
+# through unchanged).
+[[redirects]]
+  from = "/u/*"
+  to = "https://us-central1-douro-partners.cloudfunctions.net/outreachUnsubscribe/:splat"
+  status = 200
+  force = true
+
