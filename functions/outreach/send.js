@@ -230,8 +230,14 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
   // ── Record success ──
   const resendId = result.data?.id || null;
   const sentAt = Timestamp.now();
-  await messageRef.update({
-    status: "sent", resendId, sentAt, events: FieldValue.arrayUnion({ type: "sent", at: sentAt }),
+  // The webhook may already have recorded delivered/bounced for this message
+  // (Resend's events can beat this line); only a still-queued message becomes "sent".
+  await db().runTransaction(async (tx) => {
+    const cur = (await tx.get(messageRef)).data() || {};
+    tx.update(messageRef, {
+      resendId, sentAt, events: FieldValue.arrayUnion({ type: "sent", at: sentAt }),
+      ...(cur.status === "queued" ? { status: "sent" } : {}),
+    });
   });
   await threadRef.update({
     lastMessageAt: sentAt, lastDirection: "out",

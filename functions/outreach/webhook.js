@@ -105,9 +105,7 @@ async function handleDeliveryEvent(type, data) {
   const newStatus = STATUS_BY_EVENT[type];
   // A temporary bounce is logged but isn't a hard bounce.
   const permanentBounce = type === "email.bounced" && (data.bounce?.type || "Permanent") === "Permanent";
-  if (newStatus && (type !== "email.bounced" || permanentBounce)) {
-    if ((STATUS_RANK[newStatus] ?? 0) >= (STATUS_RANK[msg.status] ?? 0)) upd.status = newStatus;
-  }
+  const wantsStatus = newStatus && (type !== "email.bounced" || permanentBounce);
 
   // Bot filter for tracking: opens/clicks within 10 s of sending are scanners.
   const sentMs = msg.sentAt?.toMillis?.() || 0;
@@ -118,7 +116,16 @@ async function handleDeliveryEvent(type, data) {
   // Resend assigns the Message-ID (V1); the delivery events carry it. Store it
   // so a reply's In-Reply-To/References match this thread.
   if (data.message_id && data.message_id !== msg.rfcMessageId) upd.rfcMessageId = data.message_id;
-  await msgSnap.ref.update(upd);
+  // Resend can fire several events in the same millisecond (e.g. complained +
+  // delivered, V4 2026-09-24); they arrive as parallel webhook calls. Read the
+  // status inside a transaction so a lower-ranked event never overwrites a
+  // higher one.
+  await db().runTransaction(async (tx) => {
+    const cur = (await tx.get(msgSnap.ref)).data() || {};
+    const u = { ...upd }; // fresh per attempt: transactions can retry
+    if (wantsStatus && (STATUS_RANK[newStatus] ?? 0) >= (STATUS_RANK[cur.status] ?? 0)) u.status = newStatus;
+    tx.update(msgSnap.ref, u);
+  });
 
   const threadRef = msg.threadId ? db().doc(`outreachThreads/${msg.threadId}`) : null;
   const thread = threadRef ? (await threadRef.get()).data() : null;
