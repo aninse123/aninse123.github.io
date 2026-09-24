@@ -15,8 +15,8 @@ const {
   REGION, ADMIN_EMAILS, OWNER_BY_ADMIN, RESEND_SEND_KEY, UNSUBSCRIBE_SECRET,
   UNSUBSCRIBE_BASE_URL, DEFAULT_SENDER_CAP,
 } = require("./config");
-const { normEmail, domainOf, isFreeMail, isValidEmail, isTestRecipient, checkMx, makeUnsubToken } = require("./util");
-const { buildContext, renderTemplate, buildPlainEmail, replySubject, TEST_FOOTER } = require("./render");
+const { normEmail, domainOf, isFreeMail, isValidEmail, isTestRecipient, checkMx, makeUnsubToken, parseAddress } = require("./util");
+const { buildContext, renderTemplate, buildPlainEmail, buildQuote, replySubject, TEST_FOOTER } = require("./render");
 const { sendEmail, ResendError } = require("./resend");
 const store = require("./store");
 
@@ -150,7 +150,21 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
     footerSrc = TEST_FOOTER;
   }
   const footer = renderTemplate(footerSrc, ctx).text;
-  const { text, html } = buildPlainEmail({ bodyText: body.text, signature: sender.signature, footerText: footer, unsubscribeUrl });
+
+  // A reply quotes the last message in the thread (normally the prospect's),
+  // so the context survives forwarding and clients that don't group threads.
+  let quote = null;
+  if (isReply) {
+    const prev = await db().collection("outreachMessages").where("threadId", "==", threadRef.id).orderBy("createdAt", "asc").get();
+    const last = prev.docs.map((d) => d.data()).filter((m) => m.status !== "failed" && (m.text || m.snippet)).pop();
+    if (last) {
+      const who = last.direction === "in" ? parseAddress(last.from) : { name: sender.displayName, email: senderId };
+      // Our own earlier emails are quoted without their legal footer.
+      const prevText = last.direction === "in" ? (last.text || last.snippet) : String(last.text || "").split(/\n--\n/)[0];
+      quote = buildQuote({ date: last.createdAt?.toDate?.() || new Date(), fromName: who.name, fromEmail: who.email, text: prevText });
+    }
+  }
+  const { text, html } = buildPlainEmail({ bodyText: body.text, signature: sender.signature, footerText: footer, unsubscribeUrl, quote });
 
   // ── Headers: threading on replies, one-click unsubscribe ──
   // No custom Message-ID: Resend silently replaces it with its own (V1,

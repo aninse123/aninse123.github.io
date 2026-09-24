@@ -52,15 +52,42 @@ function renderTemplate(str, ctx) {
 
 const TEST_FOOTER = "[TESTE] Rodapé legal ainda por configurar. Remover: {{unsubscribeUrl}}";
 
+const PT_WEEKDAYS = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."];
+const MAX_QUOTE_CHARS = 6000;
+
+// "Em qui., 24/09/2026 às 17:38, André Rocha <x@y.pt> escreveu:" — Gmail's
+// Portuguese attribution line, in Lisbon time.
+function quoteHeader(date, fromName, fromEmail) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Lisbon", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", weekday: "short", hourCycle: "h23",
+  }).formatToParts(date).map((p) => [p.type, p.value]));
+  const wd = PT_WEEKDAYS[["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday)] || "";
+  const who = fromName ? `${fromName} <${fromEmail}>` : `<${fromEmail}>`;
+  return `Em ${wd}, ${parts.day}/${parts.month}/${parts.year} às ${parts.hour}:${parts.minute}, ${who} escreveu:`;
+}
+
+// The message being replied to, quoted the usual way (it already carries the
+// earlier chain). Capped so a long thread can't bloat the email.
+function buildQuote({ date, fromName, fromEmail, text }) {
+  let t = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!t) return null;
+  if (t.length > MAX_QUOTE_CHARS) t = t.slice(0, MAX_QUOTE_CHARS).replace(/\n[^\n]*$/, "") + "\n[…]";
+  return { header: quoteHeader(date, fromName, fromEmail), text: t };
+}
+
 // The "plain" layout: text first, and an HTML part that mirrors it exactly —
 // no images, colours or banner, which is what reads as a personal email.
-function buildPlainEmail({ bodyText, signature, footerText, unsubscribeUrl }) {
+// A reply quotes the previous message below the signature; the legal footer
+// stays at the very bottom.
+function buildPlainEmail({ bodyText, signature, footerText, unsubscribeUrl, quote = null }) {
   const body = String(bodyText || "").trim();
   const sig = String(signature || "").trim();
   const footer = String(footerText || "").trim();
 
   const textParts = [body];
   if (sig) textParts.push(sig);
+  if (quote) textParts.push(quote.header + "\n" + quote.text.split("\n").map((l) => (l.startsWith(">") ? ">" + l : "> " + l)).join("\n"));
   if (footer) textParts.push("--\n" + footer);
   const text = textParts.join("\n\n") + "\n";
 
@@ -73,6 +100,7 @@ function buildPlainEmail({ bodyText, signature, footerText, unsubscribeUrl }) {
     "<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222;\">",
     body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${para(p)}</p>`).join(""),
     sig ? `<p style="margin:16px 0 0;">${para(sig)}</p>` : "",
+    quote ? `<div style="margin:20px 0 0;"><div style="color:#555;">${escapeHtml(quote.header)}</div><blockquote style="margin:6px 0 0 0.8ex;border-left:1px solid #ccc;padding-left:1ex;color:#555;">${para(quote.text)}</blockquote></div>` : "",
     footer ? `<p style="margin:24px 0 0;font-size:11px;line-height:1.4;color:#888;">${linkify(para(footer))}</p>` : "",
     "</div></body></html>",
   ].join("");
@@ -85,4 +113,4 @@ function replySubject(subject) {
   return /^(re|res|ref)\s*:/i.test(s) ? s : `Re: ${s}`;
 }
 
-module.exports = { shortCompanyName, firstName, buildContext, renderTemplate, buildPlainEmail, replySubject, TEST_FOOTER };
+module.exports = { shortCompanyName, firstName, buildContext, renderTemplate, buildPlainEmail, buildQuote, quoteHeader, replySubject, TEST_FOOTER };

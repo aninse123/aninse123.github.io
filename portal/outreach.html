@@ -708,7 +708,7 @@
       box.innerHTML = `
         <div class="field" style="margin-bottom:10px;"><label for="replyText">Reply from ${esc(t.senderId || '—')}</label>
           <textarea id="replyText" placeholder="Write your reply…"></textarea>
-          <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature and the legal footer.</span></div>
+          <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature, the previous message quoted below it, and the legal footer.</span></div>
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
         <button class="btn btn--primary" id="replyBtn">Send reply</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
