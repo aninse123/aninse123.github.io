@@ -28,6 +28,8 @@
       --radius:       8px;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Components below set display:flex/grid, which would beat the UA's [hidden] rule. */
+    [hidden] { display: none !important; }
     body { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; }
     #siteNav { --nav-width: 1280px; }
 
@@ -206,7 +208,7 @@
       .main { padding: 20px 16px 48px; }
       .usage { min-width: 0; flex-basis: 100%; }
       .row2 { grid-template-columns: 1fr; }
-      .tabs { overflow-x: auto; }
+      .tabs { overflow-x: auto; overflow-y: hidden; }
     }
   </style>
 </head>
@@ -303,7 +305,7 @@
               <div class="picker__list" id="coResults" hidden></div>
               <span class="hint" id="coHint"></span>
             </div>
-            <label class="hint" id="noCompanyWrap" hidden style="display:flex;gap:6px;align-items:center;margin:-6px 0 14px;">
+            <label class="hint" id="noCompanyWrap" hidden style="display:flex;gap:6px;align-items:center;margin:-6px 0 14px;cursor:pointer;">
               <input type="checkbox" id="noCompany"> Test send without a company
             </label>
 
@@ -623,7 +625,7 @@
       const t = threads.find(x => x.id === selectedId); if (!t || !$('viewHead')) return;
       const company = t.companyId
         ? `<a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}">${esc(t.companyName || 'Company')}</a>`
-        : `<span class="pill pill--warn">Unmatched</span> <button class="btn btn--ghost btn--sm" id="assignBtn">Assign to company</button>`;
+        : `<span class="pill${t.unmatched ? ' pill--warn' : ''}">${t.unmatched ? 'Unmatched' : 'No company'}</span> <button class="btn btn--ghost btn--sm" id="assignBtn">Assign to company</button>`;
       $('viewHead').innerHTML = `
         <div class="view__title">${esc(t.subject || '(no subject)')}</div>
         <div class="view__sub">${company}<span>${esc(t.contactEmail || '')}</span>
