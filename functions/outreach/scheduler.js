@@ -24,22 +24,21 @@ const { REGION, RESEND_SEND_KEY, UNSUBSCRIBE_SECRET, DEFAULT_SETTINGS, DEFAULT_S
 const store = require("./store");
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment } = require("./campaigns");
-const { lisbonParts, isWindowOpen, addWait, pickVariant, pickSender } = require("./schedule_util");
+const { stepTaskId } = require("./task_util");
+const { lisbonParts, isWindowOpen, addWait, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 
 const { db, FieldValue, Timestamp } = store;
 
 const MAX_SENDS_PER_RUN = 4;
 const MAX_DRAFTS_PER_RUN = 50;
+const MAX_TASKS_PER_RUN = 200;
 const DUE_BATCH = 200;
 const LOCK_MS = 10 * 60 * 1000;
 const RETRY_MS = 60 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
-// After the last step the enrolment stays open this long, so a late reply
-// still counts as "replied" and not "completed, no reply".
-const FINAL_GRACE = { days: 5, unit: "working" };
 
 // What a failed check means for the enrolment (reasons from send_core).
-const STOP = new Set(["suppressed", "personal_domain", "bad_recipient", "no_mx", "company_not_found", "thread_not_found"]);
+const STOP = new Set(["suppressed", "personal_domain", "bad_recipient", "no_mx", "company_not_found", "thread_not_found", "do_not_contact"]);
 const STOP_RUN = new Set(["over_target", "daily_quota_exceeded"]);
 const DEFER = new Set(["sender_cap", "sender_not_active", "sender_not_usable", "sender_not_found"]);
 // test_mode here = the campaign test address isn't on the approved list.
@@ -117,13 +116,42 @@ async function recordSent(ref, e, campaign, step, res, { senderId, variantKey, n
   });
 }
 
+// A manual step (call, LinkedIn, WhatsApp, letter, visit, other) becomes a
+// task for a person; the enrolment waits until it's done or skipped (§5.2 —
+// a manual step is never skipped on its own). Assignee: the company owner, or
+// the campaign's assignee (C3).
+async function createTask(ref, e, campaign, step, now, rand) {
+  const taskRef = db().doc(`outreachTasks/${stepTaskId(ref.id, step.id)}`);
+  let variantKey = null;
+  if (step.channel === "letter" && step.templateId) {
+    const t = await db().doc(`outreachTemplates/${step.templateId}`).get();
+    variantKey = e.variants?.[step.id] || pickVariant(step.variants, t.exists ? t.data().variants : [], rand());
+  }
+  return db().runTransaction(async (tx) => {
+    const cur = await tx.get(taskRef);
+    if (!cur.exists || !["open"].includes(cur.data().status)) {
+      tx.set(taskRef, {
+        campaignId: campaign.id, campaignName: campaign.name, enrolmentId: ref.id,
+        companyId: e.companyId, companyName: e.companyName || "",
+        stepId: step.id, stepName: step.name, stepIndex: e.currentStep, stepCount: (campaign.steps || []).length,
+        channel: step.channel, instructions: step.instructions || "", templateId: step.templateId || null, variantKey,
+        assignee: campaign.assignee && campaign.assignee !== "owner" ? campaign.assignee : (e.owner || null),
+        dueAt: ts(now), status: "open", outcome: null, notes: "", activityId: null,
+        isTest: !!e.isTest, createdAt: FieldValue.serverTimestamp(), completedAt: null, completedBy: null,
+      });
+    }
+    tx.update(ref, { status: "awaiting_task", taskId: taskRef.id, lockUntil: null, lastError: null, ...(variantKey ? { [`variants.${step.id}`]: variantKey } : {}) });
+    return taskRef.id;
+  });
+}
+
 async function pauseCampaign(campaign, reason) {
   await db().doc(`outreachCampaigns/${campaign.id}`).update({ status: "paused", pauseReason: reason, pausedAt: FieldValue.serverTimestamp(), pausedBy: "scheduler" });
   logger.warn("outreachScheduler: campaign paused", { campaignId: campaign.id, reason });
 }
 
 async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.random } = {}) {
-  const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
+  const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   const settings = await store.getSettings();
   const campSnap = await db().collection("outreachCampaigns").where("status", "==", "active").get();
   report.campaigns = campSnap.size;
@@ -162,7 +190,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     const campaign = open.get(doc.data().campaignId);
     if (!campaign || campaign.status !== "active") continue; // paused earlier in this run
     const canSend = !report.stoppedSends && sendsThisRun < MAX_SENDS_PER_RUN && campaignSent < budget;
-    if (!canSend && report.drafts >= MAX_DRAFTS_PER_RUN) break;
+    if (!canSend && report.drafts >= MAX_DRAFTS_PER_RUN && report.tasks >= MAX_TASKS_PER_RUN) break;
 
     const e = await claim(doc.ref, now);
     if (!e) continue;
@@ -175,8 +203,9 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       continue;
     }
     if (step.channel !== "email") {
-      await unlock(doc.ref, { status: "paused", pausedFrom: "active", lastError: `Step "${step.name}" is a ${step.channel} step — manual steps arrive with Tasks (Phase 2b).` });
-      report.paused++;
+      if (report.tasks >= MAX_TASKS_PER_RUN) { await unlock(doc.ref); report.deferred++; continue; }
+      await createTask(doc.ref, e, campaign, step, now, rand);
+      report.tasks++;
       continue;
     }
     // The step's message may already exist: a draft still waiting, a draft

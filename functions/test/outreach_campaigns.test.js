@@ -25,7 +25,10 @@ const DAY = 86400000;
   ok("steps inherit approval and reply in the same conversation", n.steps.every((s) => s.approval === "inherit" && s.newSubject === false));
   ok("duplicate step ids are renumbered", U.normalizeCampaign({ name: "x", steps: [{ id: "a" }, { id: "a" }] }).steps.map((s) => s.id).join() === "a,s2");
   ok("name required", throwsReason(() => U.normalizeCampaign({ name: " " }), "name_required"));
-  ok("non-email step refused until 2b", throwsReason(() => U.normalizeCampaign({ name: "x", steps: [{ channel: "call" }] }), "channel_not_ready"));
+  ok("unknown step type refused", throwsReason(() => U.normalizeCampaign({ name: "x", steps: [{ channel: "fax" }] }), "bad_channel"));
+  const manual = U.normalizeCampaign({ name: "x", steps: [{}, { channel: "call", instructions: "  Ligar ao gerente  ", newSubject: true }, { channel: "linkedin" }] });
+  ok("manual steps kept with instructions; newSubject only for email; default names", manual.steps[1].channel === "call" && manual.steps[1].instructions === "Ligar ao gerente" && manual.steps[1].newSubject === false && manual.steps[2].name === "Linkedin 3" && manual.steps[0].instructions === "");
+  ok("a step that ran can't change type", throwsReason(() => U.normalizeCampaign({ steps: [{ id: "s1", channel: "call" }, { id: "s2" }, { id: "s3" }] }, { name: "x", steps: [{ id: "s1", channel: "email" }, { id: "s2", channel: "email" }, { id: "s3", channel: "email" }], lockedStepIds: ["s1"] }), "step_locked"));
   ok("dynamic audience refused until 2c", throwsReason(() => U.normalizeCampaign({ name: "x", audience: { mode: "dynamic" } }), "dynamic_not_ready"));
   ok("all-zero variant weights refused", throwsReason(() => U.normalizeCampaign({ name: "x", steps: [{ variants: [{ key: "A", weight: 0 }] }] }), "bad_weights"));
   ok("unknown / repeated variant keys dropped", U.normalizeCampaign({ name: "x", steps: [{ variants: [{ key: "A", weight: 60 }, { key: "A" }, { key: "Z" }, { key: "B", weight: 40 }] }] }).steps[0].variants.map((v) => v.key + v.weight).join() === "A60,B40");
@@ -54,6 +57,16 @@ const DAY = 86400000;
     { name: "E4", channel: "email", templateId: "gone", variants: [] },
   ] }, tpl);
   ok("activation: missing variant, inactive, no template, deleted template", probs.length === 4 && /variant C/.test(probs[0]) && /isn't active/.test(probs[1]) && /choose a template/.test(probs[2]) && /no longer exists/.test(probs[3]));
+  const tplK = { ...tpl, L: { name: "Carta", status: "active", kind: "letter", variants: [{ key: "A" }] }, M: { name: "Msg", status: "active", kind: "message", variants: [{ key: "A" }] } };
+  const kp = U.activationProblems({ steps: [
+    { name: "Carta", channel: "letter", templateId: null, variants: [] },
+    { name: "Carta2", channel: "letter", templateId: "t1", variants: [] },
+    { name: "LI", channel: "linkedin", templateId: null, variants: [] },
+    { name: "WA", channel: "whatsapp", templateId: "M", variants: [] },
+    { name: "Outro", channel: "other", templateId: null, instructions: "", variants: [] },
+    { name: "Carta3", channel: "letter", templateId: "L", variants: [] },
+  ] }, tplK);
+  ok("activation: letter needs a letter template; LinkedIn without template fine; 'other' needs instructions", kp.length === 3 && /choose a template/.test(kp[0]) && /email template, not a letter/.test(kp[1]) && /write what should be done/.test(kp[2]));
   ok("activation: good campaign has no problems", U.activationProblems({ steps: [{ name: "E1", channel: "email", templateId: "t1", variants: [{ key: "A", weight: 1 }] }] }, tpl).length === 0);
 
   // evaluateCompany
@@ -89,8 +102,8 @@ const DAY = 86400000;
 
   ok("non-admin refused", (await call({ action: "save", campaign: { name: "x" } }, { auth: { token: { email: "someone@gmail.com" } } })).err?.code === "permission-denied");
   ok("unknown action refused", (await call({ action: "nope" })).err?.code === "invalid-argument");
-  const badSave = await call({ action: "save", campaign: { name: "x", steps: [{ channel: "letter" }] } });
-  ok("validation error surfaces as invalid-argument with reason", badSave.err?.code === "invalid-argument" && badSave.err.details.reason === "channel_not_ready");
+  const badSave = await call({ action: "save", campaign: { name: "x", steps: [{ channel: "fax" }] } });
+  ok("validation error surfaces as invalid-argument with reason", badSave.err?.code === "invalid-argument" && badSave.err.details.reason === "bad_channel");
 
   const c1 = (await call({ action: "save", campaign: { name: "Metalurgia Norte", steps: [{ templateId: "t1" }] } })).res.campaignId;
   const camp1 = get(`outreachCampaigns/${c1}`);

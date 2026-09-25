@@ -66,7 +66,8 @@ async function clearTestData() {
   for (const d of testEnrols.docs) await endEnrolment(d.ref, "removed", "Test data cleared");
   const enrolments = await deleteQuery(db().collection("outreachEnrolments").where("isTest", "==", true));
   const campaigns = await deleteQuery(db().collection("outreachCampaigns").where("isTest", "==", true));
-  return { threads: threadCount, messages, activities, campaigns, enrolments };
+  const tasks = await deleteQuery(db().collection("outreachTasks").where("isTest", "==", true));
+  return { threads: threadCount, messages, activities, campaigns, enrolments, tasks };
 }
 
 exports.outreachAdmin = onCall({ region: REGION }, async (request) => {

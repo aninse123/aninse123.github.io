@@ -63,6 +63,10 @@ async function prepareEmail(opts) {
     const c = await db().doc(`searchCompanies/${companyId}`).get();
     if (!c.exists) fail("not-found", "company_not_found", "Company not found.");
     company = c.data();
+    // Phase 2 §10: a company marked "do not contact" gets no new outreach.
+    // A reply you type in an existing conversation is still allowed (they wrote
+    // to us); campaign follow-ups count as outreach and are blocked.
+    if (company.doNotContact?.on && countsAsOutreach) fail("failed-precondition", "do_not_contact", `${company.name || "This company"} is marked do not contact${company.doNotContact.reason ? ` (${company.doNotContact.reason})` : ""}.`);
   }
 
   // ── Sender ──

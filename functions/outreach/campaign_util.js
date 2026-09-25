@@ -22,6 +22,14 @@ const STAGE_KEYS = [
 const DEFAULT_ALLOWED_STAGES = ["universe", "screened", "outreach"];
 
 const VARIANT_KEYS = ["A", "B", "C", "D", "E"];
+
+// Step channels (spec §5.1). Email is sent by the scheduler; the others
+// become tasks for a person (Phase 2b). LinkedIn stays manual (D2).
+const CHANNELS = ["email", "linkedin", "call", "whatsapp", "letter", "visit", "other"];
+const MANUAL_CHANNELS = CHANNELS.filter((c) => c !== "email");
+// Which template kind each channel uses (templates without a kind are email).
+const TEMPLATE_KIND = { email: "email", letter: "letter", linkedin: "message", whatsapp: "message", call: "script" };
+const templateKind = (t) => t?.kind || "email";
 const MAX_STEPS = 12;
 const MAX_WAIT_DAYS = 90;
 
@@ -70,7 +78,7 @@ function normalizeWindow(w) {
 // id, so a replaced step can't pass for one that has already run.
 function normalizeStep(s, i, usedIds, reserved = new Set()) {
   const channel = s.channel || "email";
-  if (channel !== "email") bad("channel_not_ready", "Only email steps are available for now — calls, LinkedIn, letters and other manual steps arrive with Tasks (Phase 2b).");
+  if (!CHANNELS.includes(channel)) bad("bad_channel", `Unknown step type "${channel}".`);
   let id = /^[a-z0-9_-]{1,20}$/i.test(s.id || "") ? s.id : null;
   if (!id || usedIds.has(id)) { let n = i + 1; while (usedIds.has("s" + n) || reserved.has("s" + n)) n++; id = "s" + n; }
   usedIds.add(id);
@@ -84,12 +92,14 @@ function normalizeStep(s, i, usedIds, reserved = new Set()) {
     id,
     order: i,
     channel,
-    name: cleanText(s.name, 80) || `Email ${i + 1}`,
+    name: cleanText(s.name, 80) || (channel === "email" ? `Email ${i + 1}` : `${channel.charAt(0).toUpperCase() + channel.slice(1)} ${i + 1}`),
     wait: { days: intIn(s.wait?.days, 0, MAX_WAIT_DAYS, i === 0 ? 0 : 3), unit: s.wait?.unit === "calendar" ? "calendar" : "working" },
     approval: ["inherit", "auto", "approval"].includes(s.approval) ? s.approval : "inherit",
     templateId: s.templateId ? String(s.templateId) : null,
     variants,                  // empty = every variant of the template, equal weights
-    newSubject: !!s.newSubject, // C2: follow-ups reply in the same conversation unless set
+    newSubject: channel === "email" && !!s.newSubject, // C2: follow-ups reply in the same conversation unless set
+    // Manual steps: what the person should do (shown on the task).
+    instructions: channel === "email" ? "" : String(s.instructions ?? "").trim().slice(0, 2000),
   };
 }
 
@@ -125,6 +135,10 @@ function normalizeCampaign(input, existing = null) {
     if (lockedOrder.some((id, i) => newPrefix[i] !== id)) {
       bad("step_locked", "Steps that have already run can't be removed or moved — you can still change their content, or add steps after them.");
     }
+    const oldChannel = Object.fromEntries((existing.steps || []).map((s) => [s.id, s.channel || "email"]));
+    if (steps.some((s) => locked.includes(s.id) && s.channel !== oldChannel[s.id])) {
+      bad("step_locked", "A step that has already run can't change type — add a new step instead.");
+    }
   }
 
   const audienceMode = src.audience?.mode === "dynamic" ? "dynamic" : "static";
@@ -156,9 +170,15 @@ function activationProblems(campaign, templatesById) {
   const problems = [];
   if (!campaign.steps?.length) problems.push("Add at least one step to the sequence.");
   for (const s of campaign.steps || []) {
-    if (s.channel !== "email") continue;
+    const kind = TEMPLATE_KIND[s.channel];
+    const needsTemplate = s.channel === "email" || s.channel === "letter";
+    if (!needsTemplate && !s.templateId) {
+      if (s.channel === "other" && !s.instructions) problems.push(`${s.name}: write what should be done.`);
+      continue;
+    }
     const t = s.templateId && templatesById[s.templateId];
     if (!s.templateId) { problems.push(`${s.name}: choose a template.`); continue; }
+    if (t && kind && templateKind(t) !== kind) { problems.push(`${s.name}: template "${t.name}" is a ${templateKind(t)} template, not a ${kind} template.`); continue; }
     if (!t) { problems.push(`${s.name}: its template no longer exists.`); continue; }
     if (t.status !== "active") problems.push(`${s.name}: template "${t.name}" isn't active.`);
     const keys = (t.variants || []).map((v) => v.key);
@@ -222,6 +242,7 @@ const EXCLUSION_LABELS = {
 const enrolmentId = (campaignId, companyId) => `${campaignId}_${companyId}`;
 
 module.exports = {
+  CHANNELS, MANUAL_CHANNELS, TEMPLATE_KIND, templateKind,
   CAMPAIGN_STATUSES, LIVE_ENROLMENT, STAGE_KEYS, DEFAULT_ALLOWED_STAGES, VARIANT_KEYS, MAX_STEPS,
   DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems, evaluateCompany,
   EXCLUSION_LABELS, enrolmentId, tsMillis,

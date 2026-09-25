@@ -102,4 +102,8 @@ function pickSender({ policy, owner, senders, sentToday, usedThisRun, defaultCap
   return pool[0] || null;
 }
 
-module.exports = { TZ, lisbonParts, easter, nationalHolidays, isHoliday, isWorkingDay, isWindowOpen, addWait, pickVariant, pickSender };
+// After the last step the enrolment stays open this long, so a late reply
+// still counts as "replied" and not "completed, no reply".
+const FINAL_GRACE = { days: 5, unit: "working" };
+
+module.exports = { FINAL_GRACE, TZ, lisbonParts, easter, nationalHolidays, isHoliday, isWorkingDay, isWindowOpen, addWait, pickVariant, pickSender };

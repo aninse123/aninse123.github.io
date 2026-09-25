@@ -97,6 +97,22 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "enrolledAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "outreachTasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dueAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "outreachTasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "companyId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

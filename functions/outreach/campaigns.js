@@ -17,6 +17,10 @@
 //                                                    them inside the window and limits;
 //                                                    subject/body = edits (one draft only)
 //   skipDraft   { messageId }                        drop the draft, redraft next working day
+//   completeTask { taskId, outcome, notes?, stopSequence?, profileUrl?, reopenAt? }
+//                                                    a manual step's result (Phase 2b)
+//   updateTask  { taskId, assignee?, dueAt?, notes? } reassign / reschedule an open task
+//   setDoNotContact { companyId, on, reason? }       stops every campaign for the company
 //
 // The audience's companies are chosen in the browser (Search CRM filters over
 // the full cached list, a matched CSV, or ticked rows) and arrive as ids; the
@@ -26,7 +30,8 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { REGION, ADMIN_EMAILS } = require("./config");
 const { normEmail } = require("./util");
 const store = require("./store");
-const { addWait } = require("./schedule_util");
+const { addWait, FINAL_GRACE } = require("./schedule_util");
+const { findOutcome, CHANNEL_LABEL } = require("./task_util");
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
   evaluateCompany, enrolmentId,
@@ -122,8 +127,11 @@ async function endEnrolment(enrolRef, status, reason) {
     const c = await tx.get(companyRef);
     const draftRef = e.data().draftMessageId ? db().doc(`outreachMessages/${e.data().draftMessageId}`) : null;
     const draft = draftRef ? await tx.get(draftRef) : null;
+    const taskRef = e.data().taskId ? db().doc(`outreachTasks/${e.data().taskId}`) : null;
+    const task = taskRef ? await tx.get(taskRef) : null;
     endEnrolmentWrites(tx, enrolRef, companyRef, c.exists ? c.data() : null, status, reason);
     if (draft?.exists && ["draft", "approved"].includes(draft.data().status)) tx.update(draftRef, { status: "cancelled", cancelledReason: reason || status });
+    if (task?.exists && task.data().status === "open") tx.update(taskRef, { status: "cancelled", cancelledReason: reason || status });
     return true;
   });
 }
@@ -474,6 +482,120 @@ async function skipDraft({ messageId }, caller) {
   });
 }
 
+// ── Tasks (manual steps, Phase 2b) ──────────────────────────────────────────
+
+const cleanUrl = (u) => { const s = String(u || "").trim().slice(0, 300); return /^https?:\/\/\S+$/i.test(s) ? s : null; };
+const parseDate = (v) => { const d = v ? new Date(v) : null; return d && !isNaN(d) ? d : null; };
+
+// Records the outcome on the company (a searchActivities touch, like the
+// Search CRM's own "+ Activity"), then moves the sequence on — or stops it
+// when the company answered and "stop the sequence" is ticked.
+async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, reopenAt }, caller) {
+  if (!taskId) fail("invalid-argument", "task_required", "Choose a task.");
+  const taskRef = db().doc(`outreachTasks/${taskId}`);
+  const tSnap = await taskRef.get();
+  if (!tSnap.exists) fail("not-found", "task_not_found", "Task not found.");
+  const t = tSnap.data();
+  if (t.status !== "open") fail("failed-precondition", "task_closed", "This task is already closed.");
+  const o = findOutcome(t.channel, outcome);
+  if (!o) fail("invalid-argument", "bad_outcome", `Unknown outcome "${outcome}" for a ${t.channel} task.`);
+  const note = String(notes || "").trim().slice(0, 2000);
+  const reopen = o.reopen ? parseDate(reopenAt) : null;
+  if (o.reopen && (!reopen || reopen.getTime() < Date.now() - 86400000)) fail("invalid-argument", "date_required", "Pick the date for the next attempt.");
+  const campaign = (await db().doc(`outreachCampaigns/${t.campaignId}`).get()).data() || {};
+  const linkedinUrl = t.channel === "linkedin" ? cleanUrl(profileUrl) : null;
+
+  // 1. The touch on the company (a skipped step leaves no trace there).
+  let activityId = null;
+  if (o.activity) {
+    const title = `${t.isTest ? "[TEST] " : ""}${CHANNEL_LABEL[t.channel]} — ${o.label}${campaign.name ? ` (${campaign.name} · ${t.stepName})` : ""}`;
+    const ref = await db().collection("searchActivities").add({
+      companyId: t.companyId,
+      // Test-mode rehearsals never count as a touch on a real company.
+      type: t.isTest ? "task_test" : o.activity,
+      date: Timestamp.now(), title, content: note || null, via: t.channel, direction: "out",
+      outcome: o.key, responseCategory: null, status: null, isTest: !!t.isTest,
+      campaignId: t.campaignId, stepId: t.stepId, enrolmentId: t.enrolmentId, taskId, channel: t.channel,
+      linkedinUrl, createdAt: FieldValue.serverTimestamp(), createdBy: caller,
+    });
+    activityId = ref.id;
+    await store.touchCompany(t.companyId, { direction: "out", isTest: t.isTest });
+    if (o.reply) await store.touchCompany(t.companyId, { direction: "in", isTest: t.isTest });
+  }
+
+  // 2. Call back / reschedule: the same task stays open for the new date.
+  if (reopen) {
+    await taskRef.update({
+      dueAt: Timestamp.fromDate(reopen), notes: note, lastOutcome: o.key,
+      attempts: FieldValue.arrayUnion({ at: Timestamp.now(), outcome: o.key, by: caller, notes: note || null, activityId }),
+    });
+    return { ok: true, status: "open", dueAt: reopen.toISOString(), activityId };
+  }
+
+  // 3. Close the task, then stop or advance the sequence.
+  const enrolRef = db().doc(`outreachEnrolments/${t.enrolmentId}`);
+  await taskRef.update({
+    status: o.key === "skipped" ? "skipped" : "done", outcome: o.key, notes: note, activityId,
+    completedAt: FieldValue.serverTimestamp(), completedBy: caller, ...(linkedinUrl ? { linkedinUrl } : {}),
+  });
+  if (o.reply && stopSequence !== false) {
+    await endEnrolment(enrolRef, "replied", `${CHANNEL_LABEL[t.channel]}: ${o.label}`);
+    return { ok: true, status: "done", sequence: "stopped", activityId };
+  }
+  const moved = await db().runTransaction(async (tx) => {
+    const e = await tx.get(enrolRef);
+    if (!e.exists || e.data().status !== "awaiting_task" || e.data().taskId !== taskId) return false;
+    const steps = campaign.steps || [];
+    const nextIndex = e.data().currentStep + 1;
+    const next = steps[nextIndex];
+    tx.update(enrolRef, {
+      status: "active", currentStep: nextIndex, taskId: null,
+      nextActionAt: Timestamp.fromDate(addWait(new Date(), next ? next.wait : FINAL_GRACE)),
+      history: FieldValue.arrayUnion({ stepId: t.stepId, at: Timestamp.now(), result: o.key, taskId, activityId }),
+      lastError: null,
+    });
+    return true;
+  });
+  if (moved) {
+    await db().doc(`outreachCampaigns/${t.campaignId}`).update({
+      lockedStepIds: FieldValue.arrayUnion(t.stepId),
+      [`stats.tasks_${t.channel}`]: FieldValue.increment(1),
+    }).catch(() => {});
+  }
+  return { ok: true, status: o.key === "skipped" ? "skipped" : "done", sequence: moved ? "next" : "unchanged", activityId };
+}
+
+async function updateTask({ taskId, assignee, dueAt, notes }, caller) {
+  const ref = db().doc(`outreachTasks/${taskId || "_"}`);
+  const snap = await ref.get();
+  if (!snap.exists || snap.data().status !== "open") fail("failed-precondition", "task_closed", "This task is no longer open.");
+  const upd = { updatedAt: FieldValue.serverTimestamp(), updatedBy: caller };
+  if (assignee !== undefined) {
+    if (![null, "andre", "antonio"].includes(assignee)) fail("invalid-argument", "bad_assignee", "Assign to André, António or nobody.");
+    upd.assignee = assignee;
+  }
+  if (dueAt !== undefined) {
+    const d = parseDate(dueAt);
+    if (!d) fail("invalid-argument", "bad_date", "Invalid date.");
+    upd.dueAt = Timestamp.fromDate(d);
+  }
+  if (notes !== undefined) upd.notes = String(notes || "").trim().slice(0, 2000);
+  await ref.update(upd);
+  return { ok: true };
+}
+
+// Do not contact (spec §10): stops every campaign for the company and blocks
+// enrolment and new outreach until switched off.
+async function setDoNotContact({ companyId, on, reason }, caller) {
+  if (!companyId || typeof companyId !== "string") fail("invalid-argument", "company_required", "Choose a company.");
+  const ref = db().doc(`searchCompanies/${companyId}`);
+  if (!(await ref.get()).exists) fail("not-found", "company_not_found", "Company not found.");
+  const r = String(reason || "").trim().slice(0, 300);
+  await ref.update({ doNotContact: { on: !!on, reason: on ? (r || null) : null, at: FieldValue.serverTimestamp(), by: caller } });
+  const stopped = on ? await stopCompanyEnrolments(companyId, `Marked do not contact${r ? ` — ${r}` : ""}`) : 0;
+  return { ok: true, on: !!on, stopped };
+}
+
 exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
   if (!ADMIN_EMAILS.includes(caller)) fail("permission-denied", "not_admin", "Only Douro admins can manage campaigns.");
@@ -489,6 +611,9 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "setStatus": return await setStatus(data, caller);
       case "approve": return await approve(data, caller);
       case "skipDraft": return await skipDraft(data, caller);
+      case "completeTask": return await completeTask(data, caller);
+      case "updateTask": return await updateTask(data, caller);
+      case "setDoNotContact": return await setDoNotContact(data, caller);
       default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
     }
   } catch (e) {
