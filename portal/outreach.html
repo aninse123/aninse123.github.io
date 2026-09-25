@@ -524,7 +524,7 @@
         <div class="card" style="margin-top:16px;">
           <div class="toolbar" style="border-radius:var(--radius) var(--radius) 0 0;">
             <label class="usage__label" for="mGroup">Breakdown by</label>
-            <select id="mGroup"><option value="owner">Person</option><option value="sender">Sender address</option><option value="template">Template · variant</option><option value="week">Week</option></select>
+            <select id="mGroup"><option value="owner">Person</option><option value="sender">Sender address</option><option value="template">Template · variant</option><option value="campaign">Campaign</option><option value="week">Week</option></select>
           </div>
           <div class="table-wrap">
             <table>
@@ -1532,11 +1532,12 @@
       if (!metricsData) return;
       const { threads } = metricsScope();
       const by = $('mGroup').value;
-      $('mGroupHead').textContent = { owner: 'Person', sender: 'Sender address', template: 'Template · variant', week: 'Week starting' }[by];
+      $('mGroupHead').textContent = { owner: 'Person', sender: 'Sender address', template: 'Template · variant', campaign: 'Campaign', week: 'Week starting' }[by];
       const tplName = (id) => (templatesAll.find(t => t.id === id)?.name) || (id ? 'Deleted template' : 'Written from scratch');
       const keyOf = (t) => by === 'owner' ? (OWNER_LABEL[t.owner] || 'Unassigned')
         : by === 'sender' ? (t.senderId || '—')
         : by === 'template' ? (t.templateId ? `${tplName(t.templateId)} · ${t.variantKey || 'A'}` : tplName(null))
+        : by === 'campaign' ? (t.campaignId ? (campaigns.find(c => c.id === t.campaignId)?.name || 'Deleted campaign') : 'Not from a campaign')
         : isoWeekStart(tsMs(t.firstTouchAt)).toISOString().slice(0, 10);
       const groups = {};
       threads.forEach(t => { (groups[keyOf(t)] ||= []).push(t); });
@@ -2166,6 +2167,7 @@
         `${esc(approval)} (steps can override)`,
         `sends ${esc(windowText(c.sendWindow))}${c.sendWindow ? ' (own window)' : ''}`,
         `${num(c.pacing?.newPerDay || 20)} new companies a day`,
+        c.audience?.mode === 'dynamic' ? `dynamic audience${c.stats?.dynamicAdded ? ` (+${num(c.stats.dynamicAdded)} added)` : ''}` : null,
         `priority ${c.priority || 2}`,
         c.startedAt ? `started ${esc(dayFmt.format(new Date(tsMs(c.startedAt))))}` : null,
       ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
@@ -2244,6 +2246,14 @@
         const txt = Object.entries(outs).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${num(n)} ${esc(outcomeLabel(ch, k))}`).join(' · ');
         return `<tr><td>${esc(CHANNEL_LABELS[ch] || ch)}</td><td class="num">${num(done)}</td><td class="num">${num(open)}</td><td style="font-size:0.78rem;">${txt || '—'}</td></tr>`;
       }).join('');
+      // By audience source (2c): which list or filter brought the companies, and how they answered.
+      const bySrc = {};
+      curEnrols.forEach(e => {
+        const k = e.sourceLabel || ({ filters: 'Search CRM filters', csv: 'CSV list', manual: 'Added by hand', dynamic: 'Dynamic' }[e.source] || 'Other');
+        const g = bySrc[k] ||= { n: 0, contacted: 0, replied: 0 };
+        g.n++; if ((e.history || []).length || e.status === 'replied') g.contacted++; if (e.status === 'replied') g.replied++;
+      });
+      const srcRows = Object.entries(bySrc).sort((a, b) => b[1].n - a[1].n).map(([k, g]) => `<tr><td class="clip" title="${esc(k)}">${esc(k)}</td><td class="num">${num(g.n)}</td><td class="num">${num(g.contacted)}</td><td class="num">${num(g.replied)}</td><td class="num">${pctTxt(pct(g.replied, g.contacted))}</td></tr>`).join('');
       const stepRows = steps.map((s, i) => {
         const hist = curEnrols.flatMap(e => (e.history || []).filter(h => h.stepId === s.id).map(h => ({ ...h, e })));
         const repliedHere = curEnrols.filter(e => e.status === 'replied' && (e.history || []).slice(-1)[0]?.stepId === s.id);
@@ -2275,6 +2285,8 @@
               <thead><tr><th>Step</th><th>Template</th><th class="num">Sent / done</th><th class="num">Replied after it</th><th>Variants</th></tr></thead>
               <tbody>${stepRows || '<tr><td colspan="5" class="empty">No steps yet — write the sequence.</td></tr>'}</tbody>
             </table></div>
+            ${Object.keys(bySrc).length > 1 ? `<div style="padding:14px 16px 4px;"><h3>By audience source</h3></div><div class="table-wrap"><table>
+              <thead><tr><th>Source</th><th class="num">Companies</th><th class="num">Contacted</th><th class="num">Replied</th><th class="num">Reply rate</th></tr></thead><tbody>${srcRows}</tbody></table></div>` : ''}
             ${chanRows ? `<div style="padding:14px 16px 4px;"><h3>Manual steps by channel</h3></div><div class="table-wrap"><table>
               <thead><tr><th>Channel</th><th class="num">Done</th><th class="num">Open</th><th>Outcomes</th></tr></thead><tbody>${chanRows}</tbody></table></div>` : ''}
           </div>
@@ -2331,6 +2343,7 @@
               const note = e.lastError || e.stopReason || '';
               const btns = !live ? '' : [
                 e.status === 'paused' ? `<button class="btn btn--ghost btn--sm" data-eop="resume" data-eid="${esc(e.id)}">Resume</button>` : `<button class="btn btn--ghost btn--sm" data-eop="pause" data-eid="${esc(e.id)}">Pause</button>`,
+                `<button class="btn btn--ghost btn--sm" data-eop="move" data-eid="${esc(e.id)}">Move…</button>`,
                 `<button class="btn btn--danger btn--sm" data-eop="remove" data-eid="${esc(e.id)}">Remove</button>`,
               ].join(' ');
               return `<tr>
@@ -2353,12 +2366,30 @@
       $('cs-audience').querySelectorAll('[data-eop]').forEach(b => b.addEventListener('click', async () => {
         const op = b.dataset.eop, eid = b.dataset.eid;
         const e = curEnrols.find(x => x.id === eid);
+        if (op === 'move') { openMoveCompany(e); return; }
         let reason = null;
         if (op === 'remove') { reason = prompt(`Remove ${e?.companyName || 'this company'} from the campaign? Optional reason:`, ''); if (reason === null) return; }
         b.disabled = true;
         const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? 'Company removed from the campaign.' : op === 'pause' ? 'Company paused.' : 'Company resumed.');
         if (r) loadCampaignData(); else b.disabled = false;
       }));
+    }
+
+    // Move one company to another campaign (2c): the target's rules apply.
+    function openMoveCompany(e) {
+      const c = curCamp();
+      const targets = campaigns.filter(x => x.id !== c?.id && ['draft', 'active', 'paused'].includes(x.status));
+      if (!targets.length) { toast('No other open campaign to move to.'); return; }
+      openModal(`Move ${e.companyName || 'company'}`, `
+        <div class="field"><label for="mvTarget">To campaign</label>
+          <select id="mvTarget">${targets.map(x => `<option value="${esc(x.id)}">${esc(x.name)} (${esc(x.status)})</option>`).join('')}</select></div>
+        <p class="hint">It leaves "${esc(c?.name || '')}" (its open task or draft there is cancelled) and starts the other campaign from the first step, if that campaign's rules allow it.</p>`,
+        async () => {
+          const r = (await callCampaign({ action: 'enrolment', enrolmentId: e.id, op: 'move', targetCampaignId: $('mvTarget').value })).data;
+          toast(`Moved to "${targets.find(x => x.id === r.targetCampaignId)?.name || 'the other campaign'}".`);
+          loadCampaignData();
+          return true;
+        }, 'Move');
     }
 
     // ── Add companies: by name, or a CSV list → preview → enrol ──
@@ -2975,6 +3006,17 @@
             <div class="wvars">${tplVars.map(k => { const v = (s.variants || []).find(x => x.key === k); return `<label class="wvar"><input type="checkbox" data-vk="${k}" ${all || chosenKeys.has(k) ? 'checked' : ''}${dis}> ${k} <input type="text" inputmode="numeric" data-vw="${k}" value="${esc(v ? v.weight : 1)}" aria-label="Weight ${k}"${dis}></label>`; }).join('')}</div>
             <span class="hint">Each company gets one variant, picked at random by weight. Results per variant appear in the Overview.</span></div>` : ''}
           ${ch === 'email' && i > 0 ? `<label class="checkline"><input type="checkbox" data-f="newSubject" ${s.newSubject ? 'checked' : ''}${dis}> <span>Start a new conversation with the template's subject (default: reply in the same conversation, "Re: …", quoting the previous email)</span></label>` : ''}
+          ${ch !== 'email' && (TASK_OUTCOMES[ch] || []).length > 1 ? `<div class="field" style="margin-bottom:6px;"><label>Rules (optional)</label>
+            ${(s.branches || []).map((b, bi) => `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px;" data-br="${bi}">
+              <span class="hint">If the outcome is</span>
+              <select data-bf="outcome" style="width:auto;"${dis}>${(TASK_OUTCOMES[ch] || []).map(([k, l]) => `<option value="${k}"${b.outcome === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+              <select data-bf="target" style="width:auto;"${dis}>
+                <option value="end"${b.action === 'end' ? ' selected' : ''}>end the sequence</option>
+                ${seqDraft.map((x, xi) => xi > i && x.id ? `<option value="goto:${esc(x.id)}"${b.action === 'goto' && b.stepId === x.id ? ' selected' : ''}>go to step ${xi + 1} (${esc(x.name || CHANNEL_LABELS[x.channel || 'email'])})</option>` : '').join('')}
+              </select>
+              ${editable ? `<button type="button" class="btn btn--ghost btn--sm" data-brdel="${bi}">Remove</button>` : ''}</div>`).join('')}
+            ${editable ? '<button type="button" class="btn btn--ghost btn--sm" data-bradd>+ Add a rule</button>' : ''}
+            <span class="hint">Other outcomes move to the next step. "Go to" only lists saved later steps — save first after adding steps.</span></div>` : ''}
           ${ch === 'whatsapp' ? '<p class="hint">WhatsApp to a personal mobile falls under the same consent rule as email (D3) — the task flags numbers that look personal.</p>' : ''}
         </div>`;
       };
@@ -3007,7 +3049,7 @@
           if (f === 'instructions') s.instructions = inp.value;
           if (f === 'channel') {
             const oldDefault = /^(Email|Linkedin|LinkedIn|Call|Whatsapp|WhatsApp|Letter|Visit|Other|Other task) \d+$/.test(s.name || '');
-            s.channel = inp.value; s.templateId = null; s.variants = [];
+            s.channel = inp.value; s.templateId = null; s.variants = []; s.branches = [];
             if (oldDefault || !s.name) s.name = `${CHANNEL_LABELS[s.channel]} ${i + 1}`;
             mark(); renderSequence(); return;
           }
@@ -3022,6 +3064,21 @@
         };
         el.querySelectorAll('[data-vk]').forEach(x => x.addEventListener('change', readVariants));
         el.querySelectorAll('[data-vw]').forEach(x => x.addEventListener('input', readVariants));
+        el.querySelector('[data-bradd]')?.addEventListener('click', () => {
+          const first = (TASK_OUTCOMES[s.channel] || [])[0]?.[0];
+          s.branches = [...(s.branches || []), { outcome: first, action: 'end', stepId: null }];
+          mark(); renderSequence();
+        });
+        el.querySelectorAll('[data-brdel]').forEach(b => b.addEventListener('click', () => { s.branches.splice(Number(b.dataset.brdel), 1); mark(); renderSequence(); }));
+        el.querySelectorAll('[data-br]').forEach(row => {
+          const b = s.branches[Number(row.dataset.br)];
+          row.querySelector('[data-bf="outcome"]').addEventListener('change', (e) => { b.outcome = e.target.value; mark(); });
+          row.querySelector('[data-bf="target"]').addEventListener('change', (e) => {
+            const v = e.target.value;
+            if (v === 'end') { b.action = 'end'; b.stepId = null; } else { b.action = 'goto'; b.stepId = v.slice(5); }
+            mark();
+          });
+        });
         el.querySelector('[data-del]')?.addEventListener('click', () => { seqDraft.splice(i, 1); mark(); renderSequence(); });
         el.querySelectorAll('[data-mv]').forEach(b => b.addEventListener('click', () => {
           const j = i + Number(b.dataset.mv); [seqDraft[i], seqDraft[j]] = [seqDraft[j], seqDraft[i]]; mark(); renderSequence();
@@ -3029,7 +3086,7 @@
       });
       $('seqAdd')?.addEventListener('click', () => {
         const ch = $('seqAddCh').value;
-        seqDraft.push({ name: `${CHANNEL_LABELS[ch]} ${seqDraft.length + 1}`, channel: ch, wait: { days: seqDraft.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false, instructions: '' });
+        seqDraft.push({ name: `${CHANNEL_LABELS[ch]} ${seqDraft.length + 1}`, channel: ch, wait: { days: seqDraft.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false, instructions: '', branches: [] });
         mark(); renderSequence();
       });
       $('seqDiscard')?.addEventListener('click', () => { seqDraft = null; seqDirty = false; renderSequence(); });
@@ -3094,6 +3151,12 @@
           <div class="field"><label>Search CRM stages allowed</label>
             <div class="stage-grid" id="csStages">${STAGE_LABELS.map(([k, l]) => `<label class="checkline"><input type="checkbox" value="${k}" ${ex.allowedStages.includes(k) ? 'checked' : ''}${dis}> <span>${esc(l)}</span></label>`).join('')}</div></div>
           <label class="checkline"><input type="checkbox" id="csReqEmail" ${ex.requireEmail !== false ? 'checked' : ''}${dis}> <span>Skip companies without an email address</span></label>
+          <div class="field" style="margin-top:14px;"><label for="csAudMode">Audience</label>
+            <select id="csAudMode" style="max-width:520px;"${dis}>
+              <option value="static"${c.audience?.mode !== 'dynamic' ? ' selected' : ''}>Static — only the companies you add</option>
+              <option value="dynamic"${c.audience?.mode === 'dynamic' ? ' selected' : ''}>Dynamic — also add companies that start matching the Search CRM filter</option>
+            </select>
+            <span class="hint">Dynamic: every day from 07:00, companies changed in the Search CRM that match the campaign's latest filter (${(c.audience?.sources || []).some(x => x.type === 'filters') ? 'set' : '<b>none yet — add companies from the Search CRM filters first</b>'}) are added, with the rules above. Companies in another campaign are left there.</span></div>
           <p class="hint" style="margin-top:10px;">Always excluded: the suppression list, companies marked do not contact, unsubscribed or bounced${settings?.blockPersonalDomains !== false ? ', personal email domains (Settings → General)' : ''}. These rules apply when companies are added.</p>
         </div>
         <div class="banner banner--bad" id="csErr" hidden style="margin-top:12px;"></div>
@@ -3124,6 +3187,7 @@
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, ownerFilter: $('csOwner').value || null },
+          audience: { mode: $('csAudMode').value },
         } }, 'Settings saved.');
         b.disabled = false;
         if (r) { csetDirty = false; renderCampSettings(); }
