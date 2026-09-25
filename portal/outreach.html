@@ -1405,7 +1405,10 @@
             : `<rect x="${x}" y="${top}" width="${bw}" height="${h}" fill="${color}"/>`;
           base += v;
         });
-        if (i % 5 === 4 || i === rows.length - 1) svg += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#6B7280">${esc(dayFmt.format(new Date(r.day + 'T12:00:00Z')))}</text>`;
+        if (i % 5 === 4 || i === rows.length - 1) {
+          const lastOne = i === rows.length - 1; // right-align the final label so it can't run off the edge
+          svg += `<text x="${lastOne ? x + bw : x + bw / 2}" y="${H - 8}" text-anchor="${lastOne ? 'end' : 'middle'}" font-size="10" fill="#6B7280">${esc(dayFmt.format(new Date(r.day + 'T12:00:00Z')))}</text>`;
+        }
         svg += `<rect x="${padL + i * step}" y="${padT}" width="${step}" height="${plotH}" fill="transparent" data-i="${i}"/>`; // hover target, wider than the bar
       });
       svg += '</svg>';
