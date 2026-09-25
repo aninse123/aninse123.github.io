@@ -179,6 +179,35 @@ const TUE = "2026-09-29T10:30:00+01:00";
   ok("next run doesn't redraft", (await run("2026-09-29T10:40:00+01:00")).drafts === 0 && docs("outreachMessages").length === 3);
   await camp({ action: "enrolment", enrolmentId: `${cD}_c2`, op: "remove" });
   ok("removing the company cancels its draft", get(`outreachMessages/${stepMessageId(`${cD}_c2`, "s1")}`).status === "cancelled");
+  // To approve queue: approve (with edits) → the next run sends it as edited
+  const d1 = stepMessageId(`${cD}_c1`, "s1"), d3 = stepMessageId(`${cD}_c3`, "s1");
+  const badEdit = await camp({ action: "approve", messageIds: [d1, d3], body: "x" });
+  ok("edits only for one draft at a time", badEdit.err?.details?.reason === "edit_one");
+  const ap = await camp({ action: "approve", messageIds: [d1], subject: "Assunto revisto", body: "Texto revisto para {{company.shortName}}" });
+  ok("approve: draft approved, company back in the queue now", ap.approved === 1 && get(`outreachMessages/${d1}`).status === "approved" && get(`outreachMessages/${d1}`).edited === true && get(`outreachEnrolments/${cD}_c1`).status === "active");
+  ok("approving twice is skipped", (await camp({ action: "approve", messageIds: [d1] })).skipped.not_a_draft === 1);
+  const beforeAp = sends().length;
+  const rap = await run("2026-09-29T10:50:00+01:00");
+  const apSend = sends().slice(beforeAp)[0]?.body;
+  ok("approved draft sent by the scheduler with the edits (variables rendered)", rap.sent === 1 && apSend.subject === "Assunto revisto" && /Texto revisto para Empresa 1/.test(apSend.text));
+  ok("sent message records who approved it; enrolment moves on", get(`outreachMessages/${d1}`).approvedBy === "andre.rocha@douropartners.pt" && get(`outreachMessages/${d1}`).status === "sent" && get(`outreachEnrolments/${cD}_c1`).currentStep === 1);
+  // Skip: dropped now, drafted again the next working day
+  const sk = await camp({ action: "skipDraft", messageId: d3 });
+  ok("skip: draft cancelled, redraft scheduled for the next working day", sk.ok && get(`outreachMessages/${d3}`).status === "cancelled" && get(`outreachEnrolments/${cD}_c3`).status === "active" && get(`outreachEnrolments/${cD}_c3`).nextActionAt.toMillis() > Date.now());
+  ok("skipping a non-draft refused", (await camp({ action: "skipDraft", messageId: d3 })).err?.details?.reason === "not_a_draft");
+  store.set(`outreachEnrolments/${cD}_c3`, { ...get(`outreachEnrolments/${cD}_c3`), nextActionAt: Timestamp.fromDate(lisbon(TUE)) });
+  ok("after the skip the scheduler drafts it again (same message id)", (await run("2026-09-29T11:00:00+01:00")).drafts === 1 && get(`outreachMessages/${d3}`).status === "draft");
+  // An approved draft is cancelled if the company leaves before it's sent
+  await camp({ action: "approve", messageIds: [d3] });
+  await camp({ action: "enrolment", enrolmentId: `${cD}_c3`, op: "remove" });
+  ok("removing the company cancels an approved, unsent draft", get(`outreachMessages/${d3}`).status === "cancelled");
+  // Approving in a finished campaign
+  seedBase();
+  const cF = await makeCampaign({ name: "Fechada", approvalDefault: "approval", steps: [{ templateId: "t1" }] }, ["c1"]);
+  await run(TUE);
+  await camp({ action: "setStatus", campaignId: cF, status: "finished" });
+  ok("approve after the campaign finished is refused per draft", (await camp({ action: "approve", messageIds: [stepMessageId(`${cF}_c1`, "s1")] })).skipped.campaign_closed === 1);
+
   // Step override: automatic step inside an approval campaign
   seedBase();
   const cO = await makeCampaign({ name: "Mista", approvalDefault: "approval", steps: [{ templateId: "t1", approval: "auto" }] }, ["c1"]);

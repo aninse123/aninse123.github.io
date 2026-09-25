@@ -210,7 +210,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
     subject: p.subject, text: p.text, html: p.html, snippet: p.bodyText.slice(0, 500),
     templateId: p.templateId, variantKey: p.variantKey, senderId, sentBy: p.callerEmail, source,
     campaignId: campaign?.campaignId || null, enrolmentId: campaign?.enrolmentId || null, stepId: campaign?.stepId || null,
-    redirectedFrom: p.redirectedFrom,
+    redirectedFrom: p.redirectedFrom, approvedBy: campaign?.approvedBy || null,
     status: "queued", events: [], attachments: [], isAutoReply: false, isTest, createdAt: now,
   });
   await batch.commit();

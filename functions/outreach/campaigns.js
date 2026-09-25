@@ -12,6 +12,11 @@
 //   enrol       { campaignId, companyIds, source, onConflict: "skip"|"move" }
 //   enrolment   { enrolmentId, op: "pause"|"resume"|"remove", reason? }
 //   setStatus   { campaignId, status: "active"|"paused"|"finished"|"archived" }
+//   approve     { messageIds, subject?, body? }        "To approve" queue (D4): the drafts
+//                                                    go back to the scheduler, which sends
+//                                                    them inside the window and limits;
+//                                                    subject/body = edits (one draft only)
+//   skipDraft   { messageId }                        drop the draft, redraft next working day
 //
 // The audience's companies are chosen in the browser (Search CRM filters over
 // the full cached list, a matched CSV, or ticked rows) and arrive as ids; the
@@ -21,6 +26,7 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { REGION, ADMIN_EMAILS } = require("./config");
 const { normEmail } = require("./util");
 const store = require("./store");
+const { addWait } = require("./schedule_util");
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
   evaluateCompany, enrolmentId,
@@ -117,7 +123,7 @@ async function endEnrolment(enrolRef, status, reason) {
     const draftRef = e.data().draftMessageId ? db().doc(`outreachMessages/${e.data().draftMessageId}`) : null;
     const draft = draftRef ? await tx.get(draftRef) : null;
     endEnrolmentWrites(tx, enrolRef, companyRef, c.exists ? c.data() : null, status, reason);
-    if (draft?.exists && draft.data().status === "draft") tx.update(draftRef, { status: "cancelled", cancelledReason: reason || status });
+    if (draft?.exists && ["draft", "approved"].includes(draft.data().status)) tx.update(draftRef, { status: "cancelled", cancelledReason: reason || status });
     return true;
   });
 }
@@ -404,6 +410,70 @@ async function setStatus({ campaignId, status }, caller) {
   return { status };
 }
 
+// ── "To approve" queue ──────────────────────────────────────────────────────
+
+const MAX_APPROVE_PER_CALL = 300;
+
+async function approve({ messageIds, subject, body }, caller) {
+  if (!Array.isArray(messageIds) || !messageIds.length) fail("invalid-argument", "drafts_required", "No drafts to approve.");
+  const ids = [...new Set(messageIds.map(String))].slice(0, MAX_APPROVE_PER_CALL);
+  const edited = subject != null || body != null;
+  if (edited && ids.length !== 1) fail("invalid-argument", "edit_one", "Edits apply to one draft at a time.");
+  if (body != null && (!String(body).trim() || String(body).length > 20000)) fail("invalid-argument", "bad_body", "The message can't be empty (up to 20,000 characters).");
+  if (subject != null && (!String(subject).trim() || String(subject).length > 300)) fail("invalid-argument", "bad_subject", "The subject can't be empty (up to 300 characters).");
+  const campaignCache = new Map();
+  let approved = 0;
+  const skipped = {};
+  const skip = (r) => { skipped[r] = (skipped[r] || 0) + 1; };
+  for (const group of chunks(ids, TX_PARALLEL)) {
+    const res = await Promise.all(group.map(async (id) => {
+      const msgRef = db().doc(`outreachMessages/${id}`);
+      const first = await msgRef.get();
+      if (!first.exists || first.data().source !== "campaign") return "not_a_draft";
+      const campaignId = first.data().campaignId;
+      if (!campaignCache.has(campaignId)) {
+        const c = await db().doc(`outreachCampaigns/${campaignId}`).get();
+        campaignCache.set(campaignId, c.exists ? c.data() : null);
+      }
+      const campaign = campaignCache.get(campaignId);
+      if (!campaign || ["finished", "archived"].includes(campaign.status)) return "campaign_closed";
+      return db().runTransaction(async (tx) => {
+        const m = await tx.get(msgRef);
+        const enrolRef = db().doc(`outreachEnrolments/${m.data().enrolmentId}`);
+        const e = await tx.get(enrolRef);
+        if (m.data().status !== "draft") return "not_a_draft";
+        if (!e.exists || e.data().status !== "awaiting_approval" || e.data().draftMessageId !== id) return "not_waiting";
+        const upd = { status: "approved", approvedBy: caller, approvedAt: FieldValue.serverTimestamp() };
+        if (body != null) { upd.draftBody = String(body).trim(); upd.edited = true; }
+        // A follow-up keeps the conversation's "Re:" subject.
+        if (subject != null && !m.data().isReply) { upd.subject = String(subject).trim(); upd.edited = true; }
+        tx.update(msgRef, upd);
+        tx.update(enrolRef, { status: "active", nextActionAt: Timestamp.now(), lastError: null });
+        return "approved";
+      });
+    }));
+    res.forEach((r) => (r === "approved" ? approved++ : skip(r)));
+  }
+  return { approved, skipped };
+}
+
+async function skipDraft({ messageId }, caller) {
+  if (!messageId) fail("invalid-argument", "draft_required", "Choose a draft.");
+  const msgRef = db().doc(`outreachMessages/${messageId}`);
+  return db().runTransaction(async (tx) => {
+    const m = await tx.get(msgRef);
+    if (!m.exists || m.data().status !== "draft") fail("failed-precondition", "not_a_draft", "This draft is no longer waiting.");
+    const enrolRef = db().doc(`outreachEnrolments/${m.data().enrolmentId}`);
+    const e = await tx.get(enrolRef);
+    const next = addWait(new Date(), { days: 1, unit: "working" });
+    tx.update(msgRef, { status: "cancelled", cancelledReason: `Skipped by ${caller} — drafted again the next working day` });
+    if (e.exists && e.data().status === "awaiting_approval" && e.data().draftMessageId === messageId) {
+      tx.update(enrolRef, { status: "active", nextActionAt: Timestamp.fromDate(next), draftMessageId: null });
+    }
+    return { ok: true, nextActionAt: next.toISOString() };
+  });
+}
+
 exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
   if (!ADMIN_EMAILS.includes(caller)) fail("permission-denied", "not_admin", "Only Douro admins can manage campaigns.");
@@ -417,6 +487,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "enrol": return await enrol(data, caller);
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);
+      case "approve": return await approve(data, caller);
+      case "skipDraft": return await skipDraft(data, caller);
       default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
     }
   } catch (e) {

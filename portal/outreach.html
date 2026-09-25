@@ -217,6 +217,8 @@
     .settings > *, .inbox > *, .compose > * { min-width: 0; }
     .checkline { display: flex; gap: 8px; align-items: flex-start; font-size: 0.84rem; line-height: 1.4; cursor: pointer; }
     .checkline input { margin-top: 3px; }
+    /* A checkbox/radio line inside a .field reads as normal text, not as the field's caps label. */
+    .field label.checkline { font-size: 0.84rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text); }
     .checklist { display: flex; flex-direction: column; gap: 8px; background: #FDF3DC; border: 1px solid #F0D597; border-radius: var(--radius); padding: 12px 14px; margin-top: 4px; }
     .variant { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; background: var(--tint); }
     .variant__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 600; font-size: 0.84rem; }
@@ -255,6 +257,12 @@
     .summary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 0.86rem; margin: 6px 0 12px; }
     .summary dt { color: var(--text-light); }
     .summary dd { font-variant-numeric: tabular-nums; }
+    .draft { border: 1px solid var(--border); border-radius: var(--radius); background: var(--white); padding: 14px 16px; }
+    .draft + .draft { margin-top: 12px; }
+    .draft__head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: baseline; margin-bottom: 8px; }
+    .draft__co { font-weight: 600; font-size: 0.9rem; }
+    .draft__meta { font-size: 0.76rem; color: var(--text-light); display: flex; gap: 4px 14px; flex-wrap: wrap; margin-bottom: 10px; }
+    .draft textarea { min-height: 150px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
     .ov-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
     .ov-grid > * { min-width: 0; }
     .ov-grid .card + .card { margin-top: 0; }
@@ -308,7 +316,7 @@
         <button class="tab active" role="tab" data-tab="inbox" aria-selected="true">Inbox<span class="count" id="unreadCount" hidden></span></button>
         <button class="tab" role="tab" data-tab="sent" aria-selected="false">Sent</button>
         <button class="tab" role="tab" data-tab="compose" aria-selected="false">Compose</button>
-        <button class="tab" role="tab" data-tab="campaigns" aria-selected="false">Campaigns</button>
+        <button class="tab" role="tab" data-tab="campaigns" aria-selected="false">Campaigns<span class="count" id="approveCount" hidden title="Drafts waiting for approval"></span></button>
         <button class="tab" role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
         <button class="tab" role="tab" data-tab="settings" aria-selected="false">Settings</button>
       </div>
@@ -430,6 +438,11 @@
       <!-- ── Metrics ───────────────────────────────────────────── -->
       <!-- ── Campaigns (Phase 2) ───────────────────────────────── -->
       <section class="panel" id="panel-campaigns" hidden>
+        <div class="chips subnav" id="campTop" role="tablist" aria-label="Campaigns views">
+          <button class="chip on" data-cview="list">Campaigns</button>
+          <button class="chip" data-cview="approve">To approve <span id="approveChipN"></span></button>
+        </div>
+        <div id="approveView" hidden></div>
         <div id="campList">
           <div class="card" style="padding:0;">
             <div class="toolbar">
@@ -1965,12 +1978,27 @@
     const tplName = (id) => templatesAll.find(t => t.id === id)?.name || (id ? 'Template not found' : '—');
 
     function setupCampaigns() {
+      $('campTop').addEventListener('click', (e) => { const b = e.target.closest('[data-cview]'); if (b) showCampView(b.dataset.cview); });
       $('campNew').addEventListener('click', newCampaign);
       $('campBack').addEventListener('click', closeCampaign);
       $('campRefresh').addEventListener('click', loadCampCounts);
       $('campShowArchived').addEventListener('change', renderCampList);
       $('campNav').addEventListener('click', (e) => { const b = e.target.closest('[data-csec]'); if (b) showCampSec(b.dataset.csec); });
-      watchCampaigns();
+      watchCampaigns(); watchDrafts();
+    }
+
+    // Top of the Campaigns tab: the campaign list (or one campaign) vs the
+    // "To approve" queue (moves to the Tasks tab with Phase 2b).
+    let campView = 'list';
+    function showCampView(v) {
+      if (v === 'approve' && (seqDirty || csetDirty) && !confirm('Leave without saving your changes?')) return;
+      if (v === 'approve') { seqDirty = csetDirty = false; }
+      campView = v;
+      $('campTop').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.cview === v));
+      $('approveView').hidden = v !== 'approve';
+      $('campList').hidden = v !== 'list' || !!curCampId;
+      $('campPage').hidden = v !== 'list' || !curCampId;
+      if (v === 'approve') renderApprove();
     }
 
     function watchCampaigns() {
@@ -2040,6 +2068,7 @@
     }
 
     function openCampaign(id, sec = 'overview') {
+      if (campView !== 'list') { campView = 'list'; $('campTop').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.cview === 'list')); $('approveView').hidden = true; }
       curCampId = id; seqDraft = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = '';
       $('campList').hidden = true; $('campPage').hidden = false;
       curEnrols = []; curThreads = [];
@@ -2183,7 +2212,7 @@
         <div class="kpis">
           ${kpi('Companies', num(total), `${num(by.pending || 0)} waiting to start`)}
           ${kpi('In sequence', num((by.active || 0) + (by.awaiting_task || 0)), `${num(by.paused || 0)} paused`)}
-          ${kpi('To approve', num(by.awaiting_approval || 0), 'drafts waiting')}
+          ${kpi('To approve', num(by.awaiting_approval || 0), by.awaiting_approval ? `<button class="camp-link" id="ovApprove" style="font-size:0.74rem;">Open the queue →</button>` : 'drafts waiting')}
           ${kpi('Emails sent', num(sent), `to ${num(contacted)} companies`)}
           ${kpi('Replied', num(replied), `${pctTxt(pct(replied, contacted))} of contacted`)}
           ${kpi('Positive', num(positive), 'interested · call back · referred')}
@@ -2205,7 +2234,12 @@
             ${c.status === 'draft' ? '<p class="note" style="margin-top:8px;">Nothing is sent while the campaign is a draft.</p>' : ''}
           </div>
         </div>
-        <p class="hint" style="margin-top:10px;">Reply rate counts companies that answered by email; "positive" comes from the classification in the Inbox.${repliedIds.size ? '' : ''} Numbers refresh when you open the campaign.</p>`;
+        <p class="hint" style="margin-top:10px;" data-ov-end>Reply rate counts companies that answered by email; "positive" comes from the classification in the Inbox.${repliedIds.size ? '' : ''} Numbers refresh when you open the campaign.</p>`;
+      wireOverview();
+    }
+
+    function wireOverview() {
+      $('ovApprove')?.addEventListener('click', () => { approveFilter = curCampId; showCampView('approve'); });
     }
 
     // ── Companies (audience) ──
@@ -2392,7 +2426,7 @@
             <label class="checkline"><input type="radio" name="acConflict" value="skip" checked> <span>Leave them where they are (recommended)</span></label>
             <label class="checkline"><input type="radio" name="acConflict" value="move"> <span>Move them here — their other campaign stops for them</span></label></div>` : ''}
           ${p.excludedSample.length ? `<details style="margin-bottom:10px;"><summary class="hint" style="cursor:pointer;">See excluded companies</summary><div class="hint" style="margin-top:6px;max-height:140px;overflow-y:auto;">${p.excludedSample.map(x => `${esc(x.companyName || x.companyId)} — ${esc(EXCL_LABELS[x.reason] || x.reason)}`).join('<br>')}</div></details>` : ''}
-          <p class="note">At ${num(p.newPerDay)} new companies a day, everyone starts within about <b>${num(p.daysToStart)}</b> sending day${p.daysToStart === 1 ? '' : 's'}${c.status === 'draft' ? ' once the campaign is started' : ''}. The exclusion rules are in the campaign's Settings.</p>`;
+          <p class="note">${p.eligible || p.conflictCount ? `At ${num(p.newPerDay)} new companies a day, everyone starts within about <b>${num(Math.max(1, p.eligible ? p.daysToStart : p.daysToStartIfMoved))}</b> sending day${Math.max(1, p.eligible ? p.daysToStart : p.daysToStartIfMoved) === 1 ? '' : 's'}${c.status === 'draft' ? ' once the campaign is started' : ''}. ` : ''}The exclusion rules are in the campaign's Settings.</p>`;
       };
 
       const render = () => {
@@ -2453,6 +2487,110 @@
         return true;
       }, 'Check companies');
       render();
+    }
+
+    // ── To approve (D4) ──
+    // Drafts the scheduler wrote for steps that need approval. Approving hands
+    // them back to the scheduler, which sends them inside the sending window
+    // and the daily limits (spaced per address) — never a burst.
+    let drafts = [];
+    let approveFilter = 'all';
+    const draftEdits = new Map(); // messageId → { subject, body } typed but not yet approved
+
+    function watchDrafts() {
+      let first = true;
+      onSnapshot(query(collection(db, 'outreachMessages'), where('status', '==', 'draft')), (snap) => {
+        countSnap(snap, first); first = false;
+        drafts = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.source === 'campaign')
+          .sort((a, b) => tsMs(a.createdAt) - tsMs(b.createdAt));
+        const n = drafts.length;
+        $('approveCount').textContent = n; $('approveCount').hidden = !n;
+        $('approveChipN').textContent = n ? `(${num(n)})` : '';
+        if (campView === 'approve') renderApprove();
+      }, (e) => console.warn('drafts', e));
+    }
+
+    function renderApprove() {
+      if (document.activeElement?.closest?.('#approveView .draft')) return; // don't wipe what's being typed
+      const byCamp = {};
+      drafts.forEach(d => { byCamp[d.campaignId] = (byCamp[d.campaignId] || 0) + 1; });
+      if (approveFilter !== 'all' && !byCamp[approveFilter]) approveFilter = 'all';
+      const list = drafts.filter(d => approveFilter === 'all' || d.campaignId === approveFilter);
+      const shown = list.slice(0, 50);
+      const campName = (id) => campaigns.find(c => c.id === id)?.name || 'Campaign';
+      const stepName = (d) => { const c = campaigns.find(x => x.id === d.campaignId); const i = (c?.steps || []).findIndex(s => s.id === d.stepId); return i < 0 ? 'Step' : `${c.steps[i].name} (${i + 1} of ${c.steps.length})`; };
+      $('approveView').innerHTML = `
+        <div class="card" style="padding:0;margin-bottom:14px;">
+          <div class="toolbar">
+            <select id="apFilter" aria-label="Campaign"><option value="all">All campaigns (${num(drafts.length)})</option>${Object.keys(byCamp).map(id => `<option value="${esc(id)}"${id === approveFilter ? ' selected' : ''}>${esc(campName(id))} (${num(byCamp[id])})</option>`).join('')}</select>
+            ${list.length ? `<button class="btn btn--primary btn--sm" id="apAll" style="margin-left:auto;">Approve all ${list.length > 300 ? 'first 300' : num(list.length)}</button>` : ''}
+          </div>
+          <p class="hint" style="padding:10px 14px;">Approved emails go out with the next scheduler runs — inside the sending window (${esc(windowText())}), the automations limit and each address's daily cap, a few minutes apart. Every check runs again at that moment. Your signature and the legal footer are added when sending.</p>
+        </div>
+        ${shown.length ? shown.map(d => {
+          const ed = draftEdits.get(d.id) || {};
+          const test = d.redirectedFrom ? `<span class="pill pill--test">TEST</span> goes to ${esc((d.to || [])[0])} instead of ${esc(d.redirectedFrom)}` : `to ${esc((d.to || [])[0] || '')}`;
+          return `<div class="draft" data-did="${esc(d.id)}">
+            <div class="draft__head">
+              <span class="draft__co"><a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" style="color:var(--text);">${esc(d.companyName || 'Company')}</a></span>
+              <span class="hint">drafted ${esc(when(d.createdAt))}</span>
+            </div>
+            <div class="draft__meta">
+              <span><button class="camp-link" style="font-size:0.76rem;" data-opencamp="${esc(d.campaignId)}">${esc(campName(d.campaignId))}</button> · ${esc(stepName(d))}${d.variantKey ? ` · variant ${esc(d.variantKey)}` : ''}</span>
+              <span>from ${esc(localPart(d.senderId))} ${test}</span>
+            </div>
+            <div class="field"><label>Subject</label>
+              <input type="text" data-dsubj value="${esc(ed.subject ?? d.subject)}" maxlength="300"${d.isReply ? ' disabled title="A follow-up keeps the conversation\'s subject"' : ''}></div>
+            <div class="field"><label>Message</label><textarea data-dbody spellcheck="true">${esc(ed.body ?? d.draftBody ?? '')}</textarea>
+              ${d.isReply ? '<span class="hint">Sent as a reply in the same conversation, quoting the previous email.</span>' : ''}</div>
+            <div class="actions">
+              <button class="btn btn--primary btn--sm" data-dact="approve">${draftEdits.has(d.id) ? 'Save &amp; approve' : 'Approve'}</button>
+              <button class="btn btn--ghost btn--sm" data-dact="skip" title="Drop this draft; it's written again the next working day">Skip — try the next working day</button>
+              <button class="btn btn--danger btn--sm" data-dact="remove">Remove company from the campaign</button>
+            </div>
+          </div>`;
+        }).join('') : '<div class="card"><div class="empty">Nothing to approve. Drafts appear here when a campaign step needs approval.</div></div>'}
+        ${list.length > shown.length ? `<p class="hint" style="margin-top:10px;">Showing the oldest ${num(shown.length)} of ${num(list.length)}.</p>` : ''}`;
+
+      $('apFilter').addEventListener('change', (e) => { approveFilter = e.target.value; renderApprove(); });
+      $('approveView').querySelectorAll('[data-opencamp]').forEach(b => b.addEventListener('click', () => openCampaign(b.dataset.opencamp)));
+      $('apAll')?.addEventListener('click', async () => {
+        const ids = list.slice(0, 300).map(d => d.id);
+        if (draftEdits.size && !confirm('Some drafts have unsaved edits — "Approve all" sends the original text for those. Continue?')) return;
+        if (!confirm(`Approve ${num(ids.length)} emails? They go out with the next scheduler runs, within the sending window and daily limits.`)) return;
+        const b = $('apAll'); b.disabled = true;
+        const r = await campCall({ action: 'approve', messageIds: ids }, (x) => `${num(x.approved)} approved${Object.keys(x.skipped || {}).length ? ` · ${num(Object.values(x.skipped).reduce((a, n) => a + n, 0))} no longer waiting` : ''}.`);
+        if (r) ids.forEach(id => draftEdits.delete(id)); else b.disabled = false;
+      });
+      $('approveView').querySelectorAll('.draft').forEach(el => {
+        const id = el.dataset.did, d = drafts.find(x => x.id === id);
+        const markEdit = () => {
+          const subj = el.querySelector('[data-dsubj]').value, body = el.querySelector('[data-dbody]').value;
+          const changed = (!d.isReply && subj !== d.subject) || body !== (d.draftBody || '');
+          if (changed) draftEdits.set(id, { subject: subj, body }); else draftEdits.delete(id);
+          el.querySelector('[data-dact="approve"]').innerHTML = changed ? 'Save &amp; approve' : 'Approve';
+        };
+        el.querySelector('[data-dsubj]').addEventListener('input', markEdit);
+        el.querySelector('[data-dbody]').addEventListener('input', markEdit);
+        el.querySelectorAll('[data-dact]').forEach(b => b.addEventListener('click', async () => {
+          const act = b.dataset.dact;
+          b.disabled = true;
+          document.activeElement?.blur();
+          let r;
+          if (act === 'approve') {
+            const ed = draftEdits.get(id);
+            const payload = { action: 'approve', messageIds: [id] };
+            if (ed) { payload.body = ed.body; if (!d.isReply) payload.subject = ed.subject; }
+            r = await campCall(payload, (x) => x.approved ? 'Approved — it goes out with the next scheduler run in the sending window.' : 'This draft is no longer waiting.');
+          }
+          if (act === 'skip') r = await campCall({ action: 'skipDraft', messageId: id }, 'Skipped — drafted again the next working day.');
+          if (act === 'remove') {
+            if (!confirm(`Remove ${d.companyName || 'this company'} from "${campName(d.campaignId)}"? The draft is discarded.`)) { b.disabled = false; return; }
+            r = await campCall({ action: 'enrolment', enrolmentId: d.enrolmentId, op: 'remove', reason: 'Removed from the approval queue' }, 'Company removed from the campaign.');
+          }
+          if (r) draftEdits.delete(id); else b.disabled = false;
+        }));
+      });
     }
 
     // ── Sequence editor ──

@@ -179,25 +179,26 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       report.paused++;
       continue;
     }
+    // The step's message may already exist: a draft still waiting, a draft
+    // approved in "To approve" (sent now, with any edits), or a retry after a
+    // crash (already sent → just record it).
+    const messageRef = db().doc(`outreachMessages/${stepMessageId(enrolmentId, step.id)}`);
+    const existing = await messageRef.get();
+    const m = existing.exists ? existing.data() : null;
+    if (m?.status === "draft") { await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id }); continue; }
+    if (m && !["failed", "cancelled", "approved"].includes(m.status)) {
+      await recordSent(doc.ref, e, campaign, step, { messageId: messageRef.id, threadId: m.threadId }, { senderId: m.senderId, variantKey: m.variantKey, now });
+      continue;
+    }
+    const approved = m?.status === "approved" ? m : null;
+
     const approval = (step.approval === "inherit" || !step.approval) ? campaign.approvalDefault : step.approval;
-    const wantsDraft = approval === "approval";
+    const wantsDraft = approval === "approval" && !approved;
     if (!wantsDraft && !canSend) { await unlock(doc.ref); report.deferred++; continue; }
     if (wantsDraft && report.drafts >= MAX_DRAFTS_PER_RUN) { await unlock(doc.ref); report.deferred++; continue; }
 
-    // A retry after a crash: the step's message may already exist.
-    const messageRef = db().doc(`outreachMessages/${stepMessageId(enrolmentId, step.id)}`);
-    const existing = await messageRef.get();
-    if (existing.exists) {
-      const m = existing.data();
-      if (m.status === "draft") { await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id }); continue; }
-      if (!["failed", "cancelled"].includes(m.status)) {
-        await recordSent(doc.ref, e, campaign, step, { messageId: messageRef.id, threadId: m.threadId }, { senderId: m.senderId, variantKey: m.variantKey, now });
-        continue;
-      }
-    }
-
     // Sender: follow-ups keep the address of the first email.
-    let senderId = e.senderId;
+    let senderId = e.senderId || approved?.senderId || null;
     if (senderId) {
       const s = senders.find((x) => x.id === senderId);
       if (!wantsDraft && (usedThisRun.has(senderId) || (s && sentToday[senderId] >= (s.dailyCap || DEFAULT_SENDER_CAP)))) {
@@ -221,18 +222,21 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         templates.set(step.templateId, t?.exists ? t.data() : null);
       }
       const tpl = templates.get(step.templateId);
-      const variantKey = e.variants?.[step.id] || pickVariant(step.variants, tpl?.variants, rand());
+      const variantKey = approved?.variantKey || e.variants?.[step.id] || pickVariant(step.variants, tpl?.variants, rand());
       const isFollowUp = e.currentStep > 0 && e.threadId && !step.newSubject;
       const p = await prepareEmail({
         callerEmail: "scheduler", settings, messageRef,
         threadId: isFollowUp ? e.threadId : null,
         companyId: e.companyId, senderId,
         templateId: step.templateId, variantKey,
+        // Approved drafts go out as approved (edited subject/body included);
+        // every check still runs again now.
+        ...(approved ? { subject: approved.isReply ? null : approved.subject, body: approved.draftBody } : {}),
         countsAsOutreach: true, redirectTo,
         // A draft costs no quota; the target is checked again when it's approved.
         confirmOverTarget: wantsDraft,
       });
-      const campaignRef = { campaignId: campaign.id, enrolmentId, stepId: step.id };
+      const campaignRef = { campaignId: campaign.id, enrolmentId, stepId: step.id, approvedBy: approved?.approvedBy || null };
       if (wantsDraft) {
         await saveDraft(p, { campaign: campaignRef });
         await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id, senderId, [`variants.${step.id}`]: p.variantKey, lastError: null });
