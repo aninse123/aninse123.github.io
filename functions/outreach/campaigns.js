@@ -67,7 +67,7 @@ function cleanSource(src) {
   if (type === "filters" && Array.isArray(src?.filterSpec)) {
     out.filterSpec = src.filterSpec.slice(0, 30).map((f) => ({
       field: String(f?.field || "").slice(0, 60),
-      op: ["eq", "in", "gte", "lte", "between", "contains", "exists"].includes(f?.op) ? f.op : "eq",
+      op: ["eq", "in", "gte", "lte", "between", "contains", "prefix", "exists", "within_days"].includes(f?.op) ? f.op : "eq",
       value: JSON.stringify(f?.value ?? null).length <= 2000 ? JSON.parse(JSON.stringify(f?.value ?? null)) : null,
     })).filter((f) => f.field);
   }

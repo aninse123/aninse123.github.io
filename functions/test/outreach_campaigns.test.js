@@ -106,12 +106,13 @@ const DAY = 86400000;
   ok("preview: days to start at 20/day", pv.daysToStart === 1 && pv.newPerDay === 20);
   ok("bad company ids refused", (await call({ action: "preview", campaignId: c1, companyIds: [] })).err?.details?.reason === "companies_required");
 
-  const en = (await call({ action: "enrol", campaignId: c1, companyIds: ids, source: { type: "filters", label: "CAE 25, Norte", filterSpec: [{ field: "cae", op: "in", value: ["25"] }] } })).res;
+  const en = (await call({ action: "enrol", campaignId: c1, companyIds: ids, source: { type: "filters", label: "CAE 25, Norte", filterSpec: [{ field: "cae", op: "in", value: ["25"] }, { field: "caeCode", op: "prefix", value: "25" }, { field: "lastTouchAt", op: "within_days", value: 30 }, { field: "x", op: "drop table", value: 1 }] } })).res;
   ok("enrol: 3 enrolled, 6 skipped", en.enrolled === 3 && en.skippedTotal === 6 && en.skipped.stage === 1);
   const ea = get(`outreachEnrolments/${c1}_a`);
   ok("enrolment: pending, step 0, company data, test flag", ea.status === "pending" && ea.currentStep === 0 && ea.companyName === "Empresa a" && ea.contactEmail === "geral@a.pt" && ea.owner === "andre" && ea.isTest === true && ea.source === "filters");
   ok("company holds the campaign slot", get("searchCompanies/a").activeCampaignId === c1 && get("searchCompanies/a").activeCampaignName === "Metalurgia Norte" && get("searchCompanies/a").activeEnrolmentId === `${c1}_a`);
   const camp1b = get(`outreachCampaigns/${c1}`);
+  ok("filter ops kept (prefix, within_days); unknown op falls back to eq", get(`outreachCampaigns/${c1}`).audience.sources[0].filterSpec.map((f) => f.op).join() === "in,prefix,within_days,eq");
   ok("campaign stats and source recorded", camp1b.stats.enrolled === 3 && camp1b.audience.sources.length === 1 && camp1b.audience.sources[0].filterSpec[0].field === "cae" && camp1b.audience.sources[0].enrolled === 3);
   const again = (await call({ action: "enrol", campaignId: c1, companyIds: ["a"] })).res;
   ok("enrolling again is skipped (already in campaign), no source added", again.enrolled === 0 && again.skipped.already_in_campaign === 1 && get(`outreachCampaigns/${c1}`).audience.sources.length === 1);

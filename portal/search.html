@@ -106,6 +106,11 @@
     th { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-light); padding: 10px 12px; text-align: left; border-bottom: 1.5px solid var(--border); background: #FAFAF8; white-space: nowrap; cursor: pointer; user-select: none; }
     th:hover { color: var(--primary); }
     th.num, td.num { text-align: right; }
+    th.sel-col, td.sel-col { width: 34px; padding-right: 0; cursor: default; }
+    .sel-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; background: #EEF3F8; border-bottom: 1px solid var(--border); font-size: 0.84rem; }
+    .camp-summary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 0.86rem; margin: 6px 0 12px; }
+    .camp-summary dt { color: var(--text-light); }
+    .camp-radio { display: flex; gap: 8px; align-items: flex-start; font-size: 0.85rem; font-weight: 400; text-transform: none; letter-spacing: 0; margin: 4px 0; cursor: pointer; }
     td { padding: 11px 12px; font-size: 0.84rem; border-bottom: 1px solid #F0EDE6; vertical-align: middle; white-space: nowrap; }
     tr:last-child td { border-bottom: none; }
     .row-clickable { cursor: pointer; }
@@ -426,6 +431,7 @@
         <button class="btn btn--ghost" id="companyStatsBtn">📊 Company Stats</button>
         <button class="btn btn--ghost" id="peopleStatsBtn">👥 People Stats</button>
         <button class="btn btn--ghost" id="exportBtn">⬇ Export CSV</button>
+        <button class="btn btn--ghost" id="addToCampaignBtn" title="Add the companies in the current list (filters) to an Outreach campaign">📣 Add to campaign</button>
         <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
         <button class="btn btn--ghost" id="peopleImportBtn">🧑‍💼 Import People</button>
         <button class="btn btn--ghost" id="companiesImportBtn">🏢 Import Companies</button>
@@ -493,10 +499,16 @@
 
     <!-- Table (list mode) -->
     <div class="table-card" id="tableCard">
+      <div class="sel-bar" id="selBar" style="display:none;">
+        <span id="selBarText"></span>
+        <button class="btn btn--primary btn--sm" id="selBarAdd">📣 Add selected to campaign</button>
+        <button class="btn btn--ghost btn--sm" id="selBarClear">Clear selection</button>
+      </div>
       <div class="table-wrap">
         <table id="companyTable">
           <thead>
             <tr>
+              <th class="sel-col"><input type="checkbox" id="selAllRows" aria-label="Select the companies shown" title="Select the companies shown"></th>
               <th data-col="name">Company</th>
               <th>Website</th>
               <th data-col="sector">Sector</th>
@@ -570,6 +582,7 @@
       <div class="detail-header-actions">
         <button class="btn btn--action" id="editCompanyBtn">✎ Edit</button>
         <button class="btn btn--action" id="addActivityBtn">＋ Activity</button>
+        <button class="btn btn--action" id="addCoToCampaignBtn" title="Add this company to an Outreach campaign">📣 Campaign</button>
         <button class="btn btn--danger btn--sm" id="deleteCompanyBtn">Delete</button>
       </div>
     </div>
@@ -975,6 +988,19 @@
       <button class="btn btn--ghost btn--sm" id="reportDownloadBtn" style="margin-right:auto;">⬇ Download CSV</button>
       <button class="btn btn--ghost" id="reportCloseBtn">Close (skip all)</button>
       <button class="btn btn--primary" id="reportApplyBtn">Apply selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add to Outreach campaign (Phase 2a step 3b) -->
+<div class="overlay" id="addCampModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-title">Add to campaign</div>
+    <div id="addCampBody"></div>
+    <div id="addCampErr" style="display:none;color:var(--danger,#B33A3A);font-size:0.85rem;margin-top:10px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="addCampCancel">Cancel</button>
+      <button class="btn btn--primary" id="addCampNext">Check companies</button>
     </div>
   </div>
 </div>
@@ -2903,13 +2929,14 @@ function renderList(){
   renderResultsCount(list.length);
   const tbody = document.getElementById('companyBody');
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="12"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No companies found</div><div>Adjust filters or add a company.</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="14"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No companies found</div><div>Adjust filters or add a company.</div></div></td></tr>`;
     showEl('pagination', false);
     return;
   }
   const shown = list.slice(0, visibleCount);
   tbody.innerHTML = shown.map(rowHtml).join('');
   tbody.querySelectorAll('.row-clickable').forEach(r => r.addEventListener('click', () => openDetail(r.dataset.id)));
+  updateSelUi();
   if (list.length > visibleCount) {
     showEl('pagination', true); showEl('loadMoreBtn', true); showEl('loadMoreExhausted', false);
     document.getElementById('loadMoreBtn').textContent = `Load more (${list.length - visibleCount} hidden)`;
@@ -2929,7 +2956,8 @@ function renderList(){
 function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
   return `<tr class="row-clickable" data-id="${c.id}">
-    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}</td>
+    <td class="sel-col" onclick="event.stopPropagation()"><input type="checkbox" class="rowSel" data-id="${esc(c.id)}" aria-label="Select ${esc(c.name)}"${selectedCo.has(c.id) ? ' checked' : ''}></td>
+    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}</td>
     <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
     <td class="sector-cell" title="${esc(c.sector||'')}${c.subSector?' › '+esc(c.subSector):''}">${esc(c.sector||'—')}${c.subSector?'<br><span style="font-size:0.72rem;">'+esc(c.subSector)+'</span>':''}</td>
     <td>${prioPill(c.priority)}</td>
@@ -3256,6 +3284,7 @@ function renderDetail(){
     ${fitBadge(c.fitScore)}
     ${c.owner?`<span class="badge badge-grey">👤 ${OWNER_LABELS[c.owner]}</span>`:''}
     ${SOURCE_LABELS[c.sourceType]?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
+    ${c.activeCampaignName ? `<a class="badge badge-blue" href="/portal/outreach.html" title="In this Outreach campaign" style="text-decoration:none;">📣 ${esc(c.activeCampaignName)}</a>` : ''}
     ${headerOwner(c, primary)}`;
   const pill = document.getElementById('dMeta').querySelector('.stage-pill');
   const menu = document.getElementById('stageMenu');
@@ -9054,6 +9083,204 @@ async function removeContact(idx){
 const outreachFns = getFunctions(auth.app, 'us-central1');
 const callOutreachSend = httpsCallable(outreachFns, 'outreachSend');
 let outreachCfg = null; // { settings, senders, templates }, loaded on first open
+
+// ── Add to an Outreach campaign (Phase 2a step 3b) ────────────────────────────
+// Three ways in: the current filters (every matching company — needs the full
+// list, loaded once like Export CSV), ticked rows, or one company page. The
+// server (outreachCampaign) applies the exclusions and the one-campaign rule;
+// this only chooses the ids and shows its summary. The filters are saved on the
+// campaign as a portable spec so Metrics can compare audiences later.
+const callOutreachCampaign = httpsCallable(outreachFns, 'outreachCampaign', { timeout: 300000 });
+const selectedCo = new Set();
+const CAMP_EXCL_LABELS = {
+  not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact',
+  unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
+  stage: 'stage not allowed', owner: 'other owner', recent_touch: 'touched recently', no_email: 'no email address',
+  personal_domain: 'personal email domain',
+};
+
+// The list filters as data: [{ field, op, value }] + a readable label.
+function buildFilterSpec(){
+  const v = id => (document.getElementById(id)?.value || '').trim();
+  const n = id => { const x = parseFloat(v(id)); return isNaN(x) ? null : x; };
+  const spec = [], label = [];
+  const add = (field, op, value, text) => { spec.push({ field, op, value }); label.push(text); };
+  const range = (field, lo, hi, text, unit = '') => {
+    if (lo != null && hi != null) add(field, 'between', [lo, hi], `${text} ${lo}–${hi}${unit}`);
+    else if (lo != null) add(field, 'gte', lo, `${text} ≥ ${lo}${unit}`);
+    else if (hi != null) add(field, 'lte', hi, `${text} ≤ ${hi}${unit}`);
+  };
+  if (v('searchInput')) add('search', 'contains', v('searchInput'), `"${v('searchInput')}"`);
+  if (v('stageFilter')) add('stage', 'eq', v('stageFilter'), `stage ${STAGES[v('stageFilter')]?.label || v('stageFilter')}`);
+  if (v('ownerFilter')) add('owner', 'eq', v('ownerFilter'), `owner ${OWNER_LABELS[v('ownerFilter')] || v('ownerFilter')}`);
+  if (v('priorityFilter')) add('priority', 'eq', v('priorityFilter'), `priority ${v('priorityFilter')}`);
+  range('fitScore', n('fitMin'), n('fitMax'), 'fit');
+  if (v('sectorFilter')) add('sector', 'eq', v('sectorFilter'), v('sectorFilter'));
+  if (v('subSectorFilter')) add('subSector', 'eq', v('subSectorFilter'), v('subSectorFilter'));
+  if (v('nuts2Filter')) add('nuts2', 'eq', v('nuts2Filter'), v('nuts2Filter'));
+  if (v('nuts3Filter')) add('nuts3', 'eq', v('nuts3Filter'), v('nuts3Filter'));
+  if (v('sourceFilter')) add('sourceType', 'eq', v('sourceFilter'), `source ${SOURCE_LABELS[v('sourceFilter')] || v('sourceFilter')}`);
+  if (v('legalFormFilter')) add('legalForm', 'eq', v('legalFormFilter'), v('legalFormFilter'));
+  if (v('naceFilter')) add('naceCode', 'prefix', v('naceFilter'), `NACE ${v('naceFilter')}*`);
+  if (v('caeFilter')) add('caeCode', 'prefix', v('caeFilter'), `CAE ${v('caeFilter')}*`);
+  range('computedRevenue', n('revMin'), n('revMax'), 'revenue', ' €');
+  range('computedEBITDA', n('ebitdaMin'), n('ebitdaMax'), 'EBITDA', ' €');
+  range('computedEBITDAMargin', n('marginMin'), n('marginMax'), 'EBITDA margin', '%');
+  range('computedGrowthRecent', n('cagrMin'), n('cagrMax'), 'growth', '%');
+  if (v('lastTouchFilter')) add('lastTouchAt', v('lastTouchFilter') === 'never' ? 'exists' : 'within_days', v('lastTouchFilter') === 'never' ? false : Number(v('lastTouchFilter')), v('lastTouchFilter') === 'never' ? 'never touched' : `touched in the last ${v('lastTouchFilter')} days`);
+  if (v('websiteFilter')) add('website', 'exists', v('websiteFilter') === 'yes', v('websiteFilter') === 'yes' ? 'with website' : 'without website');
+  return { spec, label: label.join(' · ') };
+}
+
+function updateSelUi(){
+  const n = selectedCo.size;
+  showEl('selBar', n > 0);
+  const t = document.getElementById('selBarText');
+  if (t) t.textContent = `${n.toLocaleString('en')} compan${n === 1 ? 'y' : 'ies'} selected`;
+  const all = document.getElementById('selAllRows');
+  if (all) {
+    const boxes = [...document.querySelectorAll('#companyBody .rowSel')];
+    const on = boxes.filter(b => b.checked).length;
+    all.checked = boxes.length > 0 && on === boxes.length;
+    all.indeterminate = on > 0 && on < boxes.length;
+  }
+}
+document.addEventListener('change', (e) => {
+  const b = e.target.closest?.('.rowSel');
+  if (!b) return;
+  if (b.checked) selectedCo.add(b.dataset.id); else selectedCo.delete(b.dataset.id);
+  updateSelUi();
+});
+document.getElementById('selAllRows').addEventListener('change', (e) => {
+  document.querySelectorAll('#companyBody .rowSel').forEach(b => { b.checked = e.target.checked; if (b.checked) selectedCo.add(b.dataset.id); else selectedCo.delete(b.dataset.id); });
+  updateSelUi();
+});
+document.getElementById('selBarClear').addEventListener('click', () => { selectedCo.clear(); document.querySelectorAll('.rowSel').forEach(b => { b.checked = false; }); updateSelUi(); });
+document.getElementById('selBarAdd').addEventListener('click', () => openAddToCampaign({ mode: 'selected', ids: [...selectedCo] }));
+document.getElementById('addToCampaignBtn').addEventListener('click', () => openAddToCampaign({ mode: 'filters' }));
+document.getElementById('addCoToCampaignBtn').addEventListener('click', () => { const c = getCompany(); if (c) openAddToCampaign({ mode: 'company', ids: [c.id] }); });
+document.getElementById('addCampCancel').addEventListener('click', () => showEl('addCampModal', false));
+
+async function openAddToCampaign(opts){
+  const body = document.getElementById('addCampBody');
+  const err = document.getElementById('addCampErr');
+  const next = document.getElementById('addCampNext');
+  const setErr = (m) => { err.textContent = m || ''; err.style.display = m ? 'block' : 'none'; };
+  const fmt = (x) => Number(x || 0).toLocaleString('en');
+  setErr('');
+  next.disabled = true; next.textContent = 'Check companies';
+  body.innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);">Loading campaigns…</div>';
+  showEl('addCampModal', true);
+
+  let ids = opts.ids || [], source;
+  let campList = [];
+  try {
+    const snap = await getDocs(query(collection(db, 'outreachCampaigns'), where('status', 'in', ['draft', 'active', 'paused'])));
+    addReads(snap.size || 1); refreshReads();
+    campList = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  } catch (e) { setErr('Could not load the campaigns: ' + (e.message || e)); return; }
+  if (!campList.length) {
+    body.innerHTML = '<p style="font-size:0.88rem;">No open campaigns. Create one in <a href="/portal/outreach.html" style="color:var(--primary);">Outreach → Campaigns</a> first.</p>';
+    return;
+  }
+
+  let intro;
+  if (opts.mode === 'filters') {
+    const { spec, label } = buildFilterSpec();
+    if (!spec.length) {
+      body.innerHTML = '<p style="font-size:0.88rem;">No filter is set — this would add every company. Filter the list first (sector, CAE, region, revenue, stage…), then use <b>Add to campaign</b> again. To add a few companies, tick them in the list instead.</p>';
+      return;
+    }
+    body.innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);"><span class="spin-sm"></span>Loading every company that matches the filters…</div>';
+    try {
+      await loadCompaniesWithProgress(p => { body.innerHTML = `<div style="font-size:0.85rem;color:var(--text-light);"><span class="spin-sm"></span>Loading companies… ${fmtLoadProgress(p)}</div>`; });
+    } catch (e) { setErr('Could not load the companies: ' + (e.message || e)); return; }
+    ids = getFiltered().map(c => c.id);
+    source = { type: 'filters', filterSpec: spec, label: label.slice(0, 120) };
+    intro = `<p style="font-size:0.86rem;margin-bottom:12px;"><b>${fmt(ids.length)}</b> companies match the current filters: <span style="color:var(--text-light);">${esc(label)}</span></p>`;
+    if (!ids.length) { body.innerHTML = intro + '<p style="font-size:0.86rem;">Nothing to add.</p>'; return; }
+    if (ids.length > 5000) { body.innerHTML = intro + '<p style="font-size:0.86rem;">That\'s more than 5,000 — narrow the filters and add them in parts.</p>'; return; }
+  } else if (opts.mode === 'selected') {
+    source = { type: 'manual', label: `Ticked in the Search CRM (${ids.length})` };
+    intro = `<p style="font-size:0.86rem;margin-bottom:12px;"><b>${fmt(ids.length)}</b> selected compan${ids.length === 1 ? 'y' : 'ies'}.</p>`;
+  } else {
+    const c = getCompany();
+    source = { type: 'manual', label: 'From the company page' };
+    intro = `<p style="font-size:0.86rem;margin-bottom:12px;"><b>${esc(c?.name || 'This company')}</b>${c?.activeCampaignName ? ` — currently in "${esc(c.activeCampaignName)}"` : ''}.</p>`;
+  }
+
+  const statusLabel = { draft: 'draft', active: 'active', paused: 'paused' };
+  body.innerHTML = intro + `
+    <div class="form-group"><label for="addCampSel">Campaign</label>
+      <select class="field" id="addCampSel">${campList.map(c => `<option value="${esc(c.id)}">${esc(c.name)} (${statusLabel[c.status]}${c.isTest ? ', test' : ''})</option>`).join('')}</select></div>
+    <p style="font-size:0.78rem;color:var(--text-light);">The campaign's rules decide who can be added (stage, owner, last touch, email, suppression list). You see the result before anything is added.</p>`;
+  next.disabled = false;
+
+  let preview = null, campaignId = null;
+  next.onclick = async () => {
+    setErr('');
+    next.disabled = true;
+    try {
+      if (!preview) {
+        campaignId = document.getElementById('addCampSel').value;
+        next.innerHTML = '<span class="spin-sm"></span>Checking…';
+        preview = (await callOutreachCampaign({ action: 'preview', campaignId, companyIds: ids })).data;
+        const exc = Object.entries(preview.excluded).sort((a, b) => b[1] - a[1]);
+        const excTotal = exc.reduce((a, [, k]) => a + k, 0);
+        const camp = campList.find(c => c.id === campaignId);
+        body.innerHTML = intro + `
+          <dl class="camp-summary">
+            <dt>Campaign</dt><dd>${esc(camp?.name || '')}</dd>
+            <dt>Can be added</dt><dd><b>${fmt(preview.eligible)}</b> of ${fmt(preview.requested)}</dd>
+            <dt>Excluded</dt><dd>${fmt(excTotal)}${exc.length ? ' — ' + exc.map(([k, x]) => `${fmt(x)} ${esc(CAMP_EXCL_LABELS[k] || k)}`).join(', ') : ''}</dd>
+            ${preview.conflictCount ? `<dt>In another campaign</dt><dd>${fmt(preview.conflictCount)} — ${preview.conflictCampaigns.map(x => `${fmt(x.count)} in "${esc(x.campaignName || 'another campaign')}"`).join(', ')}</dd>` : ''}
+          </dl>
+          ${preview.conflictCount ? `<label class="camp-radio"><input type="radio" name="addCampConflict" value="skip" checked> <span>Leave those where they are (recommended)</span></label>
+            <label class="camp-radio"><input type="radio" name="addCampConflict" value="move"> <span>Move them here — their other campaign stops for them</span></label>` : ''}
+          ${preview.excludedSample.length ? `<details style="margin-top:8px;"><summary style="font-size:0.8rem;color:var(--text-light);cursor:pointer;">See excluded companies</summary><div style="font-size:0.78rem;color:var(--text-light);max-height:140px;overflow-y:auto;margin-top:6px;">${preview.excludedSample.map(x => `${esc(x.companyName || x.companyId)} — ${esc(CAMP_EXCL_LABELS[x.reason] || x.reason)}`).join('<br>')}</div></details>` : ''}
+          ${preview.eligible || preview.conflictCount ? `<p style="font-size:0.8rem;color:var(--text-light);margin-top:10px;">At ${fmt(preview.newPerDay)} new companies a day, everyone starts within about ${fmt(Math.max(1, preview.eligible ? preview.daysToStart : preview.daysToStartIfMoved))} sending day(s)${camp?.status === 'draft' ? ', once the campaign is started' : ''}.</p>` : ''}`;
+        if (!preview.eligible && !preview.conflictCount) { next.textContent = 'Close'; next.disabled = false; next.onclick = () => showEl('addCampModal', false); return; }
+        next.textContent = 'Add companies'; next.disabled = false;
+        return;
+      }
+      const onConflict = document.querySelector('input[name="addCampConflict"]:checked')?.value || 'skip';
+      if (onConflict === 'skip' && !preview.eligible) throw new Error('No company can be added — choose "Move them here", or Cancel.');
+      next.innerHTML = '<span class="spin-sm"></span>Adding…';
+      const r = (await callOutreachCampaign({ action: 'enrol', campaignId, companyIds: ids, source, onConflict })).data;
+      const camp = campList.find(c => c.id === campaignId);
+      body.innerHTML = `<p style="font-size:0.9rem;"><b>${fmt(r.enrolled)}</b> compan${r.enrolled === 1 ? 'y' : 'ies'} added to "${esc(camp?.name || '')}"${r.moved ? ` (${fmt(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${fmt(r.skippedTotal)} skipped` : ''}.</p>
+        <p style="font-size:0.82rem;color:var(--text-light);margin-top:8px;">${camp?.status === 'draft' ? 'The campaign is still a draft — start it in Outreach → Campaigns.' : 'The scheduler starts them at the campaign\'s daily pace, inside the sending window.'} <a href="/portal/outreach.html" style="color:var(--primary);">Open Outreach</a></p>`;
+      next.textContent = 'Close'; next.disabled = false; next.onclick = () => showEl('addCampModal', false);
+      if (opts.mode === 'selected') { selectedCo.clear(); document.querySelectorAll('.rowSel').forEach(b => { b.checked = false; }); updateSelUi(); }
+      await refreshCampaignBadges(ids);
+    } catch (e) {
+      setErr((e.message || String(e)).replace(/^(FirebaseError:\s*)?/, ''));
+      next.disabled = false;
+      next.textContent = preview ? 'Add companies' : 'Check companies';
+    }
+  };
+}
+
+// Re-read activeCampaign* for the companies just added (≤ 30 per query) so
+// the list badge and the company page show the campaign without a reload.
+async function refreshCampaignBadges(ids){
+  const want = ids.slice(0, 600);
+  for (let i = 0; i < want.length; i += 30) {
+    try {
+      const snap = await getDocs(query(collection(db, 'searchCompanies'), where(documentId(), 'in', want.slice(i, i + 30))));
+      addReads(snap.size || 1);
+      snap.docs.forEach(d => {
+        const c = companies.find(x => x.id === d.id); if (!c) return;
+        const x = d.data();
+        c.activeCampaignId = x.activeCampaignId || null; c.activeCampaignName = x.activeCampaignName || null; c.activeEnrolmentId = x.activeEnrolmentId || null;
+      });
+    } catch (e) { console.warn('campaign badges', e); break; }
+  }
+  refreshReads();
+  try { cacheCompanies(); } catch (e) {}
+  if (document.getElementById('detailView')?.style.display !== 'none' && currentCoId) renderDetail?.();
+  else renderList();
+}
 
 async function loadOutreachCfg(){
   const [s, snd, tpl] = await Promise.all([

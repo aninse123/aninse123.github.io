@@ -2403,7 +2403,7 @@
             <span class="hint">First row = column names. Recognised: <b>NIF</b>, <b>BvD ID</b>, <b>Email</b>, <b>Nome / Empresa</b>. From Excel: Save as → CSV. Matched like the Search CRM import: NIF, then BvD ID, then email, then name.</span></div>
           <button class="btn btn--ghost btn--sm" id="acMatch" type="button">Match companies</button>
           <div id="acCsvResult" style="margin-top:10px;">${csv ? csvResultHtml() : ''}</div>`
-        : `<p class="note">In the <a href="/portal/search.html" style="color:var(--primary);">Search CRM</a>, filter the list (sector, CAE, region, revenue, stage…) and use <b>Add to campaign</b>: every company matching the filters is added, and the filter is saved with the campaign for Metrics. <i>That button arrives in the next update (step 3b).</i></p>`}`;
+        : `<p class="note">In the <a href="/portal/search.html" style="color:var(--primary);">Search CRM</a>, filter the list (sector, CAE, region, revenue, stage…) and use <b>📣 Add to campaign</b> in the toolbar: every company matching the filters is added, and the filter is saved with the campaign for Metrics. You can also tick companies in the list (<b>Add selected to campaign</b>), or use <b>📣 Campaign</b> on a company page.</p>`}`;
       const csvResultHtml = () => `<dl class="summary">
           <dt>Rows</dt><dd>${num(csv.rows)}</dd>
           <dt>Matched</dt><dd><b>${num(csv.matched.length)}</b> companies</dd>
