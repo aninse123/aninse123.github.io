@@ -963,10 +963,9 @@
 
     async function assignCompany(t) {
       await ensureCompanies();
-      if (!companies) { toast('Open the Search CRM once so this browser has the company list, then try again.'); return; }
-      const q = prompt('Company name or email domain to assign this conversation to:', (t.contactEmail || '').split('@')[1] || '');
+      const q = prompt('Company name (start of it) or email address to assign this conversation to:', t.contactEmail || '');
       if (!q) return;
-      const hits = searchCompanies(q, 8);
+      const hits = await findCompanies(q, 8);
       if (!hits.length) { toast('No company matches that.'); return; }
       const choice = hits.length === 1 ? hits[0] : hits[Number(prompt(hits.map((c, i) => `${i + 1}. ${c.name} (${c.companyEmail || 'no email'})`).join('\n') + '\n\nNumber:')) - 1];
       if (!choice) return;
@@ -1032,7 +1031,22 @@
       companies = docs && docs.length ? docs : null;
       $('coHint').textContent = companies
         ? `${num(companies.length)} companies from this browser's Search CRM list.`
-        : 'Company list not found in this browser — open the Search CRM once (it caches the list here), then come back.';
+        : 'Searching the database by the start of the company name (e.g. DIMEXA) or an exact email — up to 10 results.';
+    }
+    // Without the Search CRM's cached list, search Firestore directly: a
+    // prefix match on the (mostly upper-case, Orbis) legal name, or an exact
+    // company email. Up to 10 reads per search.
+    async function findCompanies(q, max = 10) {
+      if (companies) return searchCompanies(q, max);
+      const raw = String(q || '').trim();
+      if (raw.length < 2) return [];
+      const col = collection(db, 'searchCompanies');
+      const qy = raw.includes('@')
+        ? query(col, where('companyEmail', '==', raw.toLowerCase()), limit(max))
+        : query(col, where('name', '>=', raw.toUpperCase()), where('name', '<=', raw.toUpperCase() + '\uf8ff'), orderBy('name'), limit(max));
+      const snap = await getDocs(qy);
+      addReads(snap.size || 1); refreshReads();
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
     }
     const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     function searchCompanies(q, max = 12) {
@@ -1056,13 +1070,22 @@
         ta.value = ta.value.slice(0, s) + ins + ta.value.slice(ta.selectionEnd ?? s);
         ta.focus(); ta.selectionStart = ta.selectionEnd = s + ins.length; renderPreview();
       });
+      let searchTimer = null, lastHits = [];
       $('coSearch').addEventListener('input', () => {
-        const hits = searchCompanies($('coSearch').value);
-        const list = $('coResults');
-        list.innerHTML = hits.map(c => `<button type="button" class="picker__item" data-id="${esc(c.id)}">${esc(c.name)}<small>${esc(c.companyEmail || 'no email')}${c.concelho ? ' · ' + esc(c.concelho) : ''}${c.owner ? ' · ' + esc(OWNER_LABEL[c.owner] || c.owner) : ''}</small></button>`).join('');
-        list.hidden = !hits.length;
+        clearTimeout(searchTimer);
+        const q = $('coSearch').value;
+        searchTimer = setTimeout(async () => {  // debounced: remote searches cost reads
+          let hits = [];
+          try { hits = await findCompanies(q); } catch (e) { $('coHint').textContent = 'Search failed: ' + e.message; }
+          if ($('coSearch').value !== q) return; // typed on meanwhile
+          lastHits = hits;
+          const list = $('coResults');
+          list.innerHTML = hits.map(c => `<button type="button" class="picker__item" data-id="${esc(c.id)}">${esc(c.name)}<small>${esc(c.companyEmail || 'no email')}${c.concelho ? ' · ' + esc(c.concelho) : ''}${c.owner ? ' · ' + esc(OWNER_LABEL[c.owner] || c.owner) : ''}</small></button>`).join('')
+            || (q.trim().length >= 2 ? '<div class="picker__item" style="cursor:default;color:var(--text-light);">No company found</div>' : '');
+          list.hidden = !list.innerHTML;
+        }, companies ? 80 : 350);
       });
-      $('coResults').addEventListener('click', (e) => { const b = e.target.closest('[data-id]'); if (b) pickCompany(companies.find(c => c.id === b.dataset.id)); });
+      $('coResults').addEventListener('click', (e) => { const b = e.target.closest('[data-id]'); if (b) pickCompany(lastHits.find(c => c.id === b.dataset.id)); });
       document.addEventListener('click', (e) => { if (!e.target.closest('.picker')) $('coResults').hidden = true; });
       $('noCompany').addEventListener('change', () => { if ($('noCompany').checked) pickCompany(null); renderPreview(); });
       ['cSubject', 'cBody', 'cTo'].forEach(id => $(id).addEventListener('input', renderPreview));
