@@ -106,7 +106,8 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
   const cap = sender.dailyCap || DEFAULT_SENDER_CAP;
   const sentFromSender = daily.bySender?.[store.senderKey(senderId)] || 0;
   if (!isReply && sentFromSender >= cap) fail("resource-exhausted", "sender_cap", `${senderId} already sent ${sentFromSender} today (limit ${cap}). Use another address.`);
-  const used = usage.resendDailyUsed ?? 0;
+  // Resend's last reported count + portal activity since (received replies included).
+  const used = (usage.resendDailyUsed ?? 0) + Math.max(0, (daily.total || 0) - (usage.portalTotalAtReading || 0));
   if (used >= settings.dailyTarget && !input.confirmOverTarget) {
     fail("failed-precondition", "over_target", `The Resend account has already sent/received ${used} emails today (target ${settings.dailyTarget}). Confirm to send anyway.`, { used, target: settings.dailyTarget });
   }

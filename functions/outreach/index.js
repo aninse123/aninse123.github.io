@@ -5,6 +5,5 @@ module.exports = {
   ...require("./send"),        // outreachSend (callable)
   ...require("./webhook"),     // resendWebhook (HTTPS, Svix-signed)
   ...require("./unsubscribe"), // outreachUnsubscribe (HTTPS, douropartners.pt/u/*)
-  ...require("./usage"),       // outreachUsageRefresh (every 15 min)
   ...require("./admin"),       // outreachAdmin (callable: seed, clearTestData)
 };

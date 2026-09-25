@@ -543,13 +543,18 @@
       const target = settings?.dailyTarget || 100;
       const used = usageDoc.resendDailyUsed;
       const out = dailyDoc.outreachSent || 0, rep = dailyDoc.repliesSent || 0, rin = dailyDoc.received || 0;
-      const total = used != null ? used : out + rep + rin;
+      // Resend only reports its count when the portal sends (V7). Between
+      // sends, add the portal's own activity since that reading; Instantly and
+      // investor emails in the meantime aren't visible until the next send.
+      const sinceReading = used != null ? Math.max(0, (dailyDoc.total || 0) - (usageDoc.portalTotalAtReading || 0)) : 0;
+      const total = used != null ? used + sinceReading : out + rep + rin;
+      const approx = used == null || sinceReading > 0;
       const other = Math.max(0, total - out - rep - rin);
       const scale = Math.max(target, total) || 1;
       const w = (n) => (n / scale * 100) + '%';
       $('segOut').style.width = w(out); $('segRep').style.width = w(rep); $('segIn').style.width = w(rin); $('segOth').style.width = w(other);
       $('usageBar').classList.toggle('over', total >= target);
-      $('usageToday').textContent = `${num(total)} / ${num(target)}`;
+      $('usageToday').textContent = `${approx ? '≈ ' : ''}${num(total)} / ${num(target)}`;
       $('usageToday').style.color = total >= target ? 'var(--danger)' : '';
       $('usageLegend').innerHTML =
         `<span><i class="seg-out"></i>Outreach ${num(out)}</span><span><i class="seg-rep"></i>Replies ${num(rep)}</span>` +
@@ -559,8 +564,10 @@
       $('usageMonth').textContent = `${month != null ? num(month) : '—'} / ${num(MONTHLY_QUOTA)}`;
       $('monthFill').style.width = month != null ? Math.min(100, month / MONTHLY_QUOTA * 100) + '%' : '0%';
       const nextReset = new Date(); nextReset.setUTCHours(24, 0, 0, 0);
-      const updated = usageDoc.updatedAt ? `Updated ${timeFmt.format(new Date(tsMs(usageDoc.updatedAt)))}` : 'No reading from Resend yet today';
-      $('usageMeta').textContent = `${updated} · resets at ${timeFmt.format(nextReset)} (Lisbon) · above ${target} every send asks for confirmation`;
+      const updated = used != null
+        ? `Resend's count at ${timeFmt.format(new Date(tsMs(usageDoc.updatedAt)))}${sinceReading ? ` + ${sinceReading} portal email${sinceReading === 1 ? '' : 's'} since` : ''}`
+        : 'Portal emails only — Resend reports its full count on the first send of the day';
+      $('usageMeta').textContent = `${updated} · warm-up and investor emails show up at the next send · resets at ${timeFmt.format(nextReset)} (Lisbon) · above ${target} every send asks for confirmation`;
     }
 
     // ── Inbox ──────────────────────────────────────────────────

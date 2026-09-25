@@ -12,13 +12,19 @@ async function getSettings() {
   return { ...DEFAULT_SETTINGS, ...(snap.exists ? snap.data() : {}) };
 }
 
-// Account-wide Resend usage from the response headers (spec §7.6).
+// Account-wide Resend usage from the response headers (spec §7.6). Only send
+// responses carry these headers (V7, 2026-09-24: no read-only endpoint does),
+// so we also note how many portal emails today's counter held at that moment
+// — the usage bar adds portal activity since then to Resend's last figure.
+// Call after bumpDaily() for the same send.
 async function recordQuota(quota, source) {
   if (!quota || (quota.daily == null && quota.monthly == null)) return;
-  const upd = { updatedAt: FieldValue.serverTimestamp(), source };
+  const day = utcDayKey();
+  const daily = await db().doc(`outreachDaily/${day}`).get();
+  const upd = { updatedAt: FieldValue.serverTimestamp(), source, portalTotalAtReading: (daily.exists && daily.data().total) || 0 };
   if (quota.daily != null) upd.resendDailyUsed = quota.daily;
   if (quota.monthly != null) upd.resendMonthlyUsed = quota.monthly;
-  await db().doc(`outreachUsage/${utcDayKey()}`).set(upd, { merge: true });
+  await db().doc(`outreachUsage/${day}`).set(upd, { merge: true });
 }
 
 async function getTodayUsage() {

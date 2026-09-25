@@ -1,9 +1,9 @@
 // Outreach module — thin Resend REST client (Node 20's global fetch, no SDK).
 //
-// Every response carries x-resend-daily-quota / x-resend-monthly-quota: the
+// Send responses carry x-resend-daily-quota / x-resend-monthly-quota — the
 // *used* counts for the whole account (warm-up, investor emails and received
-// mail included). Each call returns them so the caller can feed the usage bar
-// (spec §7.6).
+// mail included); read-only calls don't (V7, 2026-09-24). Each call returns
+// whatever it got so the caller can feed the usage bar (spec §7.6).
 
 const API = "https://api.resend.com";
 
@@ -57,22 +57,4 @@ function listReceivedAttachments(key, id) {
   return call(key, "GET", `/emails/receiving/${encodeURIComponent(id)}/attachments?limit=100`);
 }
 
-// Cheap read-only calls, used only for their quota headers. /domains does NOT
-// return them (V7, 2026-09-24), so try the email endpoints first and report
-// which one answered.
-const USAGE_PROBES = ["/emails?limit=1", "/emails/receiving?limit=1", "/domains"];
-async function pingForUsage(key) {
-  let last = null;
-  for (const path of USAGE_PROBES) {
-    try {
-      const r = await call(key, "GET", path);
-      last = { ...r, path };
-      if (r.quota.daily != null || r.quota.monthly != null) return last;
-    } catch (e) {
-      if (e.quota && (e.quota.daily != null || e.quota.monthly != null)) return { data: null, quota: e.quota, path };
-    }
-  }
-  return last || { data: null, quota: { daily: null, monthly: null }, path: null };
-}
-
-module.exports = { ResendError, sendEmail, getEmail, getReceivedEmail, listReceivedAttachments, pingForUsage };
+module.exports = { ResendError, sendEmail, getEmail, getReceivedEmail, listReceivedAttachments };
