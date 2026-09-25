@@ -257,6 +257,21 @@
     .summary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 0.86rem; margin: 6px 0 12px; }
     .summary dt { color: var(--text-light); }
     .summary dd { font-variant-numeric: tabular-nums; }
+    .task { border: 1px solid var(--border); border-radius: var(--radius); background: var(--white); padding: 14px 16px; }
+    .task + .task { margin-top: 12px; }
+    .task--overdue { box-shadow: inset 3px 0 0 var(--danger); }
+    .task__head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: baseline; margin-bottom: 6px; }
+    .task__co { font-weight: 600; font-size: 0.92rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .task__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; margin: 10px 0; }
+    .task__grid > * { min-width: 0; }
+    .task__box { background: var(--tint); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-size: 0.82rem; line-height: 1.5; }
+    .task__box h4 { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin: 0 0 6px; }
+    .task__box a { color: var(--primary); }
+    .task__text { white-space: pre-wrap; overflow-wrap: anywhere; font-family: Arial, Helvetica, sans-serif; }
+    .outcomes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .ch { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 100px; font-size: 0.7rem; font-weight: 700; background: #EEF3F8; color: var(--primary-dark); }
+    .day-head { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin: 18px 0 8px; }
+    @media (max-width: 760px) { .task__grid { grid-template-columns: 1fr; } }
     .draft { border: 1px solid var(--border); border-radius: var(--radius); background: var(--white); padding: 14px 16px; }
     .draft + .draft { margin-top: 12px; }
     .draft__head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: baseline; margin-bottom: 8px; }
@@ -316,7 +331,8 @@
         <button class="tab active" role="tab" data-tab="inbox" aria-selected="true">Inbox<span class="count" id="unreadCount" hidden></span></button>
         <button class="tab" role="tab" data-tab="sent" aria-selected="false">Sent</button>
         <button class="tab" role="tab" data-tab="compose" aria-selected="false">Compose</button>
-        <button class="tab" role="tab" data-tab="campaigns" aria-selected="false">Campaigns<span class="count" id="approveCount" hidden title="Drafts waiting for approval"></span></button>
+        <button class="tab" role="tab" data-tab="campaigns" aria-selected="false">Campaigns</button>
+        <button class="tab" role="tab" data-tab="tasks" aria-selected="false">Tasks<span class="count" id="approveCount" hidden title="Tasks due today and drafts waiting for approval"></span></button>
         <button class="tab" role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
         <button class="tab" role="tab" data-tab="settings" aria-selected="false">Settings</button>
       </div>
@@ -438,11 +454,6 @@
       <!-- ── Metrics ───────────────────────────────────────────── -->
       <!-- ── Campaigns (Phase 2) ───────────────────────────────── -->
       <section class="panel" id="panel-campaigns" hidden>
-        <div class="chips subnav" id="campTop" role="tablist" aria-label="Campaigns views">
-          <button class="chip on" data-cview="list">Campaigns</button>
-          <button class="chip" data-cview="approve">To approve <span id="approveChipN"></span></button>
-        </div>
-        <div id="approveView" hidden></div>
         <div id="campList">
           <div class="card" style="padding:0;">
             <div class="toolbar">
@@ -482,6 +493,18 @@
           <div class="campsec" id="cs-sequence" hidden></div>
           <div class="campsec" id="cs-csettings" hidden></div>
         </div>
+      </section>
+
+      <!-- ── Tasks (Phase 2b): manual steps, approvals, letters ─────── -->
+      <section class="panel" id="panel-tasks" hidden>
+        <div class="chips subnav" id="taskTop" role="tablist" aria-label="Task views">
+          <button class="chip on" data-tview="todo">To do <span id="todoChipN"></span></button>
+          <button class="chip" data-tview="approve">To approve <span id="approveChipN"></span></button>
+          <button class="chip" data-tview="letters">Letters to print <span id="lettersChipN"></span></button>
+        </div>
+        <div id="todoView"></div>
+        <div id="approveView" hidden></div>
+        <div id="lettersView" hidden></div>
       </section>
 
       <section class="panel" id="panel-metrics" hidden>
@@ -624,8 +647,8 @@
             </div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>Name</th><th>Status</th><th>Variants</th><th>Language</th><th>Updated</th><th></th></tr></thead>
-                <tbody id="tplBody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+                <thead><tr><th>Name</th><th>Used for</th><th>Status</th><th>Variants</th><th>Language</th><th>Updated</th><th></th></tr></thead>
+                <tbody id="tplBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -767,6 +790,7 @@
       if (name === 'compose') ensureCompanies();
       if (name === 'metrics') loadMetrics(); // (re)renders at the now-visible width
       if (name === 'campaigns') { if (curCampId) loadCampaignData(); else loadCampCounts(); }
+      if (name === 'tasks') showTaskView(taskView);
     }
 
     // ── Live data ──────────────────────────────────────────────
@@ -1651,7 +1675,7 @@
       $('clearTestBtn').addEventListener('click', async () => {
         if (!confirm('Delete every conversation, message and activity created in test mode? Real data is not touched.')) return;
         const b = $('clearTestBtn'); b.disabled = true;
-        try { const r = (await callAdmin({ action: 'clearTestData' })).data; toast(`Removed ${r.threads} conversations, ${r.messages} messages, ${r.activities} activities, ${r.campaigns || 0} test campaigns.`); selectedId = null; $('threadView').innerHTML = '<div class="empty">Select a conversation.</div>'; }
+        try { const r = (await callAdmin({ action: 'clearTestData' })).data; toast(`Removed ${r.threads} conversations, ${r.messages} messages, ${r.activities} activities, ${r.campaigns || 0} test campaigns, ${r.tasks || 0} test tasks.`); selectedId = null; $('threadView').innerHTML = '<div class="empty">Select a conversation.</div>'; }
         catch (e) { toast('Could not clear: ' + errText(e)); }
         finally { b.disabled = false; }
       });
@@ -1814,7 +1838,7 @@
         countSnap(snap, first); first = false;
         templatesAll = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         renderTemplatesTable();
-        templates = templatesAll.filter(t => t.status === 'active');
+        templates = templatesAll.filter(t => t.status === 'active' && (t.kind || 'email') === 'email');
         const opts = templates.flatMap(t => (t.variants || []).map(v => `<option value="${esc(t.id)}::${esc(v.key)}">${esc(t.name)} — variant ${esc(v.key)}</option>`));
         const cur = $('cTpl').value;
         $('cTpl').innerHTML = '<option value="">— Write from scratch —</option>' + opts.join('');
@@ -1825,11 +1849,11 @@
     function renderTemplatesTable() {
       const kind = { active: 'good', draft: 'warn', archived: '' };
       $('tplBody').innerHTML = templatesAll.length ? templatesAll.map(t => `<tr>
-          <td>${esc(t.name)}</td><td><span class="pill${kind[t.status] ? ' pill--' + kind[t.status] : ''}">${esc(t.status)}</span></td>
+          <td>${esc(t.name)}</td><td>${esc((TEMPLATE_KINDS.find(k => k[0] === (t.kind || 'email')) || ['', 'Email'])[1])}</td><td><span class="pill${kind[t.status] ? ' pill--' + kind[t.status] : ''}">${esc(t.status)}</span></td>
           <td>${esc((t.variants || []).map(v => v.key).join(', '))}</td><td>${esc((t.language || 'pt').toUpperCase())}</td>
           <td style="white-space:nowrap;">${t.updatedAt ? esc(dayFmt.format(new Date(tsMs(t.updatedAt)))) : ''}</td>
           <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-tpl="${esc(t.id)}">Edit</button> <button class="btn btn--ghost btn--sm" data-tpl-dup="${esc(t.id)}">Duplicate</button></td></tr>`).join('')
-        : '<tr><td colspan="6" class="empty">No templates yet. Create the first one — Compose then lets you pick it.</td></tr>';
+        : '<tr><td colspan="7" class="empty">No templates yet. Create the first one — Compose then lets you pick it.</td></tr>';
       $('tplBody').querySelectorAll('[data-tpl]').forEach(b => b.addEventListener('click', () => openTemplate(templatesAll.find(t => t.id === b.dataset.tpl))));
       $('tplBody').querySelectorAll('[data-tpl-dup]').forEach(b => b.addEventListener('click', () => {
         const t = templatesAll.find(x => x.id === b.dataset.tplDup);
@@ -1838,12 +1862,13 @@
     }
 
     function openTemplate(t) {
-      const tpl = t || { id: null, name: '', language: 'pt', status: 'draft', variants: [{ key: 'A', subject: '', body: '' }] };
+      const tpl = t || { id: null, name: '', language: 'pt', status: 'draft', kind: 'email', variants: [{ key: 'A', subject: '', body: '' }] };
+      const kindNow = () => $('tKind')?.value || tpl.kind || 'email';
       let variants = (tpl.variants || []).map(v => ({ ...v }));
       const variantHtml = () => variants.map((v, i) => `
         <div class="variant" data-i="${i}">
           <div class="variant__head"><span>Variant ${esc(v.key)}</span>${variants.length > 1 ? `<button type="button" class="btn btn--ghost btn--sm" data-rm="${i}">Remove</button>` : ''}</div>
-          <div class="field"><label>Subject</label><input type="text" data-f="subject" value="${esc(v.subject || '')}"></div>
+          <div class="field" data-subjwrap><label>${kindNow() === 'letter' ? 'Subject line (optional — printed as "Assunto:")' : 'Subject'}</label><input type="text" data-f="subject" value="${esc(v.subject || '')}"></div>
           <div class="field" style="margin-bottom:0;"><label>Message</label><textarea rows="7" data-f="body">${esc(v.body || '')}</textarea></div>
         </div>`).join('');
       openModal(t?.id ? 'Edit template' : 'New template', `
@@ -1854,15 +1879,19 @@
             <div class="field"><label for="tStatus">Status</label><select id="tStatus">${['draft', 'active', 'archived'].map(s => `<option value="${s}"${tpl.status === s ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
           </div>
         </div>
-        <p class="hint" style="margin:-4px 0 12px;">Fields: ${VARS.map(v => `<code>{{${esc(v)}}}</code>`).join(' ')} — give a fallback after <code>|</code> for fields that can be empty. Only <b>active</b> templates appear in Compose.</p>
+        <div class="field"><label for="tKind">Used for</label><select id="tKind">${TEMPLATE_KINDS.map(([k, l]) => `<option value="${k}"${(tpl.kind || 'email') === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+          <span class="hint">Email templates appear in Compose, replies and email steps; letters, messages and call scripts in the matching campaign steps and tasks.</span></div>
+        <p class="hint" style="margin:-4px 0 12px;">Fields: ${VARS.map(v => `<code>{{${esc(v)}}}</code>`).join(' ')} — give a fallback after <code>|</code> for fields that can be empty. Only <b>active</b> templates can be used.</p>
         <div id="tVariants">${variantHtml()}</div>
         <button type="button" class="btn btn--ghost btn--sm" id="tAddVar">Add variant</button>`,
         async () => {
           collect();
           const name = $('tName').value.trim();
           if (!name) { modalError('Give the template a name.'); return false; }
-          if (variants.some(v => !v.subject.trim() || !v.body.trim())) { modalError('Every variant needs a subject and a message.'); return false; }
-          const data = { name, language: $('tLang').value, status: $('tStatus').value, layout: 'plain', variants, updatedAt: serverTimestamp(), updatedBy: me };
+          const kind = $('tKind').value;
+          const needsSubject = kind === 'email';
+          if (variants.some(v => (needsSubject && !v.subject.trim()) || !v.body.trim())) { modalError(needsSubject ? 'Every variant needs a subject and a message.' : 'Every variant needs a message.'); return false; }
+          const data = { name, kind, language: $('tLang').value, status: $('tStatus').value, layout: kind === 'letter' ? 'letter' : 'plain', variants, updatedAt: serverTimestamp(), updatedBy: me };
           if (t?.id) await updateDoc(doc(db, 'outreachTemplates', t.id), data);
           else await addDoc(collection(db, 'outreachTemplates'), { ...data, complianceBlockId: 'default', createdAt: serverTimestamp(), createdBy: me });
           toast(`Template "${name}" saved.`);
@@ -1874,9 +1903,11 @@
           v.subject = el.querySelector('[data-f="subject"]').value; v.body = el.querySelector('[data-f="body"]').value;
         });
       }
-      function rerender() { $('tVariants').innerHTML = variantHtml(); bindRemove(); }
+      function rerender() { $('tVariants').innerHTML = variantHtml(); bindRemove(); $('tVariants').querySelectorAll('[data-subjwrap]').forEach(w => { w.hidden = ['message', 'script'].includes(kindNow()); }); }
       function bindRemove() { $('tVariants').querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => { collect(); variants.splice(Number(b.dataset.rm), 1); rerender(); })); }
       bindRemove();
+      $('tKind').addEventListener('change', () => { collect(); rerender(); $('tVariants').querySelectorAll('[data-subjwrap]').forEach(w => { w.hidden = ['message', 'script'].includes(kindNow()); }); });
+      $('tVariants').querySelectorAll('[data-subjwrap]').forEach(w => { w.hidden = ['message', 'script'].includes(kindNow()); });
       $('tAddVar').addEventListener('click', () => {
         collect();
         const next = String.fromCharCode(65 + variants.length);
@@ -1978,27 +2009,32 @@
     const tplName = (id) => templatesAll.find(t => t.id === id)?.name || (id ? 'Template not found' : '—');
 
     function setupCampaigns() {
-      $('campTop').addEventListener('click', (e) => { const b = e.target.closest('[data-cview]'); if (b) showCampView(b.dataset.cview); });
+      $('taskTop').addEventListener('click', (e) => { const b = e.target.closest('[data-tview]'); if (b) showTaskView(b.dataset.tview); });
       $('campNew').addEventListener('click', newCampaign);
       $('campBack').addEventListener('click', closeCampaign);
       $('campRefresh').addEventListener('click', loadCampCounts);
       $('campShowArchived').addEventListener('change', renderCampList);
       $('campNav').addEventListener('click', (e) => { const b = e.target.closest('[data-csec]'); if (b) showCampSec(b.dataset.csec); });
-      watchCampaigns(); watchDrafts();
+      watchCampaigns(); watchDrafts(); watchTasks();
     }
 
-    // Top of the Campaigns tab: the campaign list (or one campaign) vs the
-    // "To approve" queue (moves to the Tasks tab with Phase 2b).
-    let campView = 'list';
-    function showCampView(v) {
-      if (v === 'approve' && (seqDirty || csetDirty) && !confirm('Leave without saving your changes?')) return;
-      if (v === 'approve') { seqDirty = csetDirty = false; }
-      campView = v;
-      $('campTop').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.cview === v));
+    // Tasks tab: to do (manual steps), to approve (drafts), letters to print.
+    let taskView = 'todo';
+    function showTaskView(v) {
+      taskView = v;
+      $('taskTop').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.tview === v));
+      $('todoView').hidden = v !== 'todo';
       $('approveView').hidden = v !== 'approve';
-      $('campList').hidden = v !== 'list' || !!curCampId;
-      $('campPage').hidden = v !== 'list' || !curCampId;
+      $('lettersView').hidden = v !== 'letters';
+      if (v === 'todo') renderTodo();
       if (v === 'approve') renderApprove();
+      if (v === 'letters') renderLetters();
+    }
+    function goToApprove(campaignId) {
+      if ((seqDirty || csetDirty) && !confirm('Leave without saving your changes?')) return;
+      seqDirty = csetDirty = false;
+      approveFilter = campaignId || 'all';
+      showTab('tasks'); showTaskView('approve');
     }
 
     function watchCampaigns() {
@@ -2068,7 +2104,7 @@
     }
 
     function openCampaign(id, sec = 'overview') {
-      if (campView !== 'list') { campView = 'list'; $('campTop').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.cview === 'list')); $('approveView').hidden = true; }
+      if ($('panel-campaigns').hidden) showTab('campaigns');
       curCampId = id; seqDraft = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = '';
       $('campList').hidden = true; $('campPage').hidden = false;
       curEnrols = []; curThreads = [];
@@ -2198,6 +2234,15 @@
       const perDay = (c.pacing?.newPerDay || 20) * Math.max(1, steps.length);
       const limitN = settings?.automationBudget ?? 80;
 
+      // Per channel: what the manual steps produced (outcome counts from history).
+      const chanRows = Object.entries(steps.reduce((acc, s) => { if (s.channel && s.channel !== 'email') (acc[s.channel] = acc[s.channel] || []).push(s.id); return acc; }, {})).map(([ch, ids]) => {
+        const outs = {};
+        curEnrols.forEach(e => (e.history || []).filter(h => ids.includes(h.stepId)).forEach(h => { outs[h.result] = (outs[h.result] || 0) + 1; }));
+        const open = curEnrols.filter(e => e.status === 'awaiting_task' && ids.includes(steps[e.currentStep]?.id)).length;
+        const done = Object.values(outs).reduce((a, n) => a + n, 0);
+        const txt = Object.entries(outs).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${num(n)} ${esc(outcomeLabel(ch, k))}`).join(' · ');
+        return `<tr><td>${esc(CHANNEL_LABELS[ch] || ch)}</td><td class="num">${num(done)}</td><td class="num">${num(open)}</td><td style="font-size:0.78rem;">${txt || '—'}</td></tr>`;
+      }).join('');
       const stepRows = steps.map((s, i) => {
         const hist = curEnrols.flatMap(e => (e.history || []).filter(h => h.stepId === s.id).map(h => ({ ...h, e })));
         const repliedHere = curEnrols.filter(e => e.status === 'replied' && (e.history || []).slice(-1)[0]?.stepId === s.id);
@@ -2205,14 +2250,15 @@
         hist.forEach(h => { const k = h.variant || '—'; variants[k] = variants[k] || { sent: 0, replied: 0 }; variants[k].sent++; });
         repliedHere.forEach(e => { const k = e.variants?.[s.id] || '—'; variants[k] = variants[k] || { sent: 0, replied: 0 }; variants[k].replied++; });
         const vtxt = Object.keys(variants).sort().map(k => `${esc(k)}: ${num(variants[k].sent)} sent · ${num(variants[k].replied)} replied (${pctTxt(pct(variants[k].replied, variants[k].sent))})`).join('<br>');
-        return `<tr><td>${i + 1}. ${esc(s.name)}</td><td class="clip">${esc(tplName(s.templateId))}</td><td class="num">${num(hist.length)}</td><td class="num">${num(repliedHere.length)}</td><td style="font-size:0.78rem;">${vtxt || '—'}</td></tr>`;
+        return `<tr><td>${i + 1}. ${esc(s.name)} <span class="ch">${esc(CHANNEL_LABELS[s.channel || 'email'])}</span></td><td class="clip">${esc(s.templateId ? tplName(s.templateId) : (s.channel && s.channel !== 'email' ? '—' : tplName(s.templateId)))}</td><td class="num">${num(hist.length)}</td><td class="num">${num(repliedHere.length)}</td><td style="font-size:0.78rem;">${vtxt || '—'}</td></tr>`;
       }).join('');
 
       $('cs-overview').innerHTML = `
         <div class="kpis">
           ${kpi('Companies', num(total), `${num(by.pending || 0)} waiting to start`)}
-          ${kpi('In sequence', num((by.active || 0) + (by.awaiting_task || 0)), `${num(by.paused || 0)} paused`)}
+          ${kpi('In sequence', num(by.active || 0), `${num(by.paused || 0)} paused`)}
           ${kpi('To approve', num(by.awaiting_approval || 0), by.awaiting_approval ? `<button class="camp-link" id="ovApprove" style="font-size:0.74rem;">Open the queue →</button>` : 'drafts waiting')}
+          ${steps.some(s => s.channel && s.channel !== 'email') ? kpi('Tasks open', num(by.awaiting_task || 0), by.awaiting_task ? `<button class="camp-link" id="ovTasks" style="font-size:0.74rem;">Open tasks →</button>` : 'calls, LinkedIn, letters…') : ''}
           ${kpi('Emails sent', num(sent), `to ${num(contacted)} companies`)}
           ${kpi('Replied', num(replied), `${pctTxt(pct(replied, contacted))} of contacted`)}
           ${kpi('Positive', num(positive), 'interested · call back · referred')}
@@ -2226,6 +2272,8 @@
               <thead><tr><th>Step</th><th>Template</th><th class="num">Sent</th><th class="num">Replied after it</th><th>Variants</th></tr></thead>
               <tbody>${stepRows || '<tr><td colspan="5" class="empty">No steps yet — write the sequence.</td></tr>'}</tbody>
             </table></div>
+            ${chanRows ? `<div style="padding:14px 16px 4px;"><h3>Manual steps by channel</h3></div><div class="table-wrap"><table>
+              <thead><tr><th>Channel</th><th class="num">Done</th><th class="num">Open</th><th>Outcomes</th></tr></thead><tbody>${chanRows}</tbody></table></div>` : ''}
           </div>
           <div class="card">
             <h3>Pace</h3>
@@ -2239,7 +2287,8 @@
     }
 
     function wireOverview() {
-      $('ovApprove')?.addEventListener('click', () => { approveFilter = curCampId; showCampView('approve'); });
+      $('ovApprove')?.addEventListener('click', () => goToApprove(curCampId));
+      $('ovTasks')?.addEventListener('click', () => { todoCampaign = curCampId; showTab('tasks'); showTaskView('todo'); });
     }
 
     // ── Companies (audience) ──
@@ -2247,7 +2296,8 @@
       const steps = c.steps || [];
       if (e.status === 'pending') return 'Not started';
       if (!LIVE_ENROL.includes(e.status)) return (e.history || []).length ? `${(e.history || []).length} of ${steps.length} sent` : '—';
-      if (e.currentStep >= steps.length) return 'All sent — waiting for a reply';
+      if (e.currentStep >= steps.length) return 'All steps done — waiting for a reply';
+      if (e.status === 'awaiting_task') return `${esc(steps[e.currentStep]?.name || 'Task')} — task open (${e.currentStep + 1} of ${steps.length})`;
       return `${esc(steps[e.currentStep]?.name || 'Step ' + (e.currentStep + 1))} (${e.currentStep + 1} of ${steps.length})`;
     }
     function renderAudience() {
@@ -2504,9 +2554,9 @@
         drafts = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.source === 'campaign')
           .sort((a, b) => tsMs(a.createdAt) - tsMs(b.createdAt));
         const n = drafts.length;
-        $('approveCount').textContent = n; $('approveCount').hidden = !n;
         $('approveChipN').textContent = n ? `(${num(n)})` : '';
-        if (campView === 'approve') renderApprove();
+        updateTaskBadge();
+        if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove();
       }, (e) => console.warn('drafts', e));
     }
 
@@ -2553,7 +2603,7 @@
         ${list.length > shown.length ? `<p class="hint" style="margin-top:10px;">Showing the oldest ${num(shown.length)} of ${num(list.length)}.</p>` : ''}`;
 
       $('apFilter').addEventListener('change', (e) => { approveFilter = e.target.value; renderApprove(); });
-      $('approveView').querySelectorAll('[data-opencamp]').forEach(b => b.addEventListener('click', () => openCampaign(b.dataset.opencamp)));
+      $('approveView').querySelectorAll('[data-opencamp]').forEach(b => b.addEventListener('click', () => { showTab('campaigns'); openCampaign(b.dataset.opencamp); }));
       $('apAll')?.addEventListener('click', async () => {
         const ids = list.slice(0, 300).map(d => d.id);
         if (draftEdits.size && !confirm('Some drafts have unsaved edits — "Approve all" sends the original text for those. Continue?')) return;
@@ -2593,30 +2643,311 @@
       });
     }
 
+    // ── Tasks (Phase 2b): manual steps ──
+    // Same outcomes as functions/outreach/task_util.js (the server validates).
+    const TEMPLATE_KINDS = [['email', 'Email'], ['letter', 'Letter'], ['message', 'LinkedIn / WhatsApp message'], ['script', 'Call script']];
+    const CHANNEL_LABELS = { email: 'Email', linkedin: 'LinkedIn', call: 'Call', whatsapp: 'WhatsApp', letter: 'Letter', visit: 'Visit', other: 'Other task' };
+    const CHANNEL_KIND = { email: 'email', letter: 'letter', linkedin: 'message', whatsapp: 'message', call: 'script' };
+    const TASK_OUTCOMES = {
+      linkedin: [['viewed', 'Viewed profile'], ['request_sent', 'Request sent'], ['accepted', 'Accepted'], ['messaged', 'Messaged'], ['replied', 'Replied', 'reply'], ['not_found', 'Not found']],
+      call: [['connected', 'Connected', 'reply'], ['no_answer', 'No answer'], ['voicemail', 'Voicemail'], ['wrong_number', 'Wrong number'], ['callback', 'Call back on…', 'reopen']],
+      whatsapp: [['sent', 'Sent'], ['replied', 'Replied', 'reply'], ['not_on_whatsapp', 'Not on WhatsApp']],
+      letter: [['posted', 'Printed & posted'], ['returned', 'Returned']],
+      visit: [['met', 'Met', 'reply'], ['not_there', 'Not there'], ['reschedule', 'Reschedule…', 'reopen']],
+      other: [['done', 'Done']],
+    };
+    const outcomeLabel = (ch, k) => k === 'skipped' ? 'skipped' : k === 'sent' && ch === 'email' ? 'sent' : ((TASK_OUTCOMES[ch] || []).find(o => o[0] === k) || [k, k])[1].toLowerCase();
+    const OWNER_FULL = { andre: 'André Rocha', antonio: 'António Carvalho' };
+
+    let tasks = [];
+    let todoWho = 'mine', todoChannel = 'all', todoCampaign = 'all';
+    const coCache = new Map(); // companyId → company doc (task cards and letters)
+
+    function watchTasks() {
+      let first = true;
+      onSnapshot(query(collection(db, 'outreachTasks'), where('status', '==', 'open')), (snap) => {
+        countSnap(snap, first); first = false;
+        tasks = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => tsMs(a.dueAt) - tsMs(b.dueAt));
+        const letters = tasks.filter(t => t.channel === 'letter').length;
+        $('lettersChipN').textContent = letters ? `(${num(letters)})` : '';
+        updateTaskBadge();
+        if (!$('panel-tasks').hidden) { if (taskView === 'todo') renderTodo(); if (taskView === 'letters') renderLetters(); }
+      }, (e) => console.warn('tasks', e));
+    }
+    const endOfToday = () => { const d = new Date(); d.setHours(23, 59, 59, 999); return d.getTime(); };
+    const mineOrOpen = (t) => !t.assignee || t.assignee === myOwner;
+    function updateTaskBadge() {
+      const dueMine = tasks.filter(t => t.channel !== 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
+      const n = dueMine + drafts.length + tasks.filter(t => t.channel === 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
+      $('approveCount').textContent = n; $('approveCount').hidden = !n;
+      $('todoChipN').textContent = dueMine ? `(${num(dueMine)} due)` : '';
+    }
+
+    async function loadCompaniesFor(ids) {
+      const need = [...new Set(ids)].filter(id => id && !coCache.has(id));
+      if (!need.length) return;
+      if (companies) need.forEach(id => { const c = companies.find(x => x.id === id); if (c) coCache.set(id, c); });
+      const rest = need.filter(id => !coCache.has(id));
+      for (let i = 0; i < rest.length; i += 30) {
+        const snap = await getDocs(query(collection(db, 'searchCompanies'), where(documentId(), 'in', rest.slice(i, i + 30))));
+        addReads(snap.size || 1);
+        snap.docs.forEach(d => coCache.set(d.id, { id: d.id, ...d.data() }));
+      }
+      refreshReads();
+    }
+    function coCtx(c, assignee) {
+      const full = OWNER_FULL[assignee] || OWNER_FULL[myOwner] || '';
+      return {
+        company: { name: c?.name || '', shortName: shortName(c?.name), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '' },
+        contact: { firstName: '' },
+        sender: { firstName: full.split(' ')[0] || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
+        unsubscribeUrl: '',
+      };
+    }
+    // Plain-text fill (for text to copy, WhatsApp links and letters).
+    function fillText(str, ctx) {
+      return String(str || '').replace(/\{\{\s*([\w.]+)\s*(?:\|([^}]*))?\}\}/g, (all, path, fb) => {
+        const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), ctx);
+        if (v != null && String(v).trim()) return String(v);
+        return fb != null ? fb.trim() : `[${path}]`;
+      });
+    }
+    function taskTemplateText(t, c) {
+      const tpl = templatesAll.find(x => x.id === t.templateId);
+      if (!tpl) return null;
+      const v = (tpl.variants || []).find(x => x.key === t.variantKey) || (tpl.variants || [])[0];
+      if (!v) return null;
+      const ctx = coCtx(c, t.assignee);
+      return { subject: v.subject ? fillText(v.subject, ctx) : '', body: fillText(v.body, ctx), name: tpl.name };
+    }
+    const telHref = (n) => 'tel:' + String(n || '').replace(/[^\d+]/g, '');
+    function waNumber(n) {
+      let d = String(n || '').replace(/[^\d+]/g, '');
+      if (d.startsWith('+')) d = d.slice(1); else if (d.startsWith('00')) d = d.slice(2); else if (/^[29]\d{8}$/.test(d)) d = '351' + d;
+      return d.length >= 11 ? d : null;
+    }
+    const isMobilePt = (n) => /^(\+?351)?9\d{8}$/.test(String(n || '').replace(/[^\d+]/g, ''));
+
+    function contactBox(t, c) {
+      const lines = [];
+      const ch = t.channel;
+      const cName = shortName(c?.name);
+      if (['call', 'whatsapp', 'visit', 'other'].includes(ch) && c?.companyPhone) {
+        lines.push(`Company line: <a href="${esc(telHref(c.companyPhone))}">${esc(c.companyPhone)}</a>${isMobilePt(c.companyPhone) ? ' <span class="pill pill--warn" title="A mobile number may be a person\'s own phone — same consent rule as email (D3)">mobile</span>' : ''}`);
+      }
+      (c?.contacts || []).slice(0, 4).forEach(p => {
+        const bits = [esc(p.name || 'Contact'), p.role ? `<span class="hint">${esc(p.role)}</span>` : ''];
+        if (p.phone && ['call', 'whatsapp', 'visit', 'other'].includes(ch)) bits.push(`<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>${isMobilePt(p.phone) ? ' <span class="pill pill--warn" title="Probably a personal mobile — WhatsApp/calls to a private person fall under the same consent rule as email (D3)">personal?</span>' : ''}`);
+        if (p.linkedin && ch === 'linkedin') bits.push(`<a href="${esc(p.linkedin)}" target="_blank" rel="noopener noreferrer">LinkedIn</a>`);
+        lines.push(bits.filter(Boolean).join(' · '));
+      });
+      if (ch === 'linkedin') {
+        if (c?.linkedinUrl) lines.push(`<a href="${esc(/^https?:/i.test(c.linkedinUrl) ? c.linkedinUrl : 'https://' + c.linkedinUrl)}" target="_blank" rel="noopener noreferrer">Company page on LinkedIn</a>`);
+        lines.push(`Search: <a href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(cName + ' gerente')}" target="_blank" rel="noopener noreferrer">owner / manager at ${esc(cName)}</a> · <a href="https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(cName)}" target="_blank" rel="noopener noreferrer">company</a>`);
+      }
+      if (['letter', 'visit'].includes(ch) || !lines.length) {
+        const addr = [c?.hqAddress, [c?.postcode, c?.concelho].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+        lines.push(addr ? `Address: ${esc(addr)}` : '<span class="hint">No address on file.</span>');
+      }
+      if (c?.companyEmail) lines.push(`Email: ${esc(c.companyEmail)}`);
+      if (c?.website) lines.push(`<a href="${esc(/^https?:/i.test(c.website) ? c.website : 'https://' + c.website)}" target="_blank" rel="noopener noreferrer">${esc(c.website)}</a>`);
+      return lines.map(l => `<div>${l}</div>`).join('');
+    }
+
+    async function renderTodo() {
+      if (document.activeElement?.closest?.('#todoView .task')) return;
+      const open = tasks.filter(t => t.channel !== 'letter');
+      const list = open.filter(t => (todoWho === 'all' || (todoWho === 'mine' ? mineOrOpen(t) : todoWho === 'none' ? !t.assignee : t.assignee === todoWho))
+        && (todoChannel === 'all' || t.channel === todoChannel) && (todoCampaign === 'all' || t.campaignId === todoCampaign));
+      const shown = list.slice(0, 40);
+      await loadCompaniesFor(shown.map(t => t.companyId));
+      if (document.activeElement?.closest?.('#todoView .task')) return;
+      const campOpts = [...new Set(open.map(t => t.campaignId))];
+      const eot = endOfToday();
+      const dueNow = shown.filter(t => tsMs(t.dueAt) <= eot), later = shown.filter(t => tsMs(t.dueAt) > eot);
+      const card = (t) => {
+        const c = coCache.get(t.companyId) || {};
+        const overdue = tsMs(t.dueAt) < new Date().setHours(0, 0, 0, 0);
+        const txt = taskTemplateText(t, c);
+        const outs = TASK_OUTCOMES[t.channel] || [];
+        const wa = t.channel === 'whatsapp' ? waNumber(c.companyPhone || (c.contacts || []).find(p => p.phone)?.phone) : null;
+        return `<div class="task${overdue ? ' task--overdue' : ''}" data-tid="${esc(t.id)}">
+          <div class="task__head">
+            <span class="task__co"><span class="ch">${esc(CHANNEL_LABELS[t.channel])}</span><a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}" style="color:var(--text);">${esc(t.companyName || c.name || 'Company')}</a>${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}</span>
+            <span class="hint">${overdue ? '<b style="color:var(--danger);">overdue</b> · ' : ''}due ${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}${t.attempts?.length ? ` · ${t.attempts.length} earlier attempt${t.attempts.length === 1 ? '' : 's'}` : ''}</span>
+          </div>
+          <div class="draft__meta">
+            <span><button class="camp-link" style="font-size:0.76rem;" data-topencamp="${esc(t.campaignId)}">${esc(t.campaignName || 'Campaign')}</button> · ${esc(t.stepName || '')} (${(t.stepIndex ?? 0) + 1} of ${t.stepCount || '?'})</span>
+            <span>for <select data-tassign style="width:auto;padding:2px 6px;font-size:0.76rem;"><option value="">nobody</option>${Object.entries(OWNER_LABEL).map(([k, l]) => `<option value="${k}"${t.assignee === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></span>
+          </div>
+          ${t.instructions ? `<div class="note" style="margin-bottom:8px;"><b>To do:</b> ${esc(t.instructions)}</div>` : ''}
+          <div class="task__grid">
+            <div class="task__box"><h4>Contact</h4>${contactBox(t, c)}</div>
+            <div class="task__box"><h4>${t.channel === 'call' ? 'Script' : t.channel === 'letter' ? 'Letter' : 'Message'}${txt ? ` <span style="text-transform:none;letter-spacing:0;font-weight:400;">· ${esc(txt.name)}</span>` : ''}</h4>
+              ${txt ? `<div class="task__text">${esc(txt.body)}</div>
+                <div class="actions" style="margin-top:8px;"><button class="btn btn--ghost btn--sm" data-tcopy>Copy text</button>${wa ? `<a class="btn btn--ghost btn--sm" href="https://wa.me/${esc(wa)}?text=${encodeURIComponent(txt.body)}" target="_blank" rel="noopener noreferrer">Open in WhatsApp</a>` : ''}</div>`
+                : `<span class="hint">No ${t.channel === 'call' ? 'script' : 'template'} for this step.</span>${wa ? ` <a href="https://wa.me/${esc(wa)}" target="_blank" rel="noopener noreferrer">Open WhatsApp chat</a>` : ''}`}
+            </div>
+          </div>
+          <div class="field" style="margin-bottom:8px;"><label>Notes</label><textarea data-tnotes rows="2" placeholder="What happened (saved on the company's activity)">${esc(t.notes || '')}</textarea></div>
+          ${t.channel === 'linkedin' ? '<div class="field" style="margin-bottom:8px;"><label>Profile URL (optional)</label><input type="text" data-tprofile placeholder="https://www.linkedin.com/in/…"></div>' : ''}
+          ${outs.some(o => o[2] === 'reopen') ? '<div class="field" style="margin-bottom:8px;max-width:260px;"><label>Next attempt (for call back / reschedule)</label><input type="date" data-treopen></div>' : ''}
+          ${outs.some(o => o[2] === 'reply') ? '<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this company</span></label>' : ''}
+          <div class="outcomes">${outs.map(([k, l, f]) => `<button class="btn btn--${f === 'reply' ? 'primary' : 'ghost'} btn--sm" data-tout="${k}">${esc(l)}</button>`).join('')}
+            <button class="btn btn--ghost btn--sm" data-tout="skipped" style="margin-left:auto;" title="Move on without doing this step">Skip step</button></div>
+        </div>`;
+      };
+      $('todoView').innerHTML = `
+        <div class="card" style="padding:0;margin-bottom:14px;">
+          <div class="toolbar">
+            <div class="chips" id="todoWho">${[['mine', 'Mine'], ...Object.entries(OWNER_LABEL).filter(([k]) => k !== myOwner), ['none', 'Unassigned'], ['all', 'All']].map(([k, l]) => `<button class="chip${todoWho === k ? ' on' : ''}" data-who="${k}">${esc(l)}</button>`).join('')}</div>
+            <select id="todoCh" aria-label="Channel"><option value="all">All channels</option>${Object.keys(TASK_OUTCOMES).filter(k => k !== 'letter').map(k => `<option value="${k}"${todoChannel === k ? ' selected' : ''}>${esc(CHANNEL_LABELS[k])}</option>`).join('')}</select>
+            <select id="todoCamp" aria-label="Campaign"><option value="all">All campaigns</option>${campOpts.map(id => `<option value="${esc(id)}"${todoCampaign === id ? ' selected' : ''}>${esc(campaigns.find(c => c.id === id)?.name || 'Campaign')}</option>`).join('')}</select>
+          </div>
+          <p class="hint" style="padding:10px 14px;">Calls, LinkedIn, WhatsApp, visits and other steps from campaigns. Each outcome is saved on the company's activities; the sequence waits until the task is done or skipped. Letters are under <b>Letters to print</b>.</p>
+        </div>
+        ${dueNow.length ? `<div class="day-head">Due now (${num(dueNow.length)})</div>${dueNow.map(card).join('')}` : ''}
+        ${later.length ? `<div class="day-head">Later</div>${later.map(card).join('')}` : ''}
+        ${!shown.length ? '<div class="card"><div class="empty">Nothing to do here. Tasks appear when a campaign reaches a call, LinkedIn, WhatsApp, visit or other step.</div></div>' : ''}
+        ${list.length > shown.length ? `<p class="hint" style="margin-top:10px;">Showing the first ${num(shown.length)} of ${num(list.length)}.</p>` : ''}`;
+      $('todoWho').querySelectorAll('[data-who]').forEach(b => b.addEventListener('click', () => { todoWho = b.dataset.who; renderTodo(); }));
+      $('todoCh').addEventListener('change', (e) => { todoChannel = e.target.value; renderTodo(); });
+      $('todoCamp').addEventListener('change', (e) => { todoCampaign = e.target.value; renderTodo(); });
+      $('todoView').querySelectorAll('[data-topencamp]').forEach(b => b.addEventListener('click', () => { showTab('campaigns'); openCampaign(b.dataset.topencamp); }));
+      $('todoView').querySelectorAll('.task').forEach(el => {
+        const t = tasks.find(x => x.id === el.dataset.tid);
+        el.querySelector('[data-tcopy]')?.addEventListener('click', async () => {
+          try { await navigator.clipboard.writeText(el.querySelector('.task__text').textContent); toast('Copied.'); } catch (e) { toast('Copy failed — select the text instead.'); }
+        });
+        el.querySelector('[data-tassign]').addEventListener('change', async (e) => {
+          await campCall({ action: 'updateTask', taskId: t.id, assignee: e.target.value || null }, `Assigned to ${OWNER_LABEL[e.target.value] || 'nobody'}.`);
+        });
+        el.querySelectorAll('[data-tout]').forEach(b => b.addEventListener('click', async () => {
+          const outcome = b.dataset.tout;
+          const def = (TASK_OUTCOMES[t.channel] || []).find(o => o[0] === outcome);
+          const payload = { action: 'completeTask', taskId: t.id, outcome, notes: el.querySelector('[data-tnotes]').value };
+          if (def?.[2] === 'reopen') {
+            const d = el.querySelector('[data-treopen]')?.value;
+            if (!d) { toast('Pick the date for the next attempt first.'); el.querySelector('[data-treopen]')?.focus(); return; }
+            payload.reopenAt = new Date(d + 'T09:00:00').toISOString();
+          }
+          if (def?.[2] === 'reply') payload.stopSequence = el.querySelector('[data-tstop]')?.checked !== false;
+          if (t.channel === 'linkedin') payload.profileUrl = el.querySelector('[data-tprofile]')?.value || null;
+          if (outcome === 'skipped' && !confirm('Skip this step? The sequence moves on without it.')) return;
+          el.querySelectorAll('button').forEach(x => { x.disabled = true; });
+          document.activeElement?.blur();
+          const r = await campCall(payload, (x) => x.status === 'open' ? `Saved — next attempt on ${dayFmt.format(new Date(x.dueAt))}.` : x.sequence === 'stopped' ? 'Saved — the sequence stopped for this company.' : outcome === 'skipped' ? 'Step skipped.' : 'Saved.');
+          if (!r) el.querySelectorAll('button').forEach(x => { x.disabled = false; });
+        }));
+      });
+    }
+
+    // ── Letters to print (C1: plain A4, address block for a left window envelope, typed signature) ──
+    let letterSel = new Set();
+    async function renderLetters() {
+      const list = tasks.filter(t => t.channel === 'letter');
+      await loadCompaniesFor(list.slice(0, 200).map(t => t.companyId));
+      letterSel = new Set([...letterSel].filter(id => list.some(t => t.id === id)));
+      $('lettersView').innerHTML = `
+        <div class="card" style="padding:0;">
+          <div class="toolbar">
+            <label class="checkline"><input type="checkbox" id="letAll"${list.length && letterSel.size === list.length ? ' checked' : ''}> <span>Select all</span></label>
+            <button class="btn btn--primary btn--sm" id="letPrint"${letterSel.size ? '' : ' disabled'}>Print selected (${num(letterSel.size)})</button>
+            <button class="btn btn--ghost btn--sm" id="letPosted"${letterSel.size ? '' : ' disabled'}>Mark selected as printed &amp; posted</button>
+          </div>
+          <div class="table-wrap"><table>
+            <thead><tr><th></th><th>Company</th><th>Address</th><th>Campaign · step</th><th>Template</th><th>Due</th></tr></thead>
+            <tbody>${list.length ? list.map(t => {
+              const c = coCache.get(t.companyId) || {};
+              const addr = [c.hqAddress, [c.postcode, c.concelho].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+              return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}></td>
+                <td>${esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
+                <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
+                <td style="font-size:0.8rem;">${esc(t.campaignName || '')} · ${esc(t.stepName || '')}</td>
+                <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
+                <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
+            }).join('') : '<tr><td colspan="6" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
+          </table></div>
+          <p class="hint" style="padding:10px 14px;">Print on plain A4 and fold into a window envelope (address on the left). The legal entity line from Settings → Legal footer is printed at the bottom. After posting, mark them — the sequence then moves on.</p>
+        </div>`;
+      const sync = () => { $('letPrint').disabled = $('letPosted').disabled = !letterSel.size; $('letPrint').textContent = `Print selected (${num(letterSel.size)})`; };
+      $('lettersView').querySelectorAll('[data-let]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) letterSel.add(cb.dataset.let); else letterSel.delete(cb.dataset.let); sync(); }));
+      $('letAll')?.addEventListener('change', (e) => { letterSel = e.target.checked ? new Set(list.map(t => t.id)) : new Set(); renderLetters(); });
+      $('letPrint').addEventListener('click', () => printLetters(list.filter(t => letterSel.has(t.id))));
+      $('letPosted').addEventListener('click', async () => {
+        const ids = [...letterSel];
+        if (!confirm(`Mark ${num(ids.length)} letter${ids.length === 1 ? '' : 's'} as printed & posted? Each company's sequence moves on.`)) return;
+        let okN = 0;
+        for (const id of ids) { try { await callCampaign({ action: 'completeTask', taskId: id, outcome: 'posted' }); okN++; } catch (e) { console.warn('letter', id, e); } }
+        letterSel.clear();
+        toast(`${num(okN)} marked as posted${okN < ids.length ? ` — ${num(ids.length - okN)} failed, try again` : ''}.`);
+      });
+    }
+
+    async function printLetters(list) {
+      let entity = '';
+      try { const cs = await getDoc(doc(db, 'outreachCompliance', settings?.complianceBlockId || 'default')); addReads(1); entity = cs.exists() ? (cs.data().legalEntityLine || '') : ''; } catch (e) {}
+      const date = new Intl.DateTimeFormat('pt-PT', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
+      const pages = list.map(t => {
+        const c = coCache.get(t.companyId) || {};
+        const txt = taskTemplateText(t, c) || { subject: '', body: '(no letter template on this step)' };
+        const ctx = coCtx(c, t.assignee);
+        return `<section class="page">
+          <div class="addr">${esc(c.name || t.companyName || '')}<br>${esc(c.hqAddress || '')}<br>${esc([c.postcode, c.concelho].filter(Boolean).join(' '))}</div>
+          <p class="date">${esc(date)}</p>
+          ${txt.subject ? `<p class="subj"><b>Assunto:</b> ${esc(txt.subject)}</p>` : ''}
+          <div class="body">${esc(txt.body)}</div>
+          <div class="sig">${esc(ctx.sender.signature)}</div>
+          ${entity ? `<footer>${esc(entity)}</footer>` : ''}
+        </section>`;
+      }).join('');
+      const w = window.open('', '_blank');
+      if (!w) { toast('Allow pop-ups for this site to print the letters.'); return; }
+      w.document.write(`<!DOCTYPE html><html lang="pt"><head><meta charset="utf-8"><title>Cartas — ${esc(date)}</title><style>
+        @page { size: A4; margin: 0; }
+        body { margin: 0; font-family: Arial, Helvetica, sans-serif; font-size: 11pt; line-height: 1.5; color: #111; }
+        .page { width: 210mm; min-height: 297mm; box-sizing: border-box; padding: 20mm 22mm 24mm; position: relative; page-break-after: always; }
+        .page:last-child { page-break-after: auto; }
+        .addr { position: absolute; top: 45mm; left: 20mm; width: 90mm; height: 45mm; font-size: 11pt; line-height: 1.35; }
+        .date { margin: 100mm 0 8mm; text-align: right; }
+        .subj { margin: 0 0 6mm; }
+        .body { white-space: pre-wrap; }
+        .sig { white-space: pre-wrap; margin-top: 12mm; }
+        footer { position: absolute; bottom: 12mm; left: 22mm; right: 22mm; font-size: 8pt; color: #666; }
+        @media screen { body { background: #ddd; } .page { background: #fff; margin: 10mm auto; box-shadow: 0 2px 10px rgba(0,0,0,.2); } }
+      </style></head><body>${pages}<script>window.onload = () => window.print();<\/script></body></html>`);
+      w.document.close();
+    }
+
     // ── Sequence editor ──
     function renderSequence() {
       const c = curCamp(); if (!c) return;
       if (!seqDraft) seqDraft = JSON.parse(JSON.stringify(c.steps || []));
       const locked = new Set(c.lockedStepIds || []);
       const editable = campEditable(c);
-      const tplOptions = (sel) => ['<option value="">— Choose a template —</option>', ...templatesAll
-        .filter(t => t.status === 'active' || t.id === sel)
+      const tplOptions = (sel, kind, optional) => [`<option value="">${optional ? '— None —' : '— Choose a template —'}</option>`, ...templatesAll
+        .filter(t => (t.kind || 'email') === kind && (t.status === 'active' || t.id === sel))
         .map(t => `<option value="${esc(t.id)}"${t.id === sel ? ' selected' : ''}>${esc(t.name)}${t.status !== 'active' ? ` (${esc(t.status)})` : ''}</option>`)].join('');
-      const sentAt = (sid) => curEnrols.reduce((a, e) => a + (e.history || []).filter(h => h.stepId === sid).length, 0);
+      const doneAt = (sid) => curEnrols.reduce((a, e) => a + (e.history || []).filter(h => h.stepId === sid).length, 0);
       const campApproval = c.approvalDefault === 'auto' ? 'automatic' : 'needs approval';
       const lockedCount = seqDraft.filter(s => locked.has(s.id)).length;
 
       const card = (s, i) => {
+        const ch = s.channel || 'email';
         const isLocked = locked.has(s.id);
+        const kind = CHANNEL_KIND[ch];
         const tpl = templatesAll.find(t => t.id === s.templateId);
         const tplVars = (tpl?.variants || []).map(v => v.key);
         const chosenKeys = new Set((s.variants || []).map(v => v.key));
         const all = !(s.variants || []).length;
         const dis = editable ? '' : ' disabled';
+        const abOk = ch === 'email' || ch === 'letter';
         return `<div class="step${isLocked ? ' step--locked' : ''}" data-i="${i}">
           <div class="step__head">
-            <div class="step__num">${i + 1}. <input type="text" data-f="name" value="${esc(s.name || '')}" maxlength="80" style="width:auto;min-width:200px;"${dis}>
-              ${isLocked ? `<span class="pill pill--info">Sent to ${num(sentAt(s.id))} — can't be removed or moved</span>` : ''}</div>
+            <div class="step__num">${i + 1}.
+              <select data-f="channel" style="width:auto;"${dis}${isLocked ? ' disabled title="A step that already ran can\'t change type"' : ''}>${Object.entries(CHANNEL_LABELS).map(([k, l]) => `<option value="${k}"${k === ch ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+              <input type="text" data-f="name" value="${esc(s.name || '')}" maxlength="80" style="width:auto;min-width:180px;"${dis}>
+              ${isLocked ? `<span class="pill pill--info">${ch === 'email' ? 'Sent' : 'Done'} for ${num(doneAt(s.id))} — can't be removed or moved</span>` : ''}</div>
             ${editable ? `<div class="actions">
               <button class="btn btn--ghost btn--sm" data-mv="-1" ${isLocked || i === 0 || i <= lockedCount ? 'disabled' : ''} aria-label="Move up">↑</button>
               <button class="btn btn--ghost btn--sm" data-mv="1" ${isLocked || i === seqDraft.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
@@ -2627,32 +2958,36 @@
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
                 <input type="text" inputmode="numeric" data-f="waitDays" value="${esc(s.wait?.days ?? (i === 0 ? 0 : 3))}" style="width:64px;"${dis}>
                 <select data-f="waitUnit" style="width:auto;"${dis}><option value="working"${s.wait?.unit !== 'calendar' ? ' selected' : ''}>working days</option><option value="calendar"${s.wait?.unit === 'calendar' ? ' selected' : ''}>calendar days</option></select>
-                <span class="hint">${i === 0 ? 'after the company starts' : 'after the previous email'}</span>
+                <span class="hint">${i === 0 ? 'after the company starts' : 'after the previous step'}</span>
               </div></div>
-            <div class="field"><label>Template</label><select data-f="templateId"${dis}>${tplOptions(s.templateId)}</select></div>
-            <div class="field"><label>Before sending</label><select data-f="approval"${dis}>
+            ${kind ? `<div class="field"><label>${ch === 'email' ? 'Template' : ch === 'letter' ? 'Letter template' : ch === 'call' ? 'Call script (optional)' : 'Message to send (optional)'}</label><select data-f="templateId"${dis}>${tplOptions(s.templateId, kind, !['email', 'letter'].includes(ch))}</select></div>` : ''}
+            ${ch === 'email' ? `<div class="field"><label>Before sending</label><select data-f="approval"${dis}>
               <option value="inherit"${(s.approval || 'inherit') === 'inherit' ? ' selected' : ''}>Follow the campaign (${campApproval})</option>
               <option value="approval"${s.approval === 'approval' ? ' selected' : ''}>Needs approval</option>
-              <option value="auto"${s.approval === 'auto' ? ' selected' : ''}>Send automatically</option></select></div>
+              <option value="auto"${s.approval === 'auto' ? ' selected' : ''}>Send automatically</option></select></div>`
+              : `<div class="field"><label>Who does it</label><div class="hint" style="padding-top:8px;">${c.assignee && c.assignee !== 'owner' ? esc(OWNER_LABEL[c.assignee]) : "The company's owner"} (campaign Settings)</div></div>`}
           </div>
-          ${tplVars.length > 1 ? `<div class="field" style="margin-bottom:6px;"><label>A/B variants</label>
+          ${ch !== 'email' ? `<div class="field" style="margin-bottom:6px;"><label>Instructions for the task</label><textarea data-f="instructions" rows="2" maxlength="2000" placeholder="${ch === 'call' ? 'e.g. Ask for the managing partner; mention the email from last week' : ch === 'linkedin' ? 'e.g. Connect with the owner, no note' : 'What should be done'}"${dis}>${esc(s.instructions || '')}</textarea></div>` : ''}
+          ${abOk && tplVars.length > 1 ? `<div class="field" style="margin-bottom:6px;"><label>A/B variants</label>
             <div class="wvars">${tplVars.map(k => { const v = (s.variants || []).find(x => x.key === k); return `<label class="wvar"><input type="checkbox" data-vk="${k}" ${all || chosenKeys.has(k) ? 'checked' : ''}${dis}> ${k} <input type="text" inputmode="numeric" data-vw="${k}" value="${esc(v ? v.weight : 1)}" aria-label="Weight ${k}"${dis}></label>`; }).join('')}</div>
-            <span class="hint">Each company gets one variant, picked at random by weight (e.g. 50/50). Results per variant appear in the Overview.</span></div>` : ''}
-          ${i > 0 ? `<label class="checkline"><input type="checkbox" data-f="newSubject" ${s.newSubject ? 'checked' : ''}${dis}> <span>Start a new conversation with the template's subject (default: reply in the same conversation, "Re: …", quoting the previous email)</span></label>` : ''}
+            <span class="hint">Each company gets one variant, picked at random by weight. Results per variant appear in the Overview.</span></div>` : ''}
+          ${ch === 'email' && i > 0 ? `<label class="checkline"><input type="checkbox" data-f="newSubject" ${s.newSubject ? 'checked' : ''}${dis}> <span>Start a new conversation with the template's subject (default: reply in the same conversation, "Re: …", quoting the previous email)</span></label>` : ''}
+          ${ch === 'whatsapp' ? '<p class="hint">WhatsApp to a personal mobile falls under the same consent rule as email (D3) — the task flags numbers that look personal.</p>' : ''}
         </div>`;
       };
 
-      const noTpl = !templatesAll.some(t => t.status === 'active');
+      const noTpl = !templatesAll.some(t => t.status === 'active' && (t.kind || 'email') === 'email');
       $('cs-sequence').innerHTML = `
         <div class="card">
-          ${noTpl ? '<div class="banner banner--warn" style="margin-bottom:12px;"><span>No active templates yet — write one in Settings → Templates first.</span></div>' : ''}
-          <div class="steps" id="seqSteps">${seqDraft.map(card).join('') || '<div class="empty">No steps yet. Add the first email.</div>'}</div>
-          ${editable ? `<div class="actions" style="margin-top:14px;">
-            <button class="btn btn--ghost" id="seqAdd">+ Add email step</button>
+          ${noTpl ? '<div class="banner banner--warn" style="margin-bottom:12px;"><span>No active email templates yet — write one in Settings → Templates first.</span></div>' : ''}
+          <div class="steps" id="seqSteps">${seqDraft.map(card).join('') || '<div class="empty">No steps yet. Add the first one.</div>'}</div>
+          ${editable ? `<div class="actions" style="margin-top:14px;align-items:center;">
+            <select id="seqAddCh" style="width:auto;">${Object.entries(CHANNEL_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
+            <button class="btn btn--ghost" id="seqAdd">+ Add step</button>
             <button class="btn btn--primary" id="seqSave"${seqDirty ? '' : ' disabled'}>Save sequence</button>
             ${seqDirty ? '<button class="btn btn--ghost" id="seqDiscard">Discard changes</button>' : ''}
           </div>` : '<p class="hint" style="margin-top:12px;">This campaign is finished — duplicate it to reuse the sequence.</p>'}
-          <p class="hint" style="margin-top:12px;">Only email steps for now; calls, LinkedIn, letters and other manual steps arrive with Tasks. A reply, bounce or unsubscribe ends the sequence for that company. Steps already sent to someone stay in place; you can still change their content, which applies to companies that haven't reached them yet.</p>
+          <p class="hint" style="margin-top:12px;">Emails are sent by the scheduler. Calls, LinkedIn, WhatsApp, letters, visits and other steps become tasks (Tasks tab) for the company owner or the campaign's assignee; the sequence waits until each task is done or skipped. A reply, bounce or unsubscribe ends the sequence for that company. Steps already done for someone stay in place; you can still change their content.</p>
         </div>`;
 
       const box = $('seqSteps');
@@ -2666,6 +3001,13 @@
           if (f === 'waitUnit') s.wait = { ...(s.wait || {}), unit: inp.value };
           if (f === 'approval') s.approval = inp.value;
           if (f === 'newSubject') s.newSubject = inp.checked;
+          if (f === 'instructions') s.instructions = inp.value;
+          if (f === 'channel') {
+            const oldDefault = /^(Email|Linkedin|LinkedIn|Call|Whatsapp|WhatsApp|Letter|Visit|Other|Other task) \d+$/.test(s.name || '');
+            s.channel = inp.value; s.templateId = null; s.variants = [];
+            if (oldDefault || !s.name) s.name = `${CHANNEL_LABELS[s.channel]} ${i + 1}`;
+            mark(); renderSequence(); return;
+          }
           if (f === 'templateId') { s.templateId = inp.value || null; s.variants = []; mark(); renderSequence(); return; }
           mark();
         }));
@@ -2683,13 +3025,14 @@
         }));
       });
       $('seqAdd')?.addEventListener('click', () => {
-        seqDraft.push({ name: `Email ${seqDraft.length + 1}`, channel: 'email', wait: { days: seqDraft.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false });
+        const ch = $('seqAddCh').value;
+        seqDraft.push({ name: `${CHANNEL_LABELS[ch]} ${seqDraft.length + 1}`, channel: ch, wait: { days: seqDraft.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false, instructions: '' });
         mark(); renderSequence();
       });
       $('seqDiscard')?.addEventListener('click', () => { seqDraft = null; seqDirty = false; renderSequence(); });
       $('seqSave')?.addEventListener('click', async () => {
         const b = $('seqSave'); b.disabled = true;
-        const r = await campCall({ action: 'save', campaignId: c.id, campaign: { steps: seqDraft.map(s => ({ ...s, channel: 'email' })) } }, 'Sequence saved.');
+        const r = await campCall({ action: 'save', campaignId: c.id, campaign: { steps: seqDraft.map(s => ({ ...s, channel: s.channel || 'email' })) } }, 'Sequence saved.');
         if (r) { seqDirty = false; seqDraft = null; } else b.disabled = false;
       });
     }
@@ -2715,6 +3058,10 @@
           <div class="row2">
             <div class="field"><label for="csAppr">Before emails go out (steps can override)</label>
               <select id="csAppr"${dis}><option value="approval"${c.approvalDefault !== 'auto' ? ' selected' : ''}>Each email waits for approval</option><option value="auto"${c.approvalDefault === 'auto' ? ' selected' : ''}>Emails go out automatically</option></select></div>
+            <div class="field"><label for="csAssignee">Tasks (calls, LinkedIn, letters…) go to</label>
+              <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option><option value="andre"${c.assignee === 'andre' ? ' selected' : ''}>André</option><option value="antonio"${c.assignee === 'antonio' ? ' selected' : ''}>António</option></select></div>
+          </div>
+          <div class="row2">
             <div class="field"><label for="csPace">New companies per day</label><input type="text" inputmode="numeric" id="csPace" value="${esc(c.pacing?.newPerDay || 20)}"${dis}>
               <span class="hint">Emails per day ≈ this × emails per company. The automations limit (${num(settings?.automationBudget ?? 80)}/day) is shared by all campaigns.</span></div>
           </div>
@@ -2770,7 +3117,7 @@
         const b = $('csSave'); b.disabled = true;
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: {
           name: $('csName').value, description: $('csDesc').value, priority: Number($('csPrio').value),
-          approvalDefault: $('csAppr').value, pacing: { newPerDay: pace },
+          approvalDefault: $('csAppr').value, pacing: { newPerDay: pace }, assignee: $('csAssignee').value,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, ownerFilter: $('csOwner').value || null },

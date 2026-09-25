@@ -583,6 +583,7 @@
         <button class="btn btn--action" id="editCompanyBtn">✎ Edit</button>
         <button class="btn btn--action" id="addActivityBtn">＋ Activity</button>
         <button class="btn btn--action" id="addCoToCampaignBtn" title="Add this company to an Outreach campaign">📣 Campaign</button>
+        <button class="btn btn--action" id="dncBtn" title="Stop all outreach to this company">🚫 Do not contact</button>
         <button class="btn btn--danger btn--sm" id="deleteCompanyBtn">Delete</button>
       </div>
     </div>
@@ -1289,6 +1290,8 @@ const ACT = {
   // Written by the Outreach module's Cloud Functions, never logged by hand.
   email_received:   { label:'Email received',    icon:'📨', outreach:false, via:'email', response:true },
   email_test:       { label:'Test email',        icon:'🧪', outreach:false },
+  whatsapp:         { label:'WhatsApp',          icon:'💬', outreach:true,  via:'whatsapp' },
+  task_test:        { label:'Test task',         icon:'🧪', outreach:false },
   linkedin:         { label:'LinkedIn',          icon:'💼', outreach:true,  via:'linkedin' },
   warm_intro:       { label:'Warm intro',        icon:'🤝', outreach:false, via:'warm_intro' },
   leverage_network: { label:'Leverage network',  icon:'🌐', outreach:false },
@@ -1316,7 +1319,7 @@ const OUTREACH_BADGE = {
   unsubscribed: ['Unsubscribed', 'badge-grey'],
   bounced:      ['Bounced', 'badge-red'],
 };
-const MANUAL_ACT_TYPES = ['note','letter','call_attempted','call_connected','email','linkedin','warm_intro','leverage_network','meeting_scheduled','meeting_done','in_person','observation','other'];
+const MANUAL_ACT_TYPES = ['note','letter','call_attempted','call_connected','email','linkedin','whatsapp','warm_intro','leverage_network','meeting_scheduled','meeting_done','in_person','observation','other'];
 
 const RESPONSE_CATS = {
   interested:'Interested', not_interested:'Not interested', not_now:'Not now',
@@ -2958,7 +2961,7 @@ function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
   return `<tr class="row-clickable" data-id="${c.id}">
     <td class="sel-col" onclick="event.stopPropagation()"><input type="checkbox" class="rowSel" data-id="${esc(c.id)}" aria-label="Select ${esc(c.name)}"${selectedCo.has(c.id) ? ' checked' : ''}></td>
-    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}</td>
+    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}${c.doNotContact?.on ? ' <span class="badge badge-red" style="margin-left:4px;" title="Do not contact">🚫</span>' : ''}</td>
     <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
     <td class="sector-cell" title="${esc(c.sector||'')}${c.subSector?' › '+esc(c.subSector):''}">${esc(c.sector||'—')}${c.subSector?'<br><span style="font-size:0.72rem;">'+esc(c.subSector)+'</span>':''}</td>
     <td>${prioPill(c.priority)}</td>
@@ -3286,7 +3289,10 @@ function renderDetail(){
     ${c.owner?`<span class="badge badge-grey">👤 ${OWNER_LABELS[c.owner]}</span>`:''}
     ${SOURCE_LABELS[c.sourceType]?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
     ${c.activeCampaignName ? `<a class="badge badge-blue" href="/portal/outreach.html" title="In this Outreach campaign" style="text-decoration:none;">📣 ${esc(c.activeCampaignName)}</a>` : ''}
+    ${c.doNotContact?.on ? `<span class="badge badge-red" title="${esc(c.doNotContact.reason || 'No reason given')}">🚫 Do not contact</span>` : ''}
     ${headerOwner(c, primary)}`;
+  const dncB = document.getElementById('dncBtn');
+  if (dncB) dncB.textContent = c.doNotContact?.on ? '✓ Allow contact again' : '🚫 Do not contact';
   const pill = document.getElementById('dMeta').querySelector('.stage-pill');
   const menu = document.getElementById('stageMenu');
   pill.style.cursor='pointer';
@@ -3899,6 +3905,10 @@ function renderActivityLog(){
       </div>
       ${overdueHtml}${log}
     </div>`;
+  if (c.activeEnrolmentId) {
+    document.getElementById('panel-activities').insertAdjacentHTML('afterbegin', '<div class="card" id="campTimeline"><div class="sec-title">Campaign</div><div style="font-size:0.85rem;color:var(--text-light);">Loading…</div></div>');
+    renderCampaignTimeline(c);
+  }
   document.getElementById('addActivityBtn2').addEventListener('click', () => openActivity('note'));
   document.querySelectorAll('[data-closeact]').forEach(b => b.addEventListener('click', () => openCloseMtg(b.dataset.closeact)));
 }
@@ -9263,6 +9273,62 @@ async function openAddToCampaign(opts){
   };
 }
 
+// ── Company timeline: current campaign step + what's planned (Phase 2b §8.3) ──
+// Past touches are the activity log below it (tagged with campaign / step).
+const TL_CHANNEL = { email: '📧 Email', linkedin: '💼 LinkedIn', call: '📞 Call', whatsapp: '💬 WhatsApp', letter: '✉️ Letter', visit: '🏢 Visit', other: '📌 Task' };
+const TL_STATUS = { pending: 'waiting to start', active: 'in sequence', awaiting_approval: 'email waiting for approval', awaiting_task: 'task open', paused: 'paused' };
+function addWorkingDays(ms, n, unit){
+  if (unit === 'calendar') return ms + n * 86400000;
+  let t = ms, k = 0;
+  while (k < n) { t += 86400000; const d = new Date(t).getDay(); if (d !== 0 && d !== 6) k++; }
+  return t;
+}
+async function renderCampaignTimeline(c){
+  const box = document.getElementById('campTimeline'); if (!box) return;
+  try {
+    const eSnap = await getDoc(doc(db, 'outreachEnrolments', c.activeEnrolmentId));
+    const e = eSnap.exists() ? eSnap.data() : null;
+    const cSnap = e ? await getDoc(doc(db, 'outreachCampaigns', e.campaignId)) : null;
+    addReads(e ? 2 : 1); refreshReads();
+    const camp = cSnap?.exists() ? cSnap.data() : null;
+    if (!e || !camp || !['pending','active','awaiting_approval','awaiting_task','paused'].includes(e.status)) { box.remove(); return; }
+    const steps = camp.steps || [];
+    const fmtD = ms => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    const done = (e.history || []).map(h => { const st = steps.find(s => s.id === h.stepId); return `<li style="color:var(--text-light);">${TL_CHANNEL[st?.channel || 'email']} · ${esc(st?.name || h.stepId)} — ${esc(h.result)} · ${fmtD((h.at?.seconds || 0) * 1000)}</li>`; });
+    let t = e.nextActionAt ? (e.nextActionAt.seconds * 1000) : Date.now();
+    const future = [];
+    for (let i = e.currentStep; i < steps.length; i++) {
+      const st = steps[i];
+      if (i > e.currentStep) t = addWorkingDays(t, Number(st.wait?.days) || 0, st.wait?.unit);
+      const now = i === e.currentStep;
+      const when = e.status === 'pending' && now ? 'when the campaign starts it' : now && ['awaiting_task','awaiting_approval'].includes(e.status) ? 'now' : `~${fmtD(t)}`;
+      future.push(`<li${now ? ' style="font-weight:600;"' : ''}>${TL_CHANNEL[st.channel || 'email']} · ${esc(st.name)} — ${when}${now ? ' <span class="badge badge-blue">next</span>' : ''}</li>`);
+    }
+    box.innerHTML = `<div class="sec-title">Campaign — ${esc(camp.name)} <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);">(${esc(TL_STATUS[e.status] || e.status)}${camp.status !== 'active' ? ', campaign ' + esc(camp.status) : ''})</span></div>
+      <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.7;">${done.join('')}${future.join('') || '<li>All steps done — waiting for a reply.</li>'}</ul>
+      <div style="font-size:0.75rem;color:var(--text-light);margin-top:6px;">Dates after the next step are estimates (working days; the sending window and daily limits can push them). <a href="/portal/outreach.html" style="color:var(--primary);">Open in Outreach</a></div>`;
+  } catch (err) { box.innerHTML = '<div class="sec-title">Campaign</div><div style="font-size:0.85rem;color:var(--text-light);">Could not load the campaign.</div>'; }
+}
+
+// ── Do not contact (Phase 2 §10) ──
+document.getElementById('dncBtn').addEventListener('click', async () => {
+  const c = getCompany(); const id = currentCoId; if (!id) return;
+  const on = !c?.doNotContact?.on;
+  let reason = null;
+  if (on) {
+    reason = prompt('Mark as DO NOT CONTACT? Every campaign stops for this company and no new outreach can be sent. Reason (optional):', '');
+    if (reason === null) return;
+  } else if (!confirm('Allow outreach to this company again?')) return;
+  const btn = document.getElementById('dncBtn'); btn.disabled = true;
+  try {
+    const r = (await callOutreachCampaign({ action: 'setDoNotContact', companyId: id, on, reason })).data;
+    if (c) { c.doNotContact = { on, reason: on ? (reason || null) : null }; if (on) { c.activeCampaignId = null; c.activeCampaignName = null; c.activeEnrolmentId = null; } }
+    renderDetail();
+    alert(on ? `Marked do not contact${r.stopped ? ` — ${r.stopped} campaign enrolment stopped` : ''}.` : 'Outreach allowed again.');
+  } catch (e) { alert((e.message || String(e)).replace(/^(FirebaseError:\s*)?/, '')); }
+  finally { btn.disabled = false; }
+});
+
 // Re-read activeCampaign* for the companies just added (≤ 30 per query) so
 // the list badge and the company page show the campaign without a reload.
 async function refreshCampaignBadges(ids){
@@ -9458,7 +9524,8 @@ async function saveActivity(){
 async function recomputeActivityFields(c){
   // lastTouchAt = most recent non-future, non-auto activity
   // email_test: Outreach test-mode sends aren't real touches (they go to our own addresses).
-  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test'];
+  // task_test: campaign tasks done in test mode (rehearsals) — not real touches either.
+  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test'];
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));
