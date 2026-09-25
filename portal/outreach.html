@@ -63,7 +63,8 @@
     .seg-in  { background: var(--s-in); }
     .seg-oth { background: var(--s-oth); }
     .usage__bar .usage__seg + .usage__seg { border-left: 2px solid var(--white); }
-    .usage__bar.over .usage__seg { background: var(--danger); }
+    /* Over the target: keep the series colours readable, flag it with a red outline (the number turns red too). */
+    .usage__bar.over { box-shadow: 0 0 0 2px var(--danger); }
     .usage__fill-month { height: 100%; background: var(--amber); }
     .usage__legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.7rem; color: var(--text-light); margin-top: 4px; }
     .usage__legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
@@ -653,7 +654,7 @@
       document.querySelectorAll('.panel').forEach(p => { p.hidden = p.id !== 'panel-' + name; });
       if (name === 'sent') loadSent();
       if (name === 'compose') ensureCompanies();
-      if (name === 'metrics') loadMetrics();
+      if (name === 'metrics') loadMetrics(); // (re)renders at the now-visible width
     }
 
     // ── Live data ──────────────────────────────────────────────
@@ -1234,6 +1235,11 @@
     const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : null);
     const pctTxt = (v) => (v == null ? '—' : v.toLocaleString('en-GB', { maximumFractionDigits: 1 }) + '%');
 
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => { if (metricsData && !$('panel-metrics').hidden) renderDailyChart(); }, 150);
+    });
     function setupMetrics() {
       ['mPeriod', 'mTest'].forEach(id => $(id).addEventListener('change', renderMetrics));
       $('mGroup').addEventListener('change', renderBreakdown);
@@ -1315,12 +1321,12 @@
       const tile = (label, value, sub, bad) => `<div class="kpi${bad ? ' kpi--bad' : ''}"><div class="kpi__label">${esc(label)}</div><div class="kpi__value">${value}</div>${sub ? `<div class="kpi__sub">${sub}</div>` : ''}</div>`;
       $('mKpis').innerHTML = [
         tile('First emails', num(st.started), `${num(sent.length)} emails sent incl. replies`),
-        tile('Reply rate', pctTxt(pct(st.replied, st.started)), `${num(st.replied)} conversations with a human reply`),
+        tile('Reply rate', pctTxt(pct(st.replied, st.started)), `${num(st.replied)} conversation${st.replied === 1 ? '' : 's'} with a human reply`),
         tile('Positive replies', pctTxt(pct(st.positive, st.started)), `${num(st.positive)} interested, call back or referred`),
         tile('Delivered', pctTxt(pct(delivered, sent.length)), `${num(delivered)} of ${num(sent.length)}`),
         tile('Hard bounces', pctTxt(bouncePct), `${num(bounced)} · keep under 2%`, sent.length >= 20 && bouncePct > 2),
         tile('Spam complaints', pctTxt(complaintPct), `${num(complained)} · keep under 0.1%`, sent.length >= 20 && complaintPct > 0.1),
-        tile('Unsubscribed', pctTxt(pct(st.unsub, st.started)), `${num(st.unsub)} conversations`),
+        tile('Unsubscribed', pctTxt(pct(st.unsub, st.started)), `${num(st.unsub)} conversation${st.unsub === 1 ? '' : 's'}`),
         tile('Time to first reply', dur(median), 'median'),
         ...(opened || clicked ? [tile('Opens ≈ / clicks', `${pctTxt(pct(opened, delivered))} / ${pctTxt(pct(clicked, delivered))}`, 'approximate — Apple Mail inflates, Outlook hides')] : []),
       ].join('');
@@ -1371,12 +1377,16 @@
       const val = (r, k) => (k === 'in' ? r.rin : r[k]);
       const target = settings?.dailyTarget || 100;
       const max = Math.max(target, ...rows.map(r => r.total));
-      const yMax = Math.ceil(max / 25) * 25;
-      const W = Math.max(560, $('mChart').clientWidth || 560), H = 220, padL = 34, padR = 8, padT = 10, padB = 26;
+      // Round tick step (10, 20, 25, 50, 100…) so the axis reads 0/25/50/75/100/125, not quarters of the max.
+      const rawStep = max / 4, mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+      const tickStep = [1, 2, 2.5, 5, 10].map(f => f * mag).find(v => v >= rawStep);
+      const yMax = Math.ceil(max / tickStep) * tickStep;
+      // Fit the card (no sideways scroll); re-rendered when the tab is shown or the window resizes.
+      const W = Math.max(300, $('mChart').clientWidth || 600), H = 220, padL = 34, padR = 8, padT = 16, padB = 26;
       const plotW = W - padL - padR, plotH = H - padT - padB, step = plotW / rows.length, bw = Math.max(4, Math.min(18, step * 0.62));
       const y = (v) => padT + plotH - (v / yMax) * plotH;
       let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Emails per day over the last 30 days, stacked by kind, against a daily target of ${target}">`;
-      for (let g = 0; g <= yMax; g += yMax / 4) {
+      for (let g = 0; g <= yMax + 1e-9; g += tickStep) {
         svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(g)}" y2="${y(g)}" stroke="#E8E4DC" stroke-width="1"/>`;
         svg += `<text x="${padL - 6}" y="${y(g) + 3}" text-anchor="end" font-size="10" fill="#6B7280">${g}</text>`;
       }
