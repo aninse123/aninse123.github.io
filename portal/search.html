@@ -762,16 +762,16 @@
 <div class="overlay" id="sendEmailModal" style="display:none;">
   <div class="modal">
     <div class="modal-title">Send Email</div>
+    <p id="semTestNote" style="display:none;font-size:0.8rem;background:#FEF3C7;color:#92400E;border-radius:6px;padding:8px 10px;margin:0 0 12px;">Outreach is in test mode: the email goes to an approved test address. The company is used for the fields and the history.</p>
     <div class="form-row">
-      <div class="form-group"><label>To</label><input type="text" class="field" id="semTo" readonly></div>
-      <div class="form-group"><label>From</label><select class="field" id="semFrom">
-        <option value="andre">André Rocha</option>
-        <option value="antonio">António Carvalho</option>
-      </select></div>
+      <div class="form-group"><label>To</label><select class="field" id="semTo"></select></div>
+      <div class="form-group"><label>From</label><select class="field" id="semFrom"></select></div>
     </div>
-    <p id="semCcHint" style="font-size:0.78rem;color:var(--text-light);margin:-8px 0 12px;display:none;"></p>
+    <div class="form-group" id="semTestWrap" style="display:none;"><label>Test recipient</label><input type="email" class="field" id="semTestTo" list="semTestList"><datalist id="semTestList"></datalist></div>
+    <div class="form-group" id="semTplWrap" style="display:none;"><label>Template <span class="opt">(optional)</span></label><select class="field" id="semTpl"></select></div>
     <div class="form-group"><label>Subject</label><input type="text" class="field" id="semSubject"></div>
-    <div class="form-group"><label>Message</label><textarea class="field" id="semMessage" rows="8"></textarea></div>
+    <div class="form-group"><label>Message</label><textarea class="field" id="semMessage" rows="8"></textarea>
+      <p style="font-size:0.75rem;color:var(--text-light);margin-top:4px;">Sent through the Outreach module: plain text with your signature and the legal footer, one recipient per email. Fields like {{company.shortName}} or {{contact.firstName|Olá}} work here too. Replies arrive in the Outreach inbox.</p></div>
     <div class="modal-err" id="semErr"></div>
     <div class="modal-actions">
       <button class="btn btn--ghost" id="semCancelBtn">Cancel</button>
@@ -1206,6 +1206,7 @@
 import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES, FIRESTORE_PROJECT_ID } from './firebase-config.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
 import {
   collection, doc,
   getDocs, getDoc, query, where, orderBy, limit, serverTimestamp, Timestamp,
@@ -1259,6 +1260,9 @@ const ACT = {
   call_attempted:   { label:'Call (no answer)',  icon:'📞', outreach:true,  via:'call' },
   call_connected:   { label:'Call (connected)',  icon:'✅', outreach:true,  via:'call',  response:true },
   email:            { label:'Email',             icon:'📧', outreach:true,  via:'email', response:true },
+  // Written by the Outreach module's Cloud Functions, never logged by hand.
+  email_received:   { label:'Email received',    icon:'📨', outreach:false, via:'email', response:true },
+  email_test:       { label:'Test email',        icon:'🧪', outreach:false },
   linkedin:         { label:'LinkedIn',          icon:'💼', outreach:true,  via:'linkedin' },
   warm_intro:       { label:'Warm intro',        icon:'🤝', outreach:false, via:'warm_intro' },
   leverage_network: { label:'Leverage network',  icon:'🌐', outreach:false },
@@ -1278,6 +1282,13 @@ const ACT = {
   person_linked:    { label:'Person linked',     icon:'🧑‍💼', outreach:false },
   person_updated:   { label:'Person link updated', icon:'🧑‍💼', outreach:false },
   person_unlinked:  { label:'Person unlinked',   icon:'🧑‍💼', outreach:false },
+};
+// Set on searchCompanies by the Outreach Cloud Functions (spec §5).
+const OUTREACH_BADGE = {
+  contacted:    ['✉ Contacted', 'badge-blue'],
+  replied:      ['↩ Replied', 'badge-green'],
+  unsubscribed: ['Unsubscribed', 'badge-grey'],
+  bounced:      ['Bounced', 'badge-red'],
 };
 const MANUAL_ACT_TYPES = ['note','letter','call_attempted','call_connected','email','linkedin','warm_intro','leverage_network','meeting_scheduled','meeting_done','in_person','observation','other'];
 
@@ -1381,7 +1392,6 @@ function naceDerive(code){
 
 // ── State ──────────────────────────────────────────────────────────────────
 let currentUser = null;
-let notifySecret = ''; // adminConfig/notify — same pattern as admin.html, needed to call the notify Netlify function
 let companies = [];
 let brokers = [];
 let fitCriteria = { ...DEFAULT_FIT };
@@ -1821,12 +1831,11 @@ onAuthStateChanged(auth, async user => {
   currentUser = user.email;
   setNavEmail(user.email);
   startSharedReadsWatch();
-  try {
-    const secretSnap = await getDoc(doc(db, 'adminConfig', 'notify'));
-    if (secretSnap.exists() && secretSnap.data().notifySecret) notifySecret = secretSnap.data().notifySecret;
-  } catch (e) { /* Send Email button will show a config-needed alert */ }
   await loadAll();
   document.getElementById('loadingScreen').style.display = 'none';
+  // Deep link from the Outreach tab: search.html?company=<id>[&tab=activities]
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('company')) openDetail(qs.get('company'), qs.get('tab') || 'activities');
 });
 
 // ── Load ─────────────────────────────────────────────────────────────────────
@@ -2920,7 +2929,7 @@ function renderList(){
 function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
   return `<tr class="row-clickable" data-id="${c.id}">
-    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}</td>
+    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}</td>
     <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
     <td class="sector-cell" title="${esc(c.sector||'')}${c.subSector?' › '+esc(c.subSector):''}">${esc(c.sector||'—')}${c.subSector?'<br><span style="font-size:0.72rem;">'+esc(c.subSector)+'</span>':''}</td>
     <td>${prioPill(c.priority)}</td>
@@ -3800,13 +3809,13 @@ function renderContacts(c){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
         <div class="sec-title" style="margin:0;">Contacts</div>
         <div style="display:flex;gap:8px;">
-          ${emailCount > 1 ? '<button class="btn btn--ghost btn--sm" id="emailAllBtn">✉ Email All</button>' : ''}
+          <button class="btn btn--ghost btn--sm" id="emailCompanyBtn"${c.companyEmail ? '' : ' disabled title="No company email on file"'}>✉ Email company</button>
           <button class="btn btn--primary btn--sm" id="addContactBtn">＋ Add Contact</button>
         </div>
       </div>${list}
     </div>`;
   document.getElementById('addContactBtn').addEventListener('click', () => openContact(null));
-  if (emailCount > 1) document.getElementById('emailAllBtn').addEventListener('click', openSendEmailAll);
+  document.getElementById('emailCompanyBtn').addEventListener('click', () => openSendEmail('company'));
   document.querySelectorAll('[data-toggle-hist]').forEach(btn => btn.addEventListener('click', () => {
     const panel = document.getElementById(`hist-${btn.dataset.toggleHist}`);
     const open = panel.style.display !== 'none';
@@ -3848,7 +3857,7 @@ function renderActivityLog(){
         ${mtg}
         ${a.content?`<div class="act-content">${esc(a.content)}</div>`:''}
         ${a.closedNotes?`<div class="act-content" style="border-top:1px solid #F0EDE6;margin-top:6px;padding-top:6px;"><em>Closing:</em> ${esc(a.closedNotes)}</div>`:''}
-        <div class="act-by">by ${esc(a.createdBy||'')}${a.status==='open'?` · <span class="addon-link" data-closeact="${a.id}">Close</span>`:''}</div>
+        <div class="act-by">by ${esc(a.createdBy||'')}${a.threadId?` · <a class="addon-link" href="/portal/outreach.html?thread=${encodeURIComponent(a.threadId)}">Open conversation</a>`:''}${a.status==='open'?` · <span class="addon-link" data-closeact="${a.id}">Close</span>`:''}</div>
       </div>
     </div>`;
   }).join('') : '<div style="font-size:0.85rem;color:var(--text-light);">No activity yet.</div>';
@@ -9037,82 +9046,112 @@ async function removeContact(idx){
 // sendCtIdx is either a contact index (single send) or the string 'all'
 // (every contact with an email, one combined email — see notify.js's
 // `combined` mode, which CC's whichever partner isn't the sender).
-function openSendEmail(idx){
-  sendCtIdx = idx;
-  const c = getCompany();
-  const ct = (c.contacts||[])[idx];
-  document.getElementById('semTo').value = ct ? `${ct.name} <${ct.email}>` : '';
-  document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
+// ── Send email (Outreach module) ─────────────────────────────────────────────
+// The company page sends through the same Cloud Function as the Outreach tab
+// (Outreach spec §8.6): server-side checks (test mode, suppression, MX, caps),
+// one recipient per email, signature + legal footer. The server writes the
+// activity and the company fields, so nothing is logged twice from here.
+const outreachFns = getFunctions(auth.app, 'us-central1');
+const callOutreachSend = httpsCallable(outreachFns, 'outreachSend');
+let outreachCfg = null; // { settings, senders, templates }, loaded on first open
+
+async function loadOutreachCfg(){
+  const [s, snd, tpl] = await Promise.all([
+    getDoc(doc(db, 'outreachSettings', 'global')),
+    getDocs(collection(db, 'outreachSenders')),
+    getDocs(query(collection(db, 'outreachTemplates'), where('status', '==', 'active'))),
+  ]);
+  addReads(1 + (snd.size || 1) + (tpl.size || 1)); refreshReads();
+  outreachCfg = {
+    settings: s.exists() ? s.data() : null,
+    senders: snd.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.owner||'').localeCompare(b.owner||'') || a.id.localeCompare(b.id)),
+    templates: tpl.docs.map(d => ({ id: d.id, ...d.data() })),
+  };
+}
+
+// idx: a contact index, or 'company' for the company's own email.
+async function openSendEmail(idx){
+  const c = getCompany(); if (!c) return;
+  const el = document.getElementById('semErr'); el.style.display = 'none';
+  try { outreachCfg = null; await loadOutreachCfg(); }
+  catch (e) { el.textContent = "Couldn't load the Outreach settings: " + e.message; el.style.display = 'block'; }
+  const cfg = outreachCfg || { settings: null, senders: [], templates: [] };
+  const test = !cfg.settings || cfg.settings.testMode !== false;
+
+  const opts = [];
+  if (c.companyEmail) opts.push({ email: String(c.companyEmail).trim().toLowerCase(), label: `Company — ${c.companyEmail}`, key: 'company' });
+  (c.contacts || []).forEach((ct, i) => { if (ct.email) opts.push({ email: String(ct.email).trim().toLowerCase(), label: `${ct.name}${ct.role ? ' (' + ct.role + ')' : ''} — ${ct.email}`, key: String(i) }); });
+  const toSel = document.getElementById('semTo');
+  toSel.innerHTML = opts.length ? opts.map(o => `<option value="${esc(o.email)}" data-key="${o.key}">${esc(o.label)}</option>`).join('') : '<option value="">No email address for this company</option>';
+  const want = opts.find(o => o.key === String(idx)) || opts[0];
+  if (want) toSel.value = want.email;
+
+  const mine = (currentUser || '').startsWith('antonio') ? 'antonio' : 'andre';
+  const active = cfg.senders.filter(x => x.status === 'active');
+  const fromSel = document.getElementById('semFrom');
+  fromSel.innerHTML = cfg.senders.length
+    ? cfg.senders.map(x => `<option value="${esc(x.id)}"${x.status !== 'active' ? ' disabled' : ''}>${esc(x.displayName)} · ${esc(x.id)}${x.status !== 'active' ? ' (' + esc(x.status) + ')' : ''}</option>`).join('')
+    : '<option value="">No sender addresses — Outreach → Settings</option>';
+  const pick = active.find(x => x.owner === c.owner) || active.find(x => x.owner === mine) || active[0];
+  if (pick) fromSel.value = pick.id;
+
+  document.getElementById('semTestNote').style.display = test ? 'block' : 'none';
+  document.getElementById('semTestWrap').style.display = test ? 'block' : 'none';
+  document.getElementById('semTestTo').value = mine === 'antonio' ? 'amobnc92@gmail.com' : 'andrenorocha@gmail.com';
+  document.getElementById('semTestList').innerHTML = (cfg.settings?.testRecipients || []).map(e => `<option value="${esc(e)}">`).join('');
+
+  const tplSel = document.getElementById('semTpl');
+  const tplOpts = cfg.templates.flatMap(t => (t.variants || []).map(v => `<option value="${esc(t.id)}::${esc(v.key)}">${esc(t.name)} — variant ${esc(v.key)}</option>`));
+  tplSel.innerHTML = '<option value="">— Write from scratch —</option>' + tplOpts.join('');
+  document.getElementById('semTplWrap').style.display = tplOpts.length ? 'block' : 'none';
+
   document.getElementById('semSubject').value = '';
   document.getElementById('semMessage').value = '';
-  document.getElementById('semErr').style.display = 'none';
-  updateCcHint();
   showEl('sendEmailModal', true);
 }
-function openSendEmailAll(){
-  sendCtIdx = 'all';
-  const c = getCompany();
-  const withEmail = (c.contacts||[]).filter(ct => ct.email);
-  document.getElementById('semTo').value = withEmail.map(ct => `${ct.name} <${ct.email}>`).join(', ');
-  document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
-  document.getElementById('semSubject').value = '';
-  document.getElementById('semMessage').value = '';
-  document.getElementById('semErr').style.display = 'none';
-  updateCcHint();
-  showEl('sendEmailModal', true);
+function applySemTemplate(){
+  const [tid, key] = document.getElementById('semTpl').value.split('::');
+  const t = (outreachCfg?.templates || []).find(x => x.id === tid);
+  const v = t?.variants?.find(x => x.key === key);
+  if (v) { document.getElementById('semSubject').value = v.subject || ''; document.getElementById('semMessage').value = v.body || ''; }
 }
-function updateCcHint(){
-  const hint = document.getElementById('semCcHint');
-  if (sendCtIdx !== 'all') { hint.style.display = 'none'; return; }
-  const from = document.getElementById('semFrom').value;
-  const other = from === 'andre' ? 'António Carvalho' : from === 'antonio' ? 'André Rocha' : null;
-  hint.textContent = other ? `Sent to all contacts above · CC: ${other}` : 'Sent to all contacts above';
-  hint.style.display = 'block';
-}
-// Sends a free-form email via the notify Netlify function (kind:'outreach' —
-// see notify.js), then logs it as a real 'email' activity (same shape
-// saveActivity() writes) so it shows on the Activities tab and counts
-// toward lastTouchAt/outreachAttempts via the existing recomputeActivityFields().
+
 async function sendCompanyEmail(){
-  const c = getCompany();
-  const isAll = sendCtIdx === 'all';
-  const recipients = isAll
-    ? (c.contacts||[]).filter(ct => ct.email).map(ct => ({ email: ct.email, name: ct.name }))
-    : [(c.contacts||[])[sendCtIdx]].filter(ct => ct?.email).map(ct => ({ email: ct.email, name: ct.name }));
+  const c = getCompany(); if (!c) return;
+  const el = document.getElementById('semErr'); el.style.display = 'none';
+  const test = !outreachCfg?.settings || outreachCfg.settings.testMode !== false;
   const subject = document.getElementById('semSubject').value.trim();
-  const msg = document.getElementById('semMessage').value.trim();
-  const from = document.getElementById('semFrom').value;
-  const el = document.getElementById('semErr');
-  el.style.display = 'none';
-  if (!recipients.length) { el.textContent = 'No contact email to send to.'; el.style.display='block'; return; }
-  if (!subject || !msg) { el.textContent = 'Subject and message are required.'; el.style.display='block'; return; }
-  if (!notifySecret) { el.textContent = "Email sending isn't configured yet (missing adminConfig/notify secret)."; el.style.display='block'; return; }
+  const body = document.getElementById('semMessage').value.trim();
+  const to = test ? document.getElementById('semTestTo').value.trim() : document.getElementById('semTo').value;
+  const senderId = document.getElementById('semFrom').value;
+  if (!to) { el.textContent = test ? 'Enter an approved test address.' : 'This company has no email address.'; el.style.display = 'block'; return; }
+  if (!senderId) { el.textContent = 'No active sender address — Outreach → Settings → Addresses.'; el.style.display = 'block'; return; }
+  if (!subject || !body) { el.textContent = 'Subject and message are required.'; el.style.display = 'block'; return; }
+  const payload = { companyId: c.id, senderId, to, subject, body, requestId: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, '').slice(0, 32) };
+  const [tid, key] = document.getElementById('semTpl').value.split('::');
+  if (tid) { payload.templateId = tid; payload.variantKey = key; }
   const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
   try {
-    const res = await fetch('/.netlify/functions/notify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-notify-secret': notifySecret },
-      body: JSON.stringify({ recipients, subject, message: msg, from, kind: 'outreach', combined: isAll }),
-    });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      throw new Error(d.error || `Send failed (${res.status})`);
+    let res;
+    try { res = (await callOutreachSend(payload)).data; }
+    catch (e) {
+      if (e?.details?.reason !== 'over_target') throw e;
+      if (!confirm(`${e.message}\n\nSend anyway?`)) return;
+      res = (await callOutreachSend({ ...payload, confirmOverTarget: true })).data;
     }
-    const content = isAll ? `To: ${recipients.map(r => r.name).join(', ')}\n\n${msg}` : msg;
-    const single = !isAll ? (c.contacts||[])[sendCtIdx] : null;
-    const actData = {
-      companyId: c.id, type: 'email', date: Timestamp.now(), title: subject,
-      content, via: 'email', contactName: single ? single.name : null, contactRole: single ? (single.role || null) : null,
-      recipientEmails: recipients.map(r => r.email),
-      responseCategory: null, status: null, createdAt: serverTimestamp(), createdBy: currentUser,
-    };
-    const ref = await addDoc(collection(db, 'searchActivities'), actData);
-    activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
-    await recomputeActivityFields(c);
     showEl('sendEmailModal', false);
+    // Mirror what the server just wrote, so the list and the 25-minute cache aren't stale.
+    if (!res.isTest) {
+      Object.assign(c, {
+        lastTouchAt: Timestamp.now(), outreachAttempts: (c.outreachAttempts || 0) + 1,
+        outreachStatus: (!c.outreachStatus || c.outreachStatus === 'none') ? 'contacted' : c.outreachStatus,
+      });
+      cacheCompanies();
+    }
+    await loadActivities(c.id);
     renderActivityLog(); renderContacts(c); renderList();
   } catch (e) {
-    el.textContent = e.message; el.style.display = 'block';
+    el.textContent = String(e?.message || e).replace(/^FirebaseError:\s*/, ''); el.style.display = 'block';
   } finally {
     btn.disabled = false; btn.innerHTML = 'Send';
   }
@@ -9189,7 +9228,8 @@ async function saveActivity(){
 }
 async function recomputeActivityFields(c){
   // lastTouchAt = most recent non-future, non-auto activity
-  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed'];
+  // email_test: Outreach test-mode sends aren't real touches (they go to our own addresses).
+  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test'];
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));
@@ -10231,7 +10271,7 @@ document.getElementById('personBody').addEventListener('click', e => {
 });
 document.getElementById('semCancelBtn').addEventListener('click', () => showEl('sendEmailModal', false));
 document.getElementById('semSendBtn').addEventListener('click', sendCompanyEmail);
-document.getElementById('semFrom').addEventListener('change', updateCcHint);
+document.getElementById('semTpl').addEventListener('change', applySemTemplate);
 document.getElementById('actCancelBtn').addEventListener('click', () => showEl('activityModal', false));
 document.getElementById('actSaveBtn').addEventListener('click', saveActivity);
 document.getElementById('closeMtgCancelBtn').addEventListener('click', () => showEl('closeMtgModal', false));

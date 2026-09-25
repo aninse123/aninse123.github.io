@@ -498,7 +498,7 @@
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
-      collection, doc, query, where, orderBy, limit, onSnapshot, getDocs, serverTimestamp
+      collection, doc, query, where, orderBy, limit, onSnapshot, getDocs, getDoc, serverTimestamp
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import { ref, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
     import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
@@ -638,9 +638,23 @@
 
     function watchThreads() {
       let first = true;
-      onSnapshot(query(collection(db, 'outreachThreads'), orderBy('lastMessageAt', 'desc'), limit(150)), (snap) => {
+      const deepThread = new URLSearchParams(location.search).get('thread'); // from the Search CRM's "Open conversation"
+      onSnapshot(query(collection(db, 'outreachThreads'), orderBy('lastMessageAt', 'desc'), limit(150)), async (snap) => {
+        const wasFirst = first;
         countSnap(snap, first); first = false;
         threads = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (wasFirst && deepThread) {
+          if (!threads.some(t => t.id === deepThread)) {
+            // Older than the 150 most recent — fetch just that one.
+            const t = await getDoc(doc(db, 'outreachThreads', deepThread)).catch(() => null);
+            addReads(1);
+            if (t?.exists()) threads.push({ id: t.id, ...t.data() });
+          }
+          // Show it regardless of the default "Mine" filter.
+          ownerFilter = 'all';
+          $('ownerChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.owner === 'all'));
+          if (threads.some(t => t.id === deepThread)) openThread(deepThread);
+        }
         const unread = threads.filter(t => t.unread).length;
         $('unreadCount').textContent = unread; $('unreadCount').hidden = !unread;
         setOutreachBadge(unread);
