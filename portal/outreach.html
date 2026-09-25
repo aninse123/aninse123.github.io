@@ -54,10 +54,15 @@
     .usage__bar { height: 8px; background: #EEEAE2; border-radius: 4px; overflow: hidden; margin: 6px 0 4px; display: flex; }
     .usage__bar--thin { height: 4px; }
     .usage__seg { height: 100%; transition: width 0.3s; }
-    .seg-out { background: var(--primary); }
-    .seg-rep { background: #7FA0BE; }
-    .seg-in  { background: #A9C4A0; }
-    .seg-oth { background: #CFC7B8; }
+    /* Series colours: reference categorical slots 1-4, validated (dataviz
+       validator, light surface): shared by the usage bar and the Metrics chart,
+       so each kind of email keeps one colour everywhere. */
+    :root { --s-out: #2a78d6; --s-rep: #eb6834; --s-in: #1baf7a; --s-oth: #eda100; }
+    .seg-out { background: var(--s-out); }
+    .seg-rep { background: var(--s-rep); }
+    .seg-in  { background: var(--s-in); }
+    .seg-oth { background: var(--s-oth); }
+    .usage__bar .usage__seg + .usage__seg { border-left: 2px solid var(--white); }
     .usage__bar.over .usage__seg { background: var(--danger); }
     .usage__fill-month { height: 100%; background: var(--amber); }
     .usage__legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.7rem; color: var(--text-light); margin-top: 4px; }
@@ -194,6 +199,18 @@
     .settings .card { padding: 18px 20px; }
     .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 0.84rem; margin-bottom: 14px; }
     .subnav { margin-bottom: 14px; }
+    /* Metrics */
+    .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+    .kpi { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+    .kpi__label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); }
+    .kpi__value { font-family: var(--font-serif); font-size: 1.55rem; margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .kpi__sub { font-size: 0.74rem; color: var(--text-light); margin-top: 4px; }
+    .kpi--bad .kpi__value { color: var(--danger); }
+    .chart { position: relative; overflow-x: auto; }
+    .chart svg { display: block; }
+    .chart__tip { position: absolute; pointer-events: none; background: var(--bg-dark); color: #fff; font-size: 0.74rem; line-height: 1.45; padding: 8px 10px; border-radius: 6px; white-space: nowrap; box-shadow: 0 6px 18px rgba(0,0,0,0.25); z-index: 5; }
+    .chart__tip b { font-variant-numeric: tabular-nums; }
+    .chart__tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
     /* Grid children default to min-width:auto and would grow to fit a wide table;
        0 lets .table-wrap scroll inside the card instead of the page scrolling sideways. */
     .settings > *, .inbox > *, .compose > * { min-width: 0; }
@@ -261,6 +278,7 @@
         <button class="tab active" role="tab" data-tab="inbox" aria-selected="true">Inbox<span class="count" id="unreadCount" hidden></span></button>
         <button class="tab" role="tab" data-tab="sent" aria-selected="false">Sent</button>
         <button class="tab" role="tab" data-tab="compose" aria-selected="false">Compose</button>
+        <button class="tab" role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
         <button class="tab" role="tab" data-tab="settings" aria-selected="false">Settings</button>
       </div>
 
@@ -370,6 +388,48 @@
             </div>
             <p class="hint" style="margin-top:10px;">The server renders the final email the same way and refuses to send if a field is empty and has no fallback — write <code>{{contact.firstName|Olá}}</code> to give one.</p>
           </div>
+        </div>
+      </section>
+
+      <!-- ── Metrics ───────────────────────────────────────────── -->
+      <section class="panel" id="panel-metrics" hidden>
+        <div class="toolbar card" style="margin-bottom:16px;">
+          <label class="usage__label" for="mPeriod">Period</label>
+          <select id="mPeriod">
+            <option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option><option value="0">All time</option>
+          </select>
+          <label class="checkline" style="margin:0;"><input type="checkbox" id="mTest"> <span>Include test emails</span></label>
+          <span class="note" id="mNote"></span>
+          <button class="btn btn--ghost btn--sm" id="mRefresh" style="margin-left:auto;">Refresh</button>
+        </div>
+        <div id="mHealth"></div>
+        <div class="kpis" id="mKpis"></div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="toolbar" style="border-radius:var(--radius) var(--radius) 0 0;">
+            <label class="usage__label" for="mGroup">Breakdown by</label>
+            <select id="mGroup"><option value="owner">Person</option><option value="sender">Sender address</option><option value="template">Template · variant</option><option value="week">Week</option></select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th id="mGroupHead">Person</th><th class="num">First emails</th><th class="num">Replied</th><th class="num">Reply rate</th><th class="num">Positive</th><th class="num">Bounced</th><th class="num">Unsubscribed</th></tr></thead>
+              <tbody id="mBreakdown"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;padding:18px 20px;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
+            <h2 style="font-family:var(--font-serif);font-size:1.1rem;color:var(--primary);font-weight:600;">Emails per day — last 30 days</h2>
+            <button class="btn btn--ghost btn--sm" id="mChartTable" aria-pressed="false">Show as table</button>
+          </div>
+          <p class="hint" style="margin:4px 0 10px;">Everything the Resend account handled each UTC day, against the free plan's 100. "Other" is warm-up and investor emails, known only on days the portal sent something.</p>
+          <div class="usage__legend" style="margin-bottom:8px;">
+            <span><i class="seg-out"></i>Outreach</span><span><i class="seg-rep"></i>Replies</span><span><i class="seg-in"></i>Received</span><span><i class="seg-oth"></i>Other</span>
+          </div>
+          <div class="chart" id="mChart"></div>
+          <div class="table-wrap" id="mChartTableWrap" hidden></div>
         </div>
       </section>
 
@@ -498,7 +558,7 @@
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
-      collection, doc, query, where, orderBy, limit, onSnapshot, getDocs, getDoc, serverTimestamp
+      collection, doc, query, where, orderBy, limit, onSnapshot, getDocs, getDoc, serverTimestamp, documentId
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import { ref, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
     import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
@@ -579,7 +639,7 @@
       startSharedReadsWatch();
       $('loadingScreen').style.display = 'none';
       $('app').style.display = 'block';
-      setupTabs(); setupFilters(); setupCompose(); setupSettings();
+      setupTabs(); setupFilters(); setupCompose(); setupSettings(); setupMetrics();
       watchSettings(); watchSenders(); watchUsage(); watchThreads();
       setInterval(() => { if (dayUnsubs.day !== utcDay()) watchUsage(); }, 5 * 60 * 1000); // re-point at the new UTC day
     });
@@ -593,6 +653,7 @@
       document.querySelectorAll('.panel').forEach(p => { p.hidden = p.id !== 'panel-' + name; });
       if (name === 'sent') loadSent();
       if (name === 'compose') ensureCompanies();
+      if (name === 'metrics') loadMetrics();
     }
 
     // ── Live data ──────────────────────────────────────────────
@@ -1140,6 +1201,193 @@
         }
       } catch (e) { err.textContent = errText(e); err.hidden = false; }
       finally { btn.disabled = false; btn.textContent = 'Send email'; }
+    }
+
+    // ── Metrics (spec §8.4 / §9) ───────────────────────────────
+    // Loaded when the tab opens (and on Refresh), not live: a few hundred reads
+    // at most, and nobody needs these numbers to tick in real time.
+    let metricsData = null; // { threads, messages, daily, usage }
+    const POSITIVE = ['interested', 'callback_later', 'referred'];
+    const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : null);
+    const pctTxt = (v) => (v == null ? '—' : v.toLocaleString('en-GB', { maximumFractionDigits: 1 }) + '%');
+
+    function setupMetrics() {
+      ['mPeriod', 'mTest'].forEach(id => $(id).addEventListener('change', renderMetrics));
+      $('mGroup').addEventListener('change', renderBreakdown);
+      $('mRefresh').addEventListener('click', () => { metricsData = null; loadMetrics(); });
+      $('mChartTable').addEventListener('click', () => {
+        const on = $('mChartTableWrap').hidden;
+        $('mChartTableWrap').hidden = !on; $('mChart').hidden = on;
+        $('mChartTable').textContent = on ? 'Show as chart' : 'Show as table';
+        $('mChartTable').setAttribute('aria-pressed', on);
+      });
+    }
+
+    async function loadMetrics() {
+      if (metricsData) { renderMetrics(); return; }
+      $('mKpis').innerHTML = '<div class="empty">Loading…</div>';
+      try {
+        const [th, ms, dl, us] = await Promise.all([
+          getDocs(query(collection(db, 'outreachThreads'), orderBy('firstTouchAt', 'desc'), limit(3000))),
+          getDocs(query(collection(db, 'outreachMessages'), where('direction', '==', 'out'), orderBy('createdAt', 'desc'), limit(3000))),
+          getDocs(query(collection(db, 'outreachDaily'), orderBy(documentId(), 'desc'), limit(31))),
+          getDocs(query(collection(db, 'outreachUsage'), orderBy(documentId(), 'desc'), limit(31))),
+        ]);
+        addReads((th.size || 1) + (ms.size || 1) + (dl.size || 1) + (us.size || 1)); refreshReads();
+        const byId = (snap) => Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
+        metricsData = {
+          threads: th.docs.map(d => ({ id: d.id, ...d.data() })),
+          messages: ms.docs.map(d => ({ id: d.id, ...d.data() })),
+          daily: byId(dl), usage: byId(us),
+        };
+        renderMetrics();
+      } catch (e) { $('mKpis').innerHTML = `<div class="empty">Couldn't load metrics: ${esc(e.message)}</div>`; }
+    }
+
+    // Threads started by the portal in the period (the denominator of every
+    // rate — spec §9: credited to the first-touch template, variant and sender).
+    function metricsScope() {
+      const days = Number($('mPeriod').value), withTest = $('mTest').checked;
+      const since = days ? Date.now() - days * 86400000 : 0;
+      const threads = metricsData.threads.filter(t => t.firstTouchAt && tsMs(t.firstTouchAt) >= since && (withTest || !t.isTest));
+      const messages = metricsData.messages.filter(m => tsMs(m.createdAt) >= since && (withTest || !m.isTest) && m.via !== 'gmail');
+      return { threads, messages, withTest };
+    }
+
+    function threadStats(list) {
+      const replied = list.filter(t => t.repliedAt).length;
+      const positive = list.filter(t => POSITIVE.includes(t.responseCategory)).length;
+      const bounced = list.filter(t => t.status === 'bounced').length;
+      const unsub = list.filter(t => t.unsubscribedAt || t.responseCategory === 'excluded').length;
+      return { started: list.length, replied, positive, bounced, unsub };
+    }
+
+    function renderMetrics() {
+      if (!metricsData) return;
+      const { threads, messages, withTest } = metricsScope();
+      const testOnly = !withTest && !metricsData.threads.some(t => !t.isTest && t.firstTouchAt);
+      $('mNote').textContent = testOnly ? 'Only test emails so far — tick "Include test emails" to see them.' : '';
+
+      const st = threadStats(threads);
+      const sent = messages.filter(m => m.status !== 'queued' && m.status !== 'failed');
+      const delivered = sent.filter(m => ['delivered', 'complained'].includes(m.status)).length;
+      const bounced = sent.filter(m => m.status === 'bounced').length;
+      const complained = sent.filter(m => m.status === 'complained').length;
+      const opened = sent.filter(m => m.firstOpenedAt).length, clicked = sent.filter(m => m.firstClickedAt).length;
+      const replyTimes = threads.filter(t => t.repliedAt).map(t => tsMs(t.repliedAt) - tsMs(t.firstTouchAt)).sort((a, b) => a - b);
+      const median = replyTimes.length ? replyTimes[Math.floor(replyTimes.length / 2)] : null;
+      const dur = (ms) => ms == null ? '—' : ms < 3600000 ? Math.max(1, Math.round(ms / 60000)) + ' min' : ms < 172800000 ? Math.round(ms / 3600000) + ' h' : Math.round(ms / 86400000) + ' days';
+      const bouncePct = pct(bounced, sent.length), complaintPct = pct(complained, sent.length);
+
+      // Health lines (spec §8.4): > 2% hard bounces, > 0.1% complaints.
+      const warn = [];
+      if (sent.length >= 20 && bouncePct > 2) warn.push(`Hard bounces are ${pctTxt(bouncePct)} of emails sent (keep under 2%) — the company email list has dead addresses; check the MX results and clean the list before sending more.`);
+      if (sent.length >= 20 && complaintPct > 0.1) warn.push(`Spam complaints are ${pctTxt(complaintPct)} (keep under 0.1%; Google flags senders at 0.3%) — pause and review the template and targeting.`);
+      $('mHealth').innerHTML = warn.map(w => `<div class="banner banner--bad" style="margin-bottom:12px;"><span>⚠ ${esc(w)}</span></div>`).join('');
+
+      const tile = (label, value, sub, bad) => `<div class="kpi${bad ? ' kpi--bad' : ''}"><div class="kpi__label">${esc(label)}</div><div class="kpi__value">${value}</div>${sub ? `<div class="kpi__sub">${sub}</div>` : ''}</div>`;
+      $('mKpis').innerHTML = [
+        tile('First emails', num(st.started), `${num(sent.length)} emails sent incl. replies`),
+        tile('Reply rate', pctTxt(pct(st.replied, st.started)), `${num(st.replied)} conversations with a human reply`),
+        tile('Positive replies', pctTxt(pct(st.positive, st.started)), `${num(st.positive)} interested, call back or referred`),
+        tile('Delivered', pctTxt(pct(delivered, sent.length)), `${num(delivered)} of ${num(sent.length)}`),
+        tile('Hard bounces', pctTxt(bouncePct), `${num(bounced)} · keep under 2%`, sent.length >= 20 && bouncePct > 2),
+        tile('Spam complaints', pctTxt(complaintPct), `${num(complained)} · keep under 0.1%`, sent.length >= 20 && complaintPct > 0.1),
+        tile('Unsubscribed', pctTxt(pct(st.unsub, st.started)), `${num(st.unsub)} conversations`),
+        tile('Time to first reply', dur(median), 'median'),
+        ...(opened || clicked ? [tile('Opens ≈ / clicks', `${pctTxt(pct(opened, delivered))} / ${pctTxt(pct(clicked, delivered))}`, 'approximate — Apple Mail inflates, Outlook hides')] : []),
+      ].join('');
+
+      renderBreakdown();
+      renderDailyChart();
+    }
+
+    function isoWeekStart(ms) {
+      const d = new Date(ms); const day = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - day); d.setUTCHours(0, 0, 0, 0);
+      return d;
+    }
+    function renderBreakdown() {
+      if (!metricsData) return;
+      const { threads } = metricsScope();
+      const by = $('mGroup').value;
+      $('mGroupHead').textContent = { owner: 'Person', sender: 'Sender address', template: 'Template · variant', week: 'Week starting' }[by];
+      const tplName = (id) => (templatesAll.find(t => t.id === id)?.name) || (id ? 'Deleted template' : 'Written from scratch');
+      const keyOf = (t) => by === 'owner' ? (OWNER_LABEL[t.owner] || 'Unassigned')
+        : by === 'sender' ? (t.senderId || '—')
+        : by === 'template' ? (t.templateId ? `${tplName(t.templateId)} · ${t.variantKey || 'A'}` : tplName(null))
+        : isoWeekStart(tsMs(t.firstTouchAt)).toISOString().slice(0, 10);
+      const groups = {};
+      threads.forEach(t => { (groups[keyOf(t)] ||= []).push(t); });
+      const rows = Object.entries(groups).map(([k, list]) => [k, threadStats(list)])
+        .sort((a, b) => by === 'week' ? b[0].localeCompare(a[0]) : b[1].started - a[1].started);
+      $('mBreakdown').innerHTML = rows.length ? rows.map(([k, s]) => `<tr>
+          <td>${by === 'week' ? esc(dayFmt.format(new Date(k + 'T12:00:00Z'))) : esc(k)}</td>
+          <td class="num">${num(s.started)}</td><td class="num">${num(s.replied)}</td>
+          <td class="num">${pctTxt(pct(s.replied, s.started))}</td><td class="num">${pctTxt(pct(s.positive, s.started))}</td>
+          <td class="num">${num(s.bounced)}</td><td class="num">${num(s.unsub)}</td></tr>`).join('')
+        : '<tr><td colspan="7" class="empty">No first emails in this period.</td></tr>';
+    }
+
+    // Stacked bars, one per UTC day (Resend's quota day). Marks follow the
+    // dataviz spec: thin bars, 2px surface gap between stacked segments, 4px
+    // rounded top, recessive grid, hover tooltip, and a table view.
+    function renderDailyChart() {
+      const days = [];
+      for (let i = 29; i >= 0; i--) { const d = new Date(); d.setUTCDate(d.getUTCDate() - i); days.push(d.toISOString().slice(0, 10)); }
+      const rows = days.map(day => {
+        const d = metricsData.daily[day] || {}, u = metricsData.usage[day];
+        const out = d.outreachSent || 0, rep = d.repliesSent || 0, rin = d.received || 0;
+        const other = u?.resendDailyUsed != null ? Math.max(0, u.resendDailyUsed - (u.portalTotalAtReading || 0)) : 0;
+        return { day, out, rep, rin, other, total: out + rep + rin + other, known: u?.resendDailyUsed != null };
+      });
+      const series = [['out', 'Outreach', 'var(--s-out)'], ['rep', 'Replies', 'var(--s-rep)'], ['in', 'Received', 'var(--s-in)'], ['other', 'Other', 'var(--s-oth)']];
+      const val = (r, k) => (k === 'in' ? r.rin : r[k]);
+      const target = settings?.dailyTarget || 100;
+      const max = Math.max(target, ...rows.map(r => r.total));
+      const yMax = Math.ceil(max / 25) * 25;
+      const W = Math.max(560, $('mChart').clientWidth || 560), H = 220, padL = 34, padR = 8, padT = 10, padB = 26;
+      const plotW = W - padL - padR, plotH = H - padT - padB, step = plotW / rows.length, bw = Math.max(4, Math.min(18, step * 0.62));
+      const y = (v) => padT + plotH - (v / yMax) * plotH;
+      let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Emails per day over the last 30 days, stacked by kind, against a daily target of ${target}">`;
+      for (let g = 0; g <= yMax; g += yMax / 4) {
+        svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(g)}" y2="${y(g)}" stroke="#E8E4DC" stroke-width="1"/>`;
+        svg += `<text x="${padL - 6}" y="${y(g) + 3}" text-anchor="end" font-size="10" fill="#6B7280">${g}</text>`;
+      }
+      svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(target)}" y2="${y(target)}" stroke="#6B7280" stroke-width="1" stroke-dasharray="4 3"/>`;
+      svg += `<text x="${W - padR}" y="${y(target) - 4}" text-anchor="end" font-size="10" fill="#6B7280">target ${target}</text>`;
+      rows.forEach((r, i) => {
+        const x = padL + i * step + (step - bw) / 2;
+        let base = r.total ? 0 : null;
+        const segs = series.map(([k]) => [k, val(r, k)]).filter(([, v]) => v > 0);
+        segs.forEach(([k, v], si) => {
+          const top = y(base + v), bottom = y(base) - (si > 0 ? 2 : 0); // 2px surface gap between segments
+          const h = Math.max(0, bottom - top), last = si === segs.length - 1, rad = last ? Math.min(4, h / 2, bw / 2) : 0;
+          const color = series.find(s => s[0] === k)[2];
+          svg += last && rad > 0
+            ? `<path d="M${x},${top + h} V${top + rad} Q${x},${top} ${x + rad},${top} H${x + bw - rad} Q${x + bw},${top} ${x + bw},${top + rad} V${top + h} Z" fill="${color}"/>`
+            : `<rect x="${x}" y="${top}" width="${bw}" height="${h}" fill="${color}"/>`;
+          base += v;
+        });
+        if (i % 5 === 4 || i === rows.length - 1) svg += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#6B7280">${esc(dayFmt.format(new Date(r.day + 'T12:00:00Z')))}</text>`;
+        svg += `<rect x="${padL + i * step}" y="${padT}" width="${step}" height="${plotH}" fill="transparent" data-i="${i}"/>`; // hover target, wider than the bar
+      });
+      svg += '</svg>';
+      $('mChart').innerHTML = svg + '<div class="chart__tip" hidden></div>';
+      const tip = $('mChart').querySelector('.chart__tip');
+      $('mChart').querySelectorAll('rect[data-i]').forEach(hit => {
+        hit.addEventListener('mouseenter', () => {
+          const r = rows[Number(hit.dataset.i)];
+          tip.innerHTML = `<b>${esc(dayFmt.format(new Date(r.day + 'T12:00:00Z')))}</b> — ${num(r.total)} emails<br>` +
+            series.map(([k, l, c]) => `<i style="background:${c}"></i>${l} <b>${num(val(r, k))}</b>`).join('<br>') +
+            (r.known ? '' : '<br><span style="opacity:.75">No portal send this day — warm-up not counted</span>');
+          tip.hidden = false;
+          const bx = Number(hit.getAttribute('x')) + step / 2;
+          tip.style.left = Math.min(Math.max(0, bx - 80), W - 180) + 'px'; tip.style.top = '4px';
+        });
+        hit.addEventListener('mouseleave', () => { tip.hidden = true; });
+      });
+      $('mChartTableWrap').innerHTML = `<table><thead><tr><th>Day (UTC)</th><th class="num">Outreach</th><th class="num">Replies</th><th class="num">Received</th><th class="num">Other</th><th class="num">Total</th></tr></thead><tbody>` +
+        [...rows].reverse().map(r => `<tr><td>${esc(r.day)}</td><td class="num">${num(r.out)}</td><td class="num">${num(r.rep)}</td><td class="num">${num(r.rin)}</td><td class="num">${r.known ? num(r.other) : '—'}</td><td class="num">${num(r.total)}</td></tr>`).join('') + '</tbody></table>';
     }
 
     // ── Settings ───────────────────────────────────────────────
