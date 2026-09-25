@@ -193,6 +193,16 @@
     .settings { display: grid; grid-template-columns: 1fr; gap: 16px; }
     .settings .card { padding: 18px 20px; }
     .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 0.84rem; margin-bottom: 14px; }
+    .subnav { margin-bottom: 14px; }
+    .checkline { display: flex; gap: 8px; align-items: flex-start; font-size: 0.84rem; line-height: 1.4; cursor: pointer; }
+    .checkline input { margin-top: 3px; }
+    .checklist { display: flex; flex-direction: column; gap: 8px; background: #FDF3DC; border: 1px solid #F0D597; border-radius: var(--radius); padding: 12px 14px; margin-top: 4px; }
+    .variant { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; background: var(--tint); }
+    .variant__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 600; font-size: 0.84rem; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .modal { background: var(--white); border-radius: var(--radius); padding: 26px 28px; width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
+    .modal h2 { font-family: var(--font-serif); font-size: 1.25rem; color: var(--primary); margin-bottom: 18px; font-weight: 600; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
     .kv dt { color: var(--text-light); }
     .actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
@@ -362,23 +372,105 @@
 
       <!-- ── Settings ──────────────────────────────────────────── -->
       <section class="panel" id="panel-settings" hidden>
+        <div class="chips subnav" id="setNav" role="tablist" aria-label="Settings sections">
+          <button class="chip on" data-sec="general">General</button>
+          <button class="chip" data-sec="senders">Addresses</button>
+          <button class="chip" data-sec="footer">Legal footer</button>
+          <button class="chip" data-sec="templates">Templates</button>
+          <button class="chip" data-sec="suppression">Suppression list</button>
+        </div>
+
         <div class="settings">
-          <div class="card">
-            <h2>Status</h2>
-            <dl class="kv" id="settingsKv"></dl>
+          <!-- General -->
+          <div class="card setsec" id="sec-general">
+            <h2>General</h2>
+            <div class="banner" id="testModeBanner" style="margin-bottom:16px;"></div>
+            <div class="row2">
+              <div class="field">
+                <label for="gTarget">Daily target — whole Resend account</label>
+                <input type="text" inputmode="numeric" id="gTarget">
+                <span class="hint">Soft limit: above it every send asks for confirmation. The free plan's quota is 100.</span>
+              </div>
+              <div class="field">
+                <label for="gAuto">Automations limit per day</label>
+                <input type="text" inputmode="numeric" id="gAuto">
+                <span class="hint">Batches and sequences (Phase 2) stop here. Manual sends and replies never do.</span>
+              </div>
+            </div>
+            <label class="checkline"><input type="checkbox" id="gPersonal"> Block personal email domains (gmail, sapo, hotmail…) — the legal rule for natural persons</label>
+            <div class="field" style="margin-top:14px;">
+              <label for="gTestList">Approved test addresses</label>
+              <textarea id="gTestList" rows="6" spellcheck="false"></textarea>
+              <span class="hint">One per line. While test mode is on, only these can receive email.</span>
+            </div>
+            <div class="banner banner--bad" id="gErr" hidden style="margin-bottom:12px;"></div>
             <div class="actions">
-              <button class="btn btn--ghost" id="seedBtn">Set up settings &amp; addresses</button>
+              <button class="btn btn--primary" id="gSave">Save</button>
+              <button class="btn btn--ghost" id="seedBtn">Set up missing settings &amp; addresses</button>
               <button class="btn btn--danger" id="clearTestBtn">Clear test data</button>
             </div>
             <p class="hint" style="margin-top:10px;">"Set up" only creates what's missing and never overwrites. "Clear test data" deletes every conversation, message and activity created while test mode was on.</p>
           </div>
-          <div class="card" style="padding:0;">
+
+          <!-- Addresses -->
+          <div class="card setsec" id="sec-senders" hidden style="padding:0;">
             <div style="padding:18px 20px 6px;"><h2 style="margin:0;">Sender addresses</h2>
-              <p class="hint" style="margin-top:6px;">An address becomes <b>active</b> after three steps: stop its warm-up in Instantly, add <code>&lt;alias&gt;@…resend.app</code> as a second destination in ImprovMX, then set it active here (editing arrives in the next update).</p></div>
+              <p class="hint" style="margin-top:6px;">An address can start new outreach only when it's <b>active</b>: its warm-up is stopped in Instantly and ImprovMX forwards it to Resend as a second destination (<code>&lt;alias&gt;@…resend.app</code>), so replies reach the portal.</p></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>Address</th><th>Owner</th><th>Status</th><th class="num">Sent today</th><th class="num">Daily cap</th></tr></thead>
-                <tbody id="sendersBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+                <thead><tr><th>Address</th><th>Owner</th><th>Status</th><th class="num">Sent today</th><th class="num">Daily cap</th><th></th></tr></thead>
+                <tbody id="sendersBody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Legal footer -->
+          <div class="card setsec" id="sec-footer" hidden>
+            <h2>Legal footer</h2>
+            <p class="hint" style="margin-bottom:14px;">Added to the bottom of every outreach email. Required before test mode can be switched off. Draft for CCSL to review — not legal advice. Keep <code>{{unsubscribeUrl}}</code> in the text: it becomes each recipient's one-click removal link.</p>
+            <div class="field">
+              <label for="fEntity">Legal entity line</label>
+              <input type="text" id="fEntity" placeholder="Douro Partners, Lda. · NIPC [___] · [morada]">
+            </div>
+            <div class="field">
+              <label for="fText">Footer text</label>
+              <textarea id="fText" rows="5"></textarea>
+            </div>
+            <div class="preview" style="margin-bottom:14px;"><div class="preview__footer" id="fPreview" style="margin-top:0;"></div></div>
+            <div class="banner banner--bad" id="fErr" hidden style="margin-bottom:12px;"></div>
+            <div class="actions"><button class="btn btn--primary" id="fSave">Save footer</button><span class="note" id="fState"></span></div>
+          </div>
+
+          <!-- Templates -->
+          <div class="card setsec" id="sec-templates" hidden style="padding:0;">
+            <div style="padding:18px 20px 10px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+              <div><h2 style="margin:0;">Templates</h2>
+                <p class="hint" style="margin-top:6px;">Content only — the layout (plain, personal-looking), your signature and the legal footer are added when sending. Variants A/B are for testing subject lines or openings; you pick one in Compose.</p></div>
+              <button class="btn btn--primary btn--sm" id="tplNew">New template</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Name</th><th>Status</th><th>Variants</th><th>Language</th><th>Updated</th><th></th></tr></thead>
+                <tbody id="tplBody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Suppression list -->
+          <div class="card setsec" id="sec-suppression" hidden style="padding:0;">
+            <div style="padding:18px 20px 6px;"><h2 style="margin:0;">Suppression list</h2>
+              <p class="hint" style="margin-top:6px;">Nobody here is ever emailed again, from any address. Bounces, spam complaints and unsubscribes are added automatically. Add a whole domain with <code>@empresa.pt</code>.</p></div>
+            <div class="toolbar">
+              <input type="search" id="supSearch" placeholder="Filter…" style="max-width:220px;">
+              <input type="text" id="supAdd" placeholder="email@empresa.pt or @empresa.pt" style="max-width:260px;">
+              <select id="supReason" aria-label="Reason"><option value="do_not_contact">Do not contact</option><option value="manual">Manual</option><option value="unsubscribed">Asked to be removed</option></select>
+              <button class="btn btn--ghost btn--sm" id="supAddBtn">Add</button>
+              <button class="btn btn--ghost btn--sm" id="supExport" style="margin-left:auto;">Export CSV</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Address / domain</th><th>Reason</th><th>Source</th><th>Added</th><th></th></tr></thead>
+                <tbody id="supBody"><tr><td colspan="5" class="empty">Open this section to load the list.</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -387,10 +479,19 @@
     </main>
   </div>
 
+  <div class="modal-overlay" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h2 id="modalTitle"></h2>
+      <div id="modalBody"></div>
+      <div class="banner banner--bad" id="modalErr" hidden style="margin-top:12px;"></div>
+      <div class="modal-actions"><button class="btn btn--ghost" id="modalCancel" type="button">Cancel</button><button class="btn btn--primary" id="modalSave" type="button">Save</button></div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
 
   <script type="module">
-    import { auth, db, storage, ADMIN_EMAILS, addReads, updateDoc, setDoc } from './firebase-config.js';
+    import { auth, db, storage, ADMIN_EMAILS, addReads, updateDoc, setDoc, addDoc, deleteDoc } from './firebase-config.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
@@ -523,7 +624,14 @@
       const u1 = onSnapshot(doc(db, 'outreachUsage', day), (s) => { addReads(1); refreshReads(); f1 = false; usageDoc = s.exists() ? s.data() : {}; renderUsage(); });
       const u2 = onSnapshot(doc(db, 'outreachDaily', day), (s) => { addReads(1); refreshReads(); f2 = false; dailyDoc = s.exists() ? s.data() : {}; renderUsage(); renderSenders(); });
       dayUnsubs = [u1, u2]; dayUnsubs.day = day;
+      // Before today's first send there's no monthly figure yet — show the last known one.
+      getDocs(query(collection(db, 'outreachUsage'), orderBy('updatedAt', 'desc'), limit(1))).then((snap) => {
+        addReads(snap.size || 1); refreshReads();
+        lastKnownMonthly = snap.empty ? null : (snap.docs[0].data().resendMonthlyUsed ?? null);
+        renderUsage();
+      }).catch(() => {});
     }
+    let lastKnownMonthly = null;
 
     function watchThreads() {
       let first = true;
@@ -560,8 +668,9 @@
         `<span><i class="seg-out"></i>Outreach ${num(out)}</span><span><i class="seg-rep"></i>Replies ${num(rep)}</span>` +
         `<span><i class="seg-in"></i>Received ${num(rin)}</span><span><i class="seg-oth"></i>Other ${num(other)}</span>`;
       $('usageBar').title = `Resend account today: ${total} of ${target}. Outreach ${out} · replies ${rep} · received ${rin} · other (warm-up, investor emails) ${other}. Automations limit: ${settings?.automationBudget || 80}/day.`;
-      const month = usageDoc.resendMonthlyUsed;
-      $('usageMonth').textContent = `${month != null ? num(month) : '—'} / ${num(MONTHLY_QUOTA)}`;
+      const monthToday = usageDoc.resendMonthlyUsed;
+      const month = monthToday ?? lastKnownMonthly;
+      $('usageMonth').textContent = `${month != null ? (monthToday == null ? '≥ ' : '') + num(month) : '—'} / ${num(MONTHLY_QUOTA)}`;
       $('monthFill').style.width = month != null ? Math.min(100, month / MONTHLY_QUOTA * 100) + '%' : '0%';
       const nextReset = new Date(); nextReset.setUTCHours(24, 0, 0, 0);
       const updated = used != null
@@ -883,21 +992,10 @@
       $('cTpl').addEventListener('change', applyTemplate);
       $('sendBtn').addEventListener('click', sendNew);
       $('clearBtn').addEventListener('click', () => { pickCompany(null); $('coSearch').value = ''; $('cSubject').value = ''; $('cBody').value = ''; $('composeErr').hidden = true; renderPreview(); });
-      loadTemplates();
       renderPreview();
     }
 
-    let templates = [];
-    async function loadTemplates() {
-      try {
-        const snap = await getDocs(query(collection(db, 'outreachTemplates'), where('status', '==', 'active')));
-        addReads(snap.size || 1);
-        templates = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        const opts = templates.flatMap(t => (t.variants || []).map(v => `<option value="${esc(t.id)}::${esc(v.key)}">${esc(t.name)} — variant ${esc(v.key)}</option>`));
-        $('cTpl').innerHTML = '<option value="">— Write from scratch —</option>' + opts.join('');
-        $('tplField').hidden = !opts.length;
-      } catch (e) { /* templates arrive with the Settings editor */ }
-    }
+    let templates = []; // active ones, kept current by watchTemplates() in Settings
     function applyTemplate() {
       const [tid, key] = $('cTpl').value.split('::');
       const t = templates.find(x => x.id === tid); const v = t?.variants?.find(x => x.key === key);
@@ -982,7 +1080,9 @@
       $('pvSubject').innerHTML = s.html || '<span style="color:#aaa">Subject</span>';
       $('pvBody').innerHTML = (b.html || '<span style="color:#aaa">Message</span>') + (ctx.sender.signature ? '\n\n' + esc(ctx.sender.signature) : '');
       const test = !settings || settings.testMode !== false;
-      $('pvFooter').textContent = settings?.complianceBlockId ? '— legal footer (from Settings) —' : (test ? '--\n[TESTE] Rodapé legal ainda por configurar. Remover: https://douropartners.pt/u/…' : '— legal footer missing: sending is blocked —');
+      $('pvFooter').textContent = (settings?.complianceBlockId && compliance)
+        ? '--\n' + [compliance.legalEntityLine, compliance.footerText].filter(Boolean).join('\n').replace(/\{\{\s*unsubscribeUrl\s*\}\}/g, 'https://douropartners.pt/u/…')
+        : (test ? '--\n[TESTE] Rodapé legal ainda por configurar. Remover: https://douropartners.pt/u/…' : '— legal footer missing: sending is blocked —');
       const missing = [...new Set([...s.missing, ...b.missing])];
       $('pvMeta').innerHTML = `From <b>${esc($('cFrom').value || '—')}</b> to <b>${esc($('cTo').value || '—')}</b>` +
         (missing.length ? ` · <span style="color:var(--danger)">empty: ${missing.map(esc).join(', ')}</span>` : '');
@@ -1010,8 +1110,53 @@
       finally { btn.disabled = false; btn.textContent = 'Send email'; }
     }
 
-    // ── Settings (read-only in this update; editing comes with block C) ──
+    // ── Settings ───────────────────────────────────────────────
+    const DEFAULT_ENTITY = 'Douro Partners, Lda. · NIPC [___] · [morada]';
+    // Draft from spec §10.1 — CCSL to review before go-live.
+    const DEFAULT_FOOTER = 'Contactamos empresas com base em informação empresarial pública, por considerarmos que uma conversa sobre sucessão ou crescimento pode ser do vosso interesse. Se preferir não receber mais emails nossos, responda "remover" ou clique aqui: {{unsubscribeUrl}}. Política de privacidade: douropartners.pt/privacidade';
+    let compliance = null;
+    let templatesAll = [];
+    let suppression = null;
+    let generalDirty = false;
+    const hasPlaceholder = (s) => /\[[^\]]*\]/.test(s || '');
+
+    function showSec(name) {
+      $('setNav').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.sec === name));
+      document.querySelectorAll('.setsec').forEach(s => { s.hidden = s.id !== 'sec-' + name; });
+      if (name === 'suppression' && !suppression) loadSuppression();
+    }
+
+    // Generic modal: body HTML + a save handler that returns true to close.
+    function openModal(title, bodyHtml, onSave, saveLabel = 'Save') {
+      $('modalTitle').textContent = title;
+      $('modalBody').innerHTML = bodyHtml;
+      $('modalErr').hidden = true;
+      $('modalSave').textContent = saveLabel;
+      $('modal').hidden = false;
+      $('modalSave').onclick = async () => {
+        $('modalErr').hidden = true; $('modalSave').disabled = true;
+        try { if (await onSave()) closeModal(); }
+        catch (e) { modalError(e.message || String(e)); }
+        finally { $('modalSave').disabled = false; }
+      };
+      setTimeout(() => $('modalBody').querySelector('input, select, textarea')?.focus(), 30);
+    }
+    function modalError(msg) { $('modalErr').textContent = msg; $('modalErr').hidden = false; }
+    function closeModal() { $('modal').hidden = true; $('modalBody').innerHTML = ''; }
+
     function setupSettings() {
+      $('setNav').addEventListener('click', (e) => { const b = e.target.closest('[data-sec]'); if (b) showSec(b.dataset.sec); });
+      $('modalCancel').addEventListener('click', closeModal);
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
+      ['gTarget', 'gAuto', 'gPersonal', 'gTestList'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
+      $('gSave').addEventListener('click', saveGeneral);
+      ['fEntity', 'fText'].forEach(id => $(id).addEventListener('input', renderFooterPreview));
+      $('fSave').addEventListener('click', saveFooter);
+      $('tplNew').addEventListener('click', () => openTemplate(null));
+      $('supAddBtn').addEventListener('click', addSuppressionEntry);
+      $('supSearch').addEventListener('input', renderSuppression);
+      $('supExport').addEventListener('click', exportSuppression);
+      watchCompliance(); watchTemplates();
       $('seedBtn').addEventListener('click', async () => {
         const b = $('seedBtn'); b.disabled = true;
         try { const r = (await callAdmin({ action: 'seed' })).data; toast(r.created.length ? `Created ${r.created.length}: settings and sender addresses.` : 'Everything was already set up.'); }
@@ -1026,25 +1171,275 @@
         finally { b.disabled = false; }
       });
     }
+    // General: test mode, limits, personal domains, test list.
     function renderSettings() {
       const s = settings;
-      $('settingsKv').innerHTML = s ? `
-        <dt>Test mode</dt><dd>${s.testMode !== false ? '<span class="pill pill--warn">On</span> only approved test addresses can receive email' : '<span class="pill pill--good">Off</span> live'}</dd>
-        <dt>Approved test addresses</dt><dd>${(s.testRecipients || []).length}</dd>
-        <dt>Daily target (whole account)</dt><dd>${num(s.dailyTarget)} — soft: above it, sends ask for confirmation</dd>
-        <dt>Automations limit</dt><dd>${num(s.automationBudget)} per day (used from Phase 2)</dd>
-        <dt>Personal email domains</dt><dd>${s.blockPersonalDomains ? 'Blocked (gmail, sapo, hotmail…)' : 'Allowed'}</dd>
-        <dt>Legal footer</dt><dd>${s.complianceBlockId ? 'Configured' : '<span class="pill pill--warn">Not configured</span> required before test mode is switched off'}</dd>`
-        : '<dt>Status</dt><dd>Not set up yet — click "Set up settings &amp; addresses".</dd>';
+      const test = !s || s.testMode !== false;
+      const b = $('testModeBanner');
+      b.className = 'banner ' + (test ? 'banner--warn' : 'banner--ok');
+      b.innerHTML = !s
+        ? '<span>Not set up yet — click "Set up missing settings &amp; addresses" below.</span>'
+        : test
+          ? `<span><b>Test mode is on.</b> Only approved test addresses can receive email.</span><button class="btn btn--ghost btn--sm" id="testOffBtn">Go live (switch test mode off)</button>`
+          : `<span><b>Live.</b> Outreach emails reach real companies.</span><button class="btn btn--ghost btn--sm" id="testOnBtn">Switch test mode back on</button>`;
+      $('testOffBtn')?.addEventListener('click', goLive);
+      $('testOnBtn')?.addEventListener('click', async () => {
+        if (!confirm('Switch test mode back on? Only approved test addresses will receive email.')) return;
+        await updateDoc(doc(db, 'outreachSettings', 'global'), { testMode: true, updatedAt: serverTimestamp(), updatedBy: me });
+        toast('Test mode is on.');
+      });
+      if (!s || generalDirty) return;
+      $('gTarget').value = s.dailyTarget ?? 100;
+      $('gAuto').value = s.automationBudget ?? 80;
+      $('gPersonal').checked = s.blockPersonalDomains !== false;
+      $('gTestList').value = (s.testRecipients || []).join('\n');
     }
+
+    async function saveGeneral() {
+      const err = $('gErr'); err.hidden = true;
+      const target = parseInt($('gTarget').value, 10), auto = parseInt($('gAuto').value, 10);
+      if (!(target >= 1 && target <= 10000)) { err.textContent = 'Daily target must be a number between 1 and 10,000.'; err.hidden = false; return; }
+      if (!(auto >= 0 && auto <= target)) { err.textContent = `Automations limit must be between 0 and the daily target (${target}).`; err.hidden = false; return; }
+      const list = [...new Set($('gTestList').value.split(/[\s,;]+/).map(x => x.trim().toLowerCase()).filter(Boolean))];
+      const bad = list.filter(x => !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(x));
+      if (bad.length) { err.textContent = `Not valid email addresses: ${bad.join(', ')}`; err.hidden = false; return; }
+      if (!list.length) { err.textContent = 'Keep at least one approved test address.'; err.hidden = false; return; }
+      await setDoc(doc(db, 'outreachSettings', 'global'), {
+        dailyTarget: target, automationBudget: auto, blockPersonalDomains: $('gPersonal').checked,
+        testRecipients: list, updatedAt: serverTimestamp(), updatedBy: me,
+      }, { merge: true });
+      generalDirty = false;
+      toast('Settings saved.');
+    }
+
+    // Going live is gated on the go-live checklist (spec §13.3); the server
+    // independently refuses real sends without a legal footer.
+    function goLive() {
+      const footerOk = settings?.complianceBlockId && compliance && !hasPlaceholder(compliance.legalEntityLine) && (compliance.footerText || '').includes('{{unsubscribeUrl}}');
+      if (!footerOk) { toast('Set up the legal footer first (Settings → Legal footer) — with the real entity name, NIPC and address, no [___] placeholders.'); showSec('footer'); return; }
+      const items = [
+        ['glFooter', 'The legal footer and privacy page are reviewed (CCSL) and the privacy page is live'],
+        ['glAddr', 'The addresses going live are active: warm-up stopped in Instantly and ImprovMX forwarding to Resend'],
+        ['glRewrite', 'The unsubscribe link works on douropartners.pt (the /u/ rewrite is live on production)'],
+        ['glTpl', 'At least one template is written and active'],
+        ['glClear', 'Test data is cleared (General → Clear test data)'],
+      ];
+      openModal('Go live', `<p class="note" style="margin-bottom:12px;">From now on, emails reach real companies. Confirm each item on the go-live checklist:</p>
+        <div class="checklist">${items.map(([id, t]) => `<label class="checkline"><input type="checkbox" id="${id}"> ${esc(t)}</label>`).join('')}</div>`,
+        async () => {
+          if (items.some(([id]) => !$(id).checked)) { modalError('Tick every item first.'); return false; }
+          await updateDoc(doc(db, 'outreachSettings', 'global'), { testMode: false, liveSince: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: me });
+          toast('Outreach is live.');
+          return true;
+        }, 'Go live');
+    }
+
+    // Addresses: edit status / cap / signature, with the activation checklist.
     function renderSenders() {
       const body = $('sendersBody'); if (!body) return;
       const kind = { active: 'good', paused: 'warn', warming: 'info', retired: '' };
       body.innerHTML = senders.length ? senders.map(s => `<tr>
           <td>${esc(s.id)}</td><td>${esc(OWNER_LABEL[s.owner] || s.owner || '—')}</td>
           <td><span class="pill${kind[s.status] ? ' pill--' + kind[s.status] : ''}">${esc(s.status)}</span></td>
-          <td class="num">${num(dailyDoc.bySender?.[senderKey(s.id)] || 0)}</td><td class="num">${num(s.dailyCap || 25)}</td></tr>`).join('')
-        : '<tr><td colspan="5" class="empty">No sender addresses yet — click "Set up settings &amp; addresses" above.</td></tr>';
+          <td class="num">${num(dailyDoc.bySender?.[senderKey(s.id)] || 0)}</td><td class="num">${num(s.dailyCap || 25)}</td>
+          <td style="text-align:right;"><button class="btn btn--ghost btn--sm" data-edit-sender="${esc(s.id)}">Edit</button></td></tr>`).join('')
+        : '<tr><td colspan="6" class="empty">No sender addresses yet — Settings → General → "Set up missing settings &amp; addresses".</td></tr>';
+      body.querySelectorAll('[data-edit-sender]').forEach(b => b.addEventListener('click', () => openSender(senders.find(s => s.id === b.dataset.editSender))));
+    }
+
+    function openSender(s) {
+      if (!s) return;
+      const statuses = [['active', 'Active — can start new outreach'], ['paused', 'Paused — replies only'], ['warming', 'Warming — still in Instantly warm-up'], ['retired', 'Retired']];
+      openModal(s.id, `
+        <div class="row2">
+          <div class="field"><label for="sName">Display name</label><input type="text" id="sName" value="${esc(s.displayName || '')}"></div>
+          <div class="field"><label for="sCap">Daily cap (new outreach)</label><input type="text" inputmode="numeric" id="sCap" value="${esc(s.dailyCap || 25)}"></div>
+        </div>
+        <div class="field"><label for="sStatus">Status</label><select id="sStatus">${statuses.map(([v, l]) => `<option value="${v}"${s.status === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+        <div class="checklist" id="sCheck" hidden>
+          <span class="note" style="color:#6B4700;">Before activating, confirm both steps — otherwise replies to this address never reach the portal:</span>
+          <label class="checkline"><input type="checkbox" id="sCk1"> Warm-up is stopped for this address in Instantly</label>
+          <label class="checkline"><input type="checkbox" id="sCk2"> ImprovMX forwards <b>${esc(localPart(s.id))}@</b> to <b>${esc(localPart(s.id))}@…resend.app</b> as a second destination</label>
+        </div>
+        <div class="field" style="margin-top:14px;"><label for="sSig">Signature</label><textarea id="sSig" rows="4">${esc(s.signature || '')}</textarea>
+          <span class="hint">Plain text, added under every email from this address.</span></div>
+        <div class="field"><label for="sNotes">Notes</label><textarea id="sNotes" rows="2">${esc(s.notes || '')}</textarea></div>`,
+        async () => {
+          const status = $('sStatus').value, cap = parseInt($('sCap').value, 10);
+          if (!(cap >= 1 && cap <= 500)) { modalError('Daily cap must be between 1 and 500.'); return false; }
+          if (!$('sName').value.trim()) { modalError('Display name is required.'); return false; }
+          if (status === 'active' && s.status !== 'active' && !($('sCk1').checked && $('sCk2').checked)) { modalError('Confirm both activation steps.'); return false; }
+          await updateDoc(doc(db, 'outreachSenders', s.id), {
+            displayName: $('sName').value.trim(), dailyCap: cap, status, signature: $('sSig').value.trim(), notes: $('sNotes').value.trim(),
+            updatedAt: serverTimestamp(), updatedBy: me,
+          });
+          toast(`${s.id} saved.`);
+          return true;
+        });
+      const syncCheck = () => { $('sCheck').hidden = !($('sStatus').value === 'active' && s.status !== 'active'); };
+      $('sStatus').addEventListener('change', syncCheck); syncCheck();
+    }
+
+    // Legal footer: one block ("default"), linked from settings.complianceBlockId.
+    function watchCompliance() {
+      let first = true;
+      onSnapshot(doc(db, 'outreachCompliance', 'default'), (snap) => {
+        addReads(1); refreshReads(); const wasFirst = first; first = false;
+        compliance = snap.exists() ? snap.data() : null;
+        if (wasFirst || !$('fEntity').matches(':focus')) {
+          $('fEntity').value = compliance?.legalEntityLine ?? DEFAULT_ENTITY;
+          $('fText').value = compliance?.footerText ?? DEFAULT_FOOTER;
+        }
+        $('fState').textContent = compliance ? `Saved${compliance.updatedBy ? ' by ' + compliance.updatedBy : ''}.${hasPlaceholder(compliance.legalEntityLine) ? ' Still has [___] placeholders — fine for testing, not for going live.' : ''}` : 'Not saved yet — this is the draft from the spec.';
+        renderFooterPreview(); renderPreview();
+      }, (e) => console.warn('compliance', e));
+    }
+    function renderFooterPreview() {
+      const txt = [$('fEntity').value.trim(), $('fText').value.trim()].filter(Boolean).join('\n').replace(/\{\{\s*unsubscribeUrl\s*\}\}/g, 'https://douropartners.pt/u/…');
+      $('fPreview').textContent = '--\n' + txt;
+    }
+    async function saveFooter() {
+      const err = $('fErr'); err.hidden = true;
+      const legalEntityLine = $('fEntity').value.trim(), footerText = $('fText').value.trim();
+      if (!legalEntityLine || !footerText) { err.textContent = 'Both the entity line and the footer text are required.'; err.hidden = false; return; }
+      if (!footerText.includes('{{unsubscribeUrl}}')) { err.textContent = 'Keep {{unsubscribeUrl}} in the footer text — it becomes the removal link.'; err.hidden = false; return; }
+      await setDoc(doc(db, 'outreachCompliance', 'default'), { language: 'pt', legalEntityLine, footerText, updatedAt: serverTimestamp(), updatedBy: me }, { merge: true });
+      if (settings?.complianceBlockId !== 'default') await updateDoc(doc(db, 'outreachSettings', 'global'), { complianceBlockId: 'default' });
+      toast(hasPlaceholder(legalEntityLine) ? 'Footer saved — it still has [___] placeholders; fill them before going live.' : 'Footer saved.');
+    }
+
+    // Templates: content with A/B variants.
+    function watchTemplates() {
+      let first = true;
+      onSnapshot(collection(db, 'outreachTemplates'), (snap) => {
+        countSnap(snap, first); first = false;
+        templatesAll = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        renderTemplatesTable();
+        templates = templatesAll.filter(t => t.status === 'active');
+        const opts = templates.flatMap(t => (t.variants || []).map(v => `<option value="${esc(t.id)}::${esc(v.key)}">${esc(t.name)} — variant ${esc(v.key)}</option>`));
+        const cur = $('cTpl').value;
+        $('cTpl').innerHTML = '<option value="">— Write from scratch —</option>' + opts.join('');
+        $('cTpl').value = [...$('cTpl').options].some(o => o.value === cur) ? cur : '';
+        $('tplField').hidden = !opts.length;
+      }, (e) => console.warn('templates', e));
+    }
+    function renderTemplatesTable() {
+      const kind = { active: 'good', draft: 'warn', archived: '' };
+      $('tplBody').innerHTML = templatesAll.length ? templatesAll.map(t => `<tr>
+          <td>${esc(t.name)}</td><td><span class="pill${kind[t.status] ? ' pill--' + kind[t.status] : ''}">${esc(t.status)}</span></td>
+          <td>${esc((t.variants || []).map(v => v.key).join(', '))}</td><td>${esc((t.language || 'pt').toUpperCase())}</td>
+          <td style="white-space:nowrap;">${t.updatedAt ? esc(dayFmt.format(new Date(tsMs(t.updatedAt)))) : ''}</td>
+          <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-tpl="${esc(t.id)}">Edit</button> <button class="btn btn--ghost btn--sm" data-tpl-dup="${esc(t.id)}">Duplicate</button></td></tr>`).join('')
+        : '<tr><td colspan="6" class="empty">No templates yet. Create the first one — Compose then lets you pick it.</td></tr>';
+      $('tplBody').querySelectorAll('[data-tpl]').forEach(b => b.addEventListener('click', () => openTemplate(templatesAll.find(t => t.id === b.dataset.tpl))));
+      $('tplBody').querySelectorAll('[data-tpl-dup]').forEach(b => b.addEventListener('click', () => {
+        const t = templatesAll.find(x => x.id === b.dataset.tplDup);
+        openTemplate({ ...t, id: null, name: `${t.name} (copy)`, status: 'draft' });
+      }));
+    }
+
+    function openTemplate(t) {
+      const tpl = t || { id: null, name: '', language: 'pt', status: 'draft', variants: [{ key: 'A', subject: '', body: '' }] };
+      let variants = (tpl.variants || []).map(v => ({ ...v }));
+      const variantHtml = () => variants.map((v, i) => `
+        <div class="variant" data-i="${i}">
+          <div class="variant__head"><span>Variant ${esc(v.key)}</span>${variants.length > 1 ? `<button type="button" class="btn btn--ghost btn--sm" data-rm="${i}">Remove</button>` : ''}</div>
+          <div class="field"><label>Subject</label><input type="text" data-f="subject" value="${esc(v.subject || '')}"></div>
+          <div class="field" style="margin-bottom:0;"><label>Message</label><textarea rows="7" data-f="body">${esc(v.body || '')}</textarea></div>
+        </div>`).join('');
+      openModal(t?.id ? 'Edit template' : 'New template', `
+        <div class="row2">
+          <div class="field"><label for="tName">Name</label><input type="text" id="tName" value="${esc(tpl.name || '')}" placeholder="e.g. Primeiro contacto — sucessão"></div>
+          <div class="row2">
+            <div class="field"><label for="tLang">Language</label><select id="tLang"><option value="pt"${tpl.language !== 'en' ? ' selected' : ''}>PT</option><option value="en"${tpl.language === 'en' ? ' selected' : ''}>EN</option></select></div>
+            <div class="field"><label for="tStatus">Status</label><select id="tStatus">${['draft', 'active', 'archived'].map(s => `<option value="${s}"${tpl.status === s ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
+          </div>
+        </div>
+        <p class="hint" style="margin:-4px 0 12px;">Fields: ${VARS.map(v => `<code>{{${esc(v)}}}</code>`).join(' ')} — give a fallback after <code>|</code> for fields that can be empty. Only <b>active</b> templates appear in Compose.</p>
+        <div id="tVariants">${variantHtml()}</div>
+        <button type="button" class="btn btn--ghost btn--sm" id="tAddVar">Add variant</button>`,
+        async () => {
+          collect();
+          const name = $('tName').value.trim();
+          if (!name) { modalError('Give the template a name.'); return false; }
+          if (variants.some(v => !v.subject.trim() || !v.body.trim())) { modalError('Every variant needs a subject and a message.'); return false; }
+          const data = { name, language: $('tLang').value, status: $('tStatus').value, layout: 'plain', variants, updatedAt: serverTimestamp(), updatedBy: me };
+          if (t?.id) await updateDoc(doc(db, 'outreachTemplates', t.id), data);
+          else await addDoc(collection(db, 'outreachTemplates'), { ...data, complianceBlockId: 'default', createdAt: serverTimestamp(), createdBy: me });
+          toast(`Template "${name}" saved.`);
+          return true;
+        });
+      function collect() {
+        $('tVariants').querySelectorAll('.variant').forEach(el => {
+          const v = variants[Number(el.dataset.i)];
+          v.subject = el.querySelector('[data-f="subject"]').value; v.body = el.querySelector('[data-f="body"]').value;
+        });
+      }
+      function rerender() { $('tVariants').innerHTML = variantHtml(); bindRemove(); }
+      function bindRemove() { $('tVariants').querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => { collect(); variants.splice(Number(b.dataset.rm), 1); rerender(); })); }
+      bindRemove();
+      $('tAddVar').addEventListener('click', () => {
+        collect();
+        const next = String.fromCharCode(65 + variants.length);
+        if (variants.length >= 5) { modalError('Up to 5 variants.'); return; }
+        variants.push({ key: next, subject: variants[0]?.subject || '', body: variants[0]?.body || '' });
+        rerender();
+      });
+    }
+
+    // Suppression list.
+    async function loadSuppression() {
+      $('supBody').innerHTML = '<tr><td colspan="5" class="empty">Loading…</td></tr>';
+      try {
+        const snap = await getDocs(query(collection(db, 'outreachSuppression'), orderBy('at', 'desc'), limit(1000)));
+        addReads(snap.size || 1); refreshReads();
+        suppression = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderSuppression();
+      } catch (e) { $('supBody').innerHTML = `<tr><td colspan="5" class="empty">Couldn't load: ${esc(e.message)}</td></tr>`; }
+    }
+    const REASON_LABEL = { unsubscribed: 'Asked to be removed', hard_bounce: 'Hard bounce', complaint: 'Spam complaint', provider_suppressed: 'Blocked by Resend', manual: 'Manual', do_not_contact: 'Do not contact' };
+    function renderSuppression() {
+      if (!suppression) return;
+      const q = $('supSearch').value.trim().toLowerCase();
+      const rows = suppression.filter(s => !q || s.id.toLowerCase().includes(q));
+      $('supBody').innerHTML = rows.length ? rows.map(s => `<tr>
+          <td>${esc(s.id)}${s.scope === 'domain' ? ' <span class="pill">whole domain</span>' : ''}</td>
+          <td>${esc(REASON_LABEL[s.reason] || s.reason || '—')}</td><td>${esc(s.source || '—')}</td>
+          <td style="white-space:nowrap;">${s.at ? esc(dtFmt.format(new Date(tsMs(s.at)))) : ''}</td>
+          <td style="text-align:right;"><button class="btn btn--ghost btn--sm" data-unsup="${esc(s.id)}">Remove</button></td></tr>`).join('')
+        : `<tr><td colspan="5" class="empty">${suppression.length ? 'Nothing matches.' : 'The list is empty.'}</td></tr>`;
+      $('supBody').querySelectorAll('[data-unsup]').forEach(b => b.addEventListener('click', async () => {
+        const id = b.dataset.unsup; const s = suppression.find(x => x.id === id);
+        const warn = ['unsubscribed', 'complaint'].includes(s?.reason) ? '\n\nThis person asked not to be contacted (or marked you as spam). Only remove it if they explicitly asked to hear from you again.' : '';
+        if (!confirm(`Remove ${id} from the suppression list? It can be emailed again.${warn}`)) return;
+        await deleteDoc(doc(db, 'outreachSuppression', id));
+        suppression = suppression.filter(x => x.id !== id); renderSuppression(); toast(`${id} removed.`);
+      }));
+    }
+    async function addSuppressionEntry() {
+      const raw = $('supAdd').value.trim().toLowerCase();
+      const isDomain = raw.startsWith('@') || !raw.includes('@');
+      const domain = isDomain ? raw.replace(/^@/, '') : raw.split('@')[1];
+      if (!domain || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain) || (!isDomain && !/^[^\s@]+@[^\s@]+$/.test(raw))) { toast('Enter an email address or a domain like @empresa.pt.'); return; }
+      const id = isDomain ? '@' + domain : raw;
+      await setDoc(doc(db, 'outreachSuppression', id), {
+        email: isDomain ? null : raw, domain, scope: isDomain ? 'domain' : 'address',
+        reason: $('supReason').value, source: 'manual', companyId: null, by: me, at: serverTimestamp(),
+      }, { merge: true });
+      $('supAdd').value = '';
+      toast(`${id} added — it won't be emailed again.`);
+      loadSuppression();
+    }
+    function exportSuppression() {
+      if (!suppression?.length) { toast('Nothing to export.'); return; }
+      // Same formula-injection guard as the portal's other CSV exports.
+      const cell = (v) => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
+      const lines = [['address_or_domain', 'scope', 'reason', 'source', 'added'].join(',')]
+        .concat(suppression.map(s => [s.id, s.scope, s.reason, s.source, s.at ? new Date(tsMs(s.at)).toISOString() : ''].map(cell).join(',')));
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
+      a.download = `outreach-suppression-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click(); URL.revokeObjectURL(a.href);
     }
   </script>
 </body>
