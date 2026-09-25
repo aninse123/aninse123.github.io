@@ -9276,6 +9276,7 @@ async function openAddToCampaign(opts){
 // ── Company timeline: current campaign step + what's planned (Phase 2b §8.3) ──
 // Past touches are the activity log below it (tagged with campaign / step).
 const TL_CHANNEL = { email: '📧 Email', linkedin: '💼 LinkedIn', call: '📞 Call', whatsapp: '💬 WhatsApp', letter: '✉️ Letter', visit: '🏢 Visit', other: '📌 Task' };
+const TL_OUTCOME = { sent: 'sent', no_answer: 'no answer', voicemail: 'voicemail', wrong_number: 'wrong number', connected: 'connected', callback: 'call back', viewed: 'viewed profile', request_sent: 'request sent', accepted: 'accepted', messaged: 'messaged', replied: 'replied', not_found: 'not found', not_on_whatsapp: 'not on WhatsApp', posted: 'printed & posted', returned: 'returned', met: 'met', not_there: 'not there', reschedule: 'rescheduled', done: 'done', skipped: 'skipped' };
 const TL_STATUS = { pending: 'waiting to start', active: 'in sequence', awaiting_approval: 'email waiting for approval', awaiting_task: 'task open', paused: 'paused' };
 function addWorkingDays(ms, n, unit){
   if (unit === 'calendar') return ms + n * 86400000;
@@ -9294,7 +9295,7 @@ async function renderCampaignTimeline(c){
     if (!e || !camp || !['pending','active','awaiting_approval','awaiting_task','paused'].includes(e.status)) { box.remove(); return; }
     const steps = camp.steps || [];
     const fmtD = ms => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-    const done = (e.history || []).map(h => { const st = steps.find(s => s.id === h.stepId); return `<li style="color:var(--text-light);">${TL_CHANNEL[st?.channel || 'email']} · ${esc(st?.name || h.stepId)} — ${esc(h.result)} · ${fmtD((h.at?.seconds || 0) * 1000)}</li>`; });
+    const done = (e.history || []).map(h => { const st = steps.find(s => s.id === h.stepId); return `<li style="color:var(--text-light);">${TL_CHANNEL[st?.channel || 'email']} · ${esc(st?.name || h.stepId)} — ${esc(TL_OUTCOME[h.result] || h.result)} · ${fmtD((h.at?.seconds || 0) * 1000)}</li>`; });
     let t = e.nextActionAt ? (e.nextActionAt.seconds * 1000) : Date.now();
     const future = [];
     for (let i = e.currentStep; i < steps.length; i++) {
