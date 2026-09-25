@@ -4,13 +4,16 @@
 //                               registry if missing; never overwrites.
 //   { action: "clearTestData" } deletes every thread, message and activity
 //                               created while testMode was on, plus their
-//                               Storage files (go-live checklist, spec §13.3).
+//                               Storage files (go-live checklist, spec §13.3),
+//                               and every campaign/enrolment created in test
+//                               mode (releasing the companies they held).
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getStorage } = require("firebase-admin/storage");
 const { REGION, ADMIN_EMAILS, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, SEED_SENDERS, SENDER_DOMAIN } = require("./config");
 const { normEmail } = require("./util");
 const store = require("./store");
+const { endEnrolment } = require("./campaigns");
 
 const { db, FieldValue } = store;
 
@@ -57,7 +60,13 @@ async function clearTestData() {
   const messages = await deleteQuery(db().collection("outreachMessages").where("isTest", "==", true));
   const activities = await deleteQuery(db().collection("searchActivities").where("isTest", "==", true));
   const threadCount = await deleteQuery(db().collection("outreachThreads").where("isTest", "==", true));
-  return { threads: threadCount, messages, activities };
+  // Test campaigns ran on real companies (C10 rehearsal): free their campaign
+  // slot before deleting, so real campaigns can enrol them after go-live.
+  const testEnrols = await db().collection("outreachEnrolments").where("isTest", "==", true).get();
+  for (const d of testEnrols.docs) await endEnrolment(d.ref, "removed", "Test data cleared");
+  const enrolments = await deleteQuery(db().collection("outreachEnrolments").where("isTest", "==", true));
+  const campaigns = await deleteQuery(db().collection("outreachCampaigns").where("isTest", "==", true));
+  return { threads: threadCount, messages, activities, campaigns, enrolments };
 }
 
 exports.outreachAdmin = onCall({ region: REGION }, async (request) => {

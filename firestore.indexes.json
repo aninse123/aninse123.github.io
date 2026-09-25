@@ -64,6 +64,39 @@
         { "fieldPath": "threadId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "outreachEnrolments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "nextActionAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "outreachEnrolments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "campaignId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "outreachEnrolments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "campaignId", "order": "ASCENDING" },
+        { "fieldPath": "enrolledAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "outreachEnrolments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "campaignId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "enrolledAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

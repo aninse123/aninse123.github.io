@@ -16,7 +16,9 @@ const FieldValue = {
   serverTimestamp: () => SERVER_TS,
   increment: (n) => ({ __op: "increment", n }),
   arrayUnion: (...v) => ({ __op: "arrayUnion", v }),
+  delete: () => DELETE,
 };
+const DELETE = { __op: "delete" };
 
 const store = new Map(); // path -> data
 let autoId = 0;
@@ -42,13 +44,23 @@ function applyValue(oldVal, v) {
 function writeDoc(path, data, { merge = false } = {}) {
   const old = merge ? (store.get(path) || {}) : {};
   const out = merge ? { ...old } : {};
-  for (const [k, v] of Object.entries(data)) out[k] = merge ? applyValue(old[k], v) : applyValue(undefined, v);
+  for (const [k, v] of Object.entries(data)) {
+    if (v === DELETE) { delete out[k]; continue; }
+    out[k] = merge ? applyValue(old[k], v) : applyValue(undefined, v);
+  }
   store.set(path, out);
 }
 function updateDoc(path, data) {
   if (!store.has(path)) { const e = new Error(`NOT_FOUND ${path}`); e.code = 5; throw e; }
-  const cur = { ...store.get(path) };
-  for (const [k, v] of Object.entries(data)) cur[k] = applyValue(cur[k], v);
+  const cur = clone(store.get(path));
+  for (const [k, v] of Object.entries(data)) {
+    // "a.b" is a field path in update(), as in Firestore.
+    const parts = k.split("."); const last = parts.pop();
+    let obj = cur;
+    for (const p of parts) { if (!obj[p] || typeof obj[p] !== "object") obj[p] = {}; obj = obj[p]; }
+    if (v === DELETE) { delete obj[last]; continue; }
+    obj[last] = applyValue(obj[last], v);
+  }
   store.set(path, cur);
 }
 
@@ -76,6 +88,12 @@ class Query {
         const x = d.data()[f];
         if (op === "==") return JSON.stringify(x) === JSON.stringify(v);
         if (op === "array-contains-any") return Array.isArray(x) && x.some((y) => v.includes(y));
+        if (op === "in") return v.some((y) => JSON.stringify(x) === JSON.stringify(y));
+        if (op === "<=" || op === "<" || op === ">=" || op === ">") {
+          if (x == null) return false;
+          const a = x instanceof Timestamp ? x.toMillis() : x, b = v instanceof Timestamp ? v.toMillis() : v;
+          return op === "<=" ? a <= b : op === "<" ? a < b : op === ">=" ? a >= b : a > b;
+        }
         throw new Error("op " + op);
       });
     }
@@ -96,6 +114,7 @@ class CollRef extends Query {
 const fakeDb = {
   doc: (p) => new DocRef(p),
   collection: (n) => new CollRef(n),
+  async getAll(...refs) { return refs.map((r) => new DocSnap(r)); },
   batch() {
     const ops = [];
     return {
@@ -106,7 +125,20 @@ const fakeDb = {
     };
   },
   async runTransaction(fn) {
-    return fn({ get: (r) => r.get(), update: (r, d) => updateDoc(r.path, d), set: (r, d, o) => writeDoc(r.path, d, o) });
+    // Like Firestore: all reads happen before the writes, which are applied
+    // together when fn resolves (a throw discards them).
+    const ops = [];
+    const tx = {
+      get: (r) => (r instanceof Query ? r.get() : r.get()),
+      getAll: (...refs) => Promise.all(refs.map((r) => r.get())),
+      update: (r, d) => { ops.push(() => updateDoc(r.path, d)); return tx; },
+      set: (r, d, o) => { ops.push(() => writeDoc(r.path, d, o)); return tx; },
+      create: (r, d) => { ops.push(() => { if (store.has(r.path)) { const e = new Error(`ALREADY_EXISTS ${r.path}`); e.code = 6; throw e; } writeDoc(r.path, d); }); return tx; },
+      delete: (r) => { ops.push(() => store.delete(r.path)); return tx; },
+    };
+    const out = await fn(tx);
+    ops.forEach((f) => f());
+    return out;
   },
 };
 

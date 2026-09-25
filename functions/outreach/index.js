@@ -1,4 +1,4 @@
-// Outreach module (Phase 1) — Cloud Functions entry point.
+// Outreach module — Cloud Functions entry point.
 // Spec: "Outreach - Architecture Spec.md" (Documents\Douro Partners).
 
 module.exports = {
@@ -6,4 +6,6 @@ module.exports = {
   ...require("./webhook"),     // resendWebhook (HTTPS, Svix-signed)
   ...require("./unsubscribe"), // outreachUnsubscribe (HTTPS, douropartners.pt/u/*)
   ...require("./admin"),       // outreachAdmin (callable: seed, clearTestData)
+  // Phase 2 — campaigns ("Outreach Phase 2 - Campaigns Spec.md")
+  outreachCampaign: require("./campaigns").outreachCampaign, // callable: save, preview, enrol, status
 };

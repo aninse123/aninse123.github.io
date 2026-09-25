@@ -492,7 +492,7 @@
               <button class="btn btn--ghost" id="seedBtn">Set up missing settings &amp; addresses</button>
               <button class="btn btn--danger" id="clearTestBtn">Clear test data</button>
             </div>
-            <p class="hint" style="margin-top:10px;">"Set up" only creates what's missing and never overwrites. "Clear test data" deletes every conversation, message and activity created while test mode was on.</p>
+            <p class="hint" style="margin-top:10px;">"Set up" only creates what's missing and never overwrites. "Clear test data" deletes every conversation, message, activity and campaign created while test mode was on (companies in test campaigns are released).</p>
           </div>
 
           <!-- Addresses -->
@@ -1558,7 +1558,7 @@
       $('clearTestBtn').addEventListener('click', async () => {
         if (!confirm('Delete every conversation, message and activity created in test mode? Real data is not touched.')) return;
         const b = $('clearTestBtn'); b.disabled = true;
-        try { const r = (await callAdmin({ action: 'clearTestData' })).data; toast(`Removed ${r.threads} conversations, ${r.messages} messages, ${r.activities} activities.`); selectedId = null; $('threadView').innerHTML = '<div class="empty">Select a conversation.</div>'; }
+        try { const r = (await callAdmin({ action: 'clearTestData' })).data; toast(`Removed ${r.threads} conversations, ${r.messages} messages, ${r.activities} activities, ${r.campaigns || 0} test campaigns.`); selectedId = null; $('threadView').innerHTML = '<div class="empty">Select a conversation.</div>'; }
         catch (e) { toast('Could not clear: ' + errText(e)); }
         finally { b.disabled = false; }
       });
