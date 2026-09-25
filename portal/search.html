@@ -9158,7 +9158,9 @@ document.getElementById('selAllRows').addEventListener('change', (e) => {
 document.getElementById('selBarClear').addEventListener('click', () => { selectedCo.clear(); document.querySelectorAll('.rowSel').forEach(b => { b.checked = false; }); updateSelUi(); });
 document.getElementById('selBarAdd').addEventListener('click', () => openAddToCampaign({ mode: 'selected', ids: [...selectedCo] }));
 document.getElementById('addToCampaignBtn').addEventListener('click', () => openAddToCampaign({ mode: 'filters' }));
-document.getElementById('addCoToCampaignBtn').addEventListener('click', () => { const c = getCompany(); if (c) openAddToCampaign({ mode: 'company', ids: [c.id] }); });
+// currentCoId, not getCompany(): a company opened by link can be on screen
+// before it's in the loaded list.
+document.getElementById('addCoToCampaignBtn').addEventListener('click', () => { if (currentCoId) openAddToCampaign({ mode: 'company', ids: [currentCoId] }); });
 document.getElementById('addCampCancel').addEventListener('click', () => showEl('addCampModal', false));
 
 async function openAddToCampaign(opts){
@@ -9206,7 +9208,7 @@ async function openAddToCampaign(opts){
   } else {
     const c = getCompany();
     source = { type: 'manual', label: 'From the company page' };
-    intro = `<p style="font-size:0.86rem;margin-bottom:12px;"><b>${esc(c?.name || 'This company')}</b>${c?.activeCampaignName ? ` — currently in "${esc(c.activeCampaignName)}"` : ''}.</p>`;
+    intro = `<p style="font-size:0.86rem;margin-bottom:12px;"><b>${esc(c?.name || document.getElementById('dName')?.textContent || 'This company')}</b>${c?.activeCampaignName ? ` — currently in "${esc(c.activeCampaignName)}"` : ''}.</p>`;
   }
 
   const statusLabel = { draft: 'draft', active: 'active', paused: 'paused' };
