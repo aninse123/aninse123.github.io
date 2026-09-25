@@ -9301,7 +9301,10 @@ async function renderCampaignTimeline(c){
       const st = steps[i];
       if (i > e.currentStep) t = addWorkingDays(t, Number(st.wait?.days) || 0, st.wait?.unit);
       const now = i === e.currentStep;
-      const when = e.status === 'pending' && now ? 'when the campaign starts it' : now && ['awaiting_task','awaiting_approval'].includes(e.status) ? 'now' : `~${fmtD(t)}`;
+      // Before the company starts there's no date to count from.
+      const when = e.status === 'pending'
+        ? (now ? 'when the campaign starts it' : `${Number(st.wait?.days) || 0} ${st.wait?.unit === 'calendar' ? 'calendar' : 'working'} day(s) after the previous step`)
+        : now && ['awaiting_task','awaiting_approval'].includes(e.status) ? 'now' : `~${fmtD(t)}`;
       future.push(`<li${now ? ' style="font-weight:600;"' : ''}>${TL_CHANNEL[st.channel || 'email']} · ${esc(st.name)} — ${when}${now ? ' <span class="badge badge-blue">next</span>' : ''}</li>`);
     }
     box.innerHTML = `<div class="sec-title">Campaign — ${esc(camp.name)} <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);">(${esc(TL_STATUS[e.status] || e.status)}${camp.status !== 'active' ? ', campaign ' + esc(camp.status) : ''})</span></div>
