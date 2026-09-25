@@ -198,6 +198,11 @@ const TUE = "2026-09-29T10:30:00+01:00";
   const rt = await run(TUE);
   ok("account over its daily target: sending stops, nothing lost", rt.stoppedSends === "over_target" && rt.sent === 0 && get(`outreachEnrolments/${cT}_c1`).currentStep === 0 && get(`outreachEnrolments/${cT}_c1`).lockUntil === null);
 
+  seedBase();
+  store.set(`outreachUsage/${dayKey()}`, { resendDailyUsed: 100, portalTotalAtReading: 0 });
+  const cT2 = await makeCampaign({ name: "Alvo rascunho", approvalDefault: "approval", steps: [{ templateId: "t1" }] }, ["c1"]);
+  ok("over the target, approval steps still get their draft", (await run(TUE)).drafts === 1 && get(`outreachEnrolments/${cT2}_c1`).status === "awaiting_approval");
+
   // Priority (C9)
   seedBase();
   store.set("outreachSettings/global", { automationBudget: 1 });

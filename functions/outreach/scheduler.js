@@ -229,6 +229,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         companyId: e.companyId, senderId,
         templateId: step.templateId, variantKey,
         countsAsOutreach: true, redirectTo,
+        // A draft costs no quota; the target is checked again when it's approved.
+        confirmOverTarget: wantsDraft,
       });
       const campaignRef = { campaignId: campaign.id, enrolmentId, stepId: step.id };
       if (wantsDraft) {
