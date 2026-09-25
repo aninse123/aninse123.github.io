@@ -29,7 +29,7 @@ const DAY = 86400000;
   const manual = U.normalizeCampaign({ name: "x", steps: [{}, { channel: "call", instructions: "  Ligar ao gerente  ", newSubject: true }, { channel: "linkedin" }] });
   ok("manual steps kept with instructions; newSubject only for email; default names", manual.steps[1].channel === "call" && manual.steps[1].instructions === "Ligar ao gerente" && manual.steps[1].newSubject === false && manual.steps[2].name === "Linkedin 3" && manual.steps[0].instructions === "");
   ok("a step that ran can't change type", throwsReason(() => U.normalizeCampaign({ steps: [{ id: "s1", channel: "call" }, { id: "s2" }, { id: "s3" }] }, { name: "x", steps: [{ id: "s1", channel: "email" }, { id: "s2", channel: "email" }, { id: "s3", channel: "email" }], lockedStepIds: ["s1"] }), "step_locked"));
-  ok("dynamic audience refused until 2c", throwsReason(() => U.normalizeCampaign({ name: "x", audience: { mode: "dynamic" } }), "dynamic_not_ready"));
+  ok("dynamic audience accepted (2c)", U.normalizeCampaign({ name: "x", audience: { mode: "dynamic" } }).audience.mode === "dynamic");
   ok("all-zero variant weights refused", throwsReason(() => U.normalizeCampaign({ name: "x", steps: [{ variants: [{ key: "A", weight: 0 }] }] }), "bad_weights"));
   ok("unknown / repeated variant keys dropped", U.normalizeCampaign({ name: "x", steps: [{ variants: [{ key: "A", weight: 60 }, { key: "A" }, { key: "Z" }, { key: "B", weight: 40 }] }] }).steps[0].variants.map((v) => v.key + v.weight).join() === "A60,B40");
   ok("fixed senders need at least one address", throwsReason(() => U.normalizeCampaign({ name: "x", senderPolicy: { mode: "fixed", senderIds: [] } }), "senders_required"));

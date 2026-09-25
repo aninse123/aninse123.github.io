@@ -3,6 +3,7 @@
 // exclusions. Spec: "Outreach Phase 2 - Campaigns Spec.md" (§4.3, §5, §7).
 
 const { normEmail, domainOf, isFreeMail, isValidEmail } = require("./util");
+const { OUTCOMES } = require("./task_util");
 
 const CAMPAIGN_STATUSES = ["draft", "active", "paused", "finished", "archived"];
 
@@ -100,6 +101,13 @@ function normalizeStep(s, i, usedIds, reserved = new Set()) {
     newSubject: channel === "email" && !!s.newSubject, // C2: follow-ups reply in the same conversation unless set
     // Manual steps: what the person should do (shown on the task).
     instructions: channel === "email" ? "" : String(s.instructions ?? "").trim().slice(0, 2000),
+    // Phase 2c: what a task outcome does to the sequence. Validated against
+    // the final step list in normalizeCampaign (goto must point forward).
+    branches: channel === "email" ? [] : (Array.isArray(s.branches) ? s.branches : []).slice(0, 12).map((b) => ({
+      outcome: String(b?.outcome || ""),
+      action: ["goto", "end"].includes(b?.action) ? b.action : "next",
+      stepId: b?.action === "goto" ? String(b?.stepId || "") : null,
+    })).filter((b) => b.outcome && b.action !== "next"),
   };
 }
 
@@ -128,6 +136,20 @@ function normalizeCampaign(input, existing = null) {
   const reserved = new Set((existing?.steps || []).map((s) => s.id));
   const steps = rawSteps.map((s, i) => normalizeStep(s, i, used, reserved));
 
+  steps.forEach((st, i) => {
+    const valid = new Set((OUTCOMES[st.channel] || []).map((o) => o.key));
+    const seen = new Set();
+    for (const b of st.branches) {
+      if (!valid.has(b.outcome)) bad("bad_branch", `${st.name}: "${b.outcome}" isn't an outcome of a ${st.channel} step.`);
+      if (seen.has(b.outcome)) bad("bad_branch", `${st.name}: two rules for the same outcome.`);
+      seen.add(b.outcome);
+      if (b.action === "goto") {
+        const j = steps.findIndex((x) => x.id === b.stepId);
+        if (j <= i) bad("bad_branch", `${st.name}: "go to" must point to a later step.`);
+      }
+    }
+  });
+
   const locked = (existing?.lockedStepIds || []).filter((id) => (existing.steps || []).some((s) => s.id === id));
   if (locked.length) {
     const lockedOrder = (existing.steps || []).filter((s) => locked.includes(s.id)).map((s) => s.id);
@@ -142,7 +164,6 @@ function normalizeCampaign(input, existing = null) {
   }
 
   const audienceMode = src.audience?.mode === "dynamic" ? "dynamic" : "static";
-  if (audienceMode === "dynamic") bad("dynamic_not_ready", "Dynamic audiences arrive in Phase 2c — use a static audience for now.");
 
   return {
     name,
@@ -168,6 +189,9 @@ function normalizeCampaign(input, existing = null) {
 // template (with the chosen variants) behind every email step.
 function activationProblems(campaign, templatesById) {
   const problems = [];
+  if (campaign.audience?.mode === "dynamic" && !latestFilterSpec(campaign)) {
+    problems.push("A dynamic audience needs companies added from the Search CRM filters first — that's the filter it keeps applying.");
+  }
   if (!campaign.steps?.length) problems.push("Add at least one step to the sequence.");
   for (const s of campaign.steps || []) {
     const kind = TEMPLATE_KIND[s.channel];
@@ -241,9 +265,54 @@ const EXCLUSION_LABELS = {
 
 const enrolmentId = (campaignId, companyId) => `${campaignId}_${companyId}`;
 
+// The filter a dynamic audience keeps applying: the latest "filters" source.
+function latestFilterSpec(campaign) {
+  const src = [...(campaign.audience?.sources || [])].reverse().find((x) => x.type === "filters" && Array.isArray(x.filterSpec) && x.filterSpec.length);
+  return src ? src.filterSpec : null;
+}
+
+const deburr = (v) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+// Margin and growth are stored as fractions but filtered in % (search.html).
+const PERCENT_FIELDS = new Set(["computedEBITDAMargin", "computedGrowthRecent"]);
+
+// Does a company match a saved Search CRM filter spec? Same rules as the
+// list filters in search.html getFiltered(), so a dynamic audience adds the
+// companies you would see with that filter.
+function matchesFilterSpec(c, spec, now = Date.now()) {
+  for (const f of spec || []) {
+    let v = f.field === "legalForm" ? (c.nationalLegalForm || c.legalForm) : c[f.field];
+    if (PERCENT_FIELDS.has(f.field) && v != null) v = v * 100;
+    switch (f.op) {
+      case "contains": {
+        if (f.field !== "search") { if (!deburr(v).includes(deburr(f.value))) return false; break; }
+        const q = deburr(f.value), digits = q.replace(/[^a-z0-9]/g, "");
+        const hit = deburr(c.name).includes(q)
+          || (digits && String(c.nif || "").replace(/[^a-z0-9]/gi, "").toLowerCase().includes(digits))
+          || (digits && String(c.foreignTaxId || "").replace(/[^a-z0-9]/gi, "").toLowerCase().includes(digits));
+        if (!hit) return false;
+        break;
+      }
+      case "eq": if (f.field === "stage" ? (c.stage || "universe") !== f.value : v !== f.value) return false; break;
+      case "in": if (!Array.isArray(f.value) || !f.value.includes(v)) return false; break;
+      case "prefix": if (!String(v ?? "").startsWith(String(f.value))) return false; break;
+      case "gte": if (v == null || Number(v) < Number(f.value)) return false; break;
+      case "lte": if (v == null || Number(v) > Number(f.value)) return false; break;
+      case "between": if (v == null || !Array.isArray(f.value) || Number(v) < Number(f.value[0]) || Number(v) > Number(f.value[1])) return false; break;
+      case "exists": if (f.value ? !v : !!v) return false; break;
+      case "within_days": {
+        const ms = tsMillis(v);
+        if (!ms || now - ms > Number(f.value) * 86400000) return false;
+        break;
+      }
+      default: return false; // unknown op: don't guess
+    }
+  }
+  return true;
+}
+
 module.exports = {
   CHANNELS, MANUAL_CHANNELS, TEMPLATE_KIND, templateKind,
   CAMPAIGN_STATUSES, LIVE_ENROLMENT, STAGE_KEYS, DEFAULT_ALLOWED_STAGES, VARIANT_KEYS, MAX_STEPS,
   DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems, evaluateCompany,
-  EXCLUSION_LABELS, enrolmentId, tsMillis,
+  EXCLUSION_LABELS, enrolmentId, tsMillis, latestFilterSpec, matchesFilterSpec,
 };

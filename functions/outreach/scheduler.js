@@ -23,7 +23,7 @@ const { logger } = require("firebase-functions");
 const { REGION, RESEND_SEND_KEY, UNSUBSCRIBE_SECRET, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP } = require("./config");
 const store = require("./store");
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
-const { endEnrolment } = require("./campaigns");
+const { endEnrolment, runDynamicAudience } = require("./campaigns");
 const { stepTaskId } = require("./task_util");
 const { lisbonParts, isWindowOpen, addWait, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 
@@ -156,6 +156,20 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const campSnap = await db().collection("outreachCampaigns").where("status", "==", "active").get();
   report.campaigns = campSnap.size;
   if (campSnap.empty) return report;
+
+  // Dynamic audiences (2c): once per Lisbon day, from 07:00 (C5), whatever the window.
+  const lp = lisbonParts(now);
+  if (lp.hhmm >= "07:00") {
+    for (const d of campSnap.docs) {
+      const c = { id: d.id, ...d.data() };
+      if (c.audience?.mode !== "dynamic" || c.audience?.lastEvaluatedDay === lp.dayKey) continue;
+      try {
+        const r = await runDynamicAudience(c, now);
+        await d.ref.update({ "audience.lastEvaluatedDay": lp.dayKey });
+        report.dynamicAdded = (report.dynamicAdded || 0) + r.enrolled;
+      } catch (e) { logger.error("outreachScheduler: dynamic audience failed", { campaignId: c.id, message: e.message }); }
+    }
+  }
 
   const globalWindow = settings.sendWindow || DEFAULT_SETTINGS.sendWindow;
   const open = new Map();

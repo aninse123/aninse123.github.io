@@ -10,7 +10,7 @@
 //   delete      { campaignId }                       drafts only; releases every enrolled company
 //   preview     { campaignId, companyIds }           exclusion summary, writes nothing
 //   enrol       { campaignId, companyIds, source, onConflict: "skip"|"move" }
-//   enrolment   { enrolmentId, op: "pause"|"resume"|"remove", reason? }
+//   enrolment   { enrolmentId, op: "pause"|"resume"|"remove"|"move", reason?, targetCampaignId? }
 //   setStatus   { campaignId, status: "active"|"paused"|"finished"|"archived" }
 //   approve     { messageIds, subject?, body? }        "To approve" queue (D4): the drafts
 //                                                    go back to the scheduler, which sends
@@ -34,7 +34,7 @@ const { addWait, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
-  evaluateCompany, enrolmentId,
+  evaluateCompany, enrolmentId, latestFilterSpec, matchesFilterSpec,
 } = require("./campaign_util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -297,10 +297,22 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller) {
       const otherLive = other?.exists && LIVE_ENROLMENT.includes(other.data().status);
       if (!otherLive) r = { ok: true };
       else if (onConflict === "move") { moveFrom = otherRef; r = { ok: true }; }
+      // What the old enrolment leaves open (a task, a draft) is cancelled with it.
+      if (moveFrom) {
+        const od = other.data();
+        const tRef = od.taskId ? db().doc(`outreachTasks/${od.taskId}`) : null;
+        const dRef = od.draftMessageId ? db().doc(`outreachMessages/${od.draftMessageId}`) : null;
+        const [tSnap, dSnap] = await Promise.all([tRef ? tx.get(tRef) : null, dRef ? tx.get(dRef) : null]);
+        moveFrom.leftovers = [
+          tSnap?.exists && tSnap.data().status === "open" ? tRef : null,
+          dSnap?.exists && ["draft", "approved"].includes(dSnap.data().status) ? dRef : null,
+        ].filter(Boolean);
+      }
     }
     if (!r.ok) return { result: "skipped", reason: r.reason };
     if (moveFrom) {
       tx.update(moveFrom, { status: "moved", stopReason: `Moved to "${campaign.name}"`, endedAt: FieldValue.serverTimestamp(), nextActionAt: null, movedTo: campaign.id });
+      for (const ref of moveFrom.leftovers || []) tx.update(ref, { status: "cancelled", cancelledReason: `Moved to "${campaign.name}"` });
     }
     tx.set(enrolRef, {
       campaignId: campaign.id,
@@ -310,6 +322,7 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller) {
       owner: company.owner || null,
       contactEmail: normEmail(company.companyEmail) || null,
       source: source.type,
+      sourceLabel: source.label || source.type, // compared per audience in the Overview (2c)
       status: "pending",
       stopReason: null,
       currentStep: 0,
@@ -357,7 +370,22 @@ async function enrol({ campaignId, companyIds, source, onConflict }, caller) {
   return { requested: ids.length, enrolled, moved, skipped, skippedTotal };
 }
 
-async function enrolmentOp({ enrolmentId: id, op, reason }, caller) {
+// Move one company to another campaign (2c): the target campaign's rules
+// apply; the current enrolment ends as "moved" in the same transaction.
+async function moveEnrolment(id, targetCampaignId, caller) {
+  const cur = await db().doc(`outreachEnrolments/${id}`).get();
+  if (!cur.exists || !LIVE_ENROLMENT.includes(cur.data().status)) fail("failed-precondition", "not_live", "This company is no longer active in the campaign.");
+  if (!targetCampaignId || targetCampaignId === cur.data().campaignId) fail("invalid-argument", "bad_target", "Choose another campaign.");
+  const target = await getCampaign(targetCampaignId);
+  assertEnrollable(target);
+  const ctx = await evalContext(target);
+  const r = await enrolOne(cur.data().companyId, target, ctx, { type: "manual", label: `Moved from "${cur.data().campaignName || "another campaign"}"` }, "move", caller);
+  if (r.result === "skipped") fail("failed-precondition", "cant_move", `Can't be added to "${target.name}": ${r.reason.replace(/_/g, " ")}.`);
+  await db().doc(`outreachCampaigns/${target.id}`).update({ "stats.enrolled": FieldValue.increment(1) });
+  return { ok: true, status: "moved", targetCampaignId: target.id };
+}
+
+async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId }, caller) {
   if (!id || typeof id !== "string") fail("invalid-argument", "enrolment_required", "Choose a company in the campaign.");
   const ref = db().doc(`outreachEnrolments/${id}`);
   if (op === "remove") {
@@ -365,6 +393,7 @@ async function enrolmentOp({ enrolmentId: id, op, reason }, caller) {
     if (!ok) fail("failed-precondition", "not_live", "This company is no longer active in the campaign.");
     return { ok: true, status: "removed" };
   }
+  if (op === "move") return moveEnrolment(id, targetCampaignId, caller);
   if (op !== "pause" && op !== "resume") fail("invalid-argument", "bad_op", `Unknown operation "${op}".`);
   return db().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -482,6 +511,39 @@ async function skipDraft({ messageId }, caller) {
   });
 }
 
+// ── Dynamic audiences (Phase 2c, C5: daily from 07:00 Lisbon) ─────────────────
+// Re-applies the campaign's latest Search CRM filter to companies changed
+// since the last run (cheap: updatedAt > lastEvaluatedAt) and enrols new
+// matches with the usual exclusions; companies in another campaign are left
+// there. The first run only sets the starting point.
+const DYNAMIC_MAX_PER_RUN = 500;
+async function runDynamicAudience(campaign, now) {
+  const spec = latestFilterSpec(campaign);
+  const ref = db().doc(`outreachCampaigns/${campaign.id}`);
+  const since = campaign.audience?.lastEvaluatedAt || null;
+  if (!spec || !since) {
+    await ref.update({ "audience.lastEvaluatedAt": Timestamp.fromDate(now) });
+    return { checked: 0, enrolled: 0, initialised: true };
+  }
+  const snap = await db().collection("searchCompanies").where("updatedAt", ">", since).orderBy("updatedAt", "asc").limit(2000).get();
+  const matches = snap.docs.filter((d) => !d.data().activeCampaignId && matchesFilterSpec(d.data(), spec, now.getTime())).map((d) => d.id).slice(0, DYNAMIC_MAX_PER_RUN);
+  let enrolled = 0;
+  if (matches.length) {
+    const ctx = await evalContext(campaign);
+    const source = { type: "dynamic", label: "Dynamic — new matches of the filter" };
+    for (const group of chunks(matches, TX_PARALLEL)) {
+      const res = await Promise.all(group.map((id) => enrolOne(id, campaign, ctx, source, "skip", "scheduler")));
+      enrolled += res.filter((r) => r.result === "enrolled").length;
+    }
+  }
+  const last = snap.docs.length ? snap.docs[snap.docs.length - 1].data().updatedAt : Timestamp.fromDate(now);
+  await ref.update({
+    "audience.lastEvaluatedAt": snap.size >= 2000 ? last : Timestamp.fromDate(now),
+    ...(enrolled ? { "stats.enrolled": FieldValue.increment(enrolled), "stats.dynamicAdded": FieldValue.increment(enrolled) } : {}),
+  });
+  return { checked: snap.size, enrolled };
+}
+
 // ── Tasks (manual steps, Phase 2b) ──────────────────────────────────────────
 
 const cleanUrl = (u) => { const s = String(u || "").trim().slice(0, 300); return /^https?:\/\/\S+$/i.test(s) ? s : null; };
@@ -504,6 +566,9 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   if (o.reopen && (!reopen || reopen.getTime() < Date.now() - 86400000)) fail("invalid-argument", "date_required", "Pick the date for the next attempt.");
   const campaign = (await db().doc(`outreachCampaigns/${t.campaignId}`).get()).data() || {};
   const linkedinUrl = t.channel === "linkedin" ? cleanUrl(profileUrl) : null;
+  // Phase 2c branch for this outcome (set on the step): go to a later step or end.
+  const stepIdx = (campaign.steps || []).findIndex((x) => x.id === t.stepId);
+  const branch = stepIdx >= 0 ? ((campaign.steps[stepIdx].branches || []).find((b) => b.outcome === o.key) || null) : null;
 
   // 1. The touch on the company (a skipped step leaves no trace there).
   let activityId = null;
@@ -549,11 +614,18 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     }).catch(() => {});
     return { ok: true, status: "done", sequence: "stopped", activityId };
   }
+  if (branch?.action === "end") {
+    await enrolRef.update({ history: FieldValue.arrayUnion({ stepId: t.stepId, at: Timestamp.now(), result: o.key, taskId, activityId }), taskId: null }).catch(() => {});
+    await endEnrolment(enrolRef, "completed", `Ended by a rule: ${CHANNEL_LABEL[t.channel]} — ${o.label}`);
+    await db().doc(`outreachCampaigns/${t.campaignId}`).update({ lockedStepIds: FieldValue.arrayUnion(t.stepId), [`stats.tasks_${t.channel}`]: FieldValue.increment(1) }).catch(() => {});
+    return { ok: true, status: "done", sequence: "ended", activityId };
+  }
   const moved = await db().runTransaction(async (tx) => {
     const e = await tx.get(enrolRef);
     if (!e.exists || e.data().status !== "awaiting_task" || e.data().taskId !== taskId) return false;
     const steps = campaign.steps || [];
-    const nextIndex = e.data().currentStep + 1;
+    const gotoIdx = branch?.action === "goto" ? steps.findIndex((x) => x.id === branch.stepId) : -1;
+    const nextIndex = gotoIdx > e.data().currentStep ? gotoIdx : e.data().currentStep + 1;
     const next = steps[nextIndex];
     tx.update(enrolRef, {
       status: "active", currentStep: nextIndex, taskId: null,
@@ -569,7 +641,7 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
       [`stats.tasks_${t.channel}`]: FieldValue.increment(1),
     }).catch(() => {});
   }
-  return { ok: true, status: o.key === "skipped" ? "skipped" : "done", sequence: moved ? "next" : "unchanged", activityId };
+  return { ok: true, status: o.key === "skipped" ? "skipped" : "done", sequence: moved ? (branch?.action === "goto" ? "jumped" : "next") : "unchanged", activityId };
 }
 
 async function updateTask({ taskId, assignee, dueAt, notes }, caller) {
@@ -631,4 +703,5 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
 
 // Helpers for the webhook and scheduler (step 2); index.js exports only the callable.
 exports.stopCompanyEnrolments = stopCompanyEnrolments;
+exports.runDynamicAudience = runDynamicAudience;
 exports.endEnrolment = endEnrolment;
