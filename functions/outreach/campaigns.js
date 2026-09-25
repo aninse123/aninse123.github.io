@@ -198,14 +198,14 @@ async function remove({ campaignId }) {
   const c = await getCampaign(campaignId);
   if (c.status !== "draft") fail("failed-precondition", "not_draft", "Only draft campaigns can be deleted — finish or archive this one instead.");
   const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).get();
-  await endAll(snap.docs.map((d) => d.ref), "removed", "Campaign deleted");
+  const released = await endAll(snap.docs.map((d) => d.ref), "removed", "Campaign deleted");
   for (const group of chunks(snap.docs, 400)) {
     const batch = db().batch();
     group.forEach((d) => batch.delete(d.ref));
     await batch.commit();
   }
   await db().doc(`outreachCampaigns/${campaignId}`).delete();
-  return { deleted: true, released: snap.size };
+  return { deleted: true, released, enrolments: snap.size };
 }
 
 async function readCompanies(ids, campaignId) {
