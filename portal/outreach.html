@@ -304,12 +304,16 @@
         <div class="card">
           <div class="toolbar">
             <select id="sentSender" aria-label="Filter by sender"><option value="">All senders</option></select>
+            <select id="sentOwner" aria-label="Filter by person"><option value="">Everyone</option><option value="andre">André</option><option value="antonio">António</option></select>
             <select id="sentStatus" aria-label="Filter by status">
               <option value="">All statuses</option>
               <option value="sent">Sent</option><option value="delivered">Delivered</option>
               <option value="delayed">Delayed</option><option value="bounced">Bounced</option>
               <option value="complained">Complained</option><option value="failed">Failed</option>
             </select>
+            <select id="sentTpl" aria-label="Filter by template"><option value="">Any template</option><option value="__none">Written from scratch</option></select>
+            <label class="usage__label" for="sentFrom">From</label><input type="date" id="sentFrom" style="width:auto;">
+            <label class="usage__label" for="sentTo">to</label><input type="date" id="sentTo" style="width:auto;">
             <span class="note" id="sentCount"></span>
             <button class="btn btn--ghost btn--sm" id="sentRefresh" style="margin-left:auto;">Refresh</button>
           </div>
@@ -342,6 +346,7 @@
             </label>
 
             <dl class="co-card" id="coCard" hidden></dl>
+            <div id="coHistory" hidden style="margin:-6px 0 14px;"></div>
             <div class="banner banner--warn" id="twiceWarn" hidden style="margin-bottom:14px;"></div>
 
             <div class="row2">
@@ -462,6 +467,20 @@
               </div>
             </div>
             <label class="checkline"><input type="checkbox" id="gPersonal"> <span>Block personal email domains (gmail, sapo, hotmail…) — the legal rule for natural persons</span></label>
+            <div class="field" style="margin-top:14px;">
+              <label>Sending window (Lisbon time)</label>
+              <div style="display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;" id="gDays">
+                <label class="checkline"><input type="checkbox" value="1"> <span>Mon</span></label>
+                <label class="checkline"><input type="checkbox" value="2"> <span>Tue</span></label>
+                <label class="checkline"><input type="checkbox" value="3"> <span>Wed</span></label>
+                <label class="checkline"><input type="checkbox" value="4"> <span>Thu</span></label>
+                <label class="checkline"><input type="checkbox" value="5"> <span>Fri</span></label>
+                <label class="checkline"><input type="checkbox" value="6"> <span>Sat</span></label>
+                <label class="checkline"><input type="checkbox" value="0"> <span>Sun</span></label>
+                <span style="display:flex;gap:6px;align-items:center;"><input type="time" id="gFrom" style="width:auto;" aria-label="From"> – <input type="time" id="gTo" style="width:auto;" aria-label="To"></span>
+              </div>
+              <span class="hint">When campaigns send their emails (Phase 2). Emails you send by hand and replies go out immediately.</span>
+            </div>
             <div class="field" style="margin-top:14px;">
               <label for="gTestList">Approved test addresses</label>
               <textarea id="gTestList" rows="6" spellcheck="false"></textarea>
@@ -900,13 +919,30 @@
     function renderReplyBox() {
       const t = threads.find(x => x.id === selectedId); const box = $('replyBox'); if (!box || !t) return;
       box.className = 'reply';
+      // Active templates can seed a reply: the variant's message is inserted at
+      // the cursor (its subject is ignored — a reply keeps "Re: …").
+      const tplOpts = templates.flatMap(tp => (tp.variants || []).map(v => `<option value="${esc(tp.id)}::${esc(v.key)}">${esc(tp.name)} — ${esc(v.key)}</option>`)).join('');
       box.innerHTML = `
-        <div class="field" style="margin-bottom:10px;"><label for="replyText">Reply from ${esc(t.senderId || '—')}</label>
+        <div class="field" style="margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;">
+            <label for="replyText">Reply from ${esc(t.senderId || '—')}</label>
+            ${tplOpts ? `<select id="replyTpl" aria-label="Insert a template" style="width:auto;max-width:100%;"><option value="">Insert a template…</option>${tplOpts}</select>` : ''}
+          </div>
           <textarea id="replyText" placeholder="Write your reply…"></textarea>
-          <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature, the previous message quoted below it, and the legal footer.</span></div>
+          <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature, the previous message quoted below it, and the legal footer. Fields like {{company.shortName}} work here too.</span></div>
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
         <button class="btn btn--primary" id="replyBtn">Send reply</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
+      $('replyTpl')?.addEventListener('change', () => {
+        const [tid, key] = $('replyTpl').value.split('::');
+        const v = templates.find(x => x.id === tid)?.variants?.find(x => x.key === key);
+        if (v) {
+          const ta = $('replyText'), s = ta.selectionStart ?? ta.value.length;
+          ta.value = ta.value.slice(0, s) + (v.body || '') + ta.value.slice(ta.selectionEnd ?? s);
+          ta.focus();
+        }
+        $('replyTpl').value = '';
+      });
     }
 
     async function sendReply(t) {
@@ -991,8 +1027,21 @@
       $('sentSender').value = cur;
     }
     function renderSent() {
-      const sf = $('sentSender').value, st = $('sentStatus').value;
-      const rows = sentRows.filter(m => (!sf || m.senderId === sf) && (!st || m.status === st));
+      const sf = $('sentSender').value, st = $('sentStatus').value, ow = $('sentOwner').value, tp = $('sentTpl').value;
+      // Dates are Lisbon calendar days in the inputs; compare against local day boundaries.
+      const from = $('sentFrom').value ? new Date($('sentFrom').value + 'T00:00:00').getTime() : 0;
+      const to = $('sentTo').value ? new Date($('sentTo').value + 'T23:59:59.999').getTime() : Infinity;
+      const ownerOf = (id) => senders.find(s => s.id === id)?.owner;
+      // Template choices come from what's actually in the loaded rows.
+      const usedTpl = [...new Set(sentRows.map(m => m.templateId).filter(Boolean))];
+      const curTpl = $('sentTpl').value;
+      $('sentTpl').innerHTML = '<option value="">Any template</option><option value="__none">Written from scratch</option>' +
+        usedTpl.map(id => `<option value="${esc(id)}">${esc(templatesAll.find(t => t.id === id)?.name || 'Deleted template')}</option>`).join('');
+      $('sentTpl').value = curTpl;
+      const rows = sentRows.filter(m => (!sf || m.senderId === sf) && (!st || m.status === st)
+        && (!ow || ownerOf(m.senderId) === ow)
+        && (!tp || (tp === '__none' ? !m.templateId : m.templateId === tp))
+        && tsMs(m.createdAt) >= from && tsMs(m.createdAt) <= to);
       $('sentCount').textContent = `${rows.length} of the last ${sentRows.length} emails`;
       $('sentBody').innerHTML = rows.length ? rows.map(m => `<tr>
           <td style="white-space:nowrap;font-variant-numeric:tabular-nums;">${esc(m.createdAt ? dtFmt.format(new Date(tsMs(m.createdAt))) : '')}</td>
@@ -1003,8 +1052,7 @@
           <td>${pill(STATUS_PILL, m.status)}</td></tr>`).join('')
         : '<tr><td colspan="6" class="empty">No sent emails match.</td></tr>';
     }
-    $('sentSender').addEventListener('change', renderSent);
-    $('sentStatus').addEventListener('change', renderSent);
+    ['sentSender', 'sentStatus', 'sentOwner', 'sentTpl', 'sentFrom', 'sentTo'].forEach(id => $(id).addEventListener('change', renderSent));
     $('sentRefresh').addEventListener('click', loadSent);
 
     // ── Compose ────────────────────────────────────────────────
@@ -1111,7 +1159,7 @@
       if (c) { $('coSearch').value = c.name || ''; $('noCompany').checked = false; }
       const test = !settings || settings.testMode !== false;
       if (!c) {
-        $('coCard').hidden = true; $('twiceWarn').hidden = true;
+        $('coCard').hidden = true; $('twiceWarn').hidden = true; $('coHistory').hidden = true;
         if (test && !$('cTo').value) $('cTo').value = defaultTestAddress();
         renderFromOptions(); renderPreview(); return;
       }
@@ -1126,11 +1174,23 @@
       const warn = [];
       const THIRTY = 30 * 86400000;
       if (c.lastTouchAt && Date.now() - tsMs(c.lastTouchAt) < THIRTY) warn.push(`last outreach activity on ${dayFmt.format(new Date(tsMs(c.lastTouchAt)))}`);
+      $('coHistory').hidden = true;
       try {
         const snap = await getDocs(query(collection(db, 'outreachThreads'), where('companyId', '==', c.id), orderBy('lastMessageAt', 'desc'), limit(5)));
         addReads(snap.size || 1); refreshReads();
-        const recent = snap.docs.map(d => d.data()).find(t => Date.now() - tsMs(t.lastMessageAt) < THIRTY && !['closed', 'bounced'].includes(t.status));
+        if (picked?.id !== c.id) return; // picked another company meanwhile
+        const past = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const recent = past.find(t => Date.now() - tsMs(t.lastMessageAt) < THIRTY && !['closed', 'bounced'].includes(t.status));
         if (recent) warn.push(`an open conversation ("${recent.subject}") from ${dayFmt.format(new Date(tsMs(recent.lastMessageAt)))}`);
+        // Previous emails with this company (spec §8.3), newest first.
+        $('coHistory').hidden = !past.length;
+        $('coHistory').innerHTML = past.length
+          ? `<div class="usage__label" style="margin-bottom:6px;">Previous emails with this company</div>` + past.map(t =>
+              `<button type="button" class="picker__item" data-open-thread="${esc(t.id)}" style="border:1px solid var(--border);border-radius:6px;margin-bottom:4px;">
+                 ${esc(t.subject || '(no subject)')} ${pill(THREAD_PILL, t.status)}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}
+                 <small>${esc(t.lastMessageAt ? dayFmt.format(new Date(tsMs(t.lastMessageAt))) : '')} · ${esc(t.contactEmail || '')} · ${esc(localPart(t.senderId))}</small></button>`).join('')
+          : '';
+        $('coHistory').querySelectorAll('[data-open-thread]').forEach(b => b.addEventListener('click', () => { showTab('inbox'); openThread(b.dataset.openThread); }));
       } catch (e) { /* index still building — skip the check */ }
       $('twiceWarn').hidden = !warn.length;
       $('twiceWarn').innerHTML = warn.length ? `<span>Heads up: this company has ${warn.map(esc).join(' and ')}. You can still send.</span>` : '';
@@ -1258,20 +1318,23 @@
       if (metricsData) { renderMetrics(); return; }
       $('mKpis').innerHTML = '<div class="empty">Loading…</div>';
       try {
-        const [th, ms, dl, us] = await Promise.all([
+        const [th, ms, dl, us, um] = await Promise.all([
           getDocs(query(collection(db, 'outreachThreads'), orderBy('firstTouchAt', 'desc'), limit(3000))),
           getDocs(query(collection(db, 'outreachMessages'), where('direction', '==', 'out'), orderBy('createdAt', 'desc'), limit(3000))),
           // Doc ids are UTC dates (YYYY-MM-DD), so a range on the id needs no
           // extra index (a descending sort on the id would).
           getDocs(query(collection(db, 'outreachDaily'), where(documentId(), '>=', sinceDay(31)))),
           getDocs(query(collection(db, 'outreachUsage'), where(documentId(), '>=', sinceDay(31)))),
+          // Unmatched mail (spec §7.3): the spam early warning.
+          getDocs(query(collection(db, 'outreachThreads'), where('unmatched', '==', true), orderBy('lastMessageAt', 'desc'), limit(500))),
         ]);
-        addReads((th.size || 1) + (ms.size || 1) + (dl.size || 1) + (us.size || 1)); refreshReads();
+        addReads((th.size || 1) + (ms.size || 1) + (dl.size || 1) + (us.size || 1) + (um.size || 1)); refreshReads();
         const byId = (snap) => Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
         metricsData = {
           threads: th.docs.map(d => ({ id: d.id, ...d.data() })),
           messages: ms.docs.map(d => ({ id: d.id, ...d.data() })),
           daily: byId(dl), usage: byId(us),
+          unmatched: um.docs.map(d => ({ id: d.id, ...d.data() })),
         };
         renderMetrics();
       } catch (e) { $('mKpis').innerHTML = `<div class="empty">Couldn't load metrics: ${esc(e.message)}</div>`; }
@@ -1315,6 +1378,14 @@
       // Health lines (spec §8.4): > 2% hard bounces, > 0.1% complaints.
       const warn = [];
       if (sent.length >= 20 && bouncePct > 2) warn.push(`Hard bounces are ${pctTxt(bouncePct)} of emails sent (keep under 2%) — the company email list has dead addresses; check the MX results and clean the list before sending more.`);
+      // Unmatched mail: every forwarded email costs Resend quota. Above ~10 a day
+      // (7-day average), move those addresses from the ImprovMX forward to a Gmail filter.
+      const since7 = Date.now() - 7 * 86400000;
+      const unmatchedAll = metricsData.unmatched.filter(t => withTest || !t.isTest);
+      const unmatched7 = unmatchedAll.filter(t => tsMs(t.createdAt) >= since7).length;
+      const periodDays = Number($('mPeriod').value) || Math.max(1, Math.ceil((Date.now() - Math.min(...unmatchedAll.map(t => tsMs(t.createdAt)), Date.now())) / 86400000));
+      const unmatchedPeriod = unmatchedAll.filter(t => !Number($('mPeriod').value) || tsMs(t.createdAt) >= Date.now() - periodDays * 86400000).length;
+      if (unmatched7 / 7 > 10) warn.push(`Unmatched mail averages ${(unmatched7 / 7).toFixed(1)} a day over the last 7 days — mostly spam, and each one uses Resend quota. Consider forwarding those addresses through a Gmail filter instead of ImprovMX.`);
       if (sent.length >= 20 && complaintPct > 0.1) warn.push(`Spam complaints are ${pctTxt(complaintPct)} (keep under 0.1%; Google flags senders at 0.3%) — pause and review the template and targeting.`);
       $('mHealth').innerHTML = warn.map(w => `<div class="banner banner--bad" style="margin-bottom:12px;"><span>⚠ ${esc(w)}</span></div>`).join('');
 
@@ -1328,6 +1399,7 @@
         tile('Spam complaints', pctTxt(complaintPct), `${num(complained)} · keep under 0.1%`, sent.length >= 20 && complaintPct > 0.1),
         tile('Unsubscribed', pctTxt(pct(st.unsub, st.started)), `${num(st.unsub)} conversation${st.unsub === 1 ? '' : 's'}`),
         tile('Time to first reply', dur(median), 'median'),
+        tile('Unmatched mail', num(unmatchedPeriod), `≈ ${(unmatchedPeriod / periodDays).toLocaleString('en-GB', { maximumFractionDigits: 1 })} a day · mostly spam, each uses quota`, unmatched7 / 7 > 10),
         ...(opened || clicked ? [tile('Opens ≈ / clicks', `${pctTxt(pct(opened, delivered))} / ${pctTxt(pct(clicked, delivered))}`, 'approximate — Apple Mail inflates, Outlook hides')] : []),
       ].join('');
 
@@ -1468,7 +1540,7 @@
       $('setNav').addEventListener('click', (e) => { const b = e.target.closest('[data-sec]'); if (b) showSec(b.dataset.sec); });
       $('modalCancel').addEventListener('click', closeModal);
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
-      ['gTarget', 'gAuto', 'gPersonal', 'gTestList'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
+      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
       $('gSave').addEventListener('click', saveGeneral);
       ['fEntity', 'fText'].forEach(id => $(id).addEventListener('input', renderFooterPreview));
       $('fSave').addEventListener('click', saveFooter);
@@ -1513,6 +1585,9 @@
       $('gAuto').value = s.automationBudget ?? 80;
       $('gPersonal').checked = s.blockPersonalDomains !== false;
       $('gTestList').value = (s.testRecipients || []).join('\n');
+      const win = s.sendWindow || { days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
+      $('gDays').querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = (win.days || []).includes(Number(cb.value)); });
+      $('gFrom').value = win.from || '09:00'; $('gTo').value = win.to || '18:00';
     }
 
     async function saveGeneral() {
@@ -1524,9 +1599,14 @@
       const bad = list.filter(x => !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(x));
       if (bad.length) { err.textContent = `Not valid email addresses: ${bad.join(', ')}`; err.hidden = false; return; }
       if (!list.length) { err.textContent = 'Keep at least one approved test address.'; err.hidden = false; return; }
+      const days = [...$('gDays').querySelectorAll('input[type="checkbox"]:checked')].map(cb => Number(cb.value)).sort();
+      const wFrom = $('gFrom').value, wTo = $('gTo').value;
+      if (!days.length) { err.textContent = 'Pick at least one day for the sending window.'; err.hidden = false; return; }
+      if (!wFrom || !wTo || wFrom >= wTo) { err.textContent = 'The sending window needs a start time before its end time.'; err.hidden = false; return; }
       await setDoc(doc(db, 'outreachSettings', 'global'), {
         dailyTarget: target, automationBudget: auto, blockPersonalDomains: $('gPersonal').checked,
-        testRecipients: list, updatedAt: serverTimestamp(), updatedBy: me,
+        testRecipients: list, sendWindow: { days, from: wFrom, to: wTo, tz: 'Europe/Lisbon' },
+        updatedAt: serverTimestamp(), updatedBy: me,
       }, { merge: true });
       generalDirty = false;
       toast('Settings saved.');
