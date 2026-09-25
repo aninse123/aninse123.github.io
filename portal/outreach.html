@@ -1069,7 +1069,22 @@
 
     // Mirrors functions/outreach/render.js for the preview only — the server
     // renders the real email.
-    function shortName(n) { return String(n || '').replace(/[\s,]*(,?\s*(unipessoal|sociedade unipessoal)?\s*,?\s*(lda\.?|limitada|s\.?\s?a\.?|sgps|crl|ace)\.?)+\s*$/i, '').replace(/[\s,-]+$/, '').trim() || n || ''; }
+    const PT_SMALL_WORDS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'em', 'para', 'com']);
+    function titleCasePt(s) {
+      return s.toLowerCase().split(/(\s+)/).map((w, i) => {
+        if (!w.trim()) return w;
+        if (i > 0 && PT_SMALL_WORDS.has(w)) return w;
+        return w.split('-').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join('-');
+      }).join('');
+    }
+    function shortName(name) {
+      const n = String(name || '').trim();
+      let s = n.replace(/[\s,]*(,?\s*(unipessoal|sociedade unipessoal)?\s*,?\s*(lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i, '').replace(/[\s,-]+$/, '').trim() || n;
+      const brand = s.split(/\s+[-–—]\s+/)[0].trim();
+      if (brand.length >= 2) s = brand;
+      if (s === s.toUpperCase() && /\p{Lu}/u.test(s) && !(/^\S+$/.test(s) && s.replace(/[^\p{L}]/gu, '').length <= 4)) s = titleCasePt(s);
+      return s;
+    }
     function ctxFor() {
       const s = senders.find(x => x.id === $('cFrom').value) || {};
       const c = picked || {};

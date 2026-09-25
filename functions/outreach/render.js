@@ -9,10 +9,30 @@ const { escapeHtml } = require("./util");
 
 const LEGAL_SUFFIX_RE = /[\s,]*(,?\s*(unipessoal|sociedade unipessoal)?\s*,?\s*(lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i;
 
+const PT_SMALL_WORDS = new Set(["de", "da", "do", "das", "dos", "e", "a", "o", "em", "para", "com"]);
+
+// "DIMEXA - DISTRIBUICAO, IMPORTACAO E EXPORTACAO" → "Dimexa". Words are
+// capitalised, Portuguese connectors stay lower case, hyphenated parts are
+// each capitalised.
+function titleCasePt(s) {
+  return s.toLowerCase().split(/(\s+)/).map((w, i) => {
+    if (!w.trim()) return w;
+    if (i > 0 && PT_SMALL_WORDS.has(w)) return w;
+    return w.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("-");
+  }).join("");
+}
+
+// How the company is named inside an email: legal suffix dropped, only the
+// brand before " - " (Orbis names are often "BRAND - DESCRIPTION, LDA"), and
+// all-capitals names in normal case — except a single short word, which is
+// usually an acronym (SUE, TAP, EDP).
 function shortCompanyName(name) {
   const n = String(name || "").trim();
-  const stripped = n.replace(LEGAL_SUFFIX_RE, "").replace(/[\s,-]+$/, "").trim();
-  return stripped || n;
+  let s = n.replace(LEGAL_SUFFIX_RE, "").replace(/[\s,-]+$/, "").trim() || n;
+  const brand = s.split(/\s+[-–—]\s+/)[0].trim();
+  if (brand.length >= 2) s = brand;
+  if (s === s.toUpperCase() && /\p{Lu}/u.test(s) && !(/^\S+$/.test(s) && s.replace(/[^\p{L}]/gu, "").length <= 4)) s = titleCasePt(s);
+  return s;
 }
 
 function firstName(full) {
