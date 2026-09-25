@@ -40,6 +40,8 @@ const DAY = 86400000;
   const existing = { name: "x", steps: [{ id: "s1", channel: "email" }, { id: "s2", channel: "email" }, { id: "s3", channel: "email" }], lockedStepIds: ["s1", "s2"] };
   ok("locked step can't be removed", throwsReason(() => U.normalizeCampaign({ steps: [{ id: "s1" }, { id: "s3" }] }, existing), "step_locked"));
   ok("locked steps can't be reordered", throwsReason(() => U.normalizeCampaign({ steps: [{ id: "s2" }, { id: "s1" }, { id: "s3" }] }, existing), "step_locked"));
+  ok("a replacement step without an id never takes a locked step's id", throwsReason(() => U.normalizeCampaign({ steps: [{ templateId: "other" }] }, existing), "step_locked"));
+  ok("new steps skip the stored ids", U.normalizeCampaign({ steps: [{ id: "s1" }, { id: "s2" }, {}] }, existing).steps[2].id === "s4");
   ok("unlocked step can be removed, new ones appended, locked content edited", U.normalizeCampaign({ steps: [{ id: "s1", templateId: "new" }, { id: "s2" }, { id: "s9" }] }, existing).steps[0].templateId === "new");
 
   // activationProblems

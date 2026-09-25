@@ -107,13 +107,17 @@ function endEnrolmentWrites(tx, enrolRef, companyRef, companyData, status, reaso
   }
 }
 
+// A draft still waiting in "To approve" is cancelled with its enrolment.
 async function endEnrolment(enrolRef, status, reason) {
   return db().runTransaction(async (tx) => {
     const e = await tx.get(enrolRef);
     if (!e.exists || !LIVE_ENROLMENT.includes(e.data().status)) return false;
     const companyRef = db().doc(`searchCompanies/${e.data().companyId}`);
     const c = await tx.get(companyRef);
+    const draftRef = e.data().draftMessageId ? db().doc(`outreachMessages/${e.data().draftMessageId}`) : null;
+    const draft = draftRef ? await tx.get(draftRef) : null;
     endEnrolmentWrites(tx, enrolRef, companyRef, c.exists ? c.data() : null, status, reason);
+    if (draft?.exists && draft.data().status === "draft") tx.update(draftRef, { status: "cancelled", cancelledReason: reason || status });
     return true;
   });
 }
@@ -132,12 +136,13 @@ async function liveEnrolmentRefs(field, value) {
   return snap.docs.filter((d) => LIVE_ENROLMENT.includes(d.data().status)).map((d) => d.ref);
 }
 
-// Stop rules (spec §5.4): bounce, complaint, unsubscribe and do-not-contact end
-// the company's enrolments in every campaign. Wired into the webhook and the
-// scheduler in Phase 2a step 2.
-async function stopCompanyEnrolments(companyId, reason) {
+// Stop rules (spec §5.4): a human reply ends the company's enrolments as
+// "replied"; bounce, complaint, unsubscribe and do-not-contact as "stopped".
+// Called from the webhook (inbound replies, delivery events) and the
+// unsubscribe page.
+async function stopCompanyEnrolments(companyId, reason, status = "stopped") {
   if (!companyId) return 0;
-  return endAll(await liveEnrolmentRefs("companyId", companyId), "stopped", reason);
+  return endAll(await liveEnrolmentRefs("companyId", companyId), status, reason);
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────────

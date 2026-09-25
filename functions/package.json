@@ -7,7 +7,7 @@
   "main": "index.js",
   "scripts": {
     "deploy": "firebase deploy --only functions",
-    "test": "node test/outreach_helpers.test.js && node test/outreach_flows.test.js && node test/outreach_campaigns.test.js"
+    "test": "node test/outreach_helpers.test.js && node test/outreach_flows.test.js && node test/outreach_campaigns.test.js && node test/outreach_scheduler.test.js"
   },
   "dependencies": {
     "firebase-admin": "^12.6.0",

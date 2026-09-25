@@ -66,11 +66,13 @@ function normalizeWindow(w) {
   return { days, from: w.from, to: w.to, tz: "Europe/Lisbon" };
 }
 
-function normalizeStep(s, i, usedIds) {
+// `reserved` = ids of the stored steps: a new step never takes an old step's
+// id, so a replaced step can't pass for one that has already run.
+function normalizeStep(s, i, usedIds, reserved = new Set()) {
   const channel = s.channel || "email";
   if (channel !== "email") bad("channel_not_ready", "Only email steps are available for now — calls, LinkedIn, letters and other manual steps arrive with Tasks (Phase 2b).");
   let id = /^[a-z0-9_-]{1,20}$/i.test(s.id || "") ? s.id : null;
-  if (!id || usedIds.has(id)) { let n = i + 1; while (usedIds.has("s" + n)) n++; id = "s" + n; }
+  if (!id || usedIds.has(id)) { let n = i + 1; while (usedIds.has("s" + n) || reserved.has("s" + n)) n++; id = "s" + n; }
   usedIds.add(id);
   const variants = [];
   for (const v of s.variants || []) {
@@ -113,7 +115,8 @@ function normalizeCampaign(input, existing = null) {
   const rawSteps = Array.isArray(src.steps) ? src.steps : [];
   if (rawSteps.length > MAX_STEPS) bad("too_many_steps", `A sequence can have up to ${MAX_STEPS} steps.`);
   const used = new Set();
-  const steps = rawSteps.map((s, i) => normalizeStep(s, i, used));
+  const reserved = new Set((existing?.steps || []).map((s) => s.id));
+  const steps = rawSteps.map((s, i) => normalizeStep(s, i, used, reserved));
 
   const locked = (existing?.lockedStepIds || []).filter((id) => (existing.steps || []).some((s) => s.id === id));
   if (locked.length) {

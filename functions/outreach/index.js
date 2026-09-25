@@ -7,5 +7,6 @@ module.exports = {
   ...require("./unsubscribe"), // outreachUnsubscribe (HTTPS, douropartners.pt/u/*)
   ...require("./admin"),       // outreachAdmin (callable: seed, clearTestData)
   // Phase 2 — campaigns ("Outreach Phase 2 - Campaigns Spec.md")
-  outreachCampaign: require("./campaigns").outreachCampaign, // callable: save, preview, enrol, status
+  outreachCampaign: require("./campaigns").outreachCampaign,   // callable: save, preview, enrol, status
+  outreachScheduler: require("./scheduler").outreachScheduler, // every 10 min: starts enrolments, sends / drafts due steps
 };

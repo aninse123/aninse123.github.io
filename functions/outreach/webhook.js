@@ -12,6 +12,7 @@ const { verifySvixSignature, tagValue, normEmail, stripQuoted, htmlToText } = re
 const { getEmail } = require("./resend");
 const { handleReceived } = require("./inbound");
 const store = require("./store");
+const { stopCompanyEnrolments } = require("./campaigns");
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -140,13 +141,16 @@ async function handleDeliveryEvent(type, data) {
     await store.addSuppression(recipient, { reason: "hard_bounce", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });
     await store.setCompanyOutreachStatus(companyId, "bounced", isTest);
+    await stopCompanyEnrolments(companyId, "Email bounced");
   } else if (type === "email.complained") {
     await store.addSuppression(recipient, { reason: "complaint", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "closed" });
     await store.setCompanyOutreachStatus(companyId, "unsubscribed", isTest);
+    await stopCompanyEnrolments(companyId, "Marked as spam");
   } else if (type === "email.suppressed") {
     await store.addSuppression(recipient, { reason: "provider_suppressed", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });
+    await stopCompanyEnrolments(companyId, "Email suppressed by the provider");
   }
   return true;
 }

@@ -60,6 +60,7 @@ const DEFAULT_SETTINGS = {
   sendWindow: { days: [1, 2, 3, 4, 5], from: "09:00", to: "18:00", tz: "Europe/Lisbon" },
   testMode: true,
   testRecipients: TEST_RECIPIENTS,
+  campaignTestRecipient: "andrenorocha@gmail.com", // test mode: every campaign email goes here (C10); must be on the list above
   blockPersonalDomains: true,
   complianceBlockId: null, // required once testMode is off (spec §10)
 };

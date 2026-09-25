@@ -44,10 +44,13 @@ function senderKey(senderId) {
 }
 
 // The portal's own breakdown of what it sent/received today. Everything else
-// in Resend's daily figure is "other" (warm-up, investor emails).
-async function bumpDaily(field, { senderId, owner } = {}) {
+// in Resend's daily figure is "other" (warm-up, investor emails). `extra`
+// names further counters for the same email (e.g. "campaignSent", which the
+// scheduler compares with the automations limit).
+async function bumpDaily(field, { senderId, owner, extra = [] } = {}) {
   const inc = FieldValue.increment(1);
   const upd = { [field]: inc, total: inc, updatedAt: FieldValue.serverTimestamp() };
+  for (const f of extra) upd[f] = inc;
   if (senderId) upd.bySender = { [senderKey(senderId)]: inc };
   if (owner) upd.byOwner = { [owner]: inc };
   await db().doc(`outreachDaily/${utcDayKey()}`).set(upd, { merge: true });
@@ -85,7 +88,8 @@ async function addSuppression(email, { reason, source, companyId = null, by = "s
 // which the Search CRM treats as a non-outreach touch. Test traffic uses
 // "email_test" so the browser's recomputeActivityFields() never counts it as
 // an outreach attempt on a real company.
-async function writeActivity({ companyId, direction, subject, content, threadId, messageId, contactName = null, contactEmail = null, createdBy, isTest }) {
+// Campaign sends also carry campaignId / stepId / enrolmentId (Phase 2 §7).
+async function writeActivity({ companyId, direction, subject, content, threadId, messageId, contactName = null, contactEmail = null, createdBy, isTest, campaignId = null, stepId = null, enrolmentId = null }) {
   if (!companyId) return null;
   const ref = await db().collection("searchActivities").add({
     companyId,
@@ -103,6 +107,10 @@ async function writeActivity({ companyId, direction, subject, content, threadId,
     responseCategory: null,
     status: null,
     isTest: !!isTest,
+    campaignId: campaignId || null,
+    stepId: stepId || null,
+    enrolmentId: enrolmentId || null,
+    channel: "email",
     createdAt: FieldValue.serverTimestamp(),
     createdBy,
   });
