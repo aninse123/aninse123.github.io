@@ -194,6 +194,9 @@
     .settings .card { padding: 18px 20px; }
     .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 0.84rem; margin-bottom: 14px; }
     .subnav { margin-bottom: 14px; }
+    /* Grid children default to min-width:auto and would grow to fit a wide table;
+       0 lets .table-wrap scroll inside the card instead of the page scrolling sideways. */
+    .settings > *, .inbox > *, .compose > * { min-width: 0; }
     .checkline { display: flex; gap: 8px; align-items: flex-start; font-size: 0.84rem; line-height: 1.4; cursor: pointer; }
     .checkline input { margin-top: 3px; }
     .checklist { display: flex; flex-direction: column; gap: 8px; background: #FDF3DC; border: 1px solid #F0D597; border-radius: var(--radius); padding: 12px 14px; margin-top: 4px; }
@@ -397,7 +400,7 @@
                 <span class="hint">Batches and sequences (Phase 2) stop here. Manual sends and replies never do.</span>
               </div>
             </div>
-            <label class="checkline"><input type="checkbox" id="gPersonal"> Block personal email domains (gmail, sapo, hotmail…) — the legal rule for natural persons</label>
+            <label class="checkline"><input type="checkbox" id="gPersonal"> <span>Block personal email domains (gmail, sapo, hotmail…) — the legal rule for natural persons</span></label>
             <div class="field" style="margin-top:14px;">
               <label for="gTestList">Approved test addresses</label>
               <textarea id="gTestList" rows="6" spellcheck="false"></textarea>
@@ -1225,7 +1228,7 @@
         ['glClear', 'Test data is cleared (General → Clear test data)'],
       ];
       openModal('Go live', `<p class="note" style="margin-bottom:12px;">From now on, emails reach real companies. Confirm each item on the go-live checklist:</p>
-        <div class="checklist">${items.map(([id, t]) => `<label class="checkline"><input type="checkbox" id="${id}"> ${esc(t)}</label>`).join('')}</div>`,
+        <div class="checklist">${items.map(([id, t]) => `<label class="checkline"><input type="checkbox" id="${id}"> <span>${esc(t)}</span></label>`).join('')}</div>`,
         async () => {
           if (items.some(([id]) => !$(id).checked)) { modalError('Tick every item first.'); return false; }
           await updateDoc(doc(db, 'outreachSettings', 'global'), { testMode: false, liveSince: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: me });
@@ -1258,8 +1261,8 @@
         <div class="field"><label for="sStatus">Status</label><select id="sStatus">${statuses.map(([v, l]) => `<option value="${v}"${s.status === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
         <div class="checklist" id="sCheck" hidden>
           <span class="note" style="color:#6B4700;">Before activating, confirm both steps — otherwise replies to this address never reach the portal:</span>
-          <label class="checkline"><input type="checkbox" id="sCk1"> Warm-up is stopped for this address in Instantly</label>
-          <label class="checkline"><input type="checkbox" id="sCk2"> ImprovMX forwards <b>${esc(localPart(s.id))}@</b> to <b>${esc(localPart(s.id))}@…resend.app</b> as a second destination</label>
+          <label class="checkline"><input type="checkbox" id="sCk1"> <span>Warm-up is stopped for this address in Instantly</span></label>
+          <label class="checkline"><input type="checkbox" id="sCk2"> <span>ImprovMX forwards <b>${esc(localPart(s.id))}@</b> to <b>${esc(localPart(s.id))}@…resend.app</b> as a second destination</span></label>
         </div>
         <div class="field" style="margin-top:14px;"><label for="sSig">Signature</label><textarea id="sSig" rows="4">${esc(s.signature || '')}</textarea>
           <span class="hint">Plain text, added under every email from this address.</span></div>
