@@ -1419,6 +1419,7 @@ function naceDerive(code){
 // ── State ──────────────────────────────────────────────────────────────────
 let currentUser = null;
 let companies = [];
+const selectedCo = new Set(); // companies ticked in the list (Add selected to campaign)
 let brokers = [];
 let fitCriteria = { ...DEFAULT_FIT };
 let activities = [];
@@ -9091,7 +9092,6 @@ let outreachCfg = null; // { settings, senders, templates }, loaded on first ope
 // this only chooses the ids and shows its summary. The filters are saved on the
 // campaign as a portable spec so Metrics can compare audiences later.
 const callOutreachCampaign = httpsCallable(outreachFns, 'outreachCampaign', { timeout: 300000 });
-const selectedCo = new Set();
 const CAMP_EXCL_LABELS = {
   not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact',
   unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
