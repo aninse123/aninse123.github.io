@@ -1223,6 +1223,8 @@
       });
     }
 
+    function sinceDay(n) { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); }
+
     async function loadMetrics() {
       if (metricsData) { renderMetrics(); return; }
       $('mKpis').innerHTML = '<div class="empty">Loading…</div>';
@@ -1230,8 +1232,10 @@
         const [th, ms, dl, us] = await Promise.all([
           getDocs(query(collection(db, 'outreachThreads'), orderBy('firstTouchAt', 'desc'), limit(3000))),
           getDocs(query(collection(db, 'outreachMessages'), where('direction', '==', 'out'), orderBy('createdAt', 'desc'), limit(3000))),
-          getDocs(query(collection(db, 'outreachDaily'), orderBy(documentId(), 'desc'), limit(31))),
-          getDocs(query(collection(db, 'outreachUsage'), orderBy(documentId(), 'desc'), limit(31))),
+          // Doc ids are UTC dates (YYYY-MM-DD), so a range on the id needs no
+          // extra index (a descending sort on the id would).
+          getDocs(query(collection(db, 'outreachDaily'), where(documentId(), '>=', sinceDay(31)))),
+          getDocs(query(collection(db, 'outreachUsage'), where(documentId(), '>=', sinceDay(31)))),
         ]);
         addReads((th.size || 1) + (ms.size || 1) + (dl.size || 1) + (us.size || 1)); refreshReads();
         const byId = (snap) => Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
