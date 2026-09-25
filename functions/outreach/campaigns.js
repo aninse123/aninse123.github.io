@@ -539,7 +539,14 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     completedAt: FieldValue.serverTimestamp(), completedBy: caller, ...(linkedinUrl ? { linkedinUrl } : {}),
   });
   if (o.reply && stopSequence !== false) {
+    // Keep the step in the history (Overview counts it as done, and as the
+    // step the company answered after), then end the enrolment.
+    await enrolRef.update({ history: FieldValue.arrayUnion({ stepId: t.stepId, at: Timestamp.now(), result: o.key, taskId, activityId }), taskId: null }).catch(() => {});
     await endEnrolment(enrolRef, "replied", `${CHANNEL_LABEL[t.channel]}: ${o.label}`);
+    await db().doc(`outreachCampaigns/${t.campaignId}`).update({
+      lockedStepIds: FieldValue.arrayUnion(t.stepId),
+      [`stats.tasks_${t.channel}`]: FieldValue.increment(1),
+    }).catch(() => {});
     return { ok: true, status: "done", sequence: "stopped", activityId };
   }
   const moved = await db().runTransaction(async (tx) => {

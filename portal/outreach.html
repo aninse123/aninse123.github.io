@@ -2224,7 +2224,8 @@
       const c = curCamp(); if (!c) return;
       const by = {}; curEnrols.forEach(e => { by[e.status] = (by[e.status] || 0) + 1; });
       const total = curEnrols.length;
-      const contacted = curEnrols.filter(e => (e.history || []).length).length;
+      // Contacted = any step done (email or task), or answered.
+      const contacted = curEnrols.filter(e => (e.history || []).length || e.status === 'replied').length;
       const replied = by.replied || 0;
       const repliedIds = new Set(curEnrols.filter(e => e.status === 'replied').map(e => e.id));
       const positive = curThreads.filter(t => POSITIVE.includes(t.responseCategory)).length;
@@ -2249,7 +2250,9 @@
         const variants = {};
         hist.forEach(h => { const k = h.variant || '—'; variants[k] = variants[k] || { sent: 0, replied: 0 }; variants[k].sent++; });
         repliedHere.forEach(e => { const k = e.variants?.[s.id] || '—'; variants[k] = variants[k] || { sent: 0, replied: 0 }; variants[k].replied++; });
-        const vtxt = Object.keys(variants).sort().map(k => `${esc(k)}: ${num(variants[k].sent)} sent · ${num(variants[k].replied)} replied (${pctTxt(pct(variants[k].replied, variants[k].sent))})`).join('<br>');
+        const abStep = !s.channel || s.channel === 'email' || s.channel === 'letter';
+        const verb = !s.channel || s.channel === 'email' ? 'sent' : 'done';
+        const vtxt = abStep ? Object.keys(variants).sort().map(k => `${esc(k)}: ${num(variants[k].sent)} ${verb} · ${num(variants[k].replied)} replied (${pctTxt(pct(variants[k].replied, variants[k].sent))})`).join('<br>') : '';
         return `<tr><td>${i + 1}. ${esc(s.name)} <span class="ch">${esc(CHANNEL_LABELS[s.channel || 'email'])}</span></td><td class="clip">${esc(s.templateId ? tplName(s.templateId) : (s.channel && s.channel !== 'email' ? '—' : tplName(s.templateId)))}</td><td class="num">${num(hist.length)}</td><td class="num">${num(repliedHere.length)}</td><td style="font-size:0.78rem;">${vtxt || '—'}</td></tr>`;
       }).join('');
 
@@ -2259,7 +2262,7 @@
           ${kpi('In sequence', num(by.active || 0), `${num(by.paused || 0)} paused`)}
           ${kpi('To approve', num(by.awaiting_approval || 0), by.awaiting_approval ? `<button class="camp-link" id="ovApprove" style="font-size:0.74rem;">Open the queue →</button>` : 'drafts waiting')}
           ${steps.some(s => s.channel && s.channel !== 'email') ? kpi('Tasks open', num(by.awaiting_task || 0), by.awaiting_task ? `<button class="camp-link" id="ovTasks" style="font-size:0.74rem;">Open tasks →</button>` : 'calls, LinkedIn, letters…') : ''}
-          ${kpi('Emails sent', num(sent), `to ${num(contacted)} companies`)}
+          ${kpi('Emails sent', num(sent), `${num(contacted)} compan${contacted === 1 ? 'y' : 'ies'} contacted (any channel)`)}
           ${kpi('Replied', num(replied), `${pctTxt(pct(replied, contacted))} of contacted`)}
           ${kpi('Positive', num(positive), 'interested · call back · referred')}
           ${kpi('Finished, no reply', num(by.completed || 0))}
@@ -2269,7 +2272,7 @@
           <div class="card" style="padding:0;">
             <div style="padding:14px 16px 4px;"><h3>By step</h3></div>
             <div class="table-wrap"><table>
-              <thead><tr><th>Step</th><th>Template</th><th class="num">Sent</th><th class="num">Replied after it</th><th>Variants</th></tr></thead>
+              <thead><tr><th>Step</th><th>Template</th><th class="num">Sent / done</th><th class="num">Replied after it</th><th>Variants</th></tr></thead>
               <tbody>${stepRows || '<tr><td colspan="5" class="empty">No steps yet — write the sequence.</td></tr>'}</tbody>
             </table></div>
             ${chanRows ? `<div style="padding:14px 16px 4px;"><h3>Manual steps by channel</h3></div><div class="table-wrap"><table>

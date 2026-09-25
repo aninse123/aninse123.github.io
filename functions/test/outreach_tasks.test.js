@@ -86,6 +86,7 @@ async function makeCampaign(campaign, ids) {
   // Connected → stop (default) vs keep going
   const t2id = stepTaskId(`${c1}_c2`, "s2"), t3id = stepTaskId(`${c1}_c3`, "s2");
   const con = await camp({ action: "completeTask", taskId: t2id, outcome: "connected", notes: "Interessado" });
+  ok("connected: the step stays in the history and counts on the campaign", get(`outreachEnrolments/${c1}_c2`).history.slice(-1)[0].result === "connected" && get(`outreachCampaigns/${c1}`).stats.tasks_call === 2);
   ok("connected: sequence stopped as replied, company released, reply recorded", con.sequence === "stopped" && get(`outreachEnrolments/${c1}_c2`).status === "replied" && get("searchCompanies/c2").activeCampaignId === undefined && get("searchCompanies/c2").outreachStatus === "replied");
   const con2 = await camp({ action: "completeTask", taskId: t3id, outcome: "connected", stopSequence: false });
   ok("connected with 'stop' unticked: sequence continues", con2.sequence === "next" && get(`outreachEnrolments/${c1}_c3`).currentStep === 2);
