@@ -9401,8 +9401,23 @@ async function openSendEmail(idx){
   const test = !cfg.settings || cfg.settings.testMode !== false;
 
   const opts = [];
-  if (c.companyEmail) opts.push({ email: String(c.companyEmail).trim().toLowerCase(), label: `Company — ${c.companyEmail}`, key: 'company' });
-  (c.contacts || []).forEach((ct, i) => { if (ct.email) opts.push({ email: String(ct.email).trim().toLowerCase(), label: `${ct.name}${ct.role ? ' (' + ct.role + ')' : ''} — ${ct.email}`, key: String(i) }); });
+  const PERSONAL_RE = /@(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me|mac|aol|sapo|iol|netcabo|clix|telepac|portugalmail|oninet|zonmail|vodafone|meo|netvisao|gmx|mail|protonmail|proton|zoho|yandex)\.[a-z.]+$/i;
+  const seenE = new Set();
+  const addOpt = (email, label, key) => { const e = String(email || '').trim().toLowerCase(); if (!e || seenE.has(e)) return; seenE.add(e); opts.push({ email: e, label: label + (PERSONAL_RE.test(e) && key !== 'company' ? ' · personal address' : ''), key }); };
+  if (c.companyEmail) addOpt(c.companyEmail, `Company — ${c.companyEmail}`, 'company');
+  (c.contacts || []).forEach((ct, i) => { if (ct.email) addOpt(ct.email, `${ct.name}${ct.role ? ' (' + ct.role + ')' : ''} — ${ct.email}`, String(i)); });
+  // Phase 3b: People linked to the company that have an email (owner, gerente…).
+  try {
+    const ls = await getDocs(query(collection(db, 'searchPersonLinks'), where('companyId', '==', c.id), limit(60)));
+    addReads(ls.size || 1);
+    const ids = ls.docs.map(d => d.data()).filter(l => l.personId && l.personEntityType !== 'company');
+    for (let i = 0; i < ids.length && i < 60; i += 30) {
+      const ps = await getDocs(query(collection(db, 'searchPeople'), where(documentId(), 'in', ids.slice(i, i + 30).map(l => l.personId))));
+      addReads(ps.size || 1);
+      ps.docs.forEach(d => { const p = d.data(); const l = ids.find(x => x.personId === d.id) || {}; if (p.email) addOpt(p.email, `👤 ${p.name || l.personName || ''}${(l.mgmtRoles || []).length ? ' (' + l.mgmtRoles.join(', ') + ')' : ''} — ${p.email}`, 'p:' + d.id); });
+    }
+    refreshReads();
+  } catch (e) { console.warn('people for send', e); }
   const toSel = document.getElementById('semTo');
   toSel.innerHTML = opts.length ? opts.map(o => `<option value="${esc(o.email)}" data-key="${o.key}">${esc(o.label)}</option>`).join('') : '<option value="">No email address for this company</option>';
   const want = opts.find(o => o.key === String(idx)) || opts[0];
@@ -9450,6 +9465,10 @@ async function sendCompanyEmail(){
   if (!senderId) { el.textContent = 'No active sender address — Outreach → Settings → Addresses.'; el.style.display = 'block'; return; }
   if (!subject || !body) { el.textContent = 'Subject and message are required.'; el.style.display = 'block'; return; }
   const payload = { companyId: c.id, senderId, to, subject, body, requestId: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, '').slice(0, 32) };
+  // The person chosen in "To" (company, contact or linked person): the server
+  // checks it belongs to the company and fills {{contact.firstName}}.
+  const chosen = document.getElementById('semTo').value;
+  if (chosen) payload.recipient = { email: chosen };
   const [tid, key] = document.getElementById('semTpl').value.split('::');
   if (tid) { payload.templateId = tid; payload.variantKey = key; }
   const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';

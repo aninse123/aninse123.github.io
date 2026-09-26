@@ -403,6 +403,11 @@
             <div id="coHistory" hidden style="margin:-6px 0 14px;"></div>
             <div class="banner banner--warn" id="twiceWarn" hidden style="margin-bottom:14px;"></div>
 
+            <div class="field" id="cRecipWrap" hidden>
+              <label for="cRecip">Write to</label>
+              <select id="cRecip"></select>
+              <span class="hint" id="cRecipHint"></span>
+            </div>
             <div class="row2">
               <div class="field">
                 <label for="cTo">To</label>
@@ -1276,7 +1281,7 @@
       if (c) { $('coSearch').value = c.name || ''; $('noCompany').checked = false; }
       const test = !settings || settings.testMode !== false;
       if (!c) {
-        $('coCard').hidden = true; $('twiceWarn').hidden = true; $('coHistory').hidden = true;
+        $('coCard').hidden = true; $('twiceWarn').hidden = true; $('coHistory').hidden = true; $('cRecipWrap').hidden = true; $('cRecip').innerHTML = '';
         if (test && !$('cTo').value) $('cTo').value = defaultTestAddress();
         renderFromOptions(); renderPreview(); return;
       }
@@ -1287,6 +1292,23 @@
         <dt>Last touch</dt><dd>${c.lastTouchAt ? esc(dayFmt.format(new Date(tsMs(c.lastTouchAt)))) : '—'}</dd>`;
       $('cTo').value = test ? defaultTestAddress() : (c.companyEmail || '');
       renderFromOptions();
+      // Who to write to (Phase 3b): company address, contacts, linked People.
+      $('cRecipWrap').hidden = false;
+      $('cRecip').innerHTML = '<option value="">Loading…</option>';
+      loadPeopleFor([c.id]).then(() => {
+        if (picked?.id !== c.id) return;
+        const rs = recipientsFor(c);
+        const kindLabel = { company: 'Company', contact: 'Contact', person: 'Person' };
+        $('cRecip').innerHTML = rs.length ? rs.map(r => `<option value="${esc(r.email)}">${esc(kindLabel[r.kind])} — ${esc(r.name ? r.name + (r.role ? ' (' + r.role + ')' : '') : r.role)} · ${esc(r.email)}${r.personal ? ' · personal address' : ''}</option>`).join('') : '<option value="">No email address for this company</option>';
+        const onRecip = () => {
+          const r = chosenRecipient();
+          if (!test) $('cTo').value = r?.email || '';
+          $('cRecipHint').textContent = !r ? '' : (r.personal && r.kind !== 'company' ? "Personal address — allowed for people (your decision); Lei 41/2004 asks for prior consent from private individuals (to review with CCSL). " : '') + (test ? `Test mode: the email goes to ${$('cTo').value || 'the test address'}; this choice sets the wording ({{contact.firstName}}).` : '');
+          renderPreview();
+        };
+        $('cRecip').onchange = onRecip;
+        onRecip();
+      });
       // Contact-twice guard: warn only (spec §7.7).
       const warn = [];
       const THIRTY = 30 * 86400000;
@@ -1355,12 +1377,65 @@
       if (aka && aka !== '-' && !/^n\.?a\.?$/i.test(aka)) return shortName(aka);
       return shortName(c?.name);
     }
+    // ── People linked to a company (Phase 3b) — same ranking as the server
+    // (functions/outreach/recipients.js): current sócio-gerente / gerente /
+    // administrador / CEO first, then controlling shareholders, then managers.
+    const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|general manager|owner|propriet[áa]rio|founder|fundador)/i;
+    const MANAGER_RE = /(director|diretor|manager|board|conselho|administra)/i;
+    const PERSONAL_DOMAIN_RE = /@(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me|mac|aol|sapo|iol|netcabo|clix|telepac|portugalmail|oninet|zonmail|vodafone|meo|netvisao|gmx|mail|protonmail|proton|zoho|yandex)\.[a-z.]+$/i;
+    function rankLink(l) {
+      const roles = (l.mgmtRoles || []).join(' ');
+      const current = l.mgmtCurrent !== false && (l.mgmtRoles || []).length > 0;
+      const share = Number(l.shTotalPct ?? l.shDirectPct) || 0;
+      if (current && TOP_ROLE_RE.test(roles)) return 100 + Math.min(share, 99) / 100;
+      if (share >= 50) return 80 + share / 100;
+      if (current && MANAGER_RE.test(roles)) return 60;
+      if (current) return 40;
+      if (share > 0) return 20 + share / 100;
+      return 0;
+    }
+    const peopleCache = new Map(); // companyId → [{ personId, name, role, email, phone, rank }]
+    async function loadPeopleFor(companyIds) {
+      for (const id of [...new Set(companyIds)].filter(x => x && !peopleCache.has(x))) {
+        try {
+          const ls = await getDocs(query(collection(db, 'searchPersonLinks'), where('companyId', '==', id), limit(60)));
+          addReads(ls.size || 1);
+          const links = ls.docs.map(d => d.data()).filter(l => l.personId && l.personEntityType !== 'company')
+            .map(l => ({ l, rank: rankLink(l) })).sort((a, b) => b.rank - a.rank).slice(0, 30);
+          const people = new Map();
+          for (let i = 0; i < links.length; i += 30) {
+            const ps = await getDocs(query(collection(db, 'searchPeople'), where(documentId(), 'in', links.slice(i, i + 30).map(x => x.l.personId))));
+            addReads(ps.size || 1);
+            ps.docs.forEach(d => people.set(d.id, d.data()));
+          }
+          peopleCache.set(id, links.map(({ l, rank }) => {
+            const p = people.get(l.personId) || {};
+            return { personId: l.personId, name: p.name || l.personName || '', role: (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: String(p.email || '').trim().toLowerCase(), phone: p.phone || '', rank };
+          }));
+        } catch (e) { console.warn('people', id, e); peopleCache.set(id, []); }
+      }
+      refreshReads();
+    }
+    // Everyone who can receive an email for a company, best first per kind.
+    function recipientsFor(c) {
+      const out = [], seen = new Set();
+      const add = (r) => { const e = String(r.email || '').trim().toLowerCase(); if (!/^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/i.test(e) || seen.has(e)) return; seen.add(e); out.push({ ...r, email: e, personal: PERSONAL_DOMAIN_RE.test(e) }); };
+      if (c?.companyEmail) add({ kind: 'company', email: c.companyEmail, name: '', role: 'Company address' });
+      (c?.contacts || []).forEach(ct => add({ kind: 'contact', email: ct.email, name: ct.name || '', role: ct.role || (ct.isPrimary ? 'Primary contact' : 'Contact') }));
+      (peopleCache.get(c?.id) || []).forEach(p => add({ kind: 'person', email: p.email, name: p.name, role: p.role, personId: p.personId }));
+      return out;
+    }
+
+    function chosenRecipient() {
+      const v = $('cRecip')?.value;
+      return v ? recipientsFor(picked).find(r => r.email === v) || null : null;
+    }
     function ctxFor() {
       const s = senders.find(x => x.id === $('cFrom').value) || {};
       const c = picked || {};
       return {
         company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '' },
-        contact: { firstName: '' },
+        contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
         sender: { firstName: String(s.displayName || '').split(' ')[0], signature: s.signature || '' },
         unsubscribeUrl: 'https://douropartners.pt/u/…',
       };
@@ -1396,6 +1471,8 @@
         companyId: picked?.id || null, senderId: $('cFrom').value, to: $('cTo').value.trim(),
         subject: $('cSubject').value, body: $('cBody').value, requestId: requestId(),
       };
+      const rcp = picked ? chosenRecipient() : null;
+      if (rcp) payload.recipient = { email: rcp.email };
       const [tid, key] = $('cTpl').value.split('::');
       if (tid) { payload.templateId = tid; payload.variantKey = key; }
       if (!payload.companyId && !$('noCompany').checked) { err.textContent = 'Choose a company (or tick "Test send without a company").'; err.hidden = false; return; }
@@ -2355,7 +2432,7 @@
                 `<button class="btn btn--danger btn--sm" data-eop="remove" data-eid="${esc(e.id)}">Remove</button>`,
               ].join(' ');
               return `<tr>
-                <td><a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${esc(e.contactEmail || 'no email')}</div></td>
+                <td><a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div></td>
                 <td>${pill(ENROL_PILL, e.status)}</td>
                 <td style="font-size:0.8rem;">${stepLabel(e, c)}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(next)}</td>
@@ -2621,7 +2698,9 @@
         </div>
         ${shown.length ? shown.map(d => {
           const ed = draftEdits.get(d.id) || {};
-          const test = d.redirectedFrom ? `<span class="pill pill--test">TEST</span> goes to ${esc((d.to || [])[0])} instead of ${esc(d.redirectedFrom)}` : `to ${esc((d.to || [])[0] || '')}`;
+          const who = d.recipient?.name ? `${esc(d.recipient.name)} ` : '';
+          const personalTag = d.recipient?.personal || d.personalAddress ? ' <span class="pill pill--warn" title="Personal address — Lei 41/2004 consent question (CCSL)">personal</span>' : '';
+          const test = d.redirectedFrom ? `<span class="pill pill--test">TEST</span> goes to ${esc((d.to || [])[0])} instead of ${who}${esc(d.redirectedFrom)}${personalTag}` : `to ${who}${esc((d.to || [])[0] || '')}${personalTag}`;
           return `<div class="draft" data-did="${esc(d.id)}">
             <div class="draft__head">
               <span class="draft__co"><a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" style="color:var(--text);">${esc(d.companyName || 'Company')}</a></span>
@@ -2777,6 +2856,13 @@
       if (['call', 'whatsapp', 'visit', 'other'].includes(ch) && c?.companyPhone) {
         lines.push(`Company line: <a href="${esc(telHref(c.companyPhone))}">${esc(c.companyPhone)}</a>${isMobilePt(c.companyPhone) ? ' <span class="pill pill--warn" title="A mobile number may be a person\'s own phone — same consent rule as email (D3)">mobile</span>' : ''}`);
       }
+      (peopleCache.get(t.companyId) || []).filter(p => p.rank >= 40 || p.phone || p.email).slice(0, 3).forEach(p => {
+        const bits = [`👤 ${esc(p.name)}`, p.role ? `<span class="hint">${esc(p.role)}</span>` : ''];
+        if (p.phone && ['call', 'whatsapp', 'visit', 'other'].includes(ch)) bits.push(`<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>${isMobilePt(p.phone) ? ' <span class="pill pill--warn" title="Probably a personal mobile (D3)">personal?</span>' : ''}`);
+        if (ch === 'linkedin') bits.push(`<a href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(p.name + ' ' + cName)}" target="_blank" rel="noopener noreferrer">find on LinkedIn</a>`);
+        if (p.email) bits.push(esc(p.email));
+        lines.push(bits.filter(Boolean).join(' · '));
+      });
       (c?.contacts || []).slice(0, 4).forEach(p => {
         const bits = [esc(p.name || 'Contact'), p.role ? `<span class="hint">${esc(p.role)}</span>` : ''];
         if (p.phone && ['call', 'whatsapp', 'visit', 'other'].includes(ch)) bits.push(`<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>${isMobilePt(p.phone) ? ' <span class="pill pill--warn" title="Probably a personal mobile — WhatsApp/calls to a private person fall under the same consent rule as email (D3)">personal?</span>' : ''}`);
@@ -2803,6 +2889,7 @@
         && (todoChannel === 'all' || t.channel === todoChannel) && (todoCampaign === 'all' || t.campaignId === todoCampaign));
       const shown = list.slice(0, 40);
       await loadCompaniesFor(shown.map(t => t.companyId));
+      await loadPeopleFor(shown.map(t => t.companyId));
       if (document.activeElement?.closest?.('#todoView .task')) return;
       const campOpts = [...new Set(open.map(t => t.campaignId))];
       const eot = endOfToday();
@@ -3126,6 +3213,12 @@
           <div class="row2">
             <div class="field"><label for="csAppr">Before emails go out (steps can override)</label>
               <select id="csAppr"${dis}><option value="approval"${c.approvalDefault !== 'auto' ? ' selected' : ''}>Each email waits for approval</option><option value="auto"${c.approvalDefault === 'auto' ? ' selected' : ''}>Emails go out automatically</option></select></div>
+            <div class="field"><label for="csRecip">Emails go to</label>
+              <select id="csRecip"${dis}>
+                <option value="company"${(c.recipientPolicy || 'company') === 'company' ? ' selected' : ''}>The company address (geral@ / info@)</option>
+                <option value="primary_contact"${c.recipientPolicy === 'primary_contact' ? ' selected' : ''}>The primary contact (else the company address)</option>
+                <option value="best_person"${c.recipientPolicy === 'best_person' ? ' selected' : ''}>The best person — owner / gerente from People (else the company address)</option>
+              </select><span class="hint">Chosen at the first email and kept for the follow-ups. People on personal addresses (gmail, sapo…) are allowed and flagged.</span></div>
             <div class="field"><label for="csAssignee">Tasks (calls, LinkedIn, letters…) go to</label>
               <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option><option value="andre"${c.assignee === 'andre' ? ' selected' : ''}>André</option><option value="antonio"${c.assignee === 'antonio' ? ' selected' : ''}>António</option></select></div>
           </div>
@@ -3191,7 +3284,7 @@
         const b = $('csSave'); b.disabled = true;
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: {
           name: $('csName').value, description: $('csDesc').value, priority: Number($('csPrio').value),
-          approvalDefault: $('csAppr').value, pacing: { newPerDay: pace }, assignee: $('csAssignee').value,
+          approvalDefault: $('csAppr').value, pacing: { newPerDay: pace }, assignee: $('csAssignee').value, recipientPolicy: $('csRecip').value,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, ownerFilter: $('csOwner').value || null },
