@@ -4,114 +4,218 @@
       "collectionGroup": "outreachThreads",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "contactEmail", "order": "ASCENDING" },
-        { "fieldPath": "senderId", "order": "ASCENDING" },
-        { "fieldPath": "lastMessageAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "contactEmail",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "senderId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastMessageAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachThreads",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "contactEmail", "order": "ASCENDING" },
-        { "fieldPath": "lastMessageAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "contactEmail",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastMessageAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachThreads",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "contactDomain", "order": "ASCENDING" },
-        { "fieldPath": "lastMessageAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "contactDomain",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastMessageAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachThreads",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "owner", "order": "ASCENDING" },
-        { "fieldPath": "lastMessageAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "owner",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastMessageAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachThreads",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "unmatched", "order": "ASCENDING" },
-        { "fieldPath": "lastMessageAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "unmatched",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastMessageAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachThreads",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "companyId", "order": "ASCENDING" },
-        { "fieldPath": "lastMessageAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "companyId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastMessageAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachMessages",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "direction", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "direction",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachMessages",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "threadId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "threadId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachEnrolments",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "nextActionAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nextActionAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachEnrolments",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "campaignId", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" }
+        {
+          "fieldPath": "campaignId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachEnrolments",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "campaignId", "order": "ASCENDING" },
-        { "fieldPath": "enrolledAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "campaignId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "enrolledAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachEnrolments",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "campaignId", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "enrolledAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "campaignId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "enrolledAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachTasks",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "dueAt", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dueAt",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "outreachTasks",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "companyId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "companyId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "outreachRecurring",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nextIssueAt",
+          "order": "ASCENDING"
+        }
       ]
     }
   ],
