@@ -10,4 +10,5 @@ module.exports = {
   outreachCampaign: require("./campaigns").outreachCampaign,   // callable: save, preview, enrol, status
   outreachScheduler: require("./scheduler").outreachScheduler, // every 10 min: starts enrolments, sends / drafts due steps
   outreachAi: require("./ai").outreachAi,                      // Phase 4: AI opening line (off until key + setting)
+  outreachRecurring: require("./recurring").outreachRecurring, // Phase 5b: recurring emails (issues → To approve → paced send)
 };

@@ -50,6 +50,20 @@ exports.outreachUnsubscribe = onRequest({ region: REGION, secrets: [UNSUBSCRIBE_
     const thread = msg.threadId ? (await db().doc(`outreachThreads/${msg.threadId}`).get()).data() : null;
     const oneClick = /List-Unsubscribe=One-Click/i.test(typeof req.rawBody === "object" ? req.rawBody.toString("utf8") : String(req.body || ""));
 
+    // An issue of a recurring email (5b): opt out of that recurring email only.
+    const campaign = msg.campaignId ? (await db().doc(`outreachCampaigns/${msg.campaignId}`).get()).data() : null;
+    if (campaign?.recurringId) {
+      const rec = (await db().doc(`outreachRecurring/${campaign.recurringId}`).get()).data();
+      await db().doc(`outreachOptOuts/${campaign.recurringId}_${email.replace(/[^a-z0-9]/g, "_").slice(0, 120)}`).set({
+        campaignId: campaign.recurringId, email, kind: "recurring", source: oneClick ? "one_click" : "link", messageId, at: FieldValue.serverTimestamp(),
+      });
+      if (msg.threadId) await db().doc(`outreachThreads/${msg.threadId}`).update({ status: "closed", unsubscribedAt: FieldValue.serverTimestamp() });
+      if (thread?.enrolmentId) await stopEnrolmentById(thread.enrolmentId, "Unsubscribed");
+      const what = rec?.name ? `«${escapeHtml(rec.name)}»` : "estes emails";
+      res.status(200).send(page("Removido", `<h1>Pedido registado</h1><p>Não voltará a receber ${what} neste endereço.</p><p><small>Douro Partners</small></p>`));
+      return;
+    }
+
     await store.addSuppression(email, { reason: "unsubscribed", source: oneClick ? "one_click" : "link", companyId: thread?.companyId || null, by: "recipient" });
     if (msg.threadId) await db().doc(`outreachThreads/${msg.threadId}`).update({ status: "closed", unsubscribedAt: FieldValue.serverTimestamp() });
     await store.setCompanyOutreachStatus(thread?.companyId || null, "unsubscribed", !!msg.isTest);

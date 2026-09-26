@@ -74,6 +74,7 @@ class DocRef {
   async set(data, opts) { writeDoc(this.path, data, opts); }
   async update(data) { updateDoc(this.path, data); }
   async delete() { store.delete(this.path); }
+  collection(n) { return new CollRef(`${this.path}/${n}`); }
 }
 class Query {
   constructor(coll, filters = [], order = null, lim = null) { this.coll = coll; this.filters = filters; this.order = order; this.lim = lim; }

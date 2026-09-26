@@ -24,6 +24,7 @@ const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, DEFAULT_SE
 const store = require("./store");
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience } = require("./campaigns");
+const { runRecurring } = require("./recurring");
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
@@ -164,6 +165,8 @@ async function pauseCampaign(campaign, reason) {
 async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.random } = {}) {
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   const settings = await store.getSettings();
+  // Recurring emails (5b): write the issue drafts whose date has come.
+  try { report.issues = await runRecurring(now); } catch (e) { logger.error("outreachScheduler: recurring failed", { message: e.message }); }
   const campSnap = await db().collection("outreachCampaigns").where("status", "==", "active").get();
   report.campaigns = campSnap.size;
   if (campSnap.empty) return report;

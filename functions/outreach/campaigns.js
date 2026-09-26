@@ -416,7 +416,9 @@ function cleanPeople(people) {
 }
 async function peopleContext(campaign) {
   const ctx = await evalContext(campaign);
-  const opts = await db().collection("outreachOptOuts").where("campaignId", "==", campaign.id).get();
+  // An issue of a recurring email (5b) honours opt-outs from that recurring email.
+  const keys = [campaign.id, campaign.recurringId].filter(Boolean);
+  const opts = await db().collection("outreachOptOuts").where("campaignId", "in", keys).get();
   ctx.optedOut = new Set(opts.docs.map((d) => d.data().email));
   return ctx;
 }
@@ -805,3 +807,5 @@ exports.stopCompanyEnrolments = stopCompanyEnrolments;
 exports.stopEnrolmentById = stopEnrolmentById;
 exports.runDynamicAudience = runDynamicAudience;
 exports.endEnrolment = endEnrolment;
+// Recurring emails (5b) create and start each issue's campaign through these.
+exports._internal = { save, enrolPeople, setStatus };
