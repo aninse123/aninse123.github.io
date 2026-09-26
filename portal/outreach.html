@@ -335,11 +335,11 @@
       <div class="tabs" role="tablist">
         <button class="tab active" role="tab" data-tab="inbox" aria-selected="true">Inbox<span class="count" id="unreadCount" hidden></span></button>
         <button class="tab" role="tab" data-tab="sent" aria-selected="false">Sent</button>
-        <button class="tab" role="tab" data-tab="compose" aria-selected="false">Compose</button>
+        <button class="tab" role="tab" data-tab="compose" data-perm="out.send" aria-selected="false">Compose</button>
         <button class="tab" role="tab" data-tab="campaigns" aria-selected="false">Campaigns</button>
         <button class="tab" role="tab" data-tab="tasks" aria-selected="false">Tasks<span class="count" id="approveCount" hidden title="Tasks due today and drafts waiting for approval"></span></button>
         <button class="tab" role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
-        <button class="tab" role="tab" data-tab="settings" aria-selected="false">Settings</button>
+        <button class="tab" role="tab" data-tab="settings" data-perm="out.admin" aria-selected="false">Settings</button>
       </div>
 
       <!-- ── Inbox ─────────────────────────────────────────────── -->
@@ -477,7 +477,7 @@
               <h2 class="camp-h2">Campaigns</h2>
               <label class="checkline"><input type="checkbox" id="campShowArchived"> <span>Show archived</span></label>
               <button class="btn btn--ghost btn--sm" id="campRefresh">Refresh counts</button>
-              <button class="btn btn--primary btn--sm" id="campNew" style="margin-left:auto;">New campaign</button>
+              <button class="btn btn--primary btn--sm" id="campNew" data-perm="out.campaigns" style="margin-left:auto;">New campaign</button>
             </div>
             <div class="table-wrap">
               <table>
@@ -724,6 +724,7 @@
 
   <script type="module">
     import { auth, db, storage, ADMIN_EMAILS, addReads, updateDoc, setDoc, addDoc, deleteDoc } from './firebase-config.js';
+    import { guardPage } from './access.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
@@ -805,7 +806,9 @@
 
     // ── Auth guard ─────────────────────────────────────────────
     onAuthStateChanged(auth, async (user) => {
-      if (!user || !ADMIN_EMAILS.includes(user.email)) { window.location.href = '/portal/login.html'; return; }
+      // Team access: may this person open this tab? (else → their home tab)
+      const pageAccess = await guardPage(user, 'outreach'); if (!pageAccess) return;
+      window.pageAccess = pageAccess;
       me = user.email; myOwner = OWNER_BY_EMAIL[me] || null;
       setNavEmail(me);
       startSharedReadsWatch();
@@ -994,14 +997,14 @@
       const t = threads.find(x => x.id === selectedId); if (!t || !$('viewHead')) return;
       const company = t.companyId
         ? `<a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}">${esc(t.companyName || 'Company')}</a>`
-        : `<span class="pill${t.unmatched ? ' pill--warn' : ''}">${t.unmatched ? 'Unmatched' : 'No company'}</span> <button class="btn btn--ghost btn--sm" id="assignBtn">Assign to company</button>`;
+        : `<span class="pill${t.unmatched ? ' pill--warn' : ''}">${t.unmatched ? 'Unmatched' : 'No company'}</span> <button class="btn btn--ghost btn--sm" id="assignBtn" data-perm="out.write">Assign to company</button>`;
       $('viewHead').innerHTML = `
         <div class="view__title">${esc(t.subject || '(no subject)')}</div>
         <div class="view__sub">${company}<span>${esc(t.contactEmail || '')}</span>
           <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
           ${pill(THREAD_PILL, t.status)}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}</div>
         <div class="classify"><span class="classify__label">Classify</span>${CATEGORIES.map(([k, l]) =>
-          `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}">${esc(l)}</button>`).join('')}</div>`;
+          `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}" data-perm="out.write">${esc(l)}</button>`).join('')}</div>`;
       $('viewHead').querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => classify(t, b.dataset.cat)));
       $('assignBtn')?.addEventListener('click', () => assignCompany(t));
     }
@@ -1014,7 +1017,7 @@
         const tags = [out ? pill(STATUS_PILL, m.status) : '', m.via === 'gmail' ? '<span class="pill">from Gmail</span>' : '',
           m.isAutoReply ? '<span class="pill pill--warn">Auto-reply</span>' : '', m.error ? `<span class="pill pill--bad" title="${esc(m.error)}">Error</span>` : ''].join(' ');
         const unsub = (!out && m.suggestUnsubscribe && t && t.status !== 'closed')
-          ? `<div class="banner banner--warn" style="margin-top:10px;"><span>This reply looks like a removal request.</span><button class="btn btn--ghost btn--sm" data-unsub="${esc(m.id)}">Add to suppression list</button></div>` : '';
+          ? `<div class="banner banner--warn" style="margin-top:10px;"><span>This reply looks like a removal request.</span><button class="btn btn--ghost btn--sm" data-perm="out.write" data-unsub="${esc(m.id)}">Add to suppression list</button></div>` : '';
         const atts = (m.attachments || []).length ? `<div class="atts">${m.attachments.map((a, i) => attChip(m, a, i)).join('')}</div>` : '';
         const body = out ? (m.snippet || m.text || '') : (m.snippet || m.text || '');
         const canFull = (m.html || m.htmlStoragePath || (m.text && m.text !== body));
@@ -1086,7 +1089,7 @@
           <textarea id="replyText" placeholder="Write your reply…"></textarea>
           <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature, the previous message quoted below it, and the legal footer. Fields like {{company.shortName}} work here too.</span></div>
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
-        <button class="btn btn--primary" id="replyBtn">Send reply</button>`;
+        <button class="btn btn--primary" id="replyBtn" data-perm="out.send">Send reply</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
       $('replyTpl')?.addEventListener('change', () => {
         const [tid, key] = $('replyTpl').value.split('::');
@@ -2477,7 +2480,7 @@
       if (c.status === 'finished') acts.push(['archive', 'Archive', 'ghost']);
       acts.push(['duplicate', 'Duplicate', 'ghost']);
       if (c.status === 'draft') acts.push(['delete', 'Delete', 'danger']);
-      $('campActions').innerHTML = acts.map(([a, l, k]) => `<button class="btn btn--${k} btn--sm" data-cact="${a}">${l}</button>`).join('');
+      $('campActions').innerHTML = acts.map(([a, l, k]) => `<button class="btn btn--${k} btn--sm" data-cact="${a}" data-perm="${['start', 'resume'].includes(a) ? 'out.approve' : 'out.campaigns'}">${l}</button>`).join('');
       $('campActions').querySelectorAll('[data-cact]').forEach(b => b.addEventListener('click', () => campAction(b.dataset.cact, b)));
 
       const test = !settings || settings.testMode !== false;
@@ -2645,9 +2648,9 @@
               const next = live && e.nextActionAt && e.status === 'active' ? dtFmt.format(new Date(tsMs(e.nextActionAt))) : '';
               const note = e.lastError || e.stopReason || '';
               const btns = !live ? '' : [
-                e.status === 'paused' ? `<button class="btn btn--ghost btn--sm" data-eop="resume" data-eid="${esc(e.id)}">Resume</button>` : `<button class="btn btn--ghost btn--sm" data-eop="pause" data-eid="${esc(e.id)}">Pause</button>`,
-                `<button class="btn btn--ghost btn--sm" data-eop="move" data-eid="${esc(e.id)}">Move…</button>`,
-                `<button class="btn btn--danger btn--sm" data-eop="remove" data-eid="${esc(e.id)}">Remove</button>`,
+                e.status === 'paused' ? `<button class="btn btn--ghost btn--sm" data-eop="resume" data-perm="out.campaigns" data-eid="${esc(e.id)}">Resume</button>` : `<button class="btn btn--ghost btn--sm" data-eop="pause" data-perm="out.campaigns" data-eid="${esc(e.id)}">Pause</button>`,
+                `<button class="btn btn--ghost btn--sm" data-eop="move" data-perm="out.campaigns" data-eid="${esc(e.id)}">Move…</button>`,
+                `<button class="btn btn--danger btn--sm" data-eop="remove" data-perm="out.campaigns" data-eid="${esc(e.id)}">Remove</button>`,
               ].join(' ');
               return `<tr>
                 <td>${e.personEmail ? `<b>${esc(e.personName || e.personEmail)}</b>${e.org ? ` <span class="hint">· ${esc(e.org)}</span>` : ''}<div class="hint">${esc(e.personEmail)}${(e.refs || []).length ? ' · ' + e.refs.map(r => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[r.source] || r.source)).join(', ') : ''}</div>` : `<a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div>`}</td>
@@ -2917,10 +2920,10 @@
       addReads(ls.size || 1); refreshReads();
       const lists = ls.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       $('listsView').innerHTML = `<div class="card" style="padding:0;">
-          <div class="toolbar"><h2 class="camp-h2">Lists of people</h2><button class="btn btn--primary btn--sm" id="listNew" style="margin-left:auto;">New list</button></div>
+          <div class="toolbar"><h2 class="camp-h2">Lists of people</h2><button class="btn btn--primary btn--sm" id="listNew" data-perm="out.campaigns" style="margin-left:auto;">New list</button></div>
           <div class="table-wrap"><table><thead><tr><th>Name</th><th class="num">People</th><th>Built from</th><th>Created</th><th></th></tr></thead>
           <tbody>${lists.length ? lists.map(l => `<tr><td><b>${esc(l.name)}</b>${l.dynamic ? ' <span class="pill pill--info">kept up to date</span>' : ''}</td><td class="num">${num(l.count || 0)}</td><td style="font-size:0.8rem;">${esc(l.source || '')}</td><td style="white-space:nowrap;">${esc(when(l.createdAt))}</td>
-            <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-lview="${esc(l.id)}">View</button> <button class="btn btn--danger btn--sm" data-ldel="${esc(l.id)}">Delete</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No lists yet. A list is a named group of people (e.g. "Journalists PT") built from the Investor CRM, portal investors, Network, brokers or an upload — use it in campaigns to people and recurring emails.</td></tr>'}</tbody></table></div>
+            <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-lview="${esc(l.id)}">View</button> <button class="btn btn--danger btn--sm" data-ldel="${esc(l.id)}" data-perm="out.campaigns">Delete</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No lists yet. A list is a named group of people (e.g. "Journalists PT") built from the Investor CRM, portal investors, Network, brokers or an upload — use it in campaigns to people and recurring emails.</td></tr>'}</tbody></table></div>
         </div>
         <p class="hint" style="margin-top:10px;">Uploaded addresses are checked against the Investor CRM, portal investors, Network and brokers; people not found are created as Network contacts first, so everyone on a list has a record.</p>`;
       $('listNew').addEventListener('click', () => openPeoplePicker({ title: 'New list of people', confirmLabel: 'Save list', allowSaveList: false, onDone: async (people, info) => {
@@ -3224,9 +3227,9 @@
           <div class="field"><label for="ibody-${esc(i.id)}">Message</label><textarea id="ibody-${esc(i.id)}" rows="10">${esc(i.body)}</textarea>
             <span class="hint">Personal fields work as in templates: {{contact.firstName|Caro investidor}}, {{company.shortName}} (= the person's organisation). The legal footer and unsubscribe link are added.</span></div>
           <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
-            <button class="btn btn--ghost btn--sm" data-iskip="${esc(i.id)}">Skip this issue</button>
-            <button class="btn btn--ghost btn--sm" data-itest="${esc(i.id)}" title="The email as the first person on the list would get it, sent only to you">Send a test to me</button>
-            <button class="btn btn--primary btn--sm" data-iapprove="${esc(i.id)}">${tsMs(i.dueAt) > Date.now() ? 'Approve' : 'Approve and send'}</button>
+            <button class="btn btn--ghost btn--sm" data-iskip="${esc(i.id)}" data-perm="out.approve">Skip this issue</button>
+            <button class="btn btn--ghost btn--sm" data-itest="${esc(i.id)}" data-perm="out.campaigns" title="The email as the first person on the list would get it, sent only to you">Send a test to me</button>
+            <button class="btn btn--primary btn--sm" data-iapprove="${esc(i.id)}" data-perm="out.approve">${tsMs(i.dueAt) > Date.now() ? 'Approve' : 'Approve and send'}</button>
           </div></div>`;
       }).join('');
       $('issueView').querySelectorAll('[data-iapprove]').forEach(b => b.addEventListener('click', async () => {
@@ -3259,7 +3262,7 @@
     function renderRecurring() {
       const st = { active: 'good', paused: 'warn' };
       $('recurView').innerHTML = `<div class="card" style="padding:0;">
-          <div class="toolbar"><h2 class="camp-h2">Recurring emails</h2><button class="btn btn--primary btn--sm" id="recNew" style="margin-left:auto;">New recurring email</button></div>
+          <div class="toolbar"><h2 class="camp-h2">Recurring emails</h2><button class="btn btn--primary btn--sm" id="recNew" data-perm="out.campaigns" style="margin-left:auto;">New recurring email</button></div>
           <div class="table-wrap"><table><thead><tr><th>Name</th><th>When</th><th>To</th><th>From</th><th>Next issue</th><th class="num">Issues</th><th>Status</th><th></th></tr></thead>
           <tbody>${recurring.length ? recurring.map(r => `<tr>
             <td><b>${esc(r.name)}</b>${r.description ? `<div class="hint">${esc(r.description)}</div>` : ''}</td>
@@ -3270,10 +3273,10 @@
             <td class="num"><button class="camp-link" data-rhist="${esc(r.id)}">${num(r.issueCount || 0)}</button></td>
             <td><span class="pill${st[r.status] ? ' pill--' + st[r.status] : ''}">${esc(r.status)}</span></td>
             <td style="text-align:right;white-space:nowrap;">
-              <button class="btn btn--ghost btn--sm" data-rnow="${esc(r.id)}" title="Write an issue draft now, off-schedule">Issue now</button>
-              <button class="btn btn--ghost btn--sm" data-redit="${esc(r.id)}">Edit</button>
-              <button class="btn btn--ghost btn--sm" data-rstat="${esc(r.id)}">${r.status === 'active' ? 'Pause' : 'Resume'}</button>
-              <button class="btn btn--danger btn--sm" data-rdel="${esc(r.id)}">Delete</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. A day before each date an issue is drafted from the template into Tasks → To approve; you edit it (and can send yourself a test), approve, and it goes out on the date to the list, at the pace you set.</td></tr>'}</tbody></table></div>
+              <button class="btn btn--ghost btn--sm" data-rnow="${esc(r.id)}" data-perm="out.campaigns" title="Write an issue draft now, off-schedule">Issue now</button>
+              <button class="btn btn--ghost btn--sm" data-redit="${esc(r.id)}" data-perm="out.campaigns">Edit</button>
+              <button class="btn btn--ghost btn--sm" data-rstat="${esc(r.id)}" data-perm="out.campaigns">${r.status === 'active' ? 'Pause' : 'Resume'}</button>
+              <button class="btn btn--danger btn--sm" data-rdel="${esc(r.id)}" data-perm="out.campaigns">Delete</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. A day before each date an issue is drafted from the template into Tasks → To approve; you edit it (and can send yourself a test), approve, and it goes out on the date to the list, at the pace you set.</td></tr>'}</tbody></table></div>
         </div>
         <p class="hint" style="margin-top:10px;">The unsubscribe link in a recurring email removes the person from that recurring email only. A spam complaint blocks the address everywhere.</p>`;
       $('recNew').addEventListener('click', () => openRecurringModal(null));
@@ -3376,7 +3379,7 @@
         <div class="card" style="padding:0;margin-bottom:14px;">
           <div class="toolbar">
             <select id="apFilter" aria-label="Campaign"><option value="all">All campaigns (${num(drafts.length)})</option>${Object.keys(byCamp).map(id => `<option value="${esc(id)}"${id === approveFilter ? ' selected' : ''}>${esc(campName(id))} (${num(byCamp[id])})</option>`).join('')}</select>
-            ${list.length ? `<button class="btn btn--primary btn--sm" id="apAll" style="margin-left:auto;">Approve all ${list.length > 300 ? 'first 300' : num(list.length)}</button>` : ''}
+            ${list.length ? `<button class="btn btn--primary btn--sm" id="apAll" data-perm="out.approve" style="margin-left:auto;">Approve all ${list.length > 300 ? 'first 300' : num(list.length)}</button>` : ''}
           </div>
           <p class="hint" style="padding:10px 14px;">Approved emails go out with the next scheduler runs — inside the sending window (${esc(windowText())}), the automations limit and each address's daily cap, a few minutes apart. Every check runs again at that moment. Your signature and the legal footer are added when sending.</p>
         </div>
@@ -3399,9 +3402,9 @@
             <div class="field"><label>Message</label><textarea data-dbody spellcheck="true">${esc(ed.body ?? d.draftBody ?? '')}</textarea>
               ${d.isReply ? '<span class="hint">Sent as a reply in the same conversation, quoting the previous email.</span>' : ''}</div>
             <div class="actions">
-              <button class="btn btn--primary btn--sm" data-dact="approve">${draftEdits.has(d.id) ? 'Save &amp; approve' : 'Approve'}</button>
-              <button class="btn btn--ghost btn--sm" data-dact="skip" title="Drop this draft; it's written again the next working day">Skip — try the next working day</button>
-              <button class="btn btn--danger btn--sm" data-dact="remove">Remove company from the campaign</button>
+              <button class="btn btn--primary btn--sm" data-dact="approve" data-perm="out.approve">${draftEdits.has(d.id) ? 'Save &amp; approve' : 'Approve'}</button>
+              <button class="btn btn--ghost btn--sm" data-dact="skip" data-perm="out.approve" title="Drop this draft; it's written again the next working day">Skip — try the next working day</button>
+              <button class="btn btn--danger btn--sm" data-dact="remove" data-perm="out.campaigns">Remove company from the campaign</button>
             </div>
           </div>`;
         }).join('') : '<div class="card"><div class="empty">Nothing to approve. Drafts appear here when a campaign step needs approval.</div></div>'}
@@ -3423,7 +3426,7 @@
           const subj = el.querySelector('[data-dsubj]').value, body = el.querySelector('[data-dbody]').value;
           const changed = (!d.isReply && subj !== d.subject) || body !== (d.draftBody || '');
           if (changed) draftEdits.set(id, { subject: subj, body }); else draftEdits.delete(id);
-          el.querySelector('[data-dact="approve"]').innerHTML = changed ? 'Save &amp; approve' : 'Approve';
+          el.querySelector('[data-dact="approve" data-perm="out.approve"]').innerHTML = changed ? 'Save &amp; approve' : 'Approve';
         };
         el.querySelector('[data-dsubj]').addEventListener('input', markEdit);
         el.querySelector('[data-dbody]').addEventListener('input', markEdit);
@@ -3609,14 +3612,14 @@
           ${t.channel === 'linkedin' ? '<div class="field" style="margin-bottom:8px;"><label>Profile URL (optional)</label><input type="text" data-tprofile placeholder="https://www.linkedin.com/in/…"></div>' : ''}
           ${outs.some(o => o[2] === 'reopen') ? '<div class="field" style="margin-bottom:8px;max-width:260px;"><label>Next attempt (for call back / reschedule)</label><input type="date" data-treopen></div>' : ''}
           ${outs.some(o => o[2] === 'reply') ? '<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this company</span></label>' : ''}
-          <div class="outcomes">${outs.map(([k, l, f]) => `<button class="btn btn--${f === 'reply' ? 'primary' : 'ghost'} btn--sm" data-tout="${k}">${esc(l)}</button>`).join('')}
-            <button class="btn btn--ghost btn--sm" data-tout="skipped" style="margin-left:auto;" title="Move on without doing this step">Skip step</button></div>
+          <div class="outcomes">${outs.map(([k, l, f]) => `<button class="btn btn--${f === 'reply' ? 'primary' : 'ghost'} btn--sm" data-tout="${k}" data-perm="out.tasks">${esc(l)}</button>`).join('')}
+            <button class="btn btn--ghost btn--sm" data-tout="skipped" data-perm="out.tasks" style="margin-left:auto;" title="Move on without doing this step">Skip step</button></div>
         </div>`;
       };
       $('todoView').innerHTML = `
         <div class="card" style="padding:0;margin-bottom:14px;">
           <div class="toolbar">
-            <div class="chips" id="todoWho">${[['mine', 'Mine'], ...Object.entries(OWNER_LABEL).filter(([k]) => k !== myOwner), ['none', 'Unassigned'], ['all', 'All']].map(([k, l]) => `<button class="chip${todoWho === k ? ' on' : ''}" data-who="${k}">${esc(l)}</button>`).join('')}</div>
+            <div class="chips" id="todoWho">${[['mine', 'Mine'], ...Object.entries(OWNER_LABEL).filter(([k]) => k !== myOwner), ['none', 'Unassigned'], ['all', 'All']].map(([k, l]) => `<button class="chip${todoWho === k ? ' on' : ''}" data-who="${k}" data-perm="out.tasks">${esc(l)}</button>`).join('')}</div>
             <select id="todoCh" aria-label="Channel"><option value="all">All channels</option>${Object.keys(TASK_OUTCOMES).filter(k => k !== 'letter').map(k => `<option value="${k}"${todoChannel === k ? ' selected' : ''}>${esc(CHANNEL_LABELS[k])}</option>`).join('')}</select>
             <select id="todoCamp" aria-label="Campaign"><option value="all">All campaigns</option>${campOpts.map(id => `<option value="${esc(id)}"${todoCampaign === id ? ' selected' : ''}>${esc(campaigns.find(c => c.id === id)?.name || 'Campaign')}</option>`).join('')}</select>
           </div>
@@ -3811,7 +3814,7 @@
           ${editable ? `<div class="actions" style="margin-top:14px;align-items:center;">
             <select id="seqAddCh" style="width:auto;">${Object.entries(CHANNEL_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
             <button class="btn btn--ghost" id="seqAdd">+ Add step</button>
-            <button class="btn btn--primary" id="seqSave"${seqDirty ? '' : ' disabled'}>Save sequence</button>
+            <button class="btn btn--primary" id="seqSave" data-perm="out.campaigns"${seqDirty ? '' : ' disabled'}>Save sequence</button>
             ${seqDirty ? '<button class="btn btn--ghost" id="seqDiscard">Discard changes</button>' : ''}
           </div>` : '<p class="hint" style="margin-top:12px;">This campaign is finished — duplicate it to reuse the sequence.</p>'}
           <p class="hint" style="margin-top:12px;">Emails are sent by the scheduler. Calls, LinkedIn, WhatsApp, letters, visits and other steps become tasks (Tasks tab) for the company owner or the campaign's assignee; the sequence waits until each task is done or skipped. A reply, bounce or unsubscribe ends the sequence for that company. Steps already done for someone stay in place; you can still change their content.</p>
@@ -3953,7 +3956,7 @@
           <p class="hint" style="margin-top:10px;">Always excluded: the suppression list, companies marked do not contact, unsubscribed or bounced${settings?.blockPersonalDomains !== false ? ', personal email domains (Settings → General)' : ''}. These rules apply when companies are added.</p>
         </div>
         <div class="banner banner--bad" id="csErr" hidden style="margin-top:12px;"></div>
-        ${editable ? `<div class="actions" style="margin-top:14px;"><button class="btn btn--primary" id="csSave">Save settings</button>${csetDirty ? '<button class="btn btn--ghost" id="csDiscard">Discard changes</button>' : ''}</div>` : ''}`;
+        ${editable ? `<div class="actions" style="margin-top:14px;"><button class="btn btn--primary" id="csSave" data-perm="out.campaigns">Save settings</button>${csetDirty ? '<button class="btn btn--ghost" id="csDiscard" data-perm="out.campaigns">Discard changes</button>' : ''}</div>` : ''}`;
       const root = $('cs-csettings');
       root.querySelectorAll('input, select').forEach(i => i.addEventListener(i.type === 'checkbox' || i.type === 'radio' || i.tagName === 'SELECT' ? 'change' : 'input', () => { csetDirty = true; }));
       $('csOwnWin')?.addEventListener('change', (e) => { $('csWin').style.display = e.target.checked ? 'flex' : 'none'; });

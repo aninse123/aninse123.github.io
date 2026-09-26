@@ -27,7 +27,11 @@ const PAGES = [
   { key: 'network',  href: '/portal/network.html',  label: 'Network' },
   { key: 'budget',   href: '/portal/budget.html',   label: 'Budget' },
   { key: 'log',      href: '/portal/log.html',      label: 'Activity Log' },
+  { key: 'team',     href: '/portal/team.html',     label: 'Team' },
 ];
+// Team access: the permission that shows each link (access.js hides the rest;
+// links stay invisible until the page knows who is signed in).
+const PAGE_PERM = { investor: 'portal.viewas', admin: 'portal.admin', crm: 'icrm.view', search: 'search.view', outreach: 'out.view', network: 'net.view', budget: 'budget.view', log: 'log.view', team: 'access.manage' };
 
 let sharedReads = null;
 let sharedWrites = null;
@@ -51,7 +55,7 @@ export function initNav(activeKey, opts = {}) {
   if (!mount) return;
 
   const links = PAGES.map(p =>
-    `<a href="${p.href}" class="nav__link${p.key === activeKey ? ' active' : ''}">${p.label}${p.badge ? `<span class="nav__badge" id="${p.badge}" hidden></span>` : ''}</a>`
+    `<a href="${p.href}" class="nav__link${p.key === activeKey ? ' active' : ''}" data-perm="${PAGE_PERM[p.key]}">${p.label}${p.badge ? `<span class="nav__badge" id="${p.badge}" hidden></span>` : ''}</a>`
   ).join('\n        ');
 
   mount.innerHTML = `

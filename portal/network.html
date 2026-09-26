@@ -179,8 +179,8 @@
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn--ghost" id="followupsBtn">📋 Follow-ups</button>
-      <button class="btn btn--ghost btn--icon" id="categorySettingsBtn" title="Edit categories">⚙</button>
-      <button class="btn btn--primary" id="newContactBtn">＋ New Contact</button>
+      <button class="btn btn--ghost btn--icon" id="categorySettingsBtn" data-perm="net.edit" title="Edit categories">⚙</button>
+      <button class="btn btn--primary" id="newContactBtn" data-perm="net.edit">＋ New Contact</button>
     </div>
   </div>
 
@@ -196,7 +196,7 @@
     </select>
     <select class="filter-sel" id="countryFilter"><option value="">All Countries</option></select>
     <span class="results-count" id="resultsCount"></span>
-    <button class="btn btn--ghost btn--sm" id="exportBtn">⬇ Export CSV</button>
+    <button class="btn btn--ghost btn--sm" id="exportBtn" data-perm="net.export">⬇ Export CSV</button>
   </div>
 
   <!-- Table — merged list: firms (🏢, clickable straight into their page) + -->
@@ -234,19 +234,19 @@
       <div class="detail-meta" id="dMeta"></div>
     </div>
     <div class="detail-header-actions">
-      <button class="btn btn--ghost btn--sm" id="editContactBtn">✏ Edit</button>
-      <button class="btn btn--danger btn--sm" id="deleteContactBtn">🗑 Delete</button>
+      <button class="btn btn--ghost btn--sm" id="editContactBtn" data-perm="net.edit">✏ Edit</button>
+      <button class="btn btn--danger btn--sm" id="deleteContactBtn" data-perm="net.delete">🗑 Delete</button>
     </div>
   </div>
 
   <!-- Action bar -->
   <div class="action-bar">
-    <button class="btn btn--action" data-atype="note">📝 Note</button>
-    <button class="btn btn--action" data-atype="call">📞 Log Call</button>
-    <button class="btn btn--action" data-atype="email">📧 Log Email</button>
-    <button class="btn btn--action" data-atype="meeting_scheduled">📅 Schedule Meeting</button>
-    <button class="btn btn--action" data-atype="meeting_done">✅ Meeting Done</button>
-    <button class="btn btn--action" data-atype="observation">💡 Observation</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""note">📝 Note</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""call">📞 Log Call</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""email">📧 Log Email</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""meeting_scheduled">📅 Schedule Meeting</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""meeting_done">✅ Meeting Done</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""observation">💡 Observation</button>
   </div>
 
   <!-- Detail body -->
@@ -255,7 +255,7 @@
     <div class="card" style="margin-bottom:0;">
       <div class="sec-title" style="display:flex;justify-content:space-between;align-items:center;">
         <span>Contact Info</span>
-        <button class="btn btn--ghost btn--sm" id="sendEmailBtn" style="display:none;">✉ Send Email</button>
+        <button class="btn btn--ghost btn--sm" id="sendEmailBtn" data-perm="net.email" style="display:none;">✉ Send Email</button>
       </div>
       <div id="infoDisplay"></div>
     </div>
@@ -288,19 +288,19 @@
       <div class="detail-meta" id="fdMeta"></div>
     </div>
     <div class="detail-header-actions">
-      <button class="btn btn--ghost btn--sm" id="editFirmBtn">✏ Edit</button>
-      <button class="btn btn--danger btn--sm" id="deleteFirmBtn">🗑 Delete</button>
+      <button class="btn btn--ghost btn--sm" id="editFirmBtn" data-perm="net.edit">✏ Edit</button>
+      <button class="btn btn--danger btn--sm" id="deleteFirmBtn" data-perm="net.delete">🗑 Delete</button>
     </div>
   </div>
 
   <!-- Action bar -->
   <div class="action-bar">
-    <button class="btn btn--action" data-atype="note">📝 Note</button>
-    <button class="btn btn--action" data-atype="call">📞 Log Call</button>
-    <button class="btn btn--action" data-atype="email">📧 Log Email</button>
-    <button class="btn btn--action" data-atype="meeting_scheduled">📅 Schedule Meeting</button>
-    <button class="btn btn--action" data-atype="meeting_done">✅ Meeting Done</button>
-    <button class="btn btn--action" data-atype="observation">💡 Observation</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""note">📝 Note</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""call">📞 Log Call</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""email">📧 Log Email</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""meeting_scheduled">📅 Schedule Meeting</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""meeting_done">✅ Meeting Done</button>
+    <button class="btn btn--action" data-atype= data-perm="net.edit""observation">💡 Observation</button>
   </div>
 
   <div class="detail-grid">
@@ -313,8 +313,8 @@
       <div class="sec-title" style="display:flex;justify-content:space-between;align-items:center;">
         <span>Contacts at this Firm</span>
         <div style="display:flex;gap:6px;">
-          <button class="btn btn--ghost btn--sm" id="firmEmailAllBtn" style="display:none;">✉ Email All</button>
-          <button class="btn btn--ghost btn--sm" id="firmAddContactBtn">＋ Add Contact</button>
+          <button class="btn btn--ghost btn--sm" id="firmEmailAllBtn" data-perm="net.email" style="display:none;">✉ Email All</button>
+          <button class="btn btn--ghost btn--sm" id="firmAddContactBtn" data-perm="net.edit">＋ Add Contact</button>
         </div>
       </div>
       <div id="fdContactsWrap"></div>
@@ -356,7 +356,7 @@
     <div class="modal-title">Edit Categories</div>
     <p class="hint" style="margin-bottom:14px;">Rename or remove existing categories, or add new ones. Contacts keep whatever category they already had if you remove it from this list — it just won't be offered for new picks.</p>
     <div id="categoryRows" style="margin-bottom:12px;"></div>
-    <button class="btn btn--ghost btn--sm" id="addCategoryBtn" type="button">＋ Add Category</button>
+    <button class="btn btn--ghost btn--sm" id="addCategoryBtn" data-perm="net.edit" type="button">＋ Add Category</button>
     <div class="modal-err" id="catSettingsErr"></div>
     <div class="modal-actions">
       <button class="btn btn--ghost" id="catSettingsCancelBtn">Cancel</button>
@@ -392,7 +392,7 @@
         <label>Firm / Organization</label>
         <div style="display:flex;gap:6px;">
           <select class="field" id="ncFirmId" style="flex:1;"></select>
-          <button type="button" class="btn btn--ghost btn--sm" id="ncNewFirmBtn" style="flex-shrink:0;">＋ New</button>
+          <button type="button" class="btn btn--ghost btn--sm" id="ncNewFirmBtn" data-perm="net.edit" style="flex-shrink:0;">＋ New</button>
         </div>
       </div>
     </div>
@@ -586,6 +586,7 @@
 
 <script type="module">
 import { auth, db, ADMIN_EMAILS, addReads, addDoc, updateDoc, deleteDoc, setDoc } from './firebase-config.js';
+import { guardPage } from './access.js';
 import { sendPeopleEmail, sendNote } from './people-send.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -807,9 +808,9 @@ initNav('network');
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 onAuthStateChanged(auth, async user => {
-  if (!user || !ADMIN_EMAILS.includes(user.email)) {
-    window.location.href = '/portal/login.html'; return;
-  }
+  // Team access: may this person open this tab? (else → their home tab)
+  const pageAccess = await guardPage(user, 'network'); if (!pageAccess) return;
+  window.pageAccess = pageAccess;
   currentUser = user.email;
   setNavEmail(user.email);
   startSharedReadsWatch();
@@ -1274,7 +1275,7 @@ async function sendFirmEmailAll() {
   const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
   try {
     const recipients = members.map(c => ({ email: c.email, name: c.name }));
-    const result = await sendPeopleEmail({ recipients, subject, message: msg, from, kind: 'outreach', combined: true });
+    const result = await sendPeopleEmail({ context: 'network', recipients, subject, message: msg, from, kind: 'outreach', combined: true });
     if (!result.sent) throw new Error(sendNote(result) || 'Nothing was sent.');
     if (sendNote(result)) alert(sendNote(result));
     const actData = {
@@ -1423,7 +1424,7 @@ async function sendContactEmail() {
   if (!subject || !msg) { el.textContent = 'Subject and message are required.'; el.style.display = 'block'; return; }
   const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
   try {
-    const result = await sendPeopleEmail({ recipients: [{ email: c.email, name: c.name }], subject, message: msg, from, kind: 'outreach' });
+    const result = await sendPeopleEmail({ context: 'network', recipients: [{ email: c.email, name: c.name }], subject, message: msg, from, kind: 'outreach' });
     if (!result.sent) throw new Error(sendNote(result) || 'Nothing was sent.');
     if (sendNote(result)) alert(sendNote(result));
     const actData = {
@@ -1584,7 +1585,7 @@ function renderActivityLog() {
       <p>⚠️ ${overdue.length} overdue action${overdue.length>1?'s':''} need${overdue.length===1?'s':''} closing</p>
       ${overdue.map(a => `<div class="overdue-item">
         <span>${esc(a.title || (ACT[a.type]?.label||a.type) || 'Untitled')} — ${fmtDate(a.date)}</span>
-        <button class="btn btn--sm btn--action" data-mid="${a.id}">Close</button>
+        <button class="btn btn--sm btn--action" data-mid="${a.id}" data-perm="net.edit">Close</button>
       </div>`).join('')}
     </div>`;
     overdueBanners.querySelectorAll('[data-mid]').forEach(btn => {
@@ -1617,7 +1618,7 @@ function renderActivityLog() {
         ${a.guests ? `<span>👥 ${esc(a.guests)}</span>` : ''}
       </div>` : '';
     const cancelBtn = isMeetingType ? `<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
-      ${(a.status === 'open' && pastDue) ? `<button class="btn btn--sm btn--action" data-close="${a.id}" style="padding:3px 9px;font-size:0.72rem;">Close</button>` : ''}
+      ${(a.status === 'open' && pastDue) ? `<button class="btn btn--sm btn--action" data-close="${a.id}" data-perm="net.edit" style="padding:3px 9px;font-size:0.72rem;">Close</button>` : ''}
       ${(a.status !== 'cancelled') ? `<button class="btn btn--sm btn--ghost" data-cancel="${a.id}" style="padding:3px 9px;font-size:0.72rem;">Cancel</button>` : ''}
     </span>` : '';
     const loggedLine = a.createdAt

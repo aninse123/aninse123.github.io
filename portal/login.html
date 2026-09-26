@@ -225,6 +225,7 @@
 
   <script type="module">
     import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
+    import { getAccess, homeFor } from './access.js';
     import {
       sendSignInLinkToEmail,
       isSignInWithEmailLink,
@@ -246,10 +247,26 @@
     function showSent(email)  { document.getElementById('formView').style.display       = 'none';  document.getElementById('sentView').style.display        = 'block'; document.getElementById('processingView').style.display = 'none'; document.getElementById('sentEmail').textContent = email; }
     function showProcessing() { document.getElementById('formView').style.display       = 'none';  document.getElementById('sentView').style.display        = 'none';  document.getElementById('processingView').style.display = 'block'; }
 
+    // Where a signed-in person lands: team members (not partners) on their
+    // first permitted tab; partners and investors on the investor portal, as before.
+    async function landingFor(user, suffix = '') {
+      try {
+        const a = await getAccess(user, { force: true });
+        if (a && !a.partner && a.staff) return homeFor(a) || INVESTOR_URL;
+      } catch (e) { /* fall back to the investor portal */ }
+      return INVESTOR_URL + suffix;
+    }
+
+    // Access ended / suspended (a team member signed out by the portal).
+    if (new URLSearchParams(window.location.search).get('access') === 'ended') {
+      const msg = document.getElementById('errorMsg');
+      if (msg) { msg.textContent = 'Your access to the portal has ended or been paused. Contact André or António if you think this is a mistake.'; }
+    }
+
     // Already signed in → redirect
-    onAuthStateChanged(auth, (user) => {
+    onAuthStateChanged(auth, async (user) => {
       if (user && !isSignInWithEmailLink(auth, window.location.href)) {
-        window.location.href = INVESTOR_URL;
+        window.location.href = await landingFor(user);
       }
     });
 
@@ -262,9 +279,9 @@
       }
       if (email) {
         signInWithEmailLink(auth, email, window.location.href)
-          .then(() => {
+          .then(async (cred) => {
             window.localStorage.removeItem('emailForSignIn');
-            window.location.href = INVESTOR_URL + '?login=1';
+            window.location.href = await landingFor(cred.user, '?login=1');
           })
           .catch(err => {
             const msg = document.getElementById('processMsg');
@@ -288,6 +305,10 @@
     async function isRegistered(email) {
       const norm = email.trim().toLowerCase();
       if (ADMIN_EMAILS.includes(norm)) return true;
+      const hash = await sha256Hex(norm);
+      // Team members (Team & access): their own scrambled list, kept by the server.
+      const teamSnap = await getDoc(doc(db, 'config', 'teamEmailHashes')).catch(() => null);
+      if (teamSnap?.exists() && (teamSnap.data().hashes || []).includes(hash)) return true;
       // Preferred: scrambled list (no plaintext emails public)
       const hashSnap = await getDoc(doc(db, 'config', 'allowedEmailHashes'));
       if (hashSnap.exists()) {

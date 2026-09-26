@@ -175,7 +175,7 @@
           <div class="section-actions">
             <button class="btn btn--ghost" id="groupToggleBtn">Group by category</button>
             <button class="btn btn--ghost" id="exportBtn">↓ Export CSV</button>
-            <button class="btn btn--primary" id="addItemBtn">+ New Item</button>
+            <button class="btn btn--primary" id="addItemBtn" data-perm="budget.edit">+ New Item</button>
           </div>
         </div>
         <div class="card">
@@ -265,6 +265,7 @@
 
   <script type="module">
     import { auth, db, storage, ADMIN_EMAILS, addReads, addDoc, updateDoc, deleteDoc } from './firebase-config.js';
+    import { guardPage } from './access.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
@@ -304,10 +305,9 @@
 
     // ── Auth guard ─────────────────────────────────────────────
     onAuthStateChanged(auth, async (user) => {
-      if (!user || !ADMIN_EMAILS.includes(user.email)) {
-        window.location.href = '/portal/login.html';
-        return;
-      }
+      // Team access: may this person open this tab? (else → their home tab)
+      const pageAccess = await guardPage(user, 'budget'); if (!pageAccess) return;
+      window.pageAccess = pageAccess;
       adminEmail = user.email;
       setNavEmail(user.email);
       startSharedReadsWatch();
@@ -415,8 +415,8 @@
         <td>${comments}</td>
         <td>${attach}</td>
         <td style="white-space:nowrap;text-align:right;">
-          <button class="icon-btn edit-btn" data-id="${escAttr(i.id)}" title="Edit">✎</button>
-          <button class="icon-btn del-btn" data-id="${escAttr(i.id)}" title="Delete">🗑</button>
+          <button class="icon-btn edit-btn" data-perm="budget.edit" data-id="${escAttr(i.id)}" title="Edit">✎</button>
+          <button class="icon-btn del-btn" data-perm="budget.edit" data-id="${escAttr(i.id)}" title="Delete">🗑</button>
         </td>
       </tr>`;
     }

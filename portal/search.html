@@ -427,15 +427,15 @@
         <p class="page-sub" id="listSub">Loading…</p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="btn btn--ghost" id="settingsBtn">⚙ Settings</button>
+        <button class="btn btn--ghost" id="settingsBtn" data-perm="search.admin">⚙ Settings</button>
         <button class="btn btn--ghost" id="companyStatsBtn">📊 Company Stats</button>
         <button class="btn btn--ghost" id="peopleStatsBtn">👥 People Stats</button>
-        <button class="btn btn--ghost" id="exportBtn">⬇ Export CSV</button>
-        <button class="btn btn--ghost" id="addToCampaignBtn" title="Add the companies in the current list (filters) to an Outreach campaign">📣 Add to campaign</button>
-        <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
-        <button class="btn btn--ghost" id="peopleImportBtn">🧑‍💼 Import People</button>
-        <button class="btn btn--ghost" id="companiesImportBtn">🏢 Import Companies</button>
-        <button class="btn btn--primary" id="newCompanyBtn">＋ New Company</button>
+        <button class="btn btn--ghost" id="exportBtn" data-perm="search.export">⬇ Export CSV</button>
+        <button class="btn btn--ghost" id="addToCampaignBtn" data-perm="out.campaigns" title="Add the companies in the current list (filters) to an Outreach campaign">📣 Add to campaign</button>
+        <button class="btn btn--ghost" id="bulkImportBtn" data-perm="search.import">⬆ Bulk Import</button>
+        <button class="btn btn--ghost" id="peopleImportBtn" data-perm="search.import">🧑‍💼 Import People</button>
+        <button class="btn btn--ghost" id="companiesImportBtn" data-perm="search.import">🏢 Import Companies</button>
+        <button class="btn btn--primary" id="newCompanyBtn" data-perm="search.edit">＋ New Company</button>
       </div>
     </div>
 
@@ -501,7 +501,7 @@
     <div class="table-card" id="tableCard">
       <div class="sel-bar" id="selBar" style="display:none;">
         <span id="selBarText"></span>
-        <button class="btn btn--primary btn--sm" id="selBarAdd">📣 Add selected to campaign</button>
+        <button class="btn btn--primary btn--sm" id="selBarAdd" data-perm="out.campaigns">📣 Add selected to campaign</button>
         <button class="btn btn--ghost btn--sm" id="selBarClear">Clear selection</button>
       </div>
       <div class="table-wrap">
@@ -543,9 +543,9 @@
           <button id="mapModeFilteredBtn" class="active">Filtered (<span id="mapFilteredCount">0</span>)</button>
           <button id="mapModeCustomBtn">Custom selection (<span id="mapCustomCount">0</span>)</button>
         </div>
-        <button class="btn btn--ghost btn--sm" id="mapSaveBtn">Save selection…</button>
+        <button class="btn btn--ghost btn--sm" id="mapSaveBtn" data-perm="search.edit">Save selection…</button>
         <button class="btn btn--ghost btn--sm" id="mapLoadBtn">Load saved map…</button>
-        <button class="btn btn--ghost btn--sm" id="mapExportBtn">Export CSV</button>
+        <button class="btn btn--ghost btn--sm" id="mapExportBtn" data-perm="search.export">Export CSV</button>
         <span class="results-count" id="mapUnresolvedNote"></span>
         <span class="map-attr">Postal code centroids © GeoNames.org (CC BY 4.0)</span>
       </div>
@@ -580,11 +580,11 @@
         <div class="detail-meta" id="dMeta"></div>
       </div>
       <div class="detail-header-actions">
-        <button class="btn btn--action" id="editCompanyBtn">✎ Edit</button>
-        <button class="btn btn--action" id="addActivityBtn">＋ Activity</button>
-        <button class="btn btn--action" id="addCoToCampaignBtn" title="Add this company to an Outreach campaign">📣 Campaign</button>
-        <button class="btn btn--action" id="dncBtn" title="Stop all outreach to this company">🚫 Do not contact</button>
-        <button class="btn btn--danger btn--sm" id="deleteCompanyBtn">Delete</button>
+        <button class="btn btn--action" id="editCompanyBtn" data-perm="search.edit">✎ Edit</button>
+        <button class="btn btn--action" id="addActivityBtn" data-perm="search.edit">＋ Activity</button>
+        <button class="btn btn--action" id="addCoToCampaignBtn" data-perm="out.campaigns" title="Add this company to an Outreach campaign">📣 Campaign</button>
+        <button class="btn btn--action" id="dncBtn" data-perm="search.edit" title="Stop all outreach to this company">🚫 Do not contact</button>
+        <button class="btn btn--danger btn--sm" id="deleteCompanyBtn" data-perm="search.delete">Delete</button>
       </div>
     </div>
 
@@ -1233,6 +1233,7 @@
 <script src="./vendor/pt-postcodes.js?v=cp7-nominatim-1"></script>
 <script type="module">
 import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES, FIRESTORE_PROJECT_ID } from './firebase-config.js';
+import { guardPage } from './access.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
@@ -1859,7 +1860,9 @@ initNav('search');
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 onAuthStateChanged(auth, async user => {
-  if (!user || !ADMIN_EMAILS.includes(user.email)) { window.location.href = '/portal/login.html'; return; }
+  // Team access: may this person open this tab? (else → their home tab)
+  const pageAccess = await guardPage(user, 'search'); if (!pageAccess) return;
+  window.pageAccess = pageAccess;
   currentUser = user.email;
   setNavEmail(user.email);
   startSharedReadsWatch();
@@ -3450,7 +3453,7 @@ function renderAddonSection(c){
     ${addOnTo.length?`<div style="font-size:0.78rem;color:var(--text-light);margin-bottom:6px;">This company is a potential add-on to:</div>${toHtml}`:''}
     ${addOns.length?`<div style="font-size:0.78rem;color:var(--text-light);margin:10px 0 6px;">Potential add-ons for this platform:</div>${onsHtml}`:''}
     ${(!addOnTo.length&&!addOns.length)?'<div style="font-size:0.82rem;color:var(--text-light);">No add-on relationships.</div>':''}
-    <button class="btn btn--ghost btn--sm" id="addAddonBtn" style="margin-top:10px;">＋ Flag as add-on</button>
+    <button class="btn btn--ghost btn--sm" id="addAddonBtn" data-perm="search.edit" style="margin-top:10px;">＋ Flag as add-on</button>
   </div>`;
 }
 
@@ -3465,7 +3468,7 @@ function renderFinancials(c){
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
         <div class="sec-title" style="margin:0;">5-Year Financials <span style="font-weight:400;text-transform:none;color:var(--text-light)">(Y1 = most recent)</span></div>
-        <button class="btn btn--primary btn--sm" id="saveFinBtn">Save Financials</button>
+        <button class="btn btn--primary btn--sm" id="saveFinBtn" data-perm="search.edit">Save Financials</button>
       </div>
       <div class="table-wrap"><table class="fin-table">
         <thead>${head}</thead>
@@ -3835,9 +3838,9 @@ function renderContacts(c){
           ${emailHistory}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          ${ct.email?`<button class="btn btn--icon btn--ghost" data-sendct="${i}" title="Send email">✉</button>`:''}
-          <button class="btn btn--icon btn--ghost" data-editct="${i}">✎</button>
-          <button class="btn btn--icon btn--danger" data-rmct="${i}">✕</button>
+          ${ct.email?`<button class="btn btn--icon btn--ghost" data-sendct="${i}" data-perm="out.send" title="Send email">✉</button>`:''}
+          <button class="btn btn--icon btn--ghost" data-editct="${i}" data-perm="search.edit">✎</button>
+          <button class="btn btn--icon btn--danger" data-rmct="${i}" data-perm="search.edit">✕</button>
         </div>
       </div>
     </div>`;
@@ -3848,8 +3851,8 @@ function renderContacts(c){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
         <div class="sec-title" style="margin:0;">Contacts</div>
         <div style="display:flex;gap:8px;">
-          <button class="btn btn--ghost btn--sm" id="emailCompanyBtn"${c.companyEmail ? '' : ' disabled title="No company email on file"'}>✉ Email company</button>
-          <button class="btn btn--primary btn--sm" id="addContactBtn">＋ Add Contact</button>
+          <button class="btn btn--ghost btn--sm" id="emailCompanyBtn" data-perm="out.send"${c.companyEmail ? '' : ' disabled title="No company email on file"'}>✉ Email company</button>
+          <button class="btn btn--primary btn--sm" id="addContactBtn" data-perm="search.edit">＋ Add Contact</button>
         </div>
       </div>${list}
     </div>`;
@@ -3872,7 +3875,7 @@ function renderActivityLog(){
   const overdue = activities.filter(a => a.status==='open' && tsToDate(a.date) < today);
   const overdueHtml = overdue.length ? `<div class="overdue-banner">
     <p>⚠️ ${overdue.length} overdue action${overdue.length>1?'s':''}</p>
-    ${overdue.map(a=>`<div class="overdue-item"><span>${esc(a.title||(ACT[a.type]?.label)||'Action')} — ${fmtDate(a.date)}</span><button class="btn btn--sm btn--action" data-closeact="${a.id}">Close</button></div>`).join('')}
+    ${overdue.map(a=>`<div class="overdue-item"><span>${esc(a.title||(ACT[a.type]?.label)||'Action')} — ${fmtDate(a.date)}</span><button class="btn btn--sm btn--action" data-closeact="${a.id}" data-perm="search.edit">Close</button></div>`).join('')}
   </div>` : '';
   const log = activities.length ? activities.map(a => {
     const info = ACT[a.type] || { label:a.type, icon:'📌' };
@@ -3896,7 +3899,7 @@ function renderActivityLog(){
         ${mtg}
         ${a.content?`<div class="act-content">${esc(a.content)}</div>`:''}
         ${a.closedNotes?`<div class="act-content" style="border-top:1px solid #F0EDE6;margin-top:6px;padding-top:6px;"><em>Closing:</em> ${esc(a.closedNotes)}</div>`:''}
-        <div class="act-by">by ${esc(a.createdBy||'')}${a.threadId?` · <a class="addon-link" href="/portal/outreach.html?thread=${encodeURIComponent(a.threadId)}">Open conversation</a>`:''}${a.status==='open'?` · <span class="addon-link" data-closeact="${a.id}">Close</span>`:''}</div>
+        <div class="act-by">by ${esc(a.createdBy||'')}${a.threadId?` · <a class="addon-link" href="/portal/outreach.html?thread=${encodeURIComponent(a.threadId)}">Open conversation</a>`:''}${a.status==='open'?` · <span class="addon-link" data-closeact="${a.id}" data-perm="search.edit">Close</span>`:''}</div>
       </div>
     </div>`;
   }).join('') : '<div style="font-size:0.85rem;color:var(--text-light);">No activity yet.</div>';
@@ -3904,7 +3907,7 @@ function renderActivityLog(){
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
         <div class="sec-title" style="margin:0;">Activity Log — ${activities.length} ${activities.length===1?'entry':'entries'} · ${c.outreachAttempts||0} outreach</div>
-        <button class="btn btn--primary btn--sm" id="addActivityBtn2">＋ Log Activity</button>
+        <button class="btn btn--primary btn--sm" id="addActivityBtn2" data-perm="search.edit">＋ Log Activity</button>
       </div>
       ${overdueHtml}${log}
     </div>`;
@@ -3920,7 +3923,7 @@ function renderDeal(c){
   const brokerName = c.brokerId ? (brokers.find(b=>b.id===c.brokerId)?.name || '—') : '—';
   const dateRow = (k,label) => `<div class="info-row"><span class="k">${label}</span><span class="v">${c[k]?fmtDate(c[k]):'—'}</span></div>`;
   document.getElementById('panel-deal').innerHTML = `
-    <div style="display:flex;justify-content:flex-end;margin-bottom:12px;"><button class="btn btn--primary btn--sm" id="editDealBtn">✎ Edit Deal</button></div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px;"><button class="btn btn--primary btn--sm" id="editDealBtn" data-perm="search.edit">✎ Edit Deal</button></div>
     <div class="detail-grid">
       <div class="card">
         <div class="sec-title">Deal Terms</div>

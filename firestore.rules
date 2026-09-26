@@ -46,5 +46,194 @@ service cloud.firestore {
       allow read: if request.auth != null;
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // Team access (Phase 1 — "Portal - Team Access & Roles Plan.md").
+    // ADDITIVE ONLY: nothing below restricts partners (isAdmin above) or
+    // investors; it only grants team members what their permissions allow.
+    // Permissions come from the sign-in token's custom claims
+    // (request.auth.token.perms), set by the blocking functions and the
+    // teamAccess callable — no extra reads per request.
+    // ════════════════════════════════════════════════════════════════════
+    function perms() { return request.auth != null ? request.auth.token.get('perms', []) : []; }
+    function can(p) { return request.auth != null && p in perms(); }
+    function canAny(ps) { return request.auth != null && perms().hasAny(ps); }
+    function isStaff() { return request.auth != null && perms().size() > 0; }
+    function me() { return request.auth.token.email; }
+    // The record was created by this person (activities carry createdBy = email).
+    function own() { return resource.data.get('createdBy', '') == me(); }
+    function createsAsMe() { return request.resource.data.get('createdBy', me()) == me(); }
+    // An update that only touches these fields.
+    function onlyFields(fs) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fs); }
+    // Email sends refresh "last touch" on the record, nothing else.
+    function touchOnly() { return onlyFields(['lastTouchAt', 'updatedAt', 'nextContactAt', 'nextContactTime', 'nextContactTz', 'hasOverdue']); }
+
+    // ── Search CRM ──
+    match /searchCompanies/{id} {
+      allow read: if can('search.view');
+      allow create, update: if can('search.edit');
+      allow delete: if can('search.delete');
+    }
+    match /searchActivities/{id} {
+      allow read: if can('search.view');
+      allow create: if can('search.edit') && createsAsMe();
+      allow update, delete: if can('search.delete') || (can('search.edit') && own());
+    }
+    match /searchPeople/{id} {
+      allow read: if can('search.view');
+      allow create, update: if can('search.edit');
+      allow delete: if can('search.delete');
+    }
+    match /searchPersonLinks/{id} {
+      allow read: if can('search.view');
+      allow create, update: if can('search.edit');
+      allow delete: if can('search.delete') || can('search.edit');
+    }
+    match /searchMapLists/{id} {
+      allow read: if can('search.view');
+      allow write: if can('search.edit');
+    }
+    match /searchBrokers/{id} {
+      allow read: if can('search.view') || can('out.campaigns');
+      allow write: if can('search.admin');
+    }
+    match /searchConfig/{id} {
+      allow read: if can('search.view');
+      allow write: if can('search.admin');
+    }
+
+    // ── Outreach (most writes go through the callables, which check permissions) ──
+    match /outreachThreads/{id} {
+      allow read: if can('out.view');
+      // Classify / assign / close: people who can write emails. Anyone who can see: mark as read.
+      allow update: if canAny(['out.send', 'out.draft', 'out.admin']) || (can('out.view') && onlyFields(['unread']));
+    }
+    match /outreachMessages/{id} { allow read: if can('out.view'); }
+    match /outreachCampaigns/{id} { allow read: if can('out.view') || can('search.view'); }
+    match /outreachEnrolments/{id} { allow read: if can('out.view') || can('search.view'); }
+    match /outreachTasks/{id} { allow read: if can('out.view'); }
+    match /outreachUsage/{id} { allow read: if can('out.view'); }
+    match /outreachDaily/{id} { allow read: if can('out.view'); }
+    match /outreachIssues/{id} { allow read: if can('out.view'); }
+    match /outreachRecurring/{id} { allow read: if can('out.view'); }
+    match /outreachPeopleSends/{id} { allow read: if can('out.view'); }
+    match /outreachTemplates/{id} {
+      allow read: if can('out.view') || can('search.view');
+      allow write: if can('out.admin');
+    }
+    match /outreachSenders/{id} {
+      allow read: if can('out.view') || can('search.view');
+      allow write: if can('out.admin');
+    }
+    match /outreachSettings/{id} {
+      allow read: if isStaff();
+      allow write: if can('out.admin');
+    }
+    match /outreachCompliance/{id} {
+      allow read: if can('out.view');
+      allow write: if can('out.admin');
+    }
+    match /outreachSuppression/{id} {
+      allow read: if can('out.view');
+      allow create, update: if canAny(['out.send', 'out.draft', 'out.admin']);
+      allow delete: if can('out.admin');
+    }
+    match /outreachLists/{id} {
+      allow read: if can('out.view');
+      allow write: if can('out.campaigns');
+      match /members/{m} {
+        allow read: if can('out.view');
+        allow write: if can('out.campaigns');
+      }
+    }
+
+    // ── Network ──
+    match /networkContacts/{id} {
+      allow read: if can('net.view') || can('out.campaigns');
+      allow create: if can('net.edit') || can('out.campaigns'); // list uploads create Network contacts
+      allow update: if can('net.edit') || (can('net.email') && touchOnly());
+      allow delete: if can('net.delete');
+    }
+    match /networkFirms/{id} {
+      allow read: if can('net.view') || can('out.campaigns');
+      allow create: if can('net.edit');
+      allow update: if can('net.edit') || (can('net.email') && touchOnly());
+      allow delete: if can('net.delete');
+    }
+    match /networkActivities/{id} {
+      allow read: if can('net.view');
+      allow create: if canAny(['net.edit', 'net.email']) && createsAsMe();
+      allow update, delete: if can('net.delete') || (can('net.edit') && own());
+    }
+    match /networkFirmActivities/{id} {
+      allow read: if can('net.view');
+      allow create: if canAny(['net.edit', 'net.email']) && createsAsMe();
+      allow update, delete: if can('net.delete') || (can('net.edit') && own());
+    }
+    match /networkConfig/{id} {
+      allow read: if can('net.view') || can('out.campaigns');
+      allow write: if can('net.edit');
+    }
+
+    // ── Investor CRM ──
+    match /crmInvestors/{id} {
+      allow read: if can('icrm.view') || can('out.campaigns');
+      allow create: if can('icrm.edit');
+      allow update: if can('icrm.edit') || (can('icrm.email') && touchOnly());
+      allow delete: if can('icrm.delete');
+    }
+    match /crmActivities/{id} {
+      allow read: if can('icrm.view');
+      allow create: if canAny(['icrm.edit', 'icrm.email']) && createsAsMe();
+      allow update, delete: if can('icrm.delete') || (can('icrm.edit') && own());
+    }
+    match /crmConfig/{id} {
+      allow read: if can('icrm.view');
+      allow write: if can('icrm.edit');
+    }
+
+    // ── Investor portal admin ──
+    match /investors/{id} {
+      allow read: if can('portal.admin') || can('out.campaigns');
+      allow write: if can('portal.admin');
+    }
+    match /accessGroups/{id} {
+      allow read: if can('portal.admin') || can('out.campaigns');
+      allow write: if can('portal.admin');
+    }
+    match /documents/{id} {
+      allow read, write: if can('portal.admin');
+    }
+    match /portalMessages/{id} {
+      allow write: if can('portal.admin');
+    }
+    match /config/portal {
+      allow write: if can('portal.admin');
+    }
+    match /config/allowedEmailHashes {
+      allow write: if can('portal.admin');
+    }
+    // Team members' login list (hashes only; written by the server).
+    match /config/teamEmailHashes {
+      allow read: if true;
+    }
+
+    // ── Budget, activity log, shared counters ──
+    match /budgetItems/{id} {
+      allow read: if can('budget.view');
+      allow write: if can('budget.edit');
+    }
+    match /activityLog/{entryId} {
+      allow read: if can('log.view');
+      allow create: if isStaff() && request.resource.data.email == me();
+    }
+    match /dailyReadCounters/{day} { allow read, write: if isStaff(); }
+    match /dailyWriteCounters/{day} { allow read, write: if isStaff(); }
+
+    // ── Team & access (written only by the teamAccess callable) ──
+    match /team/{email} {
+      allow read: if request.auth != null && (request.auth.token.email == email || can('access.manage'));
+    }
+    match /roles/{id} { allow read: if isStaff(); }
+    match /accessAudit/{id} { allow read: if can('access.manage'); }
   }
 }

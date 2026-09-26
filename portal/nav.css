@@ -15,6 +15,8 @@
   transition: color 0.2s; white-space: nowrap;
 }
 .nav__link:hover { color: #fff; }
+/* Team access: links appear once access.js knows what the person may open. */
+html:not([data-access]) .nav__link[data-perm] { visibility: hidden; }
 .nav__link.active { color: #fff; border-bottom-color: rgba(255,255,255,0.9); }
 .nav__badge {
   display: inline-block; margin-left: 5px; min-width: 17px; padding: 1px 5px;

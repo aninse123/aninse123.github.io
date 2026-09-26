@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Team &amp; access — Douro Partners</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="icon" href="/assets/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./nav.css">
+  <style>
+    :root {
+      --primary: #4A6B8A; --primary-dark: #3A5570; --secondary: #3D6430; --danger: #B33A3A;
+      --bg: #F7F3EC; --bg-dark: #1E2A38; --text: #2C2C2C; --text-light: #6B7280; --border: #D8D3C8; --white: #FFFFFF;
+      --font-serif: 'Playfair Display', Georgia, serif; --font-sans: 'Inter', sans-serif;
+      --radius: 8px; --shadow: 0 4px 24px rgba(30,42,56,0.08);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+    #loadingScreen { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+    .main { max-width: 1100px; margin: 0 auto; padding: 40px 24px 72px; }
+    .head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+    .title { font-family: var(--font-serif); font-size: 1.6rem; color: var(--primary); }
+    .lede { color: var(--text-light); font-size: 0.9rem; max-width: 72ch; margin-bottom: 20px; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .chip { padding: 6px 14px; border-radius: 100px; border: 1px solid var(--border); background: var(--white); font: inherit; font-size: 0.85rem; cursor: pointer; color: var(--text); }
+    .chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+    .toolbar { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: #FAFAF8; flex-wrap: wrap; }
+    .toolbar h2 { font-size: 1rem; font-weight: 600; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); padding: 10px 14px; text-align: left; border-bottom: 2px solid var(--border); background: #FAFAF8; white-space: nowrap; }
+    td { padding: 12px 14px; font-size: 0.88rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .empty { color: var(--text-light); font-style: italic; text-align: center; padding: 36px; }
+    .hint { color: var(--text-light); font-size: 0.8rem; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.c, th.c { text-align: center; }
+    .badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 100px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
+    .badge--green { background: #EBF5EB; color: var(--secondary); }
+    .badge--blue { background: #E8F0F8; color: var(--primary); }
+    .badge--amber { background: #FDF3DC; color: #8A5A00; }
+    .badge--grey { background: #F0EDE8; color: var(--text-light); }
+    .badge--red { background: #FBEDED; color: var(--danger); }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: var(--radius); font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer; border: none; }
+    .btn--primary { background: var(--primary); color: #fff; }
+    .btn--primary:hover { background: var(--primary-dark); }
+    .btn--ghost { background: none; border: 1px solid var(--border); color: var(--text-light); }
+    .btn--ghost:hover { border-color: var(--primary); color: var(--primary); }
+    .btn--danger { background: none; border: 1px solid #E8C4C4; color: var(--danger); }
+    .btn--sm { padding: 5px 11px; font-size: 0.78rem; }
+    .btn:disabled { opacity: 0.55; cursor: default; }
+    .btn:focus-visible, .chip:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+    .banner { background: #FDF3DC; border: 1px solid #F0D597; color: #6B4700; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 0.88rem; }
+
+    /* Permission matrix */
+    .matrix td, .matrix th { padding: 8px 10px; }
+    .matrix .grp td { background: #FAFAF8; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-light); }
+    .matrix td.c, .matrix th.c { text-align: center; }
+    .matrix input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+    .matrix input[disabled] { cursor: default; }
+
+    /* Modal */
+    .modal-bg { position: fixed; inset: 0; background: rgba(30,42,56,0.45); display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; z-index: 200; overflow-y: auto; }
+    .modal { background: var(--white); border-radius: 12px; box-shadow: var(--shadow); width: 100%; max-width: 640px; padding: 24px; }
+    .modal h3 { font-family: var(--font-serif); color: var(--primary); font-size: 1.25rem; margin-bottom: 14px; }
+    .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+    .field label { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-light); }
+    .field input[type=text], .field input[type=email], .field input[type=date], .field select, .field textarea { padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font: inherit; font-size: 0.9rem; background: var(--white); }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .check { display: flex; gap: 8px; align-items: center; font-size: 0.88rem; margin-bottom: 12px; }
+    .perm-list { border: 1px solid var(--border); border-radius: var(--radius); max-height: 320px; overflow-y: auto; padding: 6px 12px; margin-bottom: 14px; }
+    .perm-list .g { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-light); margin: 10px 0 4px; }
+    .perm-list label { display: flex; gap: 8px; align-items: flex-start; font-size: 0.85rem; padding: 3px 0; }
+    .perm-list .diff { font-size: 0.72rem; font-weight: 600; color: #8A5A00; margin-left: 4px; }
+    .err { background: #FBEDED; color: var(--danger); border-radius: var(--radius); padding: 10px 12px; font-size: 0.85rem; margin-bottom: 12px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--bg-dark); color: #fff; padding: 10px 18px; border-radius: var(--radius); font-size: 0.88rem; z-index: 300; max-width: calc(100vw - 32px); }
+    @media (max-width: 720px) { .main { padding: 24px 16px 56px; } .row2 { grid-template-columns: 1fr; } td, th { padding: 9px 8px; font-size: 0.8rem; } }
+  </style>
+</head>
+<body>
+  <div id="loadingScreen"><div class="spinner" role="status" aria-label="Loading"></div></div>
+  <div id="app" style="display:none;">
+    <nav class="nav" id="siteNav"></nav>
+    <main class="main">
+      <div class="head"><h1 class="title">Team &amp; access</h1></div>
+      <p class="lede">Who can sign in to the portal, with which role, and until when. Tabs and buttons a person can't use are hidden; the server refuses them anyway. Changes apply within seconds — the person's page reloads.</p>
+      <div id="seedBanner" class="banner" hidden><span>Team access isn't set up yet — this creates the default roles (Analyst, Intern, Viewer) and your two partner records.</span><button class="btn btn--primary btn--sm" id="seedBtn">Set up team access</button></div>
+      <div class="chips" role="tablist" aria-label="Views">
+        <button class="chip on" data-view="people">People</button>
+        <button class="chip" data-view="roles">Roles</button>
+        <button class="chip" data-view="audit">Activity</button>
+      </div>
+      <section id="v-people"></section>
+      <section id="v-roles" hidden></section>
+      <section id="v-audit" hidden></section>
+    </main>
+  </div>
+  <div id="modalRoot"></div>
+  <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
+
+  <script type="module">
+    import { auth, db, addReads } from './firebase-config.js';
+    import { guardPage, PERMS, ALL, TAB_PERM } from './access.js';
+    import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
+    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+    import { collection, onSnapshot, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+    import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const call = httpsCallable(getFunctions(auth.app, 'us-central1'), 'teamAccess');
+    const tsMs = (t) => (!t ? 0 : t.toMillis ? t.toMillis() : t.seconds != null ? t.seconds * 1000 : new Date(t).getTime() || 0);
+    const dateFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const dtFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const day = (t) => (tsMs(t) ? dateFmt.format(new Date(tsMs(t))) : '—');
+    const isoDay = (t) => (tsMs(t) ? new Date(tsMs(t)).toISOString().slice(0, 10) : '');
+    let toastTimer;
+    function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 5000); }
+    const errText = (e) => e?.message || String(e);
+
+    const PARTNER_PERMS = ALL;
+    const GROUPS = [...new Set(PERMS.map(p => p[1]))];
+    const TAB_OF = Object.fromEntries(Object.entries(TAB_PERM).map(([k, v]) => [v, k]));
+    const TAB_LABEL = { investor: 'Investor view', admin: 'Admin', crm: 'Investor CRM', search: 'Search CRM', outreach: 'Outreach', network: 'Network', budget: 'Budget', log: 'Activity Log', team: 'Team' };
+    let people = [], roles = [], me = '';
+
+    initNav('team');
+    onAuthStateChanged(auth, async (user) => {
+      const pageAccess = await guardPage(user, 'team'); if (!pageAccess) return;
+      me = pageAccess.email;
+      setNavEmail(user.email);
+      startSharedReadsWatch();
+      $('loadingScreen').style.display = 'none';
+      $('app').style.display = 'block';
+      watch();
+    });
+
+    document.querySelector('.chips').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-view]'); if (!b) return;
+      document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b));
+      ['people', 'roles', 'audit'].forEach(v => { $('v-' + v).hidden = v !== b.dataset.view; });
+      if (b.dataset.view === 'audit') renderAudit();
+    });
+    $('seedBtn').addEventListener('click', async () => {
+      $('seedBtn').disabled = true;
+      try { const r = (await call({ action: 'seed' })).data; toast(`Team access set up (${r.created} created).`); }
+      catch (e) { toast(errText(e)); } finally { $('seedBtn').disabled = false; }
+    });
+
+    function watch() {
+      onSnapshot(collection(db, 'team'), (snap) => {
+        addReads(snap.docChanges().length || 1); refreshReads();
+        people = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.roleId === 'partner' ? 0 : 1) - (b.roleId === 'partner' ? 0 : 1) || (a.name || '').localeCompare(b.name || ''));
+        $('seedBanner').hidden = people.some(p => p.roleId === 'partner');
+        renderPeople();
+      }, (e) => { $('v-people').innerHTML = `<div class="err">Couldn't load the team: ${esc(errText(e))}</div>`; });
+      onSnapshot(collection(db, 'roles'), (snap) => {
+        addReads(snap.docChanges().length || 1); refreshReads();
+        roles = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        renderPeople(); renderRoles();
+      });
+    }
+
+    const roleName = (id) => (id === 'partner' ? 'Partner' : roles.find(r => r.id === id)?.name || id || '—');
+    const rolePerms = (id) => (id === 'partner' ? PARTNER_PERMS : roles.find(r => r.id === id)?.perms || []);
+    const effective = (p) => { if (p.roleId === 'partner') return PARTNER_PERMS; const s = new Set(rolePerms(p.roleId)); (p.extraPerms || []).forEach(x => s.add(x)); (p.removedPerms || []).forEach(x => s.delete(x)); return ALL.filter(x => s.has(x)); };
+    const tabsOf = (perms) => Object.entries(TAB_PERM).filter(([, v]) => perms.includes(v)).map(([k]) => TAB_LABEL[k]);
+    function statusBadge(p) {
+      const ended = tsMs(p.endsAt) && tsMs(p.endsAt) <= Date.now();
+      if (p.status === 'ended' || (ended && p.roleId !== 'partner')) return '<span class="badge badge--grey">ended</span>';
+      if (p.status === 'suspended') return '<span class="badge badge--red">suspended</span>';
+      if (p.status === 'invited') return '<span class="badge badge--blue">invited</span>';
+      return '<span class="badge badge--green">active</span>';
+    }
+
+    function renderPeople() {
+      const active = people.filter(p => p.status !== 'ended');
+      const past = people.filter(p => p.status === 'ended');
+      const row = (p) => {
+        const eff = effective(p);
+        const custom = (p.extraPerms || []).length || (p.removedPerms || []).length;
+        const partner = p.roleId === 'partner';
+        return `<tr>
+          <td><b>${esc(p.name || p.id)}</b> <span class="hint">· ${esc(p.key || '')}</span><div class="hint">${esc(p.id)}</div></td>
+          <td>${esc(roleName(p.roleId))}${custom ? ' <span class="badge badge--amber" title="Extra or removed permissions">custom</span>' : ''}<div class="hint">${esc(tabsOf(eff).join(' · ') || 'no tabs')}</div></td>
+          <td>${statusBadge(p)}</td>
+          <td style="white-space:nowrap;">${partner ? '—' : esc(day(p.endsAt))}</td>
+          <td style="white-space:nowrap;">${tsMs(p.lastSignInAt) ? esc(dtFmt.format(new Date(tsMs(p.lastSignInAt)))) : '<span class="hint">never</span>'}</td>
+          <td class="c">${p.ndaSigned ? '✓' : '<span class="hint">—</span>'}</td>
+          <td><div class="actions">${partner ? '<span class="hint">Partner — always full access</span>' : `
+            <button class="btn btn--ghost btn--sm" data-edit="${esc(p.id)}">Edit</button>
+            ${p.status === 'suspended' ? `<button class="btn btn--ghost btn--sm" data-act="reactivate" data-email="${esc(p.id)}">Reactivate</button>` : p.status !== 'ended' ? `<button class="btn btn--ghost btn--sm" data-act="suspend" data-email="${esc(p.id)}">Suspend</button>` : ''}
+            ${p.status !== 'ended' ? `<button class="btn btn--danger btn--sm" data-act="end" data-email="${esc(p.id)}">End access</button>` : `<button class="btn btn--ghost btn--sm" data-reinvite="${esc(p.id)}">Invite again</button>`}`}</div></td></tr>`;
+      };
+      $('v-people').innerHTML = `<div class="card">
+          <div class="toolbar"><h2>People (${active.length})</h2><button class="btn btn--primary btn--sm" id="inviteBtn" style="margin-left:auto;">Invite someone</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Person</th><th>Role · tabs</th><th>Status</th><th>Access until</th><th>Last sign-in</th><th class="c">NDA</th><th></th></tr></thead>
+          <tbody>${active.length ? active.map(row).join('') : '<tr><td colspan="7" class="empty">Nobody yet.</td></tr>'}</tbody></table></div></div>
+        ${past.length ? `<div class="card" style="margin-top:16px;"><div class="toolbar"><h2>Former team members (${past.length})</h2></div><div class="table-wrap"><table><tbody>${past.map(row).join('')}</tbody></table></div></div>` : ''}
+        <p class="hint" style="margin-top:10px;">An invited person signs in at <b>douropartners.pt/portal</b> with a magic link sent to their email, and lands on their first tab. Every change is recorded under Activity.</p>`;
+      $('inviteBtn').addEventListener('click', () => openPerson(null));
+      $('v-people').querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => openPerson(people.find(p => p.id === b.dataset.edit))));
+      $('v-people').querySelectorAll('[data-reinvite]').forEach(b => b.addEventListener('click', () => openPerson(null, people.find(p => p.id === b.dataset.reinvite))));
+      $('v-people').querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
+        const p = people.find(x => x.id === b.dataset.email);
+        const q = { suspend: `Suspend ${p.name}? They're signed out now and can't sign in until you reactivate them.`, reactivate: `Give ${p.name} access again?`, end: `End ${p.name}'s access? They're signed out and removed from the login list. Their history stays; you can invite them again later.` }[b.dataset.act];
+        if (!confirm(q)) return;
+        b.disabled = true;
+        try { await call({ action: b.dataset.act, email: p.id }); toast({ suspend: 'Suspended — signed out.', reactivate: 'Access restored.', end: 'Access ended.' }[b.dataset.act]); }
+        catch (e) { toast(errText(e)); b.disabled = false; }
+      }));
+    }
+
+    // Invite / edit a person. Permissions: ticks start from the role; any
+    // difference is saved as extra / removed permissions for this person.
+    function openPerson(p, from = null) {
+      const editing = !!p;
+      const base = p || from || {};
+      const endDefault = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+      const roleOpts = roles.map(r => `<option value="${esc(r.id)}"${(base.roleId || 'intern') === r.id ? ' selected' : ''}>${esc(r.name)}</option>`).join('');
+      $('modalRoot').innerHTML = `<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+        <h3 id="mTitle">${editing ? `Edit ${esc(p.name)}` : 'Invite someone'}</h3>
+        <div class="err" id="mErr" hidden></div>
+        <div class="row2">
+          <div class="field"><label for="fName">Name</label><input type="text" id="fName" value="${esc(base.name || '')}" placeholder="Maria Silva"></div>
+          <div class="field"><label for="fEmail">Email (they sign in with it)</label><input type="email" id="fEmail" value="${esc(base.email || base.id || '')}" placeholder="maria@douropartners.pt"${editing ? ' disabled' : ''}></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="fKey">Short name (owner / assignee)</label><input type="text" id="fKey" value="${esc(base.key || '')}" placeholder="maria"></div>
+          <div class="field"><label for="fRole">Role</label><select id="fRole">${roleOpts}</select></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="fStart">Access from (optional)</label><input type="date" id="fStart" value="${esc(isoDay(base.startsAt))}"></div>
+          <div class="field"><label for="fEnd">Access until</label><input type="date" id="fEnd" value="${esc(editing ? isoDay(base.endsAt) : endDefault)}"><span class="hint">Access stops by itself on this day. Empty = no end date.</span></div>
+        </div>
+        <label class="check"><input type="checkbox" id="fNda"${base.ndaSigned ? ' checked' : ''}> NDA signed</label>
+        <div class="field"><label>What they can see and do</label><span class="hint">Ticks come from the role; change them to give or take away something for this person only.</span></div>
+        <div class="perm-list" id="fPerms"></div>
+        <div class="field"><label for="fNotes">Notes</label><textarea id="fNotes" rows="2">${esc(base.notes || '')}</textarea></div>
+        <div class="modal-actions"><button class="btn btn--ghost" id="mCancel">Cancel</button><button class="btn btn--primary" id="mSave">${editing ? 'Save' : 'Invite'}</button></div>
+      </div></div>`;
+      const close = () => { $('modalRoot').innerHTML = ''; };
+      $('mCancel').addEventListener('click', close);
+      $('modalRoot').querySelector('.modal-bg').addEventListener('click', (e) => { if (e.target.classList.contains('modal-bg')) close(); });
+      document.addEventListener('keydown', function onKey(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } });
+      if (!editing) $('fName').addEventListener('input', () => { if (!$('fKey').dataset.touched) $('fKey').value = ($('fName').value.trim().split(/\s+/)[0] || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9-]/g, ''); });
+      $('fKey').addEventListener('input', () => { $('fKey').dataset.touched = '1'; });
+      let current = new Set(editing ? effective(p) : rolePerms($('fRole').value));
+      const drawPerms = () => {
+        const roleSet = new Set(rolePerms($('fRole').value));
+        $('fPerms').innerHTML = GROUPS.map(g => `<div class="g">${esc(g)}</div>${PERMS.filter(x => x[1] === g && x[0] !== 'access.manage').map(([code, , label]) => {
+          const on = current.has(code), diff = on !== roleSet.has(code);
+          return `<label><input type="checkbox" data-perm-code="${esc(code)}"${on ? ' checked' : ''}> <span>${esc(label)}${diff ? `<span class="diff">${on ? '+ added' : '− removed'}</span>` : ''}</span></label>`;
+        }).join('')}`).join('');
+        $('fPerms').querySelectorAll('[data-perm-code]').forEach(c => c.addEventListener('change', () => { c.checked ? current.add(c.dataset.permCode) : current.delete(c.dataset.permCode); drawPerms(); }));
+      };
+      $('fRole').addEventListener('change', () => { current = new Set(rolePerms($('fRole').value)); drawPerms(); });
+      drawPerms();
+      $('mSave').addEventListener('click', async () => {
+        const roleSet = new Set(rolePerms($('fRole').value));
+        const member = {
+          email: $('fEmail').value, name: $('fName').value, key: $('fKey').value, roleId: $('fRole').value,
+          startsAt: $('fStart').value || null, endsAt: $('fEnd').value ? $('fEnd').value + 'T23:59:59' : null,
+          ndaSigned: $('fNda').checked, notes: $('fNotes').value,
+          extraPerms: [...current].filter(x => !roleSet.has(x)), removedPerms: [...roleSet].filter(x => !current.has(x)),
+        };
+        $('mSave').disabled = true; $('mErr').hidden = true;
+        try {
+          if (editing) await call({ action: 'update', email: p.id, member });
+          else await call({ action: 'invite', member });
+          close();
+          toast(editing ? 'Saved — their page reloads with the new access.' : `Invited. ${member.name.split(' ')[0]} can now sign in at douropartners.pt/portal with ${member.email.trim()}.`);
+        } catch (e) { $('mErr').textContent = errText(e); $('mErr').hidden = false; $('mSave').disabled = false; }
+      });
+    }
+
+    // Roles: permission matrix. Partner is fixed; others editable, saved per role.
+    function renderRoles() {
+      const cols = [{ id: 'partner', name: 'Partner', perms: PARTNER_PERMS, locked: true }, ...roles];
+      const count = (id) => people.filter(p => p.roleId === id && p.status !== 'ended').length;
+      $('v-roles').innerHTML = `<div class="card">
+          <div class="toolbar"><h2>Roles</h2><span class="hint">A role is a template; a person can have extra or removed permissions on top.</span><button class="btn btn--primary btn--sm" id="newRoleBtn" style="margin-left:auto;">New role</button></div>
+          <div class="table-wrap"><table class="matrix"><thead><tr><th>Permission</th>${cols.map(r => `<th class="c">${esc(r.name)}<div class="hint" style="text-transform:none;letter-spacing:0;font-weight:500;">${count(r.id)} ${count(r.id) === 1 ? 'person' : 'people'}</div></th>`).join('')}</tr></thead>
+          <tbody>${GROUPS.map(g => `<tr class="grp"><td colspan="${cols.length + 1}">${esc(g)}</td></tr>${PERMS.filter(x => x[1] === g).map(([code, , label]) => `<tr><td>${esc(label)}<div class="hint">${esc(code)}</div></td>${cols.map(r => `<td class="c"><input type="checkbox" aria-label="${esc(r.name)}: ${esc(label)}" data-role="${esc(r.id)}" data-code="${esc(code)}"${(r.perms || []).includes(code) ? ' checked' : ''}${r.locked || code === 'access.manage' ? ' disabled' : ''}></td>`).join('')}</tr>`).join('')}`).join('')}
+            <tr><td></td>${cols.map(r => `<td class="c">${r.locked ? '<span class="hint">fixed</span>' : `<div class="actions" style="justify-content:center;"><button class="btn btn--ghost btn--sm" data-saverole="${esc(r.id)}">Save</button>${count(r.id) ? '' : `<button class="btn btn--danger btn--sm" data-delrole="${esc(r.id)}">Delete</button>`}</div>`}</td>`).join('')}</tr>
+          </tbody></table></div></div>
+        <p class="hint" style="margin-top:10px;">Managing team access stays with partners. Saving a role updates everyone who has it at once.</p>`;
+      $('newRoleBtn').addEventListener('click', async () => {
+        const name = prompt('Name of the new role (e.g. "Fundraising analyst"):', ''); if (!name) return;
+        const copy = prompt(`Start from which role's permissions? (${roles.map(r => r.name).join(', ')} — or leave empty)`, 'Intern');
+        const src = roles.find(r => r.name.toLowerCase() === String(copy || '').trim().toLowerCase());
+        try { await call({ action: 'saveRole', role: { name, perms: src?.perms || [] } }); toast(`Role "${name}" created — tick its permissions and Save.`); } catch (e) { toast(errText(e)); }
+      });
+      $('v-roles').querySelectorAll('[data-saverole]').forEach(b => b.addEventListener('click', async () => {
+        const id = b.dataset.saverole, r = roles.find(x => x.id === id);
+        const perms = [...$('v-roles').querySelectorAll(`[data-role="${id}"]:checked`)].map(c => c.dataset.code);
+        if (!confirm(`Save the "${r.name}" role? ${count(id)} ${count(id) === 1 ? 'person gets' : 'people get'} the new permissions now.`)) return;
+        b.disabled = true;
+        try { const res = (await call({ action: 'saveRole', roleId: id, role: { name: r.name, description: r.description || '', perms } })).data; toast(`Saved — ${res.updated} ${res.updated === 1 ? 'person' : 'people'} updated.`); }
+        catch (e) { toast(errText(e)); } finally { b.disabled = false; }
+      }));
+      $('v-roles').querySelectorAll('[data-delrole]').forEach(b => b.addEventListener('click', async () => {
+        const r = roles.find(x => x.id === b.dataset.delrole);
+        if (!confirm(`Delete the "${r.name}" role?`)) return;
+        try { await call({ action: 'deleteRole', roleId: r.id }); toast('Role deleted.'); } catch (e) { toast(errText(e)); }
+      }));
+    }
+
+    async function renderAudit() {
+      $('v-audit').innerHTML = '<div class="card"><div class="empty">Loading…</div></div>';
+      try {
+        const snap = await getDocs(query(collection(db, 'accessAudit'), orderBy('at', 'desc'), limit(150)));
+        addReads(snap.size || 1); refreshReads();
+        const label = { seed: 'Set up team access', invite: 'Invited', update: 'Changed', suspend: 'Suspended', reactivate: 'Reactivated', end: 'Ended access', expired: 'Access ended (end date)', saveRole: 'Changed role', createRole: 'Created role', deleteRole: 'Deleted role', signIn: 'Signed in' };
+        const detail = (a) => {
+          if (!a.after) return '';
+          return Object.entries(a.after).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') || '—' : v && typeof v.toMillis === 'function' ? dateFmt.format(new Date(v.toMillis())) : typeof v === 'object' && v !== null ? '…' : v}`).join(' · ');
+        };
+        const rows = snap.docs.map(d => d.data());
+        $('v-audit').innerHTML = `<div class="card"><div class="toolbar"><h2>Activity</h2><span class="hint">Access changes and team sign-ins, newest first (last 150).</span></div>
+          <div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th>What</th><th>Person / role</th><th>Details</th></tr></thead>
+          <tbody>${rows.length ? rows.map(a => `<tr><td style="white-space:nowrap;">${tsMs(a.at) ? esc(dtFmt.format(new Date(tsMs(a.at)))) : '—'}</td><td>${esc(a.by)}</td><td>${esc(label[a.action] || a.action)}</td><td>${esc(a.target || '—')}</td><td class="hint">${esc(detail(a))}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">Nothing yet.</td></tr>'}</tbody></table></div></div>`;
+      } catch (e) { $('v-audit').innerHTML = `<div class="err">Couldn't load the activity: ${esc(errText(e))}</div>`; }
+    }
+  </script>
+</body>
+</html>

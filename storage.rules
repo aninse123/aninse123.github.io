@@ -9,27 +9,32 @@ service firebase.storage {
                'antonio.carvalho@douropartners.pt'
              ];
     }
+    // Team access (Phase 1): permissions from the sign-in token's claims.
+    // Additive — isAdmin() keeps working exactly as before.
+    function can(p) {
+      return request.auth != null && p in request.auth.token.get('perms', []);
+    }
 
     // Investors download via the tokenized downloadURL stored in Firestore,
     // which bypasses these rules by design — so scoping read to admins does
     // NOT affect investor downloads. It only closes direct, path-based access
     // to files an investor was never granted.
     match /documents/{fileName} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || can('portal.admin');
+      allow write: if isAdmin() || can('portal.admin');
     }
 
     // Budget attachments (receipts/invoices) — admin-only, like documents.
     match /budget/{fileName} {
-      allow read: if isAdmin();
-      allow write: if isAdmin();
+      allow read: if isAdmin() || can('budget.view');
+      allow write: if isAdmin() || can('budget.edit');
     }
 
     // Outreach reply attachments and oversized email bodies. Written only by
     // the resendWebhook Cloud Function (Admin SDK, bypasses rules); admins
     // read them from the Outreach tab. No client writes.
     match /outreach/{allPaths=**} {
-      allow read: if isAdmin();
+      allow read: if isAdmin() || can('out.view');
       allow write: if false;
     }
   }

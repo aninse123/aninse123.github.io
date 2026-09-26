@@ -248,9 +248,9 @@
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn--ghost" id="followupsBtn">📋 Follow-ups</button>
-      <button class="btn btn--ghost" id="importPortalBtn">⬇ Import from Portal</button>
-      <button class="btn btn--ghost" id="bulkImportBtn">⬆ Bulk Import</button>
-      <button class="btn btn--primary" id="newInvestorBtn">＋ New Investor</button>
+      <button class="btn btn--ghost" id="importPortalBtn" data-perm="icrm.edit portal.admin">⬇ Import from Portal</button>
+      <button class="btn btn--ghost" id="bulkImportBtn" data-perm="icrm.export">⬆ Bulk Import</button>
+      <button class="btn btn--primary" id="newInvestorBtn" data-perm="icrm.edit">＋ New Investor</button>
     </div>
   </div>
 
@@ -261,7 +261,7 @@
         <h2>Fundraising Overview</h2>
         <div class="fund-params" id="fundParams">—</div>
       </div>
-      <button class="btn btn--ghost btn--sm" id="fundSettingsBtn">⚙ Settings</button>
+      <button class="btn btn--ghost btn--sm" id="fundSettingsBtn" data-perm="icrm.edit">⚙ Settings</button>
     </div>
     <div class="commit-rows" id="commitRows">
       <div style="color:var(--text-light);font-size:0.85rem;">Configure fund target to see progress.</div>
@@ -306,7 +306,7 @@
     <select class="filter-sel" id="countryFilter"><option value="">All Countries</option></select>
     <select class="filter-sel" id="docsSentFilter"><option value="">Docs: All</option><option value="yes">Docs Sent</option><option value="no">Not Sent</option></select>
     <span class="results-count" id="resultsCount"></span>
-    <button class="btn btn--ghost btn--sm" id="exportBtn" style="margin-left:auto;">⬇ Export CSV</button>
+    <button class="btn btn--ghost btn--sm" id="exportBtn" data-perm="icrm.export" style="margin-left:auto;">⬇ Export CSV</button>
   </div>
 
   <!-- Table -->
@@ -346,19 +346,19 @@
       <div class="detail-meta" id="dMeta"></div>
     </div>
     <div class="detail-header-actions">
-      <button class="btn btn--ghost btn--sm" id="editInvestorBtn">✏ Edit</button>
-      <button class="btn btn--danger btn--sm" id="deleteInvestorBtn">🗑 Delete</button>
+      <button class="btn btn--ghost btn--sm" id="editInvestorBtn" data-perm="icrm.edit">✏ Edit</button>
+      <button class="btn btn--danger btn--sm" id="deleteInvestorBtn" data-perm="icrm.delete">🗑 Delete</button>
     </div>
   </div>
 
   <!-- Action bar -->
   <div class="action-bar">
-    <button class="btn btn--action" data-atype="note">📝 Note</button>
-    <button class="btn btn--action" data-atype="call">📞 Log Call</button>
-    <button class="btn btn--action" data-atype="email">📧 Log Email</button>
-    <button class="btn btn--action" data-atype="meeting_scheduled">📅 Schedule Meeting</button>
-    <button class="btn btn--action" data-atype="meeting_done">✅ Meeting Done</button>
-    <button class="btn btn--action" data-atype="observation">💡 Observation</button>
+    <button class="btn btn--action" data-atype= data-perm="icrm.edit""note">📝 Note</button>
+    <button class="btn btn--action" data-atype= data-perm="icrm.edit""call">📞 Log Call</button>
+    <button class="btn btn--action" data-atype= data-perm="icrm.edit""email">📧 Log Email</button>
+    <button class="btn btn--action" data-atype= data-perm="icrm.edit""meeting_scheduled">📅 Schedule Meeting</button>
+    <button class="btn btn--action" data-atype= data-perm="icrm.edit""meeting_done">✅ Meeting Done</button>
+    <button class="btn btn--action" data-atype= data-perm="icrm.edit""observation">💡 Observation</button>
   </div>
 
   <!-- Detail body -->
@@ -369,12 +369,12 @@
       <div class="sec-title" style="display:flex;justify-content:space-between;align-items:center;">
         <span>Contacts</span>
         <div style="display:flex;gap:6px;">
-          <button class="btn btn--ghost btn--sm" id="emailAllBtn" style="display:none;">✉ Email All</button>
-          <button class="btn btn--ghost btn--sm" id="duplicateContactsBtn" style="display:none;">📤 Duplicate to Network</button>
+          <button class="btn btn--ghost btn--sm" id="emailAllBtn" data-perm="icrm.email" style="display:none;">✉ Email All</button>
+          <button class="btn btn--ghost btn--sm" id="duplicateContactsBtn" data-perm="icrm.edit net.edit" style="display:none;">📤 Duplicate to Network</button>
         </div>
       </div>
       <div id="contactsList"></div>
-      <button class="btn btn--ghost btn--sm" id="addContactBtn" style="margin-top:8px;">＋ Add Contact</button>
+      <button class="btn btn--ghost btn--sm" id="addContactBtn" data-perm="icrm.edit" style="margin-top:8px;">＋ Add Contact</button>
     </div>
 
     <!-- Right: Commitments + Portal -->
@@ -382,7 +382,7 @@
       <div class="card" style="margin-bottom:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <div class="sec-title" style="margin-bottom:0;">Commitments</div>
-          <button class="btn btn--ghost btn--sm" id="editCommitBtn">✏ Edit</button>
+          <button class="btn btn--ghost btn--sm" id="editCommitBtn" data-perm="icrm.edit">✏ Edit</button>
         </div>
         <div id="commitDisplay"></div>
       </div>
@@ -815,6 +815,7 @@
 
 <script type="module">
 import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
+import { guardPage } from './access.js';
 import { sendPeopleEmail, sendNote } from './people-send.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -969,9 +970,9 @@ initNav('crm');
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 onAuthStateChanged(auth, async user => {
-  if (!user || !ADMIN_EMAILS.includes(user.email)) {
-    window.location.href = '/portal/login.html'; return;
-  }
+  // Team access: may this person open this tab? (else → their home tab)
+  const pageAccess = await guardPage(user, 'crm'); if (!pageAccess) return;
+  window.pageAccess = pageAccess;
   currentUser = user.email;
   setNavEmail(user.email);
   startSharedReadsWatch();
@@ -983,10 +984,13 @@ onAuthStateChanged(auth, async user => {
 // ── Load ─────────────────────────────────────────────────────────────────────
 
 async function loadAll() {
+  // Portal data (investors, documents, groups) only for people who manage the portal.
+  const portal = window.pageAccess?.can('portal.admin') !== false;
+  const none = { docs: [] };
   const [portalInvSnap, portalDocSnap, groupsSnap, cfgSnap] = await Promise.all([
-    getDocs(collection(db, 'investors')),
-    getDocs(collection(db, 'documents')),
-    getDocs(collection(db, 'accessGroups')),
+    portal ? getDocs(collection(db, 'investors')) : none,
+    portal ? getDocs(collection(db, 'documents')) : none,
+    portal ? getDocs(collection(db, 'accessGroups')) : none,
     getDoc(doc(db, 'crmConfig', 'settings')),
   ]);
   portalInvList = portalInvSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -1355,10 +1359,10 @@ function renderContacts() {
       ${c.notes ? `<div class="contact-detail" style="margin-top:4px;font-style:italic;">${esc(c.notes)}</div>` : ''}
       ${emailHistory}
       <div class="contact-foot">
-        ${c.email ? `<button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="send-ct" title="Send email">✉</button>` : ''}
-        <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="edit-ct">✏</button>
-        <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="dup-ct" title="Duplicate to Network">📤</button>
-        <button class="btn btn--danger btn--icon" data-ci="${i}" data-action="del-ct">🗑</button>
+        ${c.email ? `<button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="send-ct" data-perm="icrm.email" title="Send email">✉</button>` : ''}
+        <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="edit-ct" data-perm="icrm.edit">✏</button>
+        <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="dup-ct" data-perm="icrm.edit net.edit" title="Duplicate to Network">📤</button>
+        <button class="btn btn--danger btn--icon" data-ci="${i}" data-action="del-ct" data-perm="icrm.edit">🗑</button>
       </div>
     </div>`;
   }).join('');
@@ -1368,10 +1372,10 @@ function renderContacts() {
     panel.style.display = open ? 'none' : 'block';
     btn.textContent = btn.textContent.replace(open ? '▾' : '▸', open ? '▸' : '▾');
   }));
-  el.querySelectorAll('[data-action="send-ct"]').forEach(btn => btn.addEventListener('click', () => openSendEmail(Number(btn.dataset.ci))));
-  el.querySelectorAll('[data-action="edit-ct"]').forEach(btn => btn.addEventListener('click', () => openEditContact(Number(btn.dataset.ci))));
-  el.querySelectorAll('[data-action="dup-ct"]').forEach(btn => btn.addEventListener('click', () => duplicateContactToNetwork(Number(btn.dataset.ci), btn)));
-  el.querySelectorAll('[data-action="del-ct"]').forEach(btn => btn.addEventListener('click', () => deleteContact(Number(btn.dataset.ci))));
+  el.querySelectorAll('[data-action="send-ct" data-perm="icrm.email"]').forEach(btn => btn.addEventListener('click', () => openSendEmail(Number(btn.dataset.ci))));
+  el.querySelectorAll('[data-action="edit-ct" data-perm="icrm.edit"]').forEach(btn => btn.addEventListener('click', () => openEditContact(Number(btn.dataset.ci))));
+  el.querySelectorAll('[data-action="dup-ct" data-perm="icrm.edit net.edit"]').forEach(btn => btn.addEventListener('click', () => duplicateContactToNetwork(Number(btn.dataset.ci), btn)));
+  el.querySelectorAll('[data-action="del-ct" data-perm="icrm.edit"]').forEach(btn => btn.addEventListener('click', () => deleteContact(Number(btn.dataset.ci))));
 }
 
 // ── Duplicate to Network ──────────────────────────────────────────────────────
@@ -1489,8 +1493,8 @@ function renderPortalSection() {
         <span style="color:var(--text-light);font-size:0.85rem;">No portal access yet</span>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
-        <button class="btn btn--primary btn--sm" id="grantPortalBtn">🔓 Grant Portal Access</button>
-        <button class="btn btn--ghost btn--sm" id="linkPortalBtn">Link existing…</button>
+        <button class="btn btn--primary btn--sm" id="grantPortalBtn" data-perm="portal.admin">🔓 Grant Portal Access</button>
+        <button class="btn btn--ghost btn--sm" id="linkPortalBtn" data-perm="portal.admin">Link existing…</button>
       </div>`;
     document.getElementById('grantPortalBtn').addEventListener('click', openGrantPortalModal);
     document.getElementById('linkPortalBtn').addEventListener('click', openPortalLinkModal);
@@ -1511,13 +1515,13 @@ function renderPortalSection() {
     return tags;
   };
   const groupChips = myGroups.length
-    ? myGroups.map(g => `<span class="badge" style="background:#EDE9FE;color:#6D28D9;">👥 ${esc(g.name)} <span style="cursor:pointer;font-weight:700;" data-rmgroup="${g.id}" title="Remove from group">×</span></span>`).join(' ')
+    ? myGroups.map(g => `<span class="badge" style="background:#EDE9FE;color:#6D28D9;">👥 ${esc(g.name)} <span style="cursor:pointer;font-weight:700;" data-rmgroup="${g.id}" data-perm="portal.admin" title="Remove from group">×</span></span>`).join(' ')
     : '<span style="font-size:0.8rem;color:var(--text-light);">Not in any group</span>';
 
   el.innerHTML = `
     <div class="portal-row">
       <span>🔗 <strong>${esc(linked.name)}</strong> <span class="badge badge-green" style="margin-left:4px;">Active</span></span>
-      <button class="btn btn--ghost btn--sm" id="unlinkPortalBtn">Unlink</button>
+      <button class="btn btn--ghost btn--sm" id="unlinkPortalBtn" data-perm="portal.admin">Unlink</button>
     </div>
     <div class="portal-row">
       <span style="color:var(--text-light);">Portal emails</span>
@@ -1577,7 +1581,7 @@ function renderActivityLog() {
       <p>⚠️ ${overdue.length} overdue action${overdue.length>1?'s':''} need${overdue.length===1?'s':''} closing</p>
       ${overdue.map(a => `<div class="overdue-item">
         <span>${esc(a.title || (TYPE_LABELS[a.type]||a.type) || 'Untitled')} — ${fmtDate(a.date)}</span>
-        <button class="btn btn--sm btn--action" data-mid="${a.id}">Close</button>
+        <button class="btn btn--sm btn--action" data-mid="${a.id}" data-perm="icrm.edit">Close</button>
       </div>`).join('')}
     </div>`;
     overdueBanners.querySelectorAll('[data-mid]').forEach(btn => {
@@ -1611,7 +1615,7 @@ function renderActivityLog() {
       </div>` : '';
     // Meeting actions: Close (mark happened/cancelled) once it's past due; Cancel any time while open.
     const cancelBtn = isMeetingType ? `<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
-      ${(a.status === 'open' && pastDue) ? `<button class="btn btn--sm btn--action" data-close="${a.id}" style="padding:3px 9px;font-size:0.72rem;">Close</button>` : ''}
+      ${(a.status === 'open' && pastDue) ? `<button class="btn btn--sm btn--action" data-close="${a.id}" data-perm="icrm.edit" style="padding:3px 9px;font-size:0.72rem;">Close</button>` : ''}
       ${(a.status !== 'cancelled') ? `<button class="btn btn--sm btn--ghost" data-cancel="${a.id}" style="padding:3px 9px;font-size:0.72rem;">Cancel</button>` : ''}
     </span>` : '';
     const loggedLine = a.createdAt
@@ -1889,7 +1893,7 @@ async function sendInvestorEmail(){
   if (!subject || !msg) { el.textContent = 'Subject and message are required.'; el.style.display = 'block'; return; }
   const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
   try {
-    const result = await sendPeopleEmail({
+    const result = await sendPeopleEmail({ context: 'crm',
       recipients, subject, message: msg, from, kind: 'outreach', combined: isAll,
       ...(selectedDoc ? { docName: selectedDoc.name, docCategory: selectedDoc.category || '', docDescription: selectedDoc.description || '', docUrl: selectedDoc.downloadURL || '' } : {}),
     });

@@ -734,6 +734,7 @@
 
   <script type="module">
     import { auth, db, storage, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
+    import { guardPage } from './access.js';
     import { sendPeopleEmail, sendNote } from './people-send.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
     import {
@@ -912,10 +913,9 @@
 
     // ── Auth guard ─────────────────────────────────────────────
     onAuthStateChanged(auth, async (user) => {
-      if (!user || !ADMIN_EMAILS.includes(user.email)) {
-        window.location.href = '/portal/login.html';
-        return;
-      }
+      // Team access: may this person open this tab? (else → their home tab)
+      const pageAccess = await guardPage(user, 'admin'); if (!pageAccess) return;
+      window.pageAccess = pageAccess;
       adminEmail = user.email;
       setNavEmail(user.email);
       startSharedReadsWatch();
@@ -2139,7 +2139,7 @@
       btn.innerHTML = '<span class="spinner-sm"></span> Sending…';
 
       try {
-        const result = await sendPeopleEmail({
+        const result = await sendPeopleEmail({ context: 'portal',
           recipients,
           subject,
           message,
@@ -2246,7 +2246,7 @@
       btn.innerHTML = '<span class="spinner-sm"></span> Sending…';
 
       try {
-        const result = await sendPeopleEmail({ recipients, subject, message, from: document.getElementById('blastSender').value });
+        const result = await sendPeopleEmail({ context: 'portal', recipients, subject, message, from: document.getElementById('blastSender').value });
         const { sent } = result;
         const invNames = checked.map(cb => allInvestors.find(i => i.id === cb.dataset.inv)?.name).filter(Boolean).join(', ');
 
