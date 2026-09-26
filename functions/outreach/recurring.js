@@ -224,7 +224,7 @@ async function approveIssue({ issueId, subject, body }, caller) {
     if (members.empty) fail("failed-precondition", "list_empty", `The list "${issue.listName}" has nobody in it.`);
     const tplRef = db().collection("outreachTemplates").doc();
     await tplRef.set({
-      name: `${issue.recurringName} — #${issue.number}`, status: "active", kind: "email", purpose: "issue", hidden: true, recurringId: issue.recurringId, issueId,
+      name: `${issue.recurringName} — #${issue.number}`, status: "active", kind: "email", purpose: "issue", hidden: true, recurringId: issue.recurringId, issueId, isTest: !!issue.isTest,
       variants: [{ key: "A", subject: finalSubject, body: finalBody }],
       createdAt: FieldValue.serverTimestamp(), createdBy: caller, updatedAt: FieldValue.serverTimestamp(),
     });

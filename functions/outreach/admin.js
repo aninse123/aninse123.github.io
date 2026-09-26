@@ -84,7 +84,19 @@ async function clearTestData() {
   const enrolments = await deleteQuery(db().collection("outreachEnrolments").where("isTest", "==", true));
   const campaigns = await deleteQuery(db().collection("outreachCampaigns").where("isTest", "==", true));
   const tasks = await deleteQuery(db().collection("outreachTasks").where("isTest", "==", true));
-  return { threads: threadCount, messages, activities, campaigns, enrolments, tasks };
+  // Phase 5: test issues of recurring emails, their one-off templates, the
+  // relationship-send log and opt-outs recorded from test emails. Lists,
+  // recurring emails and Network contacts are set-up / records and stay.
+  const testIssues = await db().collection("outreachIssues").where("isTest", "==", true).get();
+  const issueIds = testIssues.docs.map((d) => d.id);
+  let issueTemplates = await deleteQuery(db().collection("outreachTemplates").where("purpose", "==", "issue").where("isTest", "==", true));
+  for (let i = 0; i < issueIds.length; i += 30) {
+    issueTemplates += await deleteQuery(db().collection("outreachTemplates").where("issueId", "in", issueIds.slice(i, i + 30)));
+  }
+  const issues = await deleteQuery(db().collection("outreachIssues").where("isTest", "==", true));
+  const peopleSends = await deleteQuery(db().collection("outreachPeopleSends").where("isTest", "==", true));
+  const optOuts = await deleteQuery(db().collection("outreachOptOuts").where("isTest", "==", true));
+  return { threads: threadCount, messages, activities, campaigns, enrolments, tasks, issues, issueTemplates, peopleSends, optOuts };
 }
 
 async function setTracking(on, callerEmail) {

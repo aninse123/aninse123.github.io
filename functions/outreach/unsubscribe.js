@@ -55,7 +55,7 @@ exports.outreachUnsubscribe = onRequest({ region: REGION, secrets: [UNSUBSCRIBE_
     if (campaign?.recurringId) {
       const rec = (await db().doc(`outreachRecurring/${campaign.recurringId}`).get()).data();
       await db().doc(`outreachOptOuts/${campaign.recurringId}_${email.replace(/[^a-z0-9]/g, "_").slice(0, 120)}`).set({
-        campaignId: campaign.recurringId, email, kind: "recurring", source: oneClick ? "one_click" : "link", messageId, at: FieldValue.serverTimestamp(),
+        campaignId: campaign.recurringId, email, kind: "recurring", source: oneClick ? "one_click" : "link", messageId, isTest: !!msg.isTest, at: FieldValue.serverTimestamp(),
       });
       if (msg.threadId) await db().doc(`outreachThreads/${msg.threadId}`).update({ status: "closed", unsubscribedAt: FieldValue.serverTimestamp() });
       if (thread?.enrolmentId) await stopEnrolmentById(thread.enrolmentId, "Unsubscribed");

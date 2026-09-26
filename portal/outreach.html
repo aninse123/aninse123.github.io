@@ -1850,9 +1850,9 @@
         finally { b.disabled = false; }
       });
       $('clearTestBtn').addEventListener('click', async () => {
-        if (!confirm('Delete every conversation, message and activity created in test mode? Real data is not touched.')) return;
+        if (!confirm('Delete everything created in test mode — conversations, messages, activities, test campaigns and tasks, issues of recurring emails and their logs? Real data is not touched. Lists of people, recurring emails and Network contacts stay (delete those by hand if they were only for testing).')) return;
         const b = $('clearTestBtn'); b.disabled = true;
-        try { const r = (await callAdmin({ action: 'clearTestData' })).data; toast(`Removed ${r.threads} conversations, ${r.messages} messages, ${r.activities} activities, ${r.campaigns || 0} test campaigns, ${r.tasks || 0} test tasks.`); selectedId = null; $('threadView').innerHTML = '<div class="empty">Select a conversation.</div>'; }
+        try { const r = (await callAdmin({ action: 'clearTestData' })).data; toast(`Removed ${r.threads} conversations, ${r.messages} messages, ${r.activities} activities, ${r.campaigns || 0} test campaigns, ${r.tasks || 0} test tasks, ${r.issues || 0} test issues, ${r.peopleSends || 0} relationship-send logs.`); selectedId = null; $('threadView').innerHTML = '<div class="empty">Select a conversation.</div>'; }
         catch (e) { toast('Could not clear: ' + errText(e)); }
         finally { b.disabled = false; }
       });

@@ -113,6 +113,17 @@ function makeRes() { const r = {}; return { r, res: { status(c) { r.code = c; re
     return r.err?.details?.reason === "list_empty" && get(`outreachIssues/${n.issueId}`).status === "draft";
   })());
 
+  // Clear test data (go-live): test issues, their templates and campaigns go; lists and recurring emails stay
+  store.set("outreachSettings/global", { testMode: true, complianceBlockId: "cb", campaignTestRecipient: "andrenorocha@gmail.com" });
+  const rT = (await rec({ action: "save", recurring: { name: "Teste", listId: "L1", templateId: "upd", senderId: "andre.rocha@douropartners.pt" } })).recurringId;
+  const nT = await rec({ action: "issueNow", recurringId: rT });
+  const apT = await rec({ action: "approveIssue", issueId: nT.issueId });
+  const tplT = get(`outreachCampaigns/${apT.campaignId}`).steps[0].templateId;
+  ok("test-mode issue and its template are marked as test", get(`outreachIssues/${nT.issueId}`).isTest === true && get(`outreachTemplates/${tplT}`).isTest === true);
+  const cl = await fns.outreachAdmin({ ...ADMIN, data: { action: "clearTestData" } });
+  ok("clear test data: issue, template and issue campaign removed", cl.issues >= 1 && cl.issueTemplates >= 1 && !get(`outreachIssues/${nT.issueId}`) && !get(`outreachTemplates/${tplT}`) && !get(`outreachCampaigns/${apT.campaignId}`));
+  ok("clear test data: lists, recurring emails and real issues stay", !!get("outreachLists/L1") && !!get(`outreachRecurring/${rT}`) && !!get(`outreachIssues/${n2.issueId}`));
+
   console.log(fail ? `\n${fail} FAILED` : "\nall 5b tests passed");
   process.exit(fail ? 1 : 0);
 })();
