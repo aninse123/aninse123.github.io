@@ -734,6 +734,7 @@
 
   <script type="module">
     import { auth, db, storage, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
+    import { sendPeopleEmail, sendNote } from './people-send.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
     import {
       onAuthStateChanged
@@ -770,7 +771,6 @@
 
     // Notify modal state
     let notifyDocId    = null;
-    let notifySecret   = '';   // read from the admin-only adminConfig/notify doc
 
     // ── Admin identity ─────────────────────────────────────────
     let adminEmail = '';
@@ -855,13 +855,6 @@
       } catch (e) {
         currentStage = 1;
       }
-      // Notify secret lives in an admin-only doc (config/portal is investor-readable, so it must not hold secrets).
-      try {
-        const secretSnap = await getDoc(doc(db, 'adminConfig', 'notify'));
-        if (secretSnap.exists() && secretSnap.data().notifySecret) {
-          notifySecret = secretSnap.data().notifySecret;
-        }
-      } catch (e) { /* Notify/Blast will show the config-needed alert */ }
       renderAdminStageBar();
     }
 
@@ -2127,11 +2120,6 @@
       if (!subject) { alert('Please enter a subject line.'); return; }
       if (!message) { alert('Please write a message to investors.'); return; }
 
-      if (!notifySecret) {
-        alert('Notification not configured.\n\nPlease add the "notifySecret" field to Firestore → config/portal, and set NOTIFY_SECRET as a Netlify environment variable.');
-        return;
-      }
-
       const checked = [...document.querySelectorAll('.notify-check:checked')];
       const invIds  = checked.map(cb => cb.dataset.inv);
       if (!invIds.length) { alert('Please select at least one investor.'); return; }
@@ -2151,29 +2139,16 @@
       btn.innerHTML = '<span class="spinner-sm"></span> Sending…';
 
       try {
-        const res = await fetch('/.netlify/functions/notify', {
-          method:  'POST',
-          headers: {
-            'Content-Type':    'application/json',
-            'x-notify-secret': notifySecret,
-          },
-          body: JSON.stringify({
-            recipients,
-            subject,
-            message,
-            from:           document.getElementById('notifySender').value,
-            docName:        d.name,
-            docCategory:    d.category        || '',
-            docDescription: d.description     || '',
-          }),
+        const result = await sendPeopleEmail({
+          recipients,
+          subject,
+          message,
+          from:           document.getElementById('notifySender').value,
+          docName:        d.name,
+          docCategory:    d.category        || '',
+          docDescription: d.description     || '',
         });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-          throw new Error(err.error || `HTTP ${res.status}`);
-        }
-
-        const { sent } = await res.json();
+        const { sent } = result;
         const invNames  = invIds.map(id => allInvestors.find(i => i.id === id)?.name).filter(Boolean).join(', ');
 
         await logEvent('notification_sent', {
@@ -2185,7 +2160,7 @@
         });
 
         document.getElementById('notifyModal').classList.remove('open');
-        alert(`Done! ${sent} email${sent !== 1 ? 's' : ''} sent successfully.`);
+        alert(`Done! ${sent} email${sent !== 1 ? 's' : ''} sent successfully.${sendNote(result) ? '\n\n' + sendNote(result) : ''}`);
 
       } catch (err) {
         alert('Failed to send notification:\n' + err.message);
@@ -2253,11 +2228,6 @@
       if (!subject) { alert('Please enter a subject line.'); return; }
       if (!message) { alert('Please write a message.'); return; }
 
-      if (!notifySecret) {
-        alert('Notification not configured.\n\nPlease ensure NOTIFY_SECRET is set in Netlify and in Firestore config/portal.');
-        return;
-      }
-
       const checked = [...document.querySelectorAll('.blast-check:checked')];
       if (!checked.length) { alert('Please select at least one investor.'); return; }
 
@@ -2276,21 +2246,8 @@
       btn.innerHTML = '<span class="spinner-sm"></span> Sending…';
 
       try {
-        const res = await fetch('/.netlify/functions/notify', {
-          method:  'POST',
-          headers: {
-            'Content-Type':    'application/json',
-            'x-notify-secret': notifySecret,
-          },
-          body: JSON.stringify({ recipients, subject, message, from: document.getElementById('blastSender').value }),
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-          throw new Error(err.error || `HTTP ${res.status}`);
-        }
-
-        const { sent } = await res.json();
+        const result = await sendPeopleEmail({ recipients, subject, message, from: document.getElementById('blastSender').value });
+        const { sent } = result;
         const invNames = checked.map(cb => allInvestors.find(i => i.id === cb.dataset.inv)?.name).filter(Boolean).join(', ');
 
         await logEvent('notification_sent', {
@@ -2299,7 +2256,7 @@
         });
 
         document.getElementById('blastModal').classList.remove('open');
-        alert(`Done! ${sent} email${sent !== 1 ? 's' : ''} sent successfully.`);
+        alert(`Done! ${sent} email${sent !== 1 ? 's' : ''} sent successfully.${sendNote(result) ? '\n\n' + sendNote(result) : ''}`);
 
       } catch (err) {
         alert('Failed to send update:\n' + err.message);

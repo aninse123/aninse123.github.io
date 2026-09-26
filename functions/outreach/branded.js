@@ -1,134 +1,12 @@
-// Douro Partners — Investor Notification Function
-// Sends batch emails via Resend API when admin notifies investors.
-// Auth: x-notify-secret header must match NOTIFY_SECRET env var.
-// Requires env vars: RESEND_API_KEY, NOTIFY_SECRET
+// Branded HTML for relationship emails (Phase 5c): the two templates the
+// Netlify notify function used, moved unchanged so the Investor CRM, Network
+// and admin document emails look exactly as before.
+//   buildHtml         — investor portal notice (greeting, document card, portal button)
+//   buildOutreachHtml — free-form email in the same shell (optional document card)
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const NOTIFY_SECRET  = process.env.NOTIFY_SECRET;
-const PORTAL_URL     = 'https://douropartners.pt/portal/investor.html';
-// Always the production domain (like PORTAL_URL above), regardless of which
-// branch's function actually sends the email — the asset only needs to exist
-// on main/production to resolve for recipients.
-const LOGO_URL        = 'https://douropartners.pt/assets/logo-transparent.png';
-// Generous enough to never throttle a real "Send Update" blast to all
-// portal investors — just a backstop against the endpoint being abused as
-// an open mass-mailer if the secret ever leaked, not a real-world cap.
-const MAX_RECIPIENTS = 250;
-
-// Server-side allow-list — the client sends a key (never a raw address), so
-// a tampered payload can never make this function send from an arbitrary
-// "from" address, only one of these three verified domain identities.
-const SENDERS = {
-  andre:   { email: 'andre.rocha@douropartners.pt',      name: 'André Rocha' },
-  antonio: { email: 'antonio.carvalho@douropartners.pt',  name: 'António Carvalho' },
-  noreply: { email: 'noreply@douropartners.pt',           name: 'Douro Partners' },
-};
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-exports.handler = async (event) => {
-  // Only accept POST
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
-  }
-
-  // Validate secret
-  const secret = event.headers['x-notify-secret'];
-  if (!NOTIFY_SECRET || !secret || secret !== NOTIFY_SECRET) {
-    return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized' }) };
-  }
-
-  // Parse body
-  let body;
-  try {
-    body = JSON.parse(event.body);
-  } catch {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
-  }
-
-  const { recipients, subject, message, docName, docCategory, docDescription, docUrl, from, kind, combined } = body;
-
-  if (!recipients?.length || !subject?.trim() || !message?.trim()) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields: recipients, subject, message' }) };
-  }
-  if (recipients.length > MAX_RECIPIENTS) {
-    return { statusCode: 400, body: JSON.stringify({ error: `Too many recipients (max ${MAX_RECIPIENTS})` }) };
-  }
-  const badEmail = recipients.find(r => !r?.email || !EMAIL_RE.test(r.email));
-  if (badEmail) {
-    return { statusCode: 400, body: JSON.stringify({ error: `Invalid recipient email: ${badEmail?.email || '(missing)'}` }) };
-  }
-
-  const sender = SENDERS[from] || SENDERS.noreply;
-  const isOutreach = kind === 'outreach';
-  const outreachDocFields = { docName, docCategory, docDescription, docUrl };
-  const html = isOutreach
-    ? buildOutreachHtml({ message: message.trim(), ...outreachDocFields })
-    : null; // per-recipient investor template built below, needs each r.name
-
-  // Whichever of André/António did NOT send it gets CC'd on outreach sends
-  // (single or combined) so both partners stay looped in on the thread —
-  // applies to outreach only, not official investor Notify/Blast sends,
-  // which stay CC-free even when a named sender is picked for those.
-  const other = isOutreach
-    ? (from === 'andre' ? SENDERS.antonio : from === 'antonio' ? SENDERS.andre : null)
-    : null;
-
-  // combined: true sends ONE email with every recipient in "to" (so they see
-  // each other — for a firm's whole team at one investor/company). Otherwise
-  // (default) send one separate email per recipient, as today.
-  let emails;
-  if (combined) {
-    emails = [{
-      from: `${sender.name} <${sender.email}>`,
-      to:   recipients.map(r => r.email),
-      ...(other ? { cc: [`${other.name} <${other.email}>`] } : {}),
-      subject: subject.trim(),
-      html: html || buildOutreachHtml({ message: message.trim(), ...outreachDocFields }),
-    }];
-  } else {
-    emails = recipients.map(r => ({
-      from: `${sender.name} <${sender.email}>`,
-      to:   [r.email],
-      ...(other ? { cc: [`${other.name} <${other.email}>`] } : {}),
-      subject: subject.trim(),
-      html: html || buildHtml({
-        investorName:   r.name,
-        message:        message.trim(),
-        docName:        docName        || '',
-        docCategory:    docCategory    || 'Document',
-        docDescription: docDescription || '',
-      }),
-    }));
-  }
-
-  // Send via Resend batch API
-  try {
-    const res = await fetch('https://api.resend.com/emails/batch', {
-      method:  'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type':  'application/json',
-      },
-      body: JSON.stringify(emails),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error('Resend error:', errText);
-      return { statusCode: 502, body: JSON.stringify({ error: `Resend API error: ${errText}` }) };
-    }
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sent: emails.length }),
-    };
-  } catch (err) {
-    console.error('notify function error:', err);
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
-  }
-};
+const PORTAL_URL = "https://douropartners.pt/portal/investor.html";
+// Always the production domain: the asset only needs to exist on main.
+const LOGO_URL = "https://douropartners.pt/assets/logo-transparent.png";
 
 // ── Email HTML template ────────────────────────────────────────────────────────
 function buildHtml({ investorName, message, docName, docCategory, docDescription }) {
@@ -369,3 +247,5 @@ function esc(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+module.exports = { buildHtml, buildOutreachHtml };

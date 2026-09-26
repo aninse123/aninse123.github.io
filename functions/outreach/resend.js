@@ -45,6 +45,11 @@ function sendEmail(key, payload, idempotencyKey) {
   return call(key, "POST", "/emails", payload, idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {});
 }
 
+// Up to 100 emails in one call (Phase 5c relationship sends).
+function sendBatch(key, emails, idempotencyKey) {
+  return call(key, "POST", "/emails/batch", emails, idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {});
+}
+
 function getEmail(key, id) {
   return call(key, "GET", `/emails/${encodeURIComponent(id)}`);
 }
@@ -65,4 +70,4 @@ function updateDomain(key, id, body) {
   return call(key, "PATCH", `/domains/${encodeURIComponent(id)}`, body);
 }
 
-module.exports = { ResendError, sendEmail, getEmail, getReceivedEmail, listReceivedAttachments, listDomains, updateDomain };
+module.exports = { ResendError, sendEmail, sendBatch, getEmail, getReceivedEmail, listReceivedAttachments, listDomains, updateDomain };
