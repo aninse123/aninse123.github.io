@@ -606,6 +606,17 @@
               <select id="gCampTest" style="max-width:360px;"></select>
               <span class="hint">While test mode is on, every campaign email goes here instead of the company (the company is still used for the wording and the history), so a campaign can be rehearsed end to end.</span>
             </div>
+            <div class="field" id="aiBox">
+              <label>AI openings ({{ai.opener}})</label>
+              <label class="checkline"><input type="checkbox" id="gAiOn"> <span>Write an opening sentence per company with Claude <span class="hint">— only company business data is sent (sector, activity, region, age, size, trend; never names, emails or phones). Used only in steps that need approval and in Compose's "Suggest an opening".</span></span></label>
+              <div class="row2" style="margin-top:8px;">
+                <div><label for="gAiModel" style="text-transform:none;letter-spacing:0;font-weight:600;">Model</label>
+                  <select id="gAiModel"><option value="claude-opus-5">Claude Opus 5 (best, ≈ €0.01 per opening)</option><option value="claude-sonnet-5">Claude Sonnet 5 (≈ €0.004)</option><option value="claude-haiku-4-5">Claude Haiku 4.5 (≈ €0.002)</option></select></div>
+                <div><label for="gAiCap" style="text-transform:none;letter-spacing:0;font-weight:600;">Daily limit</label>
+                  <input type="text" inputmode="numeric" id="gAiCap"></div>
+              </div>
+              <span class="hint" id="aiStatus">Checking the API key…</span>
+            </div>
             <div class="banner banner--bad" id="gErr" hidden style="margin-bottom:12px;"></div>
             <div class="actions">
               <button class="btn btn--primary" id="gSave">Save</button>
@@ -723,12 +734,13 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
 
     const fns = getFunctions(auth.app, 'us-central1');
     const callSend = httpsCallable(fns, 'outreachSend');
     const callAdmin = httpsCallable(fns, 'outreachAdmin');
     const callCampaign = httpsCallable(fns, 'outreachCampaign', { timeout: 300000 });
+    const callAi = httpsCallable(fns, 'outreachAi', { timeout: 120000 });
 
     // ── State ──────────────────────────────────────────────────
     let me = '', myOwner = null;
@@ -1247,7 +1259,21 @@
     }
 
     function setupCompose() {
-      $('varButtons').innerHTML = VARS.map(v => `<button type="button" class="var" data-var="${esc(v)}">{{${esc(v)}}}</button>`).join('');
+      $('varButtons').innerHTML = VARS.filter(v => !v.startsWith('ai.')).map(v => `<button type="button" class="var" data-var="${esc(v)}">{{${esc(v)}}}</button>`).join('')
+        + ' <button type="button" class="btn btn--ghost btn--sm" id="aiSuggest" title="Phase 4: an opening sentence written for this company from its Search CRM data (off until set up in Settings)">✨ Suggest an opening</button>';
+      $('aiSuggest').addEventListener('click', async () => {
+        if (!picked) { toast('Choose a company first.'); return; }
+        const b = $('aiSuggest'); b.disabled = true; b.textContent = '✨ Writing…';
+        try {
+          const tid = ($('cTpl').value || '').split('::')[0] || null;
+          const r = (await callAi({ action: 'opener', companyId: picked.id, templateId: tid })).data;
+          const ta = $('cBody');
+          ta.value = r.text + (ta.value.trim() ? '\n\n' + ta.value.replace(/^\s*\{\{\s*ai\.opener[^\n]*\n*/, '') : '');
+          renderPreview();
+          toast(r.cached ? 'Opening inserted (written earlier for this company). Read it before sending.' : 'Opening inserted. Read and edit it before sending.');
+        } catch (e) { toast(errText(e)); }
+        finally { b.disabled = false; b.textContent = '✨ Suggest an opening'; }
+      });
       $('varButtons').addEventListener('click', (e) => {
         const b = e.target.closest('[data-var]'); if (!b) return;
         const ta = $('cBody'); const ins = `{{${b.dataset.var}}}`;
@@ -1454,15 +1480,37 @@
         unsubscribeUrl: 'https://douropartners.pt/u/…',
       };
     }
+    // Same field syntax as the server (render.js scanTemplate): a fallback may
+    // contain fields, e.g. {{ai.opener|Escrevo-lhe sobre a {{company.shortName}}.}}
+    function scanTemplate(str, onField, onText) {
+      const src = String(str || '');
+      let out = '', i = 0;
+      while (i < src.length) {
+        const open = src.indexOf('{{', i);
+        if (open < 0) { out += onText(src.slice(i)); break; }
+        let depth = 0, j = open, close = -1;
+        while (j < src.length) {
+          if (src.startsWith('{{', j)) { depth++; j += 2; continue; }
+          if (src.startsWith('}}', j)) { depth--; if (depth === 0) { close = j; break; } j += 2; continue; }
+          j++;
+        }
+        if (close < 0) { out += onText(src.slice(i)); break; }
+        out += onText(src.slice(i, open));
+        const m = /^\s*([\w.]+)\s*(?:\|([\s\S]*))?$/.exec(src.slice(open + 2, close));
+        out += m ? onField(m[1], m[2] == null ? null : m[2].trim()) : onText(src.slice(open, close + 2));
+        i = close + 2;
+      }
+      return out;
+    }
     function renderVars(str, ctx) {
       const missing = [];
-      const html = esc(str).replace(/\{\{\s*([\w.]+)\s*(?:\|([^}]*))?\}\}/g, (all, path, fb) => {
+      const render = (x) => scanTemplate(x, (path, fb) => {
         const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), ctx);
         if (v != null && String(v).trim()) return esc(v);
-        if (fb != null) return esc(fb.trim());
+        if (fb != null) return render(fb);
         missing.push(path); return `<mark>{{${esc(path)}}}</mark>`;
-      });
-      return { html, missing };
+      }, esc);
+      return { html: render(str), missing };
     }
     function renderPreview() {
       if (!$('pvSubject')) return;
@@ -1757,7 +1805,7 @@
       $('setNav').addEventListener('click', (e) => { const b = e.target.closest('[data-sec]'); if (b) showSec(b.dataset.sec); });
       $('modalCancel').addEventListener('click', closeModal);
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
-      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gCampTest'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
+      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
       $('gSave').addEventListener('click', saveGeneral);
       $('gTrack').addEventListener('change', async (e) => {
         const on = e.target.checked;
@@ -1810,6 +1858,10 @@
       $('gAuto').value = s.automationBudget ?? 80;
       $('gPersonal').checked = s.blockPersonalDomains !== false;
       $('gTrack').checked = !!s.trackOpensClicks;
+      $('gAiOn').checked = !!s.aiEnabled;
+      $('gAiModel').value = s.aiModel || 'claude-opus-5';
+      $('gAiCap').value = s.aiDailyCap ?? 100;
+      loadAiStatus();
       $('gTestList').value = (s.testRecipients || []).join('\n');
       const win = s.sendWindow || { days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
       $('gDays').querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = (win.days || []).includes(Number(cb.value)); });
@@ -1817,6 +1869,18 @@
       const campTest = s.campaignTestRecipient || 'andrenorocha@gmail.com';
       const campOpts = [...new Set([campTest, ...(s.testRecipients || [])])].filter(e => !/@resend\.dev$/i.test(e));
       $('gCampTest').innerHTML = campOpts.map(e => `<option value="${esc(e)}"${e === campTest ? ' selected' : ''}>${esc(e)}</option>`).join('');
+    }
+
+    // Phase 4: whether the ANTHROPIC_API_KEY secret is set (the server says; the key never reaches the page).
+    let aiStatusLoaded = false;
+    async function loadAiStatus() {
+      if (aiStatusLoaded) return; aiStatusLoaded = true;
+      try {
+        const st = (await callAi({ action: 'status' })).data;
+        $('aiStatus').innerHTML = st.keyConfigured
+          ? `API key set. ${num(st.usedToday)} of ${num(st.cap)} openings written today.`
+          : 'No API key yet — create one at console.anthropic.com and store it as the <code>ANTHROPIC_API_KEY</code> secret (firebase functions:secrets:set ANTHROPIC_API_KEY), then redeploy. Until then this stays off.';
+      } catch (e) { $('aiStatus').textContent = 'AI status unavailable (the outreachAi function may not be deployed yet).'; }
     }
 
     async function saveGeneral() {
@@ -1833,11 +1897,14 @@
       if (!days.length) { err.textContent = 'Pick at least one day for the sending window.'; err.hidden = false; return; }
       if (!wFrom || !wTo || wFrom >= wTo) { err.textContent = 'The sending window needs a start time before its end time.'; err.hidden = false; return; }
       const campTest = $('gCampTest').value;
+      const aiCap = parseInt($('gAiCap').value, 10);
+      if (!(aiCap >= 0 && aiCap <= 2000)) { err.textContent = 'AI daily limit must be between 0 and 2,000.'; err.hidden = false; return; }
       if (campTest && !list.includes(campTest)) { err.textContent = `The campaign test address (${campTest}) must be on the approved list.`; err.hidden = false; return; }
       await setDoc(doc(db, 'outreachSettings', 'global'), {
         dailyTarget: target, automationBudget: auto, blockPersonalDomains: $('gPersonal').checked,
         testRecipients: list, sendWindow: { days, from: wFrom, to: wTo, tz: 'Europe/Lisbon' },
         ...(campTest ? { campaignTestRecipient: campTest } : {}),
+        aiEnabled: $('gAiOn').checked, aiModel: $('gAiModel').value, aiDailyCap: aiCap,
         updatedAt: serverTimestamp(), updatedBy: me,
       }, { merge: true });
       generalDirty = false;
@@ -2852,11 +2919,12 @@
     }
     // Plain-text fill (for text to copy, WhatsApp links and letters).
     function fillText(str, ctx) {
-      return String(str || '').replace(/\{\{\s*([\w.]+)\s*(?:\|([^}]*))?\}\}/g, (all, path, fb) => {
+      const render = (x) => scanTemplate(x, (path, fb) => {
         const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), ctx);
         if (v != null && String(v).trim()) return String(v);
-        return fb != null ? fb.trim() : `[${path}]`;
-      });
+        return fb != null ? render(fb) : `[${path}]`;
+      }, (t) => t);
+      return render(str);
     }
     function taskTemplateText(t, c) {
       const tpl = templatesAll.find(x => x.id === t.templateId);

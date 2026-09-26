@@ -140,7 +140,7 @@ async function prepareEmail(opts) {
 
   // ── Content ──
   const unsubscribeUrl = UNSUBSCRIBE_BASE_URL + makeUnsubToken(messageId, UNSUBSCRIBE_SECRET.value());
-  const ctx = buildContext({ company: company || {}, contactName, sender, unsubscribeUrl });
+  const ctx = buildContext({ company: company || {}, contactName, sender, unsubscribeUrl, aiOpener: opts.aiOpener || "" });
 
   let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null;
   if (opts.templateId) {

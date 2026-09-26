@@ -132,6 +132,14 @@ ok("html: blockquote before footer", withQ.html.indexOf("<blockquote") > 0 && wi
 ok("long quote capped", r.buildQuote({ date: new Date(), fromName: "", fromEmail: "a@b.pt", text: "linha\n".repeat(3000) }).text.endsWith("[…]"));
 ok("empty quote -> null", r.buildQuote({ date: new Date(), fromEmail: "a@b.pt", text: "  " }) === null);
 
+// Nested fallbacks (Phase 4: {{ai.opener|… {{company.shortName}} …}})
+const nctx = { company: { shortName: "Silva" }, ai: { opener: "" }, contact: { firstName: "" } };
+ok("fallback with a field inside", r.renderTemplate("{{ai.opener|Escrevo-lhe sobre a {{company.shortName}}.}} Resto", nctx).text === "Escrevo-lhe sobre a Silva. Resto");
+ok("value wins over a nested fallback", r.renderTemplate("{{company.shortName|x {{ai.opener}}}}", nctx).text === "Silva");
+ok("missing field inside a fallback is reported", r.renderTemplate("{{ai.opener|Olá {{contact.firstName}}}}", nctx).missing.join() === "contact.firstName");
+ok("unclosed braces left as text", r.renderTemplate("Olá {{company.shortName", nctx).text === "Olá {{company.shortName");
+ok("fallback can contain a single }", r.renderTemplate("{{ai.opener|a } b}}", nctx).text === "a } b");
+
 // Phase 3a — email name
 ok("email name: typed name wins", r.emailNameOf({ emailName: " Silva & Filhos ", akaName: "SILVA", name: "METALURGICA SILVA, LDA" }) === "Silva & Filhos");
 ok("email name: Orbis 'also known as' next, cleaned", r.emailNameOf({ akaName: "TEXTEIS DO NORTE, S.A.; TN", name: "TN - TEXTEIS DO NORTE E COMERCIO, S.A." }) === "Texteis do Norte");

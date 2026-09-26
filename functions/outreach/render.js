@@ -51,7 +51,7 @@ function firstName(full) {
 }
 
 // Variables a template may use, resolved from the company, contact and sender.
-function buildContext({ company = {}, contactName = "", sender = {}, unsubscribeUrl = "" }) {
+function buildContext({ company = {}, contactName = "", sender = {}, unsubscribeUrl = "", aiOpener = "" }) {
   return {
     company: {
       name: company.name || "",
@@ -63,21 +63,46 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
     contact: { firstName: firstName(contactName) },
     sender: { firstName: firstName(sender.displayName), signature: sender.signature || "" },
     unsubscribeUrl,
+    ai: { opener: aiOpener || "" }, // Phase 4 — written per company, only in approval steps
   };
 }
 
 // {{company.name}} or {{contact.firstName|Olá}} (fallback after the pipe).
 // Returns the rendered text plus the variables that resolved to empty with no
 // fallback — the send is refused if any are missing (spec §7.2).
+// A fallback may itself contain fields — {{ai.opener|Escrevo-lhe sobre a
+// {{company.shortName}}.}} — so fields are matched with nesting, not a regex.
+function scanTemplate(str, onField) {
+  const s = String(str || "");
+  let out = "", i = 0;
+  while (i < s.length) {
+    const open = s.indexOf("{{", i);
+    if (open < 0) { out += s.slice(i); break; }
+    let depth = 0, j = open, close = -1;
+    while (j < s.length) {
+      if (s.startsWith("{{", j)) { depth++; j += 2; continue; }
+      if (s.startsWith("}}", j)) { depth--; if (depth === 0) { close = j; break; } j += 2; continue; }
+      j++;
+    }
+    if (close < 0) { out += s.slice(i); break; }
+    out += s.slice(i, open);
+    const m = /^\s*([\w.]+)\s*(?:\|([\s\S]*))?$/.exec(s.slice(open + 2, close));
+    out += m ? onField(m[1], m[2] == null ? null : m[2].trim()) : s.slice(open, close + 2);
+    i = close + 2;
+  }
+  return out;
+}
+
 function renderTemplate(str, ctx) {
   const missing = [];
-  const text = String(str || "").replace(/\{\{\s*([\w.]+)\s*(?:\|([^}]*))?\}\}/g, (all, path, fallback) => {
+  const render = (src) => scanTemplate(src, (path, fallback) => {
     const value = path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), ctx);
     if (value != null && String(value).trim() !== "") return String(value);
-    if (fallback != null) return fallback.trim();
+    if (fallback != null) return render(fallback);
     missing.push(path);
     return "";
   });
+  const text = render(str);
   return { text, missing: [...new Set(missing)] };
 }
 

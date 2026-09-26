@@ -63,6 +63,9 @@ const DEFAULT_SETTINGS = {
   campaignTestRecipient: "andrenorocha@gmail.com", // test mode: every campaign email goes here (C10); must be on the list above
   blockPersonalDomains: true,
   complianceBlockId: null, // required once testMode is off (spec §10)
+  aiEnabled: false,          // Phase 4: {{ai.opener}} — also needs the ANTHROPIC_API_KEY secret
+  aiModel: "claude-opus-5",
+  aiDailyCap: 100,
 };
 
 const DEFAULT_SENDER_CAP = 25; // per-address daily limit for new outreach (Q13)

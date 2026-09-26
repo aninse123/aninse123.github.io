@@ -26,6 +26,7 @@ const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience } = require("./campaigns");
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
+const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
 const { lisbonParts, isWindowOpen, addWait, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -290,6 +291,16 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       const tpl = templates.get(step.templateId);
       const variantKey = approved?.variantKey || e.variants?.[step.id] || pickVariant(step.variants, tpl?.variants, rand());
       const isFollowUp = e.currentStep > 0 && e.threadId && !step.newSubject;
+      // Phase 4: {{ai.opener}} is written only for drafts (a person approves
+      // it). If AI isn't available the field stays empty — the template's
+      // fallback ({{ai.opener|…}}) is used, or the company pauses with the reason.
+      let aiOpener = "";
+      const variantBody = ((tpl?.variants || []).find((v) => v.key === variantKey) || (tpl?.variants || [])[0] || {}).body || "";
+      if (wantsDraft && /\{\{\s*ai\.opener/.test(variantBody)) {
+        try {
+          aiOpener = (await getOpener({ companyId: e.companyId, templateId: step.templateId, templateBody: variantBody, settings, apiKey: ANTHROPIC_API_KEY.value() })).text;
+        } catch (aiErr) { logger.warn("outreachScheduler: AI opener unavailable", { enrolmentId, reason: aiErr.details?.reason || aiErr.message }); }
+      }
       // Phase 3b "Send to": chosen once (first email of the company) and kept.
       let recipient = e.recipient || null;
       if (!isFollowUp && !recipient && (campaign.recipientPolicy || "company") !== "company") {
@@ -302,6 +313,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         threadId: isFollowUp ? e.threadId : null,
         companyId: e.companyId, senderId,
         recipient: isFollowUp ? null : recipient,
+        aiOpener,
         templateId: step.templateId, variantKey,
         // Approved drafts go out as approved (edited subject/body included);
         // every check still runs again now.
@@ -358,7 +370,7 @@ exports.outreachScheduler = onSchedule({
   region: REGION,
   schedule: "every 10 minutes",
   timeZone: "Europe/Lisbon",
-  secrets: [RESEND_SEND_KEY, UNSUBSCRIBE_SECRET],
+  secrets: [RESEND_SEND_KEY, UNSUBSCRIBE_SECRET, ANTHROPIC_API_KEY],
   timeoutSeconds: 540,
   retryCount: 0, // the next run picks up whatever this one left
 }, async () => {

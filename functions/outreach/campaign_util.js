@@ -208,6 +208,11 @@ function activationProblems(campaign, templatesById) {
     if (t && kind && templateKind(t) !== kind) { problems.push(`${s.name}: template "${t.name}" is a ${templateKind(t)} template, not a ${kind} template.`); continue; }
     if (!t) { problems.push(`${s.name}: its template no longer exists.`); continue; }
     if (t.status !== "active") problems.push(`${s.name}: template "${t.name}" isn't active.`);
+    // Phase 4 safety default: AI text only where a person approves it.
+    const approval = (s.approval === "inherit" || !s.approval) ? campaign.approvalDefault : s.approval;
+    if (s.channel === "email" && approval === "auto" && (t.variants || []).some((v) => /\{\{\s*ai\.opener/.test(v.body || "") || /\{\{\s*ai\.opener/.test(v.subject || ""))) {
+      problems.push(`${s.name}: template "${t.name}" uses {{ai.opener}} — set this step to "Needs approval" so a person reads the AI text before it goes out.`);
+    }
     const keys = (t.variants || []).map((v) => v.key);
     const missing = (s.variants || []).filter((v) => v.weight > 0 && !keys.includes(v.key)).map((v) => v.key);
     if (missing.length) problems.push(`${s.name}: template "${t.name}" has no variant ${missing.join(", ")}.`);

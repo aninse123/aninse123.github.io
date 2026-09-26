@@ -16,7 +16,7 @@ function liftFn(name) {
 const liftToClose = (name) => { const i = page.indexOf(`function ${name}(`); if (i < 0) throw new Error(name); const m = /\r?\n    \}\r?\n/.exec(page.slice(i)); return page.slice(i, i + m.index + m[0].length); };
 const line = (a) => { const i = page.indexOf(a); if (i < 0) throw new Error(a); return page.slice(i, page.indexOf('\n', i)); };
 const ctx = {}; vm.createContext(ctx);
-vm.runInContext([liftFn('waNumber'), line('const isMobilePt = (n) =>'), liftToClose('fillText'), 'globalThis.api = { waNumber, isMobilePt, fillText };'].join('\n'), ctx);
+vm.runInContext([liftFn('waNumber'), line('const isMobilePt = (n) =>'), liftToClose('scanTemplate'), liftToClose('fillText'), 'globalThis.api = { waNumber, isMobilePt, fillText };'].join('\n'), ctx);
 const { waNumber, isMobilePt, fillText } = ctx.api;
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 ok('PT mobile/landline → 351 prefix', waNumber('912 345 678') === '351912345678' && waNumber('226 000 000') === '351226000000');
@@ -24,5 +24,6 @@ ok('+ and 00 prefixes kept as international', waNumber('+34 600 111 222') === '3
 ok('too short → no link', waNumber('1234') === null && waNumber('') === null);
 ok('PT mobile detection (9…, with or without 351)', isMobilePt('912345678') && isMobilePt('+351 961 234 567') && !isMobilePt('226000000'));
 const c = { company: { shortName: 'Silva', city: '' }, sender: { firstName: 'André' } };
+ok('fillText: nested fallback (Phase 4)', fillText('{{ai.opener|Escrevo sobre a {{company.shortName}}.}}', c) === 'Escrevo sobre a Silva.');
 ok('fillText: variables, fallback, missing marked', fillText('Olá {{company.shortName}}, {{company.city|no Norte}} — {{sender.firstName}} {{x.y}}', c) === 'Olá Silva, no Norte — André [x.y]');
 console.log(fail ? `\n${fail} FAILED` : '\nall task helper tests passed'); process.exit(fail ? 1 : 0);
