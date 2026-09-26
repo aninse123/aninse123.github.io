@@ -2812,7 +2812,7 @@
           const pv = (await callCampaign({ action: 'previewPeople', campaignId: c.id, people })).data;
           const exc = Object.entries(pv.excluded).map(([k, n]) => `${num(n)} ${esc({ no_email: 'invalid address', already_in_campaign: 'already in this campaign', suppressed: 'on the suppression list', unsubscribed: 'unsubscribed from this campaign', contacted_recently: 'emailed recently' }[k] || k)}`).join(', ');
           setTimeout(() => openModal(`Add people to "${c.name}"`, `<dl class="summary"><dt>Selected</dt><dd>${num(pv.requested)}</dd><dt>Can be added</dt><dd><b>${num(pv.eligible)}</b></dd><dt>Excluded</dt><dd>${exc || '0'}</dd></dl>
-            <p class="note">At ${num(pv.perDay)} a day, everyone gets the first email within about <b>${num(Math.max(1, pv.daysToStart))}</b> sending day${pv.daysToStart === 1 ? '' : 's'}${c.status === 'draft' ? ' once the campaign is started' : ''}.</p>`,
+            <p class="note">${pv.eligible ? `At ${num(pv.perDay)} a day, everyone gets the first email within about <b>${num(Math.max(1, pv.daysToStart))}</b> sending day${Math.max(1, pv.daysToStart) === 1 ? '' : 's'}${c.status === 'draft' ? ' once the campaign is started' : ''}.` : 'Nobody can be added from this selection.'}</p>`,
             async () => {
               if (!pv.eligible) return true;
               const r = (await callCampaign({ action: 'enrolPeople', campaignId: c.id, people, source: info })).data;
