@@ -132,6 +132,12 @@ ok("html: blockquote before footer", withQ.html.indexOf("<blockquote") > 0 && wi
 ok("long quote capped", r.buildQuote({ date: new Date(), fromName: "", fromEmail: "a@b.pt", text: "linha\n".repeat(3000) }).text.endsWith("[…]"));
 ok("empty quote -> null", r.buildQuote({ date: new Date(), fromEmail: "a@b.pt", text: "  " }) === null);
 
+// Phase 3a — email name
+ok("email name: typed name wins", r.emailNameOf({ emailName: " Silva & Filhos ", akaName: "SILVA", name: "METALURGICA SILVA, LDA" }) === "Silva & Filhos");
+ok("email name: Orbis 'also known as' next, cleaned", r.emailNameOf({ akaName: "TEXTEIS DO NORTE, S.A.; TN", name: "TN - TEXTEIS DO NORTE E COMERCIO, S.A." }) === "Texteis do Norte");
+ok("email name: '-' / n.a. ignored, legal name used", r.emailNameOf({ akaName: "n.a.", name: "DIMEXA - DISTRIBUICAO, LDA" }) === "Dimexa" && r.emailNameOf({ akaName: "-", name: "SUE, LDA" }) === "SUE");
+ok("email name feeds {{company.shortName}}", r.buildContext({ company: { emailName: "Farmácia Sá da Bandeira", name: "FARMACIA SA DA BANDEIRA, S.A." } }).company.shortName === "Farmácia Sá da Bandeira");
+
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASSED");
 process.exit(fail ? 1 : 0);
 })();

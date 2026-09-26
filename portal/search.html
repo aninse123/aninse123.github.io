@@ -644,6 +644,8 @@
       <div class="form-group"><label>Website</label><input type="text" class="field" id="cWebsite"></div>
       <div class="form-group"><label>LinkedIn URL</label><input type="text" class="field" id="cLinkedin"></div>
     </div>
+    <div class="form-group"><label>Email name <span class="opt">(how emails and letters name the company — {{company.shortName}})</span></label><input type="text" class="field" id="cEmailName" maxlength="80">
+      <div style="font-size:0.74rem;color:var(--text-light);margin-top:3px;" id="cEmailNameHint"></div></div>
     <div class="form-row">
       <div class="form-group"><label>Company Email <span class="opt">(general)</span></label><input type="text" class="field" id="cCompanyEmail"></div>
       <div class="form-group"><label>Company Phone</label><input type="text" class="field" id="cCompanyPhone"></div>
@@ -3523,6 +3525,7 @@ function renderLegalCompliance(c){
         <div class="info-row"><span class="k">Size classification</span><span class="v">${esc(c.sizeClassification||'—')}</span></div>
         <div class="info-row"><span class="k">Previous company name</span><span class="v">${esc(c.previousCompanyName||'—')}</span></div>
         <div class="info-row"><span class="k">Also known as</span><span class="v">${esc(c.akaName||'—')}</span></div>
+        <div class="info-row"><span class="k">Email name</span><span class="v">${esc(c.emailName || autoEmailName(c))}${c.emailName ? '' : ' <span style="color:var(--text-light);font-size:0.75rem;">(automatic)</span>'}</span></div>
         <div class="info-row"><span class="k">Orbis release date</span><span class="v">${c.orbisReleaseDate?fmtDate(c.orbisReleaseDate):'—'}</span></div>
       </div>
       <div class="card">
@@ -8852,7 +8855,7 @@ async function changeStage(newStage){
 function openNewCompany(){
   editCoId = null;
   document.getElementById('companyModalTitle').textContent = 'New Company';
-  ['cName','cNif','cLegalForm','cYearFounded','cWebsite','cLinkedin','cCompanyEmail','cCompanyPhone','cDescription','cSector','cSubSector','cNaceCode','cNaceDesc','cCaeCode','cCaeDesc','cAuditingFirm','cBvdId','cIndependence','cGuo','cConcelho','cPostcode','cHqAddress','cNuts2','cNuts3','cCountries'].forEach(id=>document.getElementById(id).value='');
+  ['cName','cNif','cLegalForm','cYearFounded','cWebsite','cLinkedin','cEmailName','cCompanyEmail','cCompanyPhone','cDescription','cSector','cSubSector','cNaceCode','cNaceDesc','cCaeCode','cCaeDesc','cAuditingFirm','cBvdId','cIndependence','cGuo','cConcelho','cPostcode','cHqAddress','cNuts2','cNuts3','cCountries'].forEach(id=>document.getElementById(id).value='');
   ['cOwnershipType','cSuccession','cStage','cPriority','cOwner','cSourceType','cReasonExcluded'].forEach(id=>{ const el=document.getElementById(id); el.value = id==='cStage'?'universe':''; });
   document.getElementById('cMultinational').checked = false;
   document.querySelectorAll('.cRegion').forEach(cb=>cb.checked=false);
@@ -8867,6 +8870,8 @@ function openEditCompany(){
   const set = (id,v)=>document.getElementById(id).value = v??'';
   set('cName',c.name); set('cNif',c.nif); set('cLegalForm',c.legalForm); set('cYearFounded',c.yearFounded);
   set('cWebsite',c.website); set('cLinkedin',c.linkedinUrl); set('cCompanyEmail',c.companyEmail); set('cCompanyPhone',c.companyPhone);
+  set('cEmailName',c.emailName);
+  document.getElementById('cEmailNameHint').textContent = `Leave empty to use: "${autoEmailName(c)}"${c.akaName ? ' (from Orbis "Also known as")' : ' (from the legal name)'}.`;
   set('cDescription',c.description); set('cSector',c.sector); set('cSubSector',c.subSector);
   set('cNaceCode',c.naceCode); set('cNaceDesc',c.naceDescription); set('cCaeCode',c.caeCode); set('cCaeDesc',c.caeDescription);
   set('cAuditingFirm',c.auditingFirm); set('cBvdId',c.bvdId); set('cIndependence',c.independenceIndicator); set('cGuo',c.guoName);
@@ -8904,6 +8909,7 @@ async function saveCompany(){
   const data = {
     name, nif:v('cNif')||null, legalForm:v('cLegalForm')||null, yearFounded:num(v('cYearFounded'))||null,
     website:v('cWebsite')||null, linkedinUrl:v('cLinkedin')||null, companyEmail:v('cCompanyEmail')||null, companyPhone:v('cCompanyPhone')||null,
+    emailName:v('cEmailName')||null,
     description:v('cDescription')||null, sector:v('cSector')||null, subSector:v('cSubSector')||null,
     naceCode:v('cNaceCode')||null, naceDescription:v('cNaceDesc')||null, caeCode:v('cCaeCode')||null, caeDescription:v('cCaeDesc')||null,
     auditingFirm:v('cAuditingFirm')||null, bvdId:v('cBvdId')||null, independenceIndicator:v('cIndependence')||null, guoName:v('cGuo')||null,
@@ -9271,6 +9277,23 @@ async function openAddToCampaign(opts){
       next.textContent = preview ? 'Add companies' : 'Check companies';
     }
   };
+}
+
+// Email name (Phase 3a): same rule as the Outreach server (render.js emailNameOf).
+const EN_SMALL = new Set(['de','da','do','das','dos','e','a','o','em','para','com']);
+function enTitle(s){ return s.toLowerCase().split(/(\s+)/).map((w,i)=>{ if(!w.trim()) return w; if(i>0 && EN_SMALL.has(w)) return w; return w.split('-').map(p=>p.charAt(0).toUpperCase()+p.slice(1)).join('-'); }).join(''); }
+function enShort(name){
+  const n = String(name||'').trim();
+  let s = n.replace(/[\s,]*(,?\s*(unipessoal|sociedade unipessoal)?\s*,?\s*(lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i, '').replace(/[\s,-]+$/, '').trim() || n;
+  const brand = s.split(/\s+[-–—]\s+/)[0].trim();
+  if (brand.length >= 2) s = brand;
+  if (s === s.toUpperCase() && /\p{Lu}/u.test(s) && !(/^\S+$/.test(s) && s.replace(/[^\p{L}]/gu, '').length <= 4)) s = enTitle(s);
+  return s;
+}
+function autoEmailName(c){
+  const aka = String(c?.akaName||'').split(/[;\n|]/)[0].trim();
+  if (aka && aka !== '-' && !/^n\.?a\.?$/i.test(aka)) return enShort(aka);
+  return enShort(c?.name);
 }
 
 // ── Company timeline: current campaign step + what's planned (Phase 2b §8.3) ──

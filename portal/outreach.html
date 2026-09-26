@@ -1347,11 +1347,19 @@
       if (s === s.toUpperCase() && /\p{Lu}/u.test(s) && !(/^\S+$/.test(s) && s.replace(/[^\p{L}]/gu, '').length <= 4)) s = titleCasePt(s);
       return s;
     }
+    // Same rule as functions/outreach/render.js emailNameOf() (Phase 3a).
+    function emailNameOf(c) {
+      const typed = String(c?.emailName || '').trim();
+      if (typed) return typed;
+      const aka = String(c?.akaName || '').split(/[;\n|]/)[0].trim();
+      if (aka && aka !== '-' && !/^n\.?a\.?$/i.test(aka)) return shortName(aka);
+      return shortName(c?.name);
+    }
     function ctxFor() {
       const s = senders.find(x => x.id === $('cFrom').value) || {};
       const c = picked || {};
       return {
-        company: { name: c.name || '', shortName: shortName(c.name), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '' },
+        company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '' },
         contact: { firstName: '' },
         sender: { firstName: String(s.displayName || '').split(' ')[0], signature: s.signature || '' },
         unsubscribeUrl: 'https://douropartners.pt/u/…',
@@ -2732,7 +2740,7 @@
     function coCtx(c, assignee) {
       const full = OWNER_FULL[assignee] || OWNER_FULL[myOwner] || '';
       return {
-        company: { name: c?.name || '', shortName: shortName(c?.name), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '' },
+        company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '' },
         contact: { firstName: '' },
         sender: { firstName: full.split(' ')[0] || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
         unsubscribeUrl: '',
@@ -2765,7 +2773,7 @@
     function contactBox(t, c) {
       const lines = [];
       const ch = t.channel;
-      const cName = shortName(c?.name);
+      const cName = emailNameOf(c);
       if (['call', 'whatsapp', 'visit', 'other'].includes(ch) && c?.companyPhone) {
         lines.push(`Company line: <a href="${esc(telHref(c.companyPhone))}">${esc(c.companyPhone)}</a>${isMobilePt(c.companyPhone) ? ' <span class="pill pill--warn" title="A mobile number may be a person\'s own phone — same consent rule as email (D3)">mobile</span>' : ''}`);
       }

@@ -35,6 +35,17 @@ function shortCompanyName(name) {
   return s;
 }
 
+// The name used inside emails, {{company.shortName}} (Phase 3a, Q16): the
+// "email name" typed in the Search CRM, else Orbis "Also known as" (first
+// one, cleaned like the legal name), else the short form of the legal name.
+function emailNameOf(company = {}) {
+  const typed = String(company.emailName || "").trim();
+  if (typed) return typed;
+  const aka = String(company.akaName || "").split(/[;\n|]/)[0].trim();
+  if (aka && aka !== "-" && !/^n\.?a\.?$/i.test(aka)) return shortCompanyName(aka);
+  return shortCompanyName(company.name);
+}
+
 function firstName(full) {
   return String(full || "").trim().split(/\s+/)[0] || "";
 }
@@ -44,7 +55,7 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
   return {
     company: {
       name: company.name || "",
-      shortName: shortCompanyName(company.name),
+      shortName: emailNameOf(company),
       city: company.city || company.concelho || "",
       sector: company.sector || "",
       cae: company.caeDescription || company.caeCode || "",
@@ -133,4 +144,4 @@ function replySubject(subject) {
   return /^(re|res|ref)\s*:/i.test(s) ? s : `Re: ${s}`;
 }
 
-module.exports = { shortCompanyName, firstName, buildContext, renderTemplate, buildPlainEmail, buildQuote, quoteHeader, replySubject, TEST_FOOTER };
+module.exports = { shortCompanyName, emailNameOf, firstName, buildContext, renderTemplate, buildPlainEmail, buildQuote, quoteHeader, replySubject, TEST_FOOTER };
