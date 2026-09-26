@@ -5,7 +5,9 @@
 // Send.
 //
 // Request data:
-//   new thread : { companyId, senderId, to?, templateId?, variantKey?, subject?, body?, confirmOverTarget?, requestId? }
+//   new thread : { companyId, senderId, to?, recipient?: { email }, templateId?, variantKey?, subject?, body?, confirmOverTarget?, requestId? }
+//                (recipient = the company address, a contact or a linked person — Phase 3b;
+//                 in test mode `to` is the approved test address)
 //   reply      : { threadId, body, senderId?, confirmOverTarget?, requestId? }
 // `to` defaults to the company's companyEmail (Phase 1 recipient, Q10).
 // `requestId` (optional) becomes the message id, so a retried call is a no-op.
@@ -46,6 +48,7 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUB
     callerEmail, settings, messageRef,
     threadId: input.threadId || null,
     companyId: input.companyId, senderId: input.senderId, to: input.to,
+    recipient: isReply ? null : (input.recipient || null),
     templateId: isReply ? null : input.templateId, variantKey: input.variantKey,
     subject: isReply ? null : input.subject, body: input.body,
     confirmOverTarget: !!input.confirmOverTarget,

@@ -25,6 +25,7 @@ const store = require("./store");
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience } = require("./campaigns");
 const { stepTaskId } = require("./task_util");
+const { companyRecipients, pickByPolicy } = require("./recipients");
 const { lisbonParts, isWindowOpen, addWait, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -267,10 +268,18 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       const tpl = templates.get(step.templateId);
       const variantKey = approved?.variantKey || e.variants?.[step.id] || pickVariant(step.variants, tpl?.variants, rand());
       const isFollowUp = e.currentStep > 0 && e.threadId && !step.newSubject;
+      // Phase 3b "Send to": chosen once (first email of the company) and kept.
+      let recipient = e.recipient || null;
+      if (!isFollowUp && !recipient && (campaign.recipientPolicy || "company") !== "company") {
+        const co = await db().doc(`searchCompanies/${e.companyId}`).get();
+        const pick = co.exists ? pickByPolicy(await companyRecipients(e.companyId, co.data()), campaign.recipientPolicy) : null;
+        if (pick) { recipient = { email: pick.email, name: pick.name || "", kind: pick.kind }; await doc.ref.update({ recipient }); }
+      }
       const p = await prepareEmail({
         callerEmail: "scheduler", settings, messageRef,
         threadId: isFollowUp ? e.threadId : null,
         companyId: e.companyId, senderId,
+        recipient: isFollowUp ? null : recipient,
         templateId: step.templateId, variantKey,
         // Approved drafts go out as approved (edited subject/body included);
         // every check still runs again now.

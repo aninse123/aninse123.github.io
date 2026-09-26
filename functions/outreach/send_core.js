@@ -20,6 +20,7 @@ const { normEmail, domainOf, isFreeMail, isValidEmail, isTestRecipient, checkMx,
 const { buildContext, renderTemplate, buildPlainEmail, buildQuote, replySubject, TEST_FOOTER } = require("./render");
 const { sendEmail, ResendError } = require("./resend");
 const store = require("./store");
+const { companyRecipients } = require("./recipients");
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -38,6 +39,10 @@ function fail(code, reason, message, extra = {}) {
 //                              campaign follow-ups set it although they are replies
 //   redirectTo               → test mode only: campaign emails go to this approved
 //                              address instead of the company (C10 rehearsal)
+//   recipient                → Phase 3b: { email } of the person to write to (the company
+//                              address, a contact or a linked person). Checked against the
+//                              company's own list; fills {{contact.firstName}}. In test mode
+//                              the email still goes to the test address (`to` / redirectTo).
 async function prepareEmail(opts) {
   const { callerEmail, settings, messageRef } = opts;
   const isReply = !!opts.threadId;
@@ -80,9 +85,23 @@ async function prepareEmail(opts) {
   if (countsAsOutreach && sender.status !== "active") fail("failed-precondition", "sender_not_active", `${senderId} is ${sender.status} — only active addresses can start new outreach.`);
   if (["warming", "retired"].includes(sender.status)) fail("failed-precondition", "sender_not_usable", `${senderId} is ${sender.status}.`);
 
+  // ── Who (Phase 3b): the chosen recipient must be the company's address,
+  // one of its contacts or a person linked to it — so the personal-domain
+  // rule can't be skipped by labelling any address a "contact".
+  let recipient = null;
+  if (!isReply && opts.recipient?.email && company) {
+    const want = normEmail(opts.recipient.email);
+    recipient = (await companyRecipients(companyId, company)).find((r) => r.email === want) || null;
+    if (!recipient) fail("invalid-argument", "recipient_not_found", `${want} isn't this company's address, one of its contacts or a person linked to it.`);
+  }
+  const contactName = isReply ? (thread.contactName || "") : (recipient?.kind !== "company" ? (recipient?.name || "") : "");
+
   // ── Recipient checks ──
   const redirect = isTest && opts.redirectTo ? normEmail(opts.redirectTo) : null;
-  const to = normEmail(isReply ? thread.contactEmail : (redirect || opts.to || company?.companyEmail));
+  const intended = normEmail(isReply ? thread.contactEmail : (recipient ? recipient.email : (opts.to || company?.companyEmail)));
+  // Test mode: the email goes to the approved test address; the intended
+  // recipient is only used for the wording and recorded as redirectedFrom.
+  const to = normEmail(isReply ? thread.contactEmail : (redirect || (isTest && recipient ? (opts.to || intended) : intended)));
   if (!isValidEmail(to)) fail("invalid-argument", "bad_recipient", to ? `"${to}" is not a valid email address.` : "This company has no email address.");
   const toDomain = domainOf(to);
   const testAllowed = isTestRecipient(to, settings.testRecipients);
@@ -91,7 +110,14 @@ async function prepareEmail(opts) {
   const suppressed = await store.findSuppression(to);
   if (suppressed) fail("failed-precondition", "suppressed", `${to} is on the suppression list (${suppressed.reason}).`);
 
-  if (settings.blockPersonalDomains && isFreeMail(toDomain) && !testAllowed) {
+  // Person-level recipients may use any address (André, 2026-09-26: R3 — flag
+  // recorded for CCSL); the company address keeps the personal-domain setting.
+  // A reply keeps the conversation's recipient kind; a reply you type (not a
+  // campaign follow-up) answers someone who wrote to us, so it isn't blocked.
+  const personLevel = recipient ? recipient.kind !== "company"
+    : isReply && (["contact", "person"].includes(thread.recipientKind) || !countsAsOutreach);
+  const personalAddress = isFreeMail(domainOf(intended));
+  if (settings.blockPersonalDomains && isFreeMail(toDomain) && !testAllowed && !personLevel) {
     fail("failed-precondition", "personal_domain", `${toDomain} is a personal email domain — blocked while personal domains are off (legal rule for natural persons).`);
   }
 
@@ -114,7 +140,7 @@ async function prepareEmail(opts) {
 
   // ── Content ──
   const unsubscribeUrl = UNSUBSCRIBE_BASE_URL + makeUnsubToken(messageId, UNSUBSCRIBE_SECRET.value());
-  const ctx = buildContext({ company: company || {}, contactName: "", sender, unsubscribeUrl });
+  const ctx = buildContext({ company: company || {}, contactName, sender, unsubscribeUrl });
 
   let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null;
   if (opts.templateId) {
@@ -182,7 +208,10 @@ async function prepareEmail(opts) {
   return {
     callerEmail, settings, isReply, isTest, messageRef, messageId, threadRef, thread, companyId, company,
     senderId, sender, to, toDomain, subject: subject.text, bodyText: body.text, text, html, headers,
-    templateId, variantKey, countsAsOutreach, redirectedFrom: redirect ? normEmail(company?.companyEmail) || null : null,
+    templateId, variantKey, countsAsOutreach,
+    redirectedFrom: isTest && intended && intended !== to ? intended : null,
+    contactName, recipientKind: isReply ? (thread.recipientKind || null) : (recipient?.kind || "company"),
+    recipientPersonId: recipient?.personId || null, personalAddress: !isReply && personalAddress,
   };
 }
 
@@ -197,7 +226,8 @@ async function deliverEmail(p, { campaign = null } = {}) {
   const batch = db().batch();
   if (!isReply) {
     batch.set(threadRef, {
-      companyId, companyName: company?.name || null, contactEmail: to, contactDomain: toDomain, contactName: "",
+      companyId, companyName: company?.name || null, contactEmail: to, contactDomain: toDomain, contactName: p.contactName || "",
+      recipientKind: p.recipientKind, recipientPersonId: p.recipientPersonId, personalAddress: !!p.personalAddress,
       senderId, owner, subject: p.subject, status: "open", unread: false, unmatched: false,
       lastMessageAt: now, lastDirection: "out", rfcIds: [], lastInboundRfcId: null,
       templateId: p.templateId, variantKey: p.variantKey,
@@ -215,6 +245,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
     templateId: p.templateId, variantKey: p.variantKey, senderId, sentBy: p.callerEmail, source,
     campaignId: campaign?.campaignId || null, enrolmentId: campaign?.enrolmentId || null, stepId: campaign?.stepId || null,
     redirectedFrom: p.redirectedFrom, approvedBy: campaign?.approvedBy || null,
+    recipientKind: p.recipientKind, personalAddress: !!p.personalAddress,
     status: "queued", events: [], attachments: [], isAutoReply: false, isTest, createdAt: now,
   });
   await batch.commit();
@@ -291,6 +322,7 @@ async function saveDraft(p, { campaign }) {
     templateId: p.templateId, variantKey: p.variantKey, senderId: p.senderId, source: "campaign",
     campaignId: campaign.campaignId, enrolmentId: campaign.enrolmentId, stepId: campaign.stepId,
     redirectedFrom: p.redirectedFrom, isReply: p.isReply,
+    recipient: p.isReply ? null : { email: p.redirectedFrom || p.to, name: p.contactName || "", kind: p.recipientKind, personal: !!p.personalAddress },
     status: "draft", events: [], attachments: [], isAutoReply: false, isTest: p.isTest,
     createdAt: FieldValue.serverTimestamp(), createdBy: p.callerEmail,
   });

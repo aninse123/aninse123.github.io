@@ -94,6 +94,7 @@ async function evalContext(campaign) {
     campaignId: campaign.id,
     exclusions: { ...DEFAULT_CAMPAIGN.exclusions, ...(campaign.exclusions || {}) },
     firstChannel: firstChannel(campaign),
+    recipientPolicy: campaign.recipientPolicy || "company",
     blockPersonalDomains: !!settings.blockPersonalDomains,
     suppressed: await loadSuppressed(),
     now: Date.now(),

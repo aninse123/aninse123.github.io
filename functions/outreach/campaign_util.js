@@ -53,6 +53,7 @@ const DEFAULT_CAMPAIGN = {
   },
   steps: [],
   lockedStepIds: [],           // steps that have already run for someone (C8)
+  recipientPolicy: "company",  // Phase 3b: company | primary_contact | best_person
 };
 
 class CampaignError extends Error {
@@ -171,6 +172,7 @@ function normalizeCampaign(input, existing = null) {
     priority: intIn(src.priority, 1, 3, 2),
     assignee: ["owner", "andre", "antonio"].includes(src.assignee) ? src.assignee : "owner",
     approvalDefault: src.approvalDefault === "auto" ? "auto" : "approval",
+    recipientPolicy: ["primary_contact", "best_person"].includes(src.recipientPolicy) ? src.recipientPolicy : "company",
     senderPolicy,
     sendWindow: normalizeWindow(src.sendWindow),
     pacing: { newPerDay: intIn(src.pacing?.newPerDay, 1, 200, 20) },
@@ -243,8 +245,14 @@ function evaluateCompany(company, ctx) {
     if (last && ctx.now - last < ex.contactedWithinDays * 86400000) return { ok: false, reason: "recent_touch" };
   }
   if (ctx.firstChannel === "email") {
-    if (ex.requireEmail && !hasEmail) return { ok: false, reason: "no_email" };
-    if (hasEmail && ctx.blockPersonalDomains && isFreeMail(domainOf(email))) return { ok: false, reason: "personal_domain" };
+    // Phase 3b: with "Send to" a person, a company without a generic address
+    // can still be written to through a contact; People are only checked at
+    // send time (they need extra reads), so best_person lets it through.
+    const policy = ctx.recipientPolicy || "company";
+    const contactEmail = (company.contacts || []).some((ct) => isValidEmail(normEmail(ct.email)));
+    const reachable = hasEmail || (policy !== "company" && (contactEmail || policy === "best_person"));
+    if (ex.requireEmail && !reachable) return { ok: false, reason: "no_email" };
+    if (policy === "company" && hasEmail && ctx.blockPersonalDomains && isFreeMail(domainOf(email))) return { ok: false, reason: "personal_domain" };
   }
   if (company.activeCampaignId && company.activeCampaignId !== ctx.campaignId) {
     return { ok: false, reason: "in_other_campaign", conflict: { campaignId: company.activeCampaignId, campaignName: company.activeCampaignName || "", enrolmentId: company.activeEnrolmentId || null } };
