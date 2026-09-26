@@ -164,12 +164,13 @@ async function createIssue(r, dueAt, by) {
   const tpl = await db().doc(`outreachTemplates/${r.templateId}`).get();
   const v = (tpl.exists ? tpl.data().variants || [] : [])[0] || { subject: r.name, body: "" };
   const superseded = await cancelDrafts(r.id, "Replaced by a newer issue");
+  const list = await db().doc(`outreachLists/${r.listId}`).get();
   const settings = await store.getSettings();
   const ref = db().collection("outreachIssues").doc();
   const number = (r.issueCount || 0) + 1;
   await ref.set({
     recurringId: r.id, recurringName: r.name, number, subject: v.subject || r.name, body: v.body || "",
-    status: "draft", dueAt: Timestamp.fromDate(dueAt), listId: r.listId, listName: r.listName || "",
+    status: "draft", dueAt: Timestamp.fromDate(dueAt), listId: r.listId, listName: r.listName || "", listCount: list.exists ? list.data().count ?? null : null,
     senderId: r.senderId, maxPerDay: r.maxPerDay || 40, campaignId: null, recipients: null,
     isTest: !!settings.testMode, createdAt: FieldValue.serverTimestamp(), createdBy: by,
   });

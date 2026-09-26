@@ -461,9 +461,11 @@
       <section class="panel" id="panel-campaigns" hidden>
         <div class="chips subnav" id="campTop" role="tablist" aria-label="Campaign views">
           <button class="chip on" data-cview="campaigns">Campaigns</button>
+          <button class="chip" data-cview="recurring">Recurring emails</button>
           <button class="chip" data-cview="lists">Lists of people</button>
         </div>
         <div id="listsView" hidden></div>
+        <div id="recurView" hidden></div>
         <div id="campList">
           <div class="card" style="padding:0;">
             <div class="toolbar">
@@ -513,6 +515,7 @@
           <button class="chip" data-tview="letters">Letters to print <span id="lettersChipN"></span></button>
         </div>
         <div id="todoView"></div>
+        <div id="issueView" hidden></div>
         <div id="approveView" hidden></div>
         <div id="lettersView" hidden></div>
       </section>
@@ -746,6 +749,7 @@
     const callAdmin = httpsCallable(fns, 'outreachAdmin');
     const callCampaign = httpsCallable(fns, 'outreachCampaign', { timeout: 300000 });
     const callAi = httpsCallable(fns, 'outreachAi', { timeout: 120000 });
+    const callRecurring = httpsCallable(fns, 'outreachRecurring', { timeout: 300000 });
 
     // ── State ──────────────────────────────────────────────────
     let me = '', myOwner = null;
@@ -2031,7 +2035,7 @@
         countSnap(snap, first); first = false;
         templatesAll = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         renderTemplatesTable();
-        templates = templatesAll.filter(t => t.status === 'active' && (t.kind || 'email') === 'email');
+        templates = templatesAll.filter(t => t.status === 'active' && (t.kind || 'email') === 'email' && !t.hidden);
         const opts = templates.flatMap(t => (t.variants || []).map(v => `<option value="${esc(t.id)}::${esc(v.key)}">${esc(t.name)} — variant ${esc(v.key)}</option>`));
         const cur = $('cTpl').value;
         $('cTpl').innerHTML = '<option value="">— Write from scratch —</option>' + opts.join('');
@@ -2041,7 +2045,7 @@
     }
     function renderTemplatesTable() {
       const kind = { active: 'good', draft: 'warn', archived: '' };
-      $('tplBody').innerHTML = templatesAll.length ? templatesAll.map(t => `<tr>
+      $('tplBody').innerHTML = templatesAll.some(t => !t.hidden) ? templatesAll.filter(t => !t.hidden).map(t => `<tr>
           <td>${esc(t.name)}</td><td>${esc((TEMPLATE_KINDS.find(k => k[0] === (t.kind || 'email')) || ['', 'Email'])[1])}</td><td><span class="pill${kind[t.status] ? ' pill--' + kind[t.status] : ''}">${esc(t.status)}</span></td>
           <td>${esc((t.variants || []).map(v => v.key).join(', '))}</td><td>${esc((t.language || 'pt').toUpperCase())}</td>
           <td style="white-space:nowrap;">${t.updatedAt ? esc(dayFmt.format(new Date(tsMs(t.updatedAt)))) : ''}</td>
@@ -2203,13 +2207,21 @@
 
     function setupCampaigns() {
       $('taskTop').addEventListener('click', (e) => { const b = e.target.closest('[data-tview]'); if (b) showTaskView(b.dataset.tview); });
-      $('campTop').addEventListener('click', (e) => { const b = e.target.closest('[data-cview]'); if (!b) return; $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b)); const lists = b.dataset.cview === 'lists'; $('listsView').hidden = !lists; $('campList').hidden = lists || !!curCampId; $('campPage').hidden = lists || !curCampId; if (lists) renderLists(); });
+      $('campTop').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-cview]'); if (!b) return;
+        $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b));
+        const v = b.dataset.cview, other = v !== 'campaigns';
+        $('listsView').hidden = v !== 'lists'; $('recurView').hidden = v !== 'recurring';
+        $('campList').hidden = other || !!curCampId; $('campPage').hidden = other || !curCampId;
+        if (v === 'lists') renderLists();
+        if (v === 'recurring') renderRecurring();
+      });
       $('campNew').addEventListener('click', newCampaign);
       $('campBack').addEventListener('click', closeCampaign);
       $('campRefresh').addEventListener('click', loadCampCounts);
       $('campShowArchived').addEventListener('change', renderCampList);
       $('campNav').addEventListener('click', (e) => { const b = e.target.closest('[data-csec]'); if (b) showCampSec(b.dataset.csec); });
-      watchCampaigns(); watchDrafts(); watchTasks();
+      watchCampaigns(); watchDrafts(); watchTasks(); watchIssues(); watchRecurring();
     }
 
     // Tasks tab: to do (manual steps), to approve (drafts), letters to print.
@@ -2218,10 +2230,10 @@
       taskView = v;
       $('taskTop').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.tview === v));
       $('todoView').hidden = v !== 'todo';
-      $('approveView').hidden = v !== 'approve';
+      $('approveView').hidden = v !== 'approve'; $('issueView').hidden = v !== 'approve';
       $('lettersView').hidden = v !== 'letters';
       if (v === 'todo') renderTodo();
-      if (v === 'approve') renderApprove();
+      if (v === 'approve') { renderIssues(); renderApprove(); }
       if (v === 'letters') renderLetters();
     }
     function goToApprove(campaignId) {
@@ -2250,7 +2262,7 @@
 
     // Company counts per campaign: 3 aggregation queries each (≈1 read each).
     async function loadCampCounts() {
-      const list = campaigns.filter(c => c.status !== 'archived');
+      const list = campaigns.filter(c => c.status !== 'archived' && c.kind !== 'issue');
       const col = collection(db, 'outreachEnrolments');
       await Promise.all(list.map(async (c) => {
         try {
@@ -2268,7 +2280,8 @@
 
     function renderCampList() {
       const showArch = $('campShowArchived').checked;
-      const list = campaigns.filter(c => showArch || c.status !== 'archived');
+      // Issues of recurring emails run as campaigns of their own; they're listed under Recurring emails.
+      const list = campaigns.filter(c => c.kind !== 'issue' && (showArch || c.status !== 'archived'));
       const n = (v) => (v == null ? '—' : num(v));
       $('campBody').innerHTML = list.length ? list.map(c => {
         const k = campCounts[c.id] || {};
@@ -2296,8 +2309,7 @@
         async () => {
           const aud = document.querySelector('input[name="ncAud"]:checked')?.value || 'companies';
           const r = (await callCampaign({ action: 'save', campaign: { name: $('ncName').value, description: $('ncDesc').value, approvalDefault: $('ncAppr').value, audienceType: aud, steps: [] } })).data;
-          if (aud === 'people') toast('Campaign created — write its sequence, then choose who sends it (Settings) and add people.');
-          toast('Campaign created — now write its sequence.');
+          toast(aud === 'people' ? 'Campaign created — write its sequence, then choose who sends it (Settings) and add people.' : 'Campaign created — now write its sequence.');
           openCampaign(r.campaignId, 'sequence');
           return true;
         }, 'Create');
@@ -2306,9 +2318,10 @@
     function openCampaign(id, sec = 'overview') {
       if ($('panel-campaigns').hidden) showTab('campaigns');
       curCampId = id; seqDraft = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = '';
-      $('campList').hidden = true; $('campPage').hidden = false; $('listsView').hidden = true;
+      $('campList').hidden = true; $('campPage').hidden = false; $('listsView').hidden = true; $('recurView').hidden = true;
       $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.cview === 'campaigns'));
       curEnrols = []; curThreads = [];
+      $('campNav').querySelector('[data-csec="audience"]').textContent = curCamp()?.audienceType === 'people' ? 'People' : 'Companies';
       renderCampHeader();
       showCampSec(sec);
       loadCampaignData();
@@ -3053,11 +3066,161 @@
         countSnap(snap, first); first = false;
         drafts = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.source === 'campaign')
           .sort((a, b) => tsMs(a.createdAt) - tsMs(b.createdAt));
-        const n = drafts.length;
+        const n = drafts.length + issueDrafts.length;
         $('approveChipN').textContent = n ? `(${num(n)})` : '';
         updateTaskBadge();
         if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove();
       }, (e) => console.warn('drafts', e));
+    }
+
+    // ── Recurring emails (Phase 5b) ─────────────────────────────────────────
+    // An issue = one date's email of a recurring email; it waits here as one
+    // draft for the whole list, then goes out paced by its max per day.
+    let issueDrafts = [], recurring = [];
+    const FREQ_LABEL = { weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly' };
+    const WEEKDAY_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const QUARTER_MONTHS = { 1: 'Jan, Apr, Jul, Oct', 2: 'Feb, May, Aug, Nov', 3: 'Mar, Jun, Sep, Dec' };
+    function scheduleText(sc) {
+      if (!sc) return '—';
+      if (sc.freq === 'weekly') return `Every ${WEEKDAY_LONG[sc.weekday ?? 1]} at ${sc.time}`;
+      if (sc.freq === 'quarterly') return `Quarterly — day ${sc.day} of ${QUARTER_MONTHS[sc.startMonth || 1]}, ${sc.time}`;
+      return `Monthly — day ${sc.day} at ${sc.time}`;
+    }
+    function watchIssues() {
+      let first = true;
+      onSnapshot(query(collection(db, 'outreachIssues'), where('status', '==', 'draft')), (snap) => {
+        countSnap(snap, first); first = false;
+        issueDrafts = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => tsMs(a.dueAt) - tsMs(b.dueAt));
+        const n = drafts.length + issueDrafts.length;
+        $('approveChipN').textContent = n ? `(${num(n)})` : '';
+        updateTaskBadge();
+        if (taskView === 'approve' && !$('panel-tasks').hidden) renderIssues();
+      }, (e) => console.warn('issues', e));
+    }
+    function watchRecurring() {
+      let first = true;
+      onSnapshot(collection(db, 'outreachRecurring'), (snap) => {
+        countSnap(snap, first); first = false;
+        recurring = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        if (!$('recurView').hidden) renderRecurring();
+      }, (e) => console.warn('recurring', e));
+    }
+    function renderIssues() {
+      if (document.activeElement?.closest?.('#issueView .draft')) return;
+      if (!issueDrafts.length) { $('issueView').innerHTML = ''; return; }
+      $('issueView').innerHTML = issueDrafts.map(i => {
+        const count = i.listCount;
+        return `<div class="card draft" data-issue="${esc(i.id)}" style="margin-bottom:14px;">
+          <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;">
+            <span class="pill pill--info">recurring</span> <b>${esc(i.recurringName)}</b> <span class="hint">— issue #${num(i.number)} · due ${esc(when(i.dueAt))}</span>${i.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}
+          </div>
+          <p class="note" style="margin:8px 0;">To everyone on <b>${esc(i.listName || 'the list')}</b>${count != null ? ` (${num(count)})` : ''} · from <b>${esc(i.senderId)}</b> · at most <b>${num(i.maxPerDay)}</b> a day${count ? ` → about <b>${num(Math.ceil(count / (i.maxPerDay || 40)))}</b> sending day(s)` : ''}. People who unsubscribed from this recurring email are left out.</p>
+          ${i.lastError ? `<div class="banner banner--bad" style="margin:8px 0;">Last attempt failed: ${esc(i.lastError)}</div>` : ''}
+          <div class="field"><label for="isub-${esc(i.id)}">Subject</label><input type="text" id="isub-${esc(i.id)}" maxlength="300" value="${esc(i.subject)}"></div>
+          <div class="field"><label for="ibody-${esc(i.id)}">Message</label><textarea id="ibody-${esc(i.id)}" rows="10">${esc(i.body)}</textarea>
+            <span class="hint">Personal fields work as in templates: {{contact.firstName|Caro investidor}}, {{company.shortName}} (= the person's organisation). The legal footer and unsubscribe link are added.</span></div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+            <button class="btn btn--ghost btn--sm" data-iskip="${esc(i.id)}">Skip this issue</button>
+            <button class="btn btn--primary btn--sm" data-iapprove="${esc(i.id)}">Approve and send</button>
+          </div></div>`;
+      }).join('');
+      $('issueView').querySelectorAll('[data-iapprove]').forEach(b => b.addEventListener('click', async () => {
+        const id = b.dataset.iapprove, i = issueDrafts.find(x => x.id === id);
+        const subject = $('isub-' + id).value, body = $('ibody-' + id).value;
+        if (!confirm(`Send "${subject}" to everyone on "${i.listName}"? It goes out inside the sending window, at most ${i.maxPerDay} a day.`)) return;
+        b.disabled = true;
+        try {
+          const r = (await callRecurring({ action: 'approveIssue', issueId: id, subject: subject !== i.subject ? subject : null, body: body !== i.body ? body : null })).data;
+          toast(`Approved — ${num(r.enrolled)} people, about ${num(Math.max(1, r.days))} sending day(s)${r.skipped?.unsubscribed ? ` · ${num(r.skipped.unsubscribed)} unsubscribed left out` : ''}.`);
+        } catch (e) { toast(errText(e)); b.disabled = false; }
+      }));
+      $('issueView').querySelectorAll('[data-iskip]').forEach(b => b.addEventListener('click', async () => {
+        if (!confirm('Skip this issue? Nothing is sent; the next one comes on its date.')) return;
+        try { await callRecurring({ action: 'skipIssue', issueId: b.dataset.iskip }); toast('Issue skipped.'); } catch (e) { toast(errText(e)); }
+      }));
+    }
+
+    function renderRecurring() {
+      const st = { active: 'good', paused: 'warn' };
+      $('recurView').innerHTML = `<div class="card" style="padding:0;">
+          <div class="toolbar"><h2 class="camp-h2">Recurring emails</h2><button class="btn btn--primary btn--sm" id="recNew" style="margin-left:auto;">New recurring email</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Name</th><th>When</th><th>To</th><th>From</th><th>Next issue</th><th class="num">Issues</th><th>Status</th><th></th></tr></thead>
+          <tbody>${recurring.length ? recurring.map(r => `<tr>
+            <td><b>${esc(r.name)}</b>${r.description ? `<div class="hint">${esc(r.description)}</div>` : ''}</td>
+            <td style="font-size:0.82rem;">${esc(scheduleText(r.schedule))}</td>
+            <td style="font-size:0.82rem;">${esc(r.listName || '')}<div class="hint">max ${num(r.maxPerDay)}/day</div></td>
+            <td style="font-size:0.82rem;">${esc(r.senderId)}</td>
+            <td style="white-space:nowrap;">${r.status === 'active' ? esc(when(r.nextIssueAt)) : '—'}</td>
+            <td class="num"><button class="camp-link" data-rhist="${esc(r.id)}">${num(r.issueCount || 0)}</button></td>
+            <td><span class="pill${st[r.status] ? ' pill--' + st[r.status] : ''}">${esc(r.status)}</span></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <button class="btn btn--ghost btn--sm" data-rnow="${esc(r.id)}" title="Write an issue draft now, off-schedule">Issue now</button>
+              <button class="btn btn--ghost btn--sm" data-redit="${esc(r.id)}">Edit</button>
+              <button class="btn btn--ghost btn--sm" data-rstat="${esc(r.id)}">${r.status === 'active' ? 'Pause' : 'Resume'}</button>
+              <button class="btn btn--danger btn--sm" data-rdel="${esc(r.id)}">Delete</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. On each date an issue is drafted from the template into Tasks → To approve; you edit it, approve, and it goes out to the list at the pace you set.</td></tr>'}</tbody></table></div>
+        </div>
+        <p class="hint" style="margin-top:10px;">The unsubscribe link in a recurring email removes the person from that recurring email only. A spam complaint blocks the address everywhere.</p>`;
+      $('recNew').addEventListener('click', () => openRecurringModal(null));
+      const byId = (id) => recurring.find(r => r.id === id);
+      $('recurView').querySelectorAll('[data-redit]').forEach(b => b.addEventListener('click', () => openRecurringModal(byId(b.dataset.redit))));
+      $('recurView').querySelectorAll('[data-rnow]').forEach(b => b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { const r = (await callRecurring({ action: 'issueNow', recurringId: b.dataset.rnow })).data; toast(`Issue #${r.number} drafted — see Tasks → To approve.${r.superseded ? ' The older waiting draft was replaced.' : ''}`); }
+        catch (e) { toast(errText(e)); } finally { b.disabled = false; }
+      }));
+      $('recurView').querySelectorAll('[data-rstat]').forEach(b => b.addEventListener('click', async () => {
+        const r = byId(b.dataset.rstat);
+        try { await callRecurring({ action: 'setStatus', recurringId: r.id, status: r.status === 'active' ? 'paused' : 'active' }); toast(r.status === 'active' ? 'Paused — no new issues until you resume.' : 'Resumed — the next issue comes on its next date.'); } catch (e) { toast(errText(e)); }
+      }));
+      $('recurView').querySelectorAll('[data-rdel]').forEach(b => b.addEventListener('click', async () => {
+        const r = byId(b.dataset.rdel);
+        if (!confirm(`Delete "${r.name}"? A waiting draft is cancelled; issues already sent (and their history) stay.`)) return;
+        try { await callRecurring({ action: 'delete', recurringId: r.id }); toast('Recurring email deleted.'); } catch (e) { toast(errText(e)); }
+      }));
+      $('recurView').querySelectorAll('[data-rhist]').forEach(b => b.addEventListener('click', async () => {
+        const r = byId(b.dataset.rhist);
+        const snap = await getDocs(query(collection(db, 'outreachIssues'), where('recurringId', '==', r.id)));
+        addReads(snap.size || 1); refreshReads();
+        const rows = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, c) => (c.number || 0) - (a.number || 0));
+        const label = { draft: 'waiting for approval', approving: 'being approved', sending: 'sent / sending', skipped: 'skipped', cancelled: 'replaced' };
+        openModal(`${r.name} — issues`, rows.length ? `<div class="table-wrap" style="max-height:60vh;overflow:auto;"><table><thead><tr><th>#</th><th>Due</th><th>Subject</th><th>Status</th><th class="num">People</th><th></th></tr></thead><tbody>${rows.map(i => `<tr><td>${num(i.number)}</td><td style="white-space:nowrap;">${esc(when(i.dueAt))}</td><td>${esc(i.subject)}</td><td>${esc(label[i.status] || i.status)}</td><td class="num">${i.recipients != null ? num(i.recipients) : '—'}</td><td>${i.campaignId ? `<button class="btn btn--ghost btn--sm" data-iopen="${esc(i.campaignId)}">Who got it</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No issues yet.</p>', async () => true, 'Close');
+        $('modalBody').querySelectorAll('[data-iopen]').forEach(x => x.addEventListener('click', () => { closeModal(); openCampaign(x.dataset.iopen, 'audience'); }));
+      }));
+    }
+
+    async function openRecurringModal(r) {
+      const ls = await getDocs(collection(db, 'outreachLists'));
+      addReads(ls.size || 1); refreshReads();
+      const lists = ls.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      if (!lists.length) { toast('Create a list of people first (Campaigns → Lists of people).'); return; }
+      const sc = r?.schedule || { freq: 'monthly', day: 1, weekday: 1, startMonth: 1, time: '09:30' };
+      const active = senders.filter(x => x.status === 'active');
+      const sel = (v, cur) => (v === cur ? ' selected' : '');
+      openModal(r ? `Edit "${r.name}"` : 'New recurring email', `
+        <div class="field"><label for="rcName">Name</label><input type="text" id="rcName" maxlength="100" value="${esc(r?.name || '')}" placeholder="e.g. Monthly investor update"></div>
+        <div class="field"><label for="rcList">To (list of people)</label><select id="rcList">${lists.map(l => `<option value="${esc(l.id)}"${sel(l.id, r?.listId)}>${esc(l.name)} (${num(l.count || 0)})</option>`).join('')}</select></div>
+        <div class="field"><label for="rcTpl">Starting content (template)</label><select id="rcTpl">${templates.map(t => `<option value="${esc(t.id)}"${sel(t.id, r?.templateId)}>${esc(t.name)}</option>`).join('')}</select>
+          <span class="hint">Each issue starts from this template; you edit it before approving.</span></div>
+        <div class="field"><label for="rcFrom">From</label><select id="rcFrom">${active.map(x => `<option value="${esc(x.id)}"${sel(x.id, r?.senderId)}>${esc(x.id)}${x.kind === 'relationship' ? ' (your real address — replies go to Gmail)' : ' (replies in the portal Inbox)'}</option>`).join('')}</select></div>
+        <div class="field"><label for="rcFreq">How often</label><select id="rcFreq"><option value="weekly"${sel('weekly', sc.freq)}>Weekly</option><option value="monthly"${sel('monthly', sc.freq)}>Monthly</option><option value="quarterly"${sel('quarterly', sc.freq)}>Quarterly</option></select></div>
+        <div class="field" id="rcWdF"><label for="rcWd">Day of the week</label><select id="rcWd">${WEEKDAY_LONG.map((d, i) => `<option value="${i}"${sel(i, sc.weekday)}>${d}</option>`).join('')}</select></div>
+        <div class="field" id="rcDayF"><label for="rcDay">Day of the month (1–28)</label><input type="text" inputmode="numeric" id="rcDay" value="${esc(sc.day)}"></div>
+        <div class="field" id="rcQF"><label for="rcQ">Months</label><select id="rcQ">${[1, 2, 3].map(m => `<option value="${m}"${sel(m, sc.startMonth)}>${QUARTER_MONTHS[m]}</option>`).join('')}</select></div>
+        <div class="field"><label for="rcTime">Draft the issue at (Lisbon)</label><input type="time" id="rcTime" value="${esc(sc.time)}"></div>
+        <div class="field"><label for="rcMax">Max emails per day</label><input type="text" inputmode="numeric" id="rcMax" value="${esc(r?.maxPerDay ?? 40)}">
+          <span class="hint">Also bounded by the automations limit and the address's daily cap. The approve card shows how many days it will take.</span></div>`,
+        async () => {
+          const recurringIn = {
+            name: $('rcName').value, listId: $('rcList').value, templateId: $('rcTpl').value, senderId: $('rcFrom').value,
+            schedule: { freq: $('rcFreq').value, weekday: Number($('rcWd').value), day: Number($('rcDay').value), startMonth: Number($('rcQ').value), time: $('rcTime').value },
+            maxPerDay: Number($('rcMax').value),
+          };
+          const out = (await callRecurring({ action: 'save', recurringId: r?.id || null, recurring: recurringIn })).data;
+          toast(r ? 'Saved.' : `Created — the first issue will be drafted ${out.nextIssueAt ? dayFmt.format(new Date(out.nextIssueAt)) : 'on its date'}. Use "Issue now" to start earlier.`);
+          return true;
+        }, r ? 'Save' : 'Create');
+      const sync = () => { const f = $('rcFreq').value; $('rcWdF').hidden = f !== 'weekly'; $('rcDayF').hidden = f === 'weekly'; $('rcQF').hidden = f !== 'quarterly'; };
+      $('rcFreq').addEventListener('change', sync); sync();
     }
 
     function renderApprove() {
@@ -3182,7 +3345,7 @@
     const mineOrOpen = (t) => !t.assignee || t.assignee === myOwner;
     function updateTaskBadge() {
       const dueMine = tasks.filter(t => t.channel !== 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
-      const n = dueMine + drafts.length + tasks.filter(t => t.channel === 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
+      const n = dueMine + drafts.length + issueDrafts.length + tasks.filter(t => t.channel === 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
       $('approveCount').textContent = n; $('approveCount').hidden = !n;
       $('todoChipN').textContent = dueMine ? `(${num(dueMine)} due)` : '';
     }
