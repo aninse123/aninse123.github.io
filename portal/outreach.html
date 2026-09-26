@@ -219,6 +219,11 @@
     .checkline input { margin-top: 3px; }
     /* A checkbox/radio line inside a .field reads as normal text, not as the field's caps label. */
     .field label.checkline { font-size: 0.84rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text); }
+    .readiness { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .rd-row { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); align-items: start; }
+    .rd-row:last-child { border-bottom: 0; }
+    .rd-row b { font-weight: 600; }
+    .rd-row .hint { display: block; margin-top: 2px; }
     .checklist { display: flex; flex-direction: column; gap: 8px; background: #FDF3DC; border: 1px solid #F0D597; border-radius: var(--radius); padding: 12px 14px; margin-top: 4px; }
     .variant { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; background: var(--tint); }
     .variant__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 600; font-size: 0.84rem; }
@@ -632,6 +637,11 @@
               <button class="btn btn--danger" id="clearTestBtn">Clear test data</button>
             </div>
             <p class="hint" style="margin-top:10px;">"Set up" only creates what's missing and never overwrites. "Clear test data" deletes every conversation, message, activity and campaign created while test mode was on (companies in test campaigns are released).</p>
+            <div class="readiness">
+              <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;"><h3 style="margin:0;">Go-live readiness</h3><span class="hint" id="rdWhen"></span><button class="btn btn--ghost btn--sm" id="rdRun" style="margin-left:auto;">Check again</button></div>
+              <p class="hint" style="margin:4px 0 10px;">Checked automatically against this site (<span id="rdHost"></span>) and the data. Go live once everything that matters is ready.</p>
+              <div id="rdList"><div class="empty">Open to check…</div></div>
+            </div>
           </div>
 
           <!-- Addresses -->
@@ -818,6 +828,7 @@
       if (name === 'metrics') loadMetrics(); // (re)renders at the now-visible width
       if (name === 'campaigns') { if (curCampId) loadCampaignData(); else loadCampCounts(); }
       if (name === 'tasks') showTaskView(taskView);
+      if (name === 'settings' && !$('sec-general').hidden) renderReadiness();
     }
 
     // ── Live data ──────────────────────────────────────────────
@@ -1802,6 +1813,7 @@
       $('setNav').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.sec === name));
       document.querySelectorAll('.setsec').forEach(s => { s.hidden = s.id !== 'sec-' + name; });
       if (name === 'suppression' && !suppression) loadSuppression();
+      if (name === 'general') renderReadiness();
     }
 
     // Generic modal: body HTML + a save handler that returns true to close.
@@ -1828,6 +1840,7 @@
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
       ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
       $('gSave').addEventListener('click', saveGeneral);
+      $('rdRun').addEventListener('click', () => renderReadiness(true));
       $('gTrack').addEventListener('change', async (e) => {
         const on = e.target.checked;
         if (!confirm(on ? 'Switch open and click tracking ON for the outreach domain in Resend? Links in every outreach email will be rewritten and a tracking pixel added.' : 'Switch open and click tracking OFF? "Clicked a link" rules stop working.')) { e.target.checked = !on; return; }
@@ -1930,6 +1943,77 @@
       }, { merge: true });
       generalDirty = false;
       toast('Settings saved.');
+    }
+
+    // ── Go-live readiness (Settings → General) ─────────────────────────────
+    // Each item checks itself; status ok / todo / check (worth a look) / info.
+    let rdLast = 0;
+    async function renderReadiness(force = false) {
+      if (!force && Date.now() - rdLast < 60000) return;
+      rdLast = Date.now();
+      $('rdHost').textContent = location.host;
+      $('rdList').innerHTML = '<div class="empty">Checking…</div>';
+      const TEST_NAME = /zzteste|teste claude/i;
+      const items = [];
+      const add = (status, title, detail = '', action = '') => items.push({ status, title, detail, action });
+      const fetchStatus = async (path) => { try { const r = await fetch(path, { method: 'GET', cache: 'no-store', redirect: 'manual' }); return { status: r.status, text: r.status === 200 ? await r.text() : '' }; } catch (e) { return { status: 0, text: '' }; } };
+      const count = async (coll, ...conds) => { try { const r = await getCountFromServer(query(collection(db, coll), ...conds)); addReads(1); return r.data().count; } catch (e) { return null; } };
+      try {
+        // 1. Legal footer
+        const footerOk = settings?.complianceBlockId && compliance && !hasPlaceholder(compliance.legalEntityLine) && (compliance.footerText || '').includes('{{unsubscribeUrl}}');
+        add(footerOk ? 'ok' : 'todo', 'Legal footer', footerOk ? 'Entity line and unsubscribe link saved.' : 'Needs the real entity name, NIPC and address (no [___]) — Settings → Legal footer. CCSL to review.', footerOk ? '' : 'footer');
+        // 2–4. This site: privacy page, unsubscribe rewrite, hidden server code
+        const [priv, unsub, src] = await Promise.all([fetchStatus('/privacidade'), fetchStatus('/u/readiness-check'), fetchStatus('/functions/package.json')]);
+        if (priv.status !== 200) add('todo', 'Privacy page', `/privacidade answers ${priv.status || 'nothing'} on ${location.host}.`);
+        else if (/Rascunho em revisão|name="robots" content="noindex"/.test(priv.text)) add('check', 'Privacy page', 'Live, but still the draft (banner and noindex) — remove both once CCSL approves it and the [a definir] fields are filled.');
+        else add('ok', 'Privacy page', 'Live.');
+        add(unsub.status === 400 || unsub.status === 200 ? 'ok' : 'todo', 'Unsubscribe links', unsub.status === 400 || unsub.status === 200 ? `douropartners.pt/u/… works on ${location.host}.` : `/u/… answers ${unsub.status || 'nothing'} here — on production it needs the merge to main (the /u/ rewrite).`);
+        add(src.status === 404 ? 'ok' : 'todo', 'Server code hidden', src.status === 404 ? 'Source and config files answer 404.' : `/functions/package.json answers ${src.status} — needs the merge to main (security #17).`);
+        // 5. Templates
+        const activeEmail = templatesAll.filter(t => t.status === 'active' && (t.kind || 'email') === 'email' && !t.hidden);
+        const real = activeEmail.filter(t => !TEST_NAME.test(t.name || '') && !TEST_NAME.test(t.id));
+        const testTpl = templatesAll.filter(t => TEST_NAME.test(t.name || '') || TEST_NAME.test(t.id));
+        add(real.length ? 'ok' : 'todo', 'Templates', real.length ? `${num(real.length)} active email template${real.length === 1 ? '' : 's'}.` : 'No real active email template yet — Settings → Templates.', real.length ? '' : 'templates');
+        if (testTpl.length) add('check', 'Test templates', `${testTpl.map(t => t.name).join(', ')} — delete (or archive) before going live.`, 'templates');
+        // 6. Addresses
+        const out = senders.filter(x => x.kind !== 'relationship');
+        const active = out.filter(x => x.status === 'active'), warming = out.filter(x => x.status === 'warming');
+        add(active.length ? 'ok' : 'todo', 'Outreach addresses', active.length ? `Active: ${active.map(x => localPart(x.id)).join(', ')}. Each needs its warm-up stopped in Instantly and the ImprovMX forward to Resend.` : 'No active outreach address.', 'senders');
+        if (warming.length) add('info', 'Still warming', `${warming.map(x => localPart(x.id)).join(', ')} — Instantly's warm-up uses the same Resend daily quota; stop it on the addresses going live.`);
+        const used = usageDoc?.resendDailyUsed, target = settings?.dailyTarget || 100;
+        if (used != null) add(used > target * 0.5 ? 'check' : 'info', 'Resend quota today', `${num(used)} of ${num(target)} used (warm-up, investor emails and received mail included). Campaigns only get what's left.`);
+        // 7. Test data
+        const [tThreads, tCamps, tIssues] = await Promise.all([count('outreachThreads', where('isTest', '==', true)), count('outreachCampaigns', where('isTest', '==', true)), count('outreachIssues', where('isTest', '==', true))]);
+        const tTotal = (tThreads || 0) + (tCamps || 0) + (tIssues || 0);
+        add(tTotal ? 'todo' : 'ok', 'Test data', tTotal ? `${num(tThreads || 0)} test conversations, ${num(tCamps || 0)} test campaigns, ${num(tIssues || 0)} test issues — "Clear test data" (below the settings) on go-live day.` : 'Nothing left from test mode.');
+        // 8. Test leftovers kept on purpose (lists, recurring emails, Network contacts, suppression entries)
+        const [ls, nc, supDom, supAddr] = await Promise.all([
+          getDocs(collection(db, 'outreachLists')),
+          getDocs(query(collection(db, 'networkContacts'), where('name', '>=', ''))),
+          getDocs(query(collection(db, 'outreachSuppression'), where('domain', '==', 'resend.dev'))),
+          getDoc(doc(db, 'outreachSuppression', 'andrerochaaero@gmail.com')),
+        ]);
+        addReads((ls.size || 1) + (nc.size || 1) + (supDom.size || 1) + 1); refreshReads();
+        const leftovers = [
+          ...campaigns.filter(c => TEST_NAME.test(c.name || '') && c.kind !== 'issue').map(c => `campaign "${c.name}"`),
+          ...recurring.filter(r => TEST_NAME.test(r.name || '')).map(r => `recurring email "${r.name}"`),
+          ...ls.docs.filter(d => TEST_NAME.test(d.data().name || '')).map(d => `list "${d.data().name}"`),
+          ...nc.docs.filter(d => TEST_NAME.test(d.data().name || '')).map(d => `Network contact "${d.data().name}"`),
+        ];
+        if (leftovers.length) add('check', 'Test items to delete by hand', leftovers.join(' · '));
+        const supTest = [...supDom.docs.map(d => d.id), ...(supAddr.exists() ? [supAddr.id] : [])];
+        if (supTest.length) add('check', 'Suppression list: test entries', `${supTest.join(', ')} — remove in Settings → Suppression list (unless the person really asked).`, 'suppression');
+        // 9. Decisions
+        add('info', 'Open / click tracking', settings?.trackOpensClicks ? 'On — links are rewritten and a pixel is added.' : 'Off. Decide before the first real campaign (needed for "if they clicked a link" rules).');
+        add(settings?.testMode === false ? 'ok' : 'info', 'Test mode', settings?.testMode === false ? 'Live.' : 'On — switch off with "Go live" at the top of this page when the items above are ready.');
+      } catch (e) { add('todo', 'Check failed', errText(e)); }
+      const pillFor = { ok: '<span class="pill pill--good">Ready</span>', todo: '<span class="pill pill--bad">To do</span>', check: '<span class="pill pill--warn">Check</span>', info: '<span class="pill">Info</span>' };
+      const order = { todo: 0, check: 1, info: 2, ok: 3 };
+      items.sort((a, b) => order[a.status] - order[b.status]);
+      $('rdList').innerHTML = items.map(i => `<div class="rd-row">${pillFor[i.status]}<div><b>${esc(i.title)}</b>${i.action ? ` <button class="btn btn--ghost btn--sm" data-rdgo="${esc(i.action)}" style="margin-left:6px;padding:1px 8px;">Open</button>` : ''}<span class="hint">${esc(i.detail)}</span></div></div>`).join('');
+      $('rdList').querySelectorAll('[data-rdgo]').forEach(b => b.addEventListener('click', () => showSec(b.dataset.rdgo)));
+      const todo = items.filter(i => i.status === 'todo').length;
+      $('rdWhen').textContent = `${todo ? `${todo} to do` : 'nothing blocking'} · checked ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
     }
 
     // Going live is gated on the go-live checklist (spec §13.3); the server
