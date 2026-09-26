@@ -101,6 +101,13 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   ok("relationship sends: Network page needs net.email, the admin notices need portal.admin", (await call("outreachPeopleSend", as("x@d.pt", ["net.view"]), { context: "network", recipients: [{ email: "a@b.pt" }], subject: "s", message: "m" })).err?.details?.reason === "not_admin"
     && (await call("outreachPeopleSend", as("x@d.pt", ["net.email"]), { context: "portal", recipients: [{ email: "a@b.pt" }], subject: "s", message: "m" })).err?.details?.reason === "not_admin");
 
+  // A failing team lookup never locks partners or investors out
+  const origDoc = F.fakeDb.doc;
+  F.fakeDb.doc = (path) => (String(path).startsWith("team/") ? { get: async () => { throw new Error("firestore down"); } } : origDoc(path));
+  ok("team lookup error: partner still signs in (by email)", !(await signIn("antonio.carvalho@douropartners.pt")).err);
+  ok("team lookup error: investor still signs in", !(await signIn("investor@fundo.pt")).err);
+  F.fakeDb.doc = origDoc;
+
   console.log(fail ? `\n${fail} FAILED` : "\nall access tests passed");
   process.exit(fail ? 1 : 0);
 })();

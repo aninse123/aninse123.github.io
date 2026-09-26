@@ -1881,7 +1881,7 @@ async function loadAll(){
   ]);
   fitCriteria = cfgSnap.exists() ? { ...DEFAULT_FIT, ...cfgSnap.data() } : { ...DEFAULT_FIT };
   brokers = brokerSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-  if (!brokers.length) await seedBrokers();
+  if (!brokers.length && window.pageAccess?.can('search.admin') !== false) await seedBrokers(); // team access: maintenance only
   buildStaticOptions();
   await startCompaniesListener();
   fetchTotalCount(); // async, non-blocking — corrects the "total" stat while only a bounded page is loaded
@@ -2047,6 +2047,7 @@ let fullDatasetPromise = null;
 let fullDatasetBackfilled = false;
 async function runBackfillsOnce(){
   if (fullDatasetBackfilled) return;
+  if (window.pageAccess && !window.pageAccess.can('search.admin')) return; // team access: data maintenance runs for partners / admins only
   fullDatasetBackfilled = true;
   await backfillSectors();
   await backfillLastTouch();

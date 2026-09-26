@@ -67,7 +67,12 @@ const NO_TEAM_CLAIMS = { role: null, perms: [], key: null };
 
 async function decide(event) {
   const email = event.data?.email;
-  const team = await onTeamSignIn(email, event.data?.uid);
+  // If the team lookup fails, fall back to today's behaviour (partners by
+  // email, investors by the hash list) — a team-access problem must never
+  // lock partners or investors out.
+  let team = null;
+  try { team = await onTeamSignIn(email, event.data?.uid); }
+  catch (e) { console.error("team sign-in lookup failed", e?.message || e); team = null; }
   if (team?.allowed) return { customClaims: team.claims };
   if (!(await isAllowed(email))) throw new HttpsError("permission-denied", REJECTION_MESSAGE);
   // An investor (or a former team member who is also an investor): no team permissions.
