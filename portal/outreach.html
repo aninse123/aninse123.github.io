@@ -2651,6 +2651,16 @@
       const iE = col(['email', 'emailaddress', 'correioeletronico'], 0), iN = col(['name', 'nome'], 1), iO = col(['organisation', 'organization', 'organizacao', 'empresa', 'company', 'org'], 2), iC = col(['category', 'categoria'], 3), iR = col(['role', 'cargo', 'funcao'], 4);
       return (hasHeader ? rows.slice(1) : rows).map(r => ({ email: String(r[iE] || '').trim().toLowerCase(), name: (r[iN] || '').trim(), org: (r[iO] || '').trim(), category: iC >= 0 ? (r[iC] || '').trim() : '', role: iR >= 0 ? (r[iR] || '').trim() : '' }));
     }
+    // A filter as the "Add people" picker and a dynamic list keep it (mirrors functions/outreach/lists.js).
+    const FILTER_MODES = ['crm', 'portal', 'network', 'brokers'];
+    function peopleFor(d, src) {
+      const has = (a) => Array.isArray(a) && a.length;
+      if (d.mode === 'crm') return src.crm.filter(p => !has(d.stages) || d.stages.includes(p.stage));
+      if (d.mode === 'portal') { const g = d.groupId ? src.groups.find(x => x.id === d.groupId) : null; return src.portal.filter(p => !d.groupId || (g?.investorIds || []).includes(p.investorId)); }
+      if (d.mode === 'network') return src.network.filter(p => (!has(d.categories) || p.categories.some(c => d.categories.includes(c))) && (!has(d.phases) || p.phases.some(c => d.phases.includes(c))) && (!d.owner || p.owner === d.owner));
+      if (d.mode === 'brokers') return src.brokers;
+      return [];
+    }
     const validEmail = (e) => /^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/i.test(e || '');
     const NETWORK_CATS = [['journalist', 'Journalist'], ['banker_broker', 'Banker/Broker'], ['investor_outside_process', 'Investor (outside process)'], ['lawyer', 'Lawyer'], ['accountant', 'Accountant'], ['advisor', 'Advisor'], ['operator', 'Operator'], ['current_searcher', 'Current Searcher'], ['former_searcher', 'Former Searcher'], ['service_provider', 'Service Provider'], ['other', 'Other']];
     // P2: people not found anywhere are created as Network contacts first.
@@ -2675,14 +2685,9 @@
       let mode = 'crm', src = null, validated = null, busy = false;
       const filters = { crmStages: new Set(), portalGroup: '', netCats: new Set(), netPhases: new Set(), netOwner: '', listId: '' };
       let lists = [];
-      const selected = () => {
-        if (!src) return [];
-        if (mode === 'crm') return src.crm.filter(p => !filters.crmStages.size || filters.crmStages.has(p.stage));
-        if (mode === 'portal') { const g = src.groups.find(x => x.id === filters.portalGroup); return src.portal.filter(p => !g || (g.investorIds || []).includes(p.investorId)); }
-        if (mode === 'network') return src.network.filter(p => (!filters.netCats.size || p.categories.some(c => filters.netCats.has(c))) && (!filters.netPhases.size || p.phases.some(c => filters.netPhases.has(c))) && (!filters.netOwner || p.owner === filters.netOwner));
-        if (mode === 'brokers') return src.brokers;
-        return [];
-      };
+      const filterSpec = () => ({ mode, stages: [...filters.crmStages], groupId: filters.portalGroup || null, categories: [...filters.netCats], phases: [...filters.netPhases], owner: filters.netOwner || null });
+      const selected = () => (src && FILTER_MODES.includes(mode) ? peopleFor(filterSpec(), src) : []);
+      const listPeopleNow = (l) => (l?.dynamic && src ? mergePeople(peopleFor(l.dynamic, src)) : null);
       const body = () => {
         if (!src) return '<p class="note"><span class="spinner-sm" style="border-color:var(--border);border-top-color:var(--primary);"></span> Loading Investor CRM, portal investors, Network and brokers…</p>';
         const chip = (k, l) => `<button type="button" class="chip${mode === k ? ' on' : ''}" data-pm="${k}">${esc(l)}</button>`;
@@ -2706,11 +2711,14 @@
             <button type="button" class="btn btn--ghost btn--sm" id="ppCheck">Check addresses</button>
             <div id="ppResult" style="margin-top:10px;">${validated ? validatedHtml() : ''}</div>`;
         } else if (mode === 'brokers') inner = `<p class="note">${num(src.brokers.length)} broker contacts with an email (Search CRM → Brokers).</p>`;
-        const count = mode === 'paste' ? (validated ? validated.found.length + validated.newOnes.length : 0) : mode === 'list' ? (lists.find(l => l.id === filters.listId)?.count || 0) : mergePeople(selected()).length;
+        const chosenList = lists.find(l => l.id === filters.listId);
+        const count = mode === 'paste' ? (validated ? validated.found.length + validated.newOnes.length : 0) : mode === 'list' ? (listPeopleNow(chosenList)?.length ?? (chosenList?.count || 0)) : mergePeople(selected()).length;
         return `<div class="chips" style="margin-bottom:12px;">${chip('crm', 'Investor CRM')}${chip('portal', 'Portal investors')}${chip('network', 'Network')}${chip('brokers', 'Brokers')}${chip('list', 'Saved list')}${chip('paste', 'CSV / paste')}</div>
           ${inner}
           <p class="note" style="margin-top:6px;"><b>${num(count)}</b> ${count === 1 ? 'person' : 'people'} selected${mode === 'paste' && validated?.newOnes.length ? ` (${num(validated.newOnes.length)} to be created in Network)` : ''}.</p>
-          ${allowSaveList ? `<label class="checkline" style="margin-top:6px;"><input type="checkbox" id="ppSave"> <span>Also save them as a list:</span> <input type="text" id="ppSaveName" placeholder="e.g. Journalists PT" style="width:auto;min-width:200px;padding:4px 8px;"></label>` : ''}`;
+          ${allowSaveList ? `<label class="checkline" style="margin-top:6px;"><input type="checkbox" id="ppSave"> <span>Also save them as a list:</span> <input type="text" id="ppSaveName" placeholder="e.g. Journalists PT" style="width:auto;min-width:200px;padding:4px 8px;"></label>` : ''}
+          ${FILTER_MODES.includes(mode) ? `<label class="checkline" style="margin-top:4px;"><input type="checkbox" id="ppDyn"> <span>Keep the list up to date — re-apply these filters each time it's used (e.g. new journalists in the Network join the next issue)</span></label>` : ''}
+          ${mode === 'list' && chosenList?.dynamic ? '<p class="hint">Kept up to date: filters re-applied now.</p>' : ''}`;
       };
       const validatedHtml = () => `<dl class="summary">
           <dt>Rows</dt><dd>${num(validated.rows)}</dd>
@@ -2760,20 +2768,24 @@
           } finally { busy = false; }
         } else if (mode === 'list') {
           if (!filters.listId) throw new Error('Choose a list.');
-          const ms = await getDocs(collection(db, 'outreachLists', filters.listId, 'members'));
-          addReads(ms.size || 1);
-          people = ms.docs.map(d => d.data());
-          info = { type: 'manual', label: `List: ${lists.find(l => l.id === filters.listId)?.name || ''}` };
+          const l = lists.find(x => x.id === filters.listId);
+          if (l?.dynamic) people = listPeopleNow(l) || [];
+          else {
+            const ms = await getDocs(collection(db, 'outreachLists', filters.listId, 'members'));
+            addReads(ms.size || 1);
+            people = ms.docs.map(d => d.data());
+          }
+          info = { type: 'manual', label: `List: ${l?.name || ''}` };
         } else {
           people = mergePeople(selected());
           const lbl = { crm: `Investor CRM${filters.crmStages.size ? ' · ' + [...filters.crmStages].join(', ') : ''}`, portal: `Portal investors${filters.portalGroup ? ' · ' + (src.groups.find(g => g.id === filters.portalGroup)?.name || '') : ''}`, network: `Network${filters.netCats.size ? ' · ' + [...filters.netCats].join(', ') : ''}`, brokers: 'Brokers' }[mode];
-          info = { type: 'manual', label: lbl };
+          info = { type: 'manual', label: lbl, dynamic: $('ppDyn')?.checked ? filterSpec() : null };
         }
         if (!people.length) throw new Error('Nobody selected.');
         if ($('ppSave')?.checked) {
           const name = ($('ppSaveName').value || '').trim();
           if (!name) throw new Error('Give the list a name, or untick "save as a list".');
-          await saveList(name, people, info.label);
+          await saveList(name, people, info.label, info.dynamic);
         }
         return onDone(people, info);
       }, confirmLabel);
@@ -2781,12 +2793,13 @@
       loadPeopleSources().then(x => { src = x; render(); }).catch(e => modalError('Could not load the contacts: ' + errText(e)));
     }
 
-    async function saveList(name, people, sourceLabel) {
-      const ref = await addDoc(collection(db, 'outreachLists'), { name, count: people.length, source: sourceLabel || null, createdAt: serverTimestamp(), createdBy: me, updatedAt: serverTimestamp() });
-      for (let i = 0; i < people.length; i += 400) {
+    // dynamic = the filter to re-apply on each use (no members stored).
+    async function saveList(name, people, sourceLabel, dynamic = null) {
+      const ref = await addDoc(collection(db, 'outreachLists'), { name, count: people.length, source: sourceLabel || null, dynamic: dynamic || null, createdAt: serverTimestamp(), createdBy: me, updatedAt: serverTimestamp() });
+      for (let i = 0; !dynamic && i < people.length; i += 400) {
         await Promise.all(people.slice(i, i + 400).map(p => setDoc(doc(db, 'outreachLists', ref.id, 'members', p.email.replace(/[^a-z0-9]/gi, '_').slice(0, 140)), { email: p.email, name: p.name || '', org: p.org || '', refs: p.refs || [], addedAt: serverTimestamp() })));
       }
-      toast(`List "${name}" saved (${num(people.length)}).`);
+      toast(`List "${name}" saved (${num(people.length)}${dynamic ? ' today — kept up to date' : ''}).`);
       return ref.id;
     }
 
@@ -2797,7 +2810,7 @@
         title: `Add people to "${c.name}"`, confirmLabel: 'Check people',
         onDone: async (people, info) => {
           const pv = (await callCampaign({ action: 'previewPeople', campaignId: c.id, people })).data;
-          const exc = Object.entries(pv.excluded).map(([k, n]) => `${num(n)} ${esc({ no_email: 'invalid address', already_in_campaign: 'already in this campaign', suppressed: 'on the suppression list', unsubscribed: 'unsubscribed from this campaign' }[k] || k)}`).join(', ');
+          const exc = Object.entries(pv.excluded).map(([k, n]) => `${num(n)} ${esc({ no_email: 'invalid address', already_in_campaign: 'already in this campaign', suppressed: 'on the suppression list', unsubscribed: 'unsubscribed from this campaign', contacted_recently: 'emailed recently' }[k] || k)}`).join(', ');
           setTimeout(() => openModal(`Add people to "${c.name}"`, `<dl class="summary"><dt>Selected</dt><dd>${num(pv.requested)}</dd><dt>Can be added</dt><dd><b>${num(pv.eligible)}</b></dd><dt>Excluded</dt><dd>${exc || '0'}</dd></dl>
             <p class="note">At ${num(pv.perDay)} a day, everyone gets the first email within about <b>${num(Math.max(1, pv.daysToStart))}</b> sending day${pv.daysToStart === 1 ? '' : 's'}${c.status === 'draft' ? ' once the campaign is started' : ''}.</p>`,
             async () => {
@@ -2821,13 +2834,13 @@
       $('listsView').innerHTML = `<div class="card" style="padding:0;">
           <div class="toolbar"><h2 class="camp-h2">Lists of people</h2><button class="btn btn--primary btn--sm" id="listNew" style="margin-left:auto;">New list</button></div>
           <div class="table-wrap"><table><thead><tr><th>Name</th><th class="num">People</th><th>Built from</th><th>Created</th><th></th></tr></thead>
-          <tbody>${lists.length ? lists.map(l => `<tr><td><b>${esc(l.name)}</b></td><td class="num">${num(l.count || 0)}</td><td style="font-size:0.8rem;">${esc(l.source || '')}</td><td style="white-space:nowrap;">${esc(when(l.createdAt))}</td>
+          <tbody>${lists.length ? lists.map(l => `<tr><td><b>${esc(l.name)}</b>${l.dynamic ? ' <span class="pill pill--info">kept up to date</span>' : ''}</td><td class="num">${num(l.count || 0)}</td><td style="font-size:0.8rem;">${esc(l.source || '')}</td><td style="white-space:nowrap;">${esc(when(l.createdAt))}</td>
             <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-lview="${esc(l.id)}">View</button> <button class="btn btn--danger btn--sm" data-ldel="${esc(l.id)}">Delete</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No lists yet. A list is a named group of people (e.g. "Journalists PT") built from the Investor CRM, portal investors, Network, brokers or an upload — use it in campaigns to people and recurring emails.</td></tr>'}</tbody></table></div>
         </div>
         <p class="hint" style="margin-top:10px;">Uploaded addresses are checked against the Investor CRM, portal investors, Network and brokers; people not found are created as Network contacts first, so everyone on a list has a record.</p>`;
       $('listNew').addEventListener('click', () => openPeoplePicker({ title: 'New list of people', confirmLabel: 'Save list', allowSaveList: false, onDone: async (people, info) => {
         const name = prompt('Name of the list:', ''); if (!name) return false;
-        await saveList(name.trim(), people, info.label); renderLists(); return true;
+        await saveList(name.trim(), people, info.label, info.dynamic); renderLists(); return true;
       } }));
       $('listsView').querySelectorAll('[data-ldel]').forEach(b => b.addEventListener('click', async () => {
         const l = lists.find(x => x.id === b.dataset.ldel);
@@ -2839,9 +2852,14 @@
       }));
       $('listsView').querySelectorAll('[data-lview]').forEach(b => b.addEventListener('click', async () => {
         const l = lists.find(x => x.id === b.dataset.lview);
-        const ms = await getDocs(collection(db, 'outreachLists', l.id, 'members'));
-        addReads(ms.size || 1); refreshReads();
-        const rows = ms.docs.map(d => d.data()).sort((a, b2) => (a.name || a.email).localeCompare(b2.name || b2.email));
+        let rows;
+        if (l.dynamic) rows = mergePeople(peopleFor(l.dynamic, await loadPeopleSources()));
+        else {
+          const ms = await getDocs(collection(db, 'outreachLists', l.id, 'members'));
+          addReads(ms.size || 1); refreshReads();
+          rows = ms.docs.map(d => d.data());
+        }
+        rows = rows.sort((a, b2) => (a.name || a.email).localeCompare(b2.name || b2.email));
         openModal(`${l.name} (${num(rows.length)})`, `<div class="table-wrap" style="max-height:60vh;overflow:auto;"><table><thead><tr><th>Name</th><th>Organisation</th><th>Email</th><th>Records</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.org)}</td><td>${esc(r.email)}</td><td style="font-size:0.78rem;">${esc((r.refs || []).map(x => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[x.source] || x.source)).join(', '))}</td></tr>`).join('')}</tbody></table></div>`, async () => true, 'Close');
       }));
     }
@@ -3113,27 +3131,39 @@
         const count = i.listCount;
         return `<div class="card draft" data-issue="${esc(i.id)}" style="margin-bottom:14px;">
           <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;">
-            <span class="pill pill--info">recurring</span> <b>${esc(i.recurringName)}</b> <span class="hint">— issue #${num(i.number)} · due ${esc(when(i.dueAt))}</span>${i.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}
+            <span class="pill pill--info">recurring</span> <b>${esc(i.recurringName)}</b> <span class="hint">— issue #${num(i.number)} · goes out ${esc(dayFmt.format(new Date(tsMs(i.dueAt))))} ${esc(new Date(tsMs(i.dueAt)).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Lisbon' }))}</span>${i.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}
           </div>
-          <p class="note" style="margin:8px 0;">To everyone on <b>${esc(i.listName || 'the list')}</b>${count != null ? ` (${num(count)})` : ''} · from <b>${esc(i.senderId)}</b> · at most <b>${num(i.maxPerDay)}</b> a day${count ? ` → about <b>${num(Math.ceil(count / (i.maxPerDay || 40)))}</b> sending day(s)` : ''}. People who unsubscribed from this recurring email are left out.</p>
+          <p class="note" style="margin:8px 0;">To everyone on <b>${esc(i.listName || 'the list')}</b>${count != null ? ` (${num(count)})` : ''} · from <b>${esc(i.senderId)}</b> · at most <b>${num(i.maxPerDay)}</b> a day${count ? ` → about <b>${num(Math.ceil(count / (i.maxPerDay || 40)))}</b> sending day(s)` : ''}. People who unsubscribed from this recurring email are left out.${tsMs(i.dueAt) > Date.now() ? ' Approve now and it goes out on its date; you can still cancel it until then (Recurring emails → issues).' : ''}</p>
           ${i.lastError ? `<div class="banner banner--bad" style="margin:8px 0;">Last attempt failed: ${esc(i.lastError)}</div>` : ''}
           <div class="field"><label for="isub-${esc(i.id)}">Subject</label><input type="text" id="isub-${esc(i.id)}" maxlength="300" value="${esc(i.subject)}"></div>
           <div class="field"><label for="ibody-${esc(i.id)}">Message</label><textarea id="ibody-${esc(i.id)}" rows="10">${esc(i.body)}</textarea>
             <span class="hint">Personal fields work as in templates: {{contact.firstName|Caro investidor}}, {{company.shortName}} (= the person's organisation). The legal footer and unsubscribe link are added.</span></div>
           <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
             <button class="btn btn--ghost btn--sm" data-iskip="${esc(i.id)}">Skip this issue</button>
-            <button class="btn btn--primary btn--sm" data-iapprove="${esc(i.id)}">Approve and send</button>
+            <button class="btn btn--ghost btn--sm" data-itest="${esc(i.id)}" title="The email as the first person on the list would get it, sent only to you">Send a test to me</button>
+            <button class="btn btn--primary btn--sm" data-iapprove="${esc(i.id)}">${tsMs(i.dueAt) > Date.now() ? 'Approve' : 'Approve and send'}</button>
           </div></div>`;
       }).join('');
       $('issueView').querySelectorAll('[data-iapprove]').forEach(b => b.addEventListener('click', async () => {
         const id = b.dataset.iapprove, i = issueDrafts.find(x => x.id === id);
         const subject = $('isub-' + id).value, body = $('ibody-' + id).value;
-        if (!confirm(`Send "${subject}" to everyone on "${i.listName}"? It goes out inside the sending window, at most ${i.maxPerDay} a day.`)) return;
+        const later = tsMs(i.dueAt) > Date.now();
+        if (!confirm(`${later ? 'Approve' : 'Send'} "${subject}" to everyone on "${i.listName}"? ${later ? `It goes out on ${dayFmt.format(new Date(tsMs(i.dueAt)))}, ` : 'It goes out '}inside the sending window, at most ${i.maxPerDay} a day.`)) return;
         b.disabled = true;
         try {
           const r = (await callRecurring({ action: 'approveIssue', issueId: id, subject: subject !== i.subject ? subject : null, body: body !== i.body ? body : null })).data;
-          toast(`Approved — ${num(r.enrolled)} people, about ${num(Math.max(1, r.days))} sending day(s)${r.skipped?.unsubscribed ? ` · ${num(r.skipped.unsubscribed)} unsubscribed left out` : ''}.`);
+          if (r.scheduled) toast(`Approved — goes out ${dayFmt.format(new Date(r.sendAt))} to ${num(r.listSize)} people (about ${num(Math.max(1, r.days))} sending day(s)).`);
+          else toast(`Approved — ${num(r.enrolled)} people, about ${num(Math.max(1, r.days))} sending day(s)${r.skipped?.unsubscribed ? ` · ${num(r.skipped.unsubscribed)} unsubscribed left out` : ''}.`);
         } catch (e) { toast(errText(e)); b.disabled = false; }
+      }));
+      $('issueView').querySelectorAll('[data-itest]').forEach(b => b.addEventListener('click', async () => {
+        const id = b.dataset.itest, i = issueDrafts.find(x => x.id === id);
+        const subject = $('isub-' + id).value, body = $('ibody-' + id).value;
+        b.disabled = true;
+        try {
+          const r = (await callRecurring({ action: 'testIssue', issueId: id, subject: subject !== i.subject ? subject : null, body: body !== i.body ? body : null })).data;
+          toast(`Test sent to ${r.sentTo}${r.filledWith ? `, filled in as for ${r.filledWith}` : ''}. The unsubscribe link doesn't work in a test.`);
+        } catch (e) { toast(errText(e)); } finally { b.disabled = false; }
       }));
       $('issueView').querySelectorAll('[data-iskip]').forEach(b => b.addEventListener('click', async () => {
         if (!confirm('Skip this issue? Nothing is sent; the next one comes on its date.')) return;
@@ -3158,7 +3188,7 @@
               <button class="btn btn--ghost btn--sm" data-rnow="${esc(r.id)}" title="Write an issue draft now, off-schedule">Issue now</button>
               <button class="btn btn--ghost btn--sm" data-redit="${esc(r.id)}">Edit</button>
               <button class="btn btn--ghost btn--sm" data-rstat="${esc(r.id)}">${r.status === 'active' ? 'Pause' : 'Resume'}</button>
-              <button class="btn btn--danger btn--sm" data-rdel="${esc(r.id)}">Delete</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. On each date an issue is drafted from the template into Tasks → To approve; you edit it, approve, and it goes out to the list at the pace you set.</td></tr>'}</tbody></table></div>
+              <button class="btn btn--danger btn--sm" data-rdel="${esc(r.id)}">Delete</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. A day before each date an issue is drafted from the template into Tasks → To approve; you edit it (and can send yourself a test), approve, and it goes out on the date to the list, at the pace you set.</td></tr>'}</tbody></table></div>
         </div>
         <p class="hint" style="margin-top:10px;">The unsubscribe link in a recurring email removes the person from that recurring email only. A spam complaint blocks the address everywhere.</p>`;
       $('recNew').addEventListener('click', () => openRecurringModal(null));
@@ -3183,9 +3213,32 @@
         const snap = await getDocs(query(collection(db, 'outreachIssues'), where('recurringId', '==', r.id)));
         addReads(snap.size || 1); refreshReads();
         const rows = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, c) => (c.number || 0) - (a.number || 0));
-        const label = { draft: 'waiting for approval', approving: 'being approved', sending: 'sent / sending', skipped: 'skipped', cancelled: 'replaced' };
-        openModal(`${r.name} — issues`, rows.length ? `<div class="table-wrap" style="max-height:60vh;overflow:auto;"><table><thead><tr><th>#</th><th>Due</th><th>Subject</th><th>Status</th><th class="num">People</th><th></th></tr></thead><tbody>${rows.map(i => `<tr><td>${num(i.number)}</td><td style="white-space:nowrap;">${esc(when(i.dueAt))}</td><td>${esc(i.subject)}</td><td>${esc(label[i.status] || i.status)}</td><td class="num">${i.recipients != null ? num(i.recipients) : '—'}</td><td>${i.campaignId ? `<button class="btn btn--ghost btn--sm" data-iopen="${esc(i.campaignId)}">Who got it</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No issues yet.</p>', async () => true, 'Close');
+        const label = { draft: 'waiting for approval', approved: 'approved — goes out on its date', approving: 'being approved', launching: 'starting', sending: 'sending', sent: 'sent', skipped: 'skipped', cancelled: 'replaced' };
+        // Delivery per issue: its campaign's messages and conversations.
+        const stats = {};
+        await Promise.all(rows.filter(i => i.campaignId).map(async (i) => {
+          const [ms, ts2] = await Promise.all([
+            getDocs(query(collection(db, 'outreachMessages'), where('campaignId', '==', i.campaignId))),
+            getDocs(query(collection(db, 'outreachThreads'), where('campaignId', '==', i.campaignId))),
+          ]);
+          addReads((ms.size || 1) + (ts2.size || 1));
+          const m = ms.docs.map(d => d.data()).filter(x => x.direction === 'out');
+          stats[i.id] = {
+            sent: m.filter(x => !['draft', 'cancelled', 'queued'].includes(x.status)).length,
+            delivered: m.filter(x => x.status === 'delivered').length,
+            bounced: m.filter(x => x.status === 'bounced').length,
+            complained: m.filter(x => x.status === 'complained').length,
+            unsub: ts2.docs.filter(d => d.data().unsubscribedAt).length,
+          };
+        }));
+        refreshReads();
+        const cell = (i) => { const x = stats[i.id]; if (!x) return '—'; return `${num(x.delivered)} delivered${x.sent > x.delivered ? ` of ${num(x.sent)}` : ''}${x.bounced ? ` · ${num(x.bounced)} bounced` : ''}${x.complained ? ` · ${num(x.complained)} spam` : ''}${x.unsub ? ` · ${num(x.unsub)} unsubscribed` : ''}`; };
+        openModal(`${r.name} — issues`, rows.length ? `<div class="table-wrap" style="max-height:60vh;overflow:auto;"><table><thead><tr><th>#</th><th>Goes out</th><th>Subject</th><th>Status</th><th class="num">People</th><th>Delivery</th><th></th></tr></thead><tbody>${rows.map(i => `<tr><td>${num(i.number)}</td><td style="white-space:nowrap;">${esc(when(i.dueAt))}</td><td>${esc(i.subject)}</td><td>${esc(label[i.status] || i.status)}</td><td class="num">${i.recipients != null ? num(i.recipients) : '—'}</td><td style="font-size:0.8rem;">${cell(i)}</td><td style="white-space:nowrap;">${i.campaignId ? `<button class="btn btn--ghost btn--sm" data-iopen="${esc(i.campaignId)}">Who got it</button>` : ''}${i.status === 'approved' ? `<button class="btn btn--danger btn--sm" data-icancel="${esc(i.id)}">Don't send</button>` : ''}</td></tr>`).join('')}</tbody></table></div><p class="hint" style="margin-top:8px;">"Delivered" is confirmed by the recipient's mail server. Opens aren't counted.</p>` : '<p class="note">No issues yet.</p>', async () => true, 'Close');
         $('modalBody').querySelectorAll('[data-iopen]').forEach(x => x.addEventListener('click', () => { closeModal(); openCampaign(x.dataset.iopen, 'audience'); }));
+        $('modalBody').querySelectorAll('[data-icancel]').forEach(x => x.addEventListener('click', async () => {
+          if (!confirm('Cancel this approved issue? Nothing is sent; the next one comes on its date.')) return;
+          try { await callRecurring({ action: 'skipIssue', issueId: x.dataset.icancel }); toast('Issue cancelled.'); closeModal(); } catch (e) { toast(errText(e)); }
+        }));
       }));
     }
 
@@ -3199,7 +3252,7 @@
       const sel = (v, cur) => (v === cur ? ' selected' : '');
       openModal(r ? `Edit "${r.name}"` : 'New recurring email', `
         <div class="field"><label for="rcName">Name</label><input type="text" id="rcName" maxlength="100" value="${esc(r?.name || '')}" placeholder="e.g. Monthly investor update"></div>
-        <div class="field"><label for="rcList">To (list of people)</label><select id="rcList">${lists.map(l => `<option value="${esc(l.id)}"${sel(l.id, r?.listId)}>${esc(l.name)} (${num(l.count || 0)})</option>`).join('')}</select></div>
+        <div class="field"><label for="rcList">To (list of people)</label><select id="rcList">${lists.map(l => `<option value="${esc(l.id)}"${sel(l.id, r?.listId)}>${esc(l.name)} (${num(l.count || 0)})${l.dynamic ? ' — kept up to date' : ''}</option>`).join('')}</select></div>
         <div class="field"><label for="rcTpl">Starting content (template)</label><select id="rcTpl">${templates.map(t => `<option value="${esc(t.id)}"${sel(t.id, r?.templateId)}>${esc(t.name)}</option>`).join('')}</select>
           <span class="hint">Each issue starts from this template; you edit it before approving.</span></div>
         <div class="field"><label for="rcFrom">From</label><select id="rcFrom">${active.map(x => `<option value="${esc(x.id)}"${sel(x.id, r?.senderId)}>${esc(x.id)}${x.kind === 'relationship' ? ' (your real address — replies go to Gmail)' : ' (replies in the portal Inbox)'}</option>`).join('')}</select></div>
@@ -3207,7 +3260,8 @@
         <div class="field" id="rcWdF"><label for="rcWd">Day of the week</label><select id="rcWd">${WEEKDAY_LONG.map((d, i) => `<option value="${i}"${sel(i, sc.weekday)}>${d}</option>`).join('')}</select></div>
         <div class="field" id="rcDayF"><label for="rcDay">Day of the month (1–28)</label><input type="text" inputmode="numeric" id="rcDay" value="${esc(sc.day)}"></div>
         <div class="field" id="rcQF"><label for="rcQ">Months</label><select id="rcQ">${[1, 2, 3].map(m => `<option value="${m}"${sel(m, sc.startMonth)}>${QUARTER_MONTHS[m]}</option>`).join('')}</select></div>
-        <div class="field"><label for="rcTime">Draft the issue at (Lisbon)</label><input type="time" id="rcTime" value="${esc(sc.time)}"></div>
+        <div class="field"><label for="rcTime">Goes out at (Lisbon)</label><input type="time" id="rcTime" value="${esc(sc.time)}">
+          <span class="hint">Each issue is drafted a day before, into Tasks → To approve. Approve it by then and it goes out on the day, inside the sending window.</span></div>
         <div class="field"><label for="rcMax">Max emails per day</label><input type="text" inputmode="numeric" id="rcMax" value="${esc(r?.maxPerDay ?? 40)}">
           <span class="hint">Also bounded by the automations limit and the address's daily cap. The approve card shows how many days it will take.</span></div>`,
         async () => {
@@ -3217,7 +3271,7 @@
             maxPerDay: Number($('rcMax').value),
           };
           const out = (await callRecurring({ action: 'save', recurringId: r?.id || null, recurring: recurringIn })).data;
-          toast(r ? 'Saved.' : `Created — the first issue will be drafted ${out.nextIssueAt ? dayFmt.format(new Date(out.nextIssueAt)) : 'on its date'}. Use "Issue now" to start earlier.`);
+          toast(r ? 'Saved.' : `Created — the first issue goes out ${out.nextIssueAt ? dayFmt.format(new Date(out.nextIssueAt)) : 'on its date'} (drafted a day before). Use "Issue now" to start earlier.`);
           return true;
         }, r ? 'Save' : 'Create');
       const sync = () => { const f = $('rcFreq').value; $('rcWdF').hidden = f !== 'weekly'; $('rcDayF').hidden = f === 'weekly'; $('rcQF').hidden = f !== 'quarterly'; };
@@ -3773,6 +3827,8 @@
           <div class="row2">
             <div class="field"><label for="csMaxDay">Max emails per day (this campaign)</label><input type="text" inputmode="numeric" id="csMaxDay" value="${esc(c.pacing?.maxPerDay ?? '')}" placeholder="no own limit"${dis}>
               <span class="hint">Empty = only the global limits. The portal spreads the sends over the days needed — see "How long each step will take" in the Overview.</span></div>
+            ${c.audienceType === 'people' && c.kind !== 'issue' ? `<div class="field"><label for="csPeopleRecent">Skip people the portal emailed in the last … days</label><input type="text" inputmode="numeric" id="csPeopleRecent" value="${esc(c.exclusions?.peopleContactedWithinDays || 0)}"${dis}>
+              <span class="hint">0 = off (default). Counts campaign, Compose and Investor CRM / Network emails sent through the portal. Recurring emails always go to the whole list.</span></div>` : ''}
             <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csPace">New companies per day</label><input type="text" inputmode="numeric" id="csPace" value="${esc(c.pacing?.newPerDay || 20)}"${dis}>
               <span class="hint">Emails per day ≈ this × emails per company. The automations limit (${num(settings?.automationBudget ?? 80)}/day) is shared by all campaigns.</span></div>
           </div>
@@ -3840,7 +3896,7 @@
           approvalDefault: $('csAppr').value, pacing: { newPerDay: pace, maxPerDay: maxDay }, assignee: $('csAssignee').value, recipientPolicy: $('csRecip').value,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,
-          exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, ownerFilter: $('csOwner').value || null },
+          exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },
           audience: { mode: $('csAudMode').value },
         } }, 'Settings saved.');
         b.disabled = false;

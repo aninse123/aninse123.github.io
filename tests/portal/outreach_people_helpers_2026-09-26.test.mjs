@@ -18,11 +18,11 @@ const line = (a) => { const i = page.indexOf(a); if (i < 0) throw new Error(a); 
 const ctx = {}; vm.createContext(ctx);
 vm.runInContext([
   liftFn('esc'), line('const dayFmt ='), line('const num ='), line('const norm ='), line('const LIVE_ENROL ='), line('const validEmail ='),
-  liftFn('parseCsv'), liftFn('parsePeopleRows'), liftFn('whereIs'), liftFn('mergePeople'), liftToClose('projectionHtml'),
+  liftFn('parseCsv'), liftFn('parsePeopleRows'), liftFn('whereIs'), liftFn('mergePeople'), liftFn('peopleFor'), liftToClose('projectionHtml'),
   'var curEnrols = [], settings = null, senders = [];',
-  'globalThis.api = { parsePeopleRows, whereIs, mergePeople, validEmail, projectionHtml, set: (k, v) => { if (k === "curEnrols") curEnrols = v; if (k === "settings") settings = v; if (k === "senders") senders = v; } };',
+  'globalThis.api = { parsePeopleRows, whereIs, mergePeople, peopleFor, validEmail, projectionHtml, set: (k, v) => { if (k === "curEnrols") curEnrols = v; if (k === "settings") settings = v; if (k === "senders") senders = v; } };',
 ].join('\n'), ctx);
-const { parsePeopleRows, whereIs, mergePeople, validEmail, projectionHtml, set } = ctx.api;
+const { parsePeopleRows, whereIs, mergePeople, peopleFor, validEmail, projectionHtml, set } = ctx.api;
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 
 // Parsing
@@ -48,6 +48,15 @@ const m = mergePeople([...src.crm, ...src.portal, ...src.network, { email: 'rui@
 const ana = m.find(p => p.email === 'ana@alfa.pt'), rui = m.find(p => p.email === 'rui@jornal.pt');
 ok('merged by email, refs from both records', m.length === 2 && ana.refs.length === 2 && ana.name === 'Ana Pinto');
 ok('same record twice → one ref; empty org filled from the other source', rui.refs.length === 1 && rui.org === 'Jornal');
+
+// Dynamic lists: same filter rules as functions/outreach/lists.js
+const S = { crm: [{ email: 'a@a.pt', stage: 'dd' }, { email: 'b@b.pt', stage: 'pass' }], portal: [{ email: 'p@p.pt', investorId: 'p1' }, { email: 'q@q.pt', investorId: 'p2' }],
+  network: [{ email: 'r@x.pt', categories: ['journalist'], phases: ['fundraising'], owner: 'andre' }, { email: 'e@y.pt', categories: ['lawyer'], phases: [], owner: 'antonio' }],
+  brokers: [{ email: 'z@z.pt' }], groups: [{ id: 'g1', investorIds: ['p1'] }] };
+const em = (xs) => xs.map(x => x.email).join(',');
+ok('dynamic: CRM by stage / all', em(peopleFor({ mode: 'crm', stages: ['dd'] }, S)) === 'a@a.pt' && em(peopleFor({ mode: 'crm', stages: [] }, S)) === 'a@a.pt,b@b.pt');
+ok('dynamic: portal group / all portal / unknown group = nobody', em(peopleFor({ mode: 'portal', groupId: 'g1' }, S)) === 'p@p.pt' && em(peopleFor({ mode: 'portal', groupId: null }, S)) === 'p@p.pt,q@q.pt' && peopleFor({ mode: 'portal', groupId: 'gone' }, S).length === 0);
+ok('dynamic: Network categories + owner + phases, brokers', em(peopleFor({ mode: 'network', categories: ['journalist'], phases: [], owner: 'andre' }, S)) === 'r@x.pt' && em(peopleFor({ mode: 'network', categories: [], phases: ['fundraising'], owner: null }, S)) === 'r@x.pt' && em(peopleFor({ mode: 'brokers' }, S)) === 'z@z.pt');
 
 // Projection (P4): effective pace = lowest of campaign limit, automations limit, address caps
 set('settings', { automationBudget: 80, sendWindow: { days: [1, 2, 3, 4, 5] } });
