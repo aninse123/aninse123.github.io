@@ -77,10 +77,11 @@ class DocRef {
   collection(n) { return new CollRef(`${this.path}/${n}`); }
 }
 class Query {
-  constructor(coll, filters = [], order = null, lim = null) { this.coll = coll; this.filters = filters; this.order = order; this.lim = lim; }
-  where(f, op, v) { return new Query(this.coll, [...this.filters, { f, op, v }], this.order, this.lim); }
-  orderBy(f, dir = "asc") { return new Query(this.coll, this.filters, { f, dir }, this.lim); }
-  limit(n) { return new Query(this.coll, this.filters, this.order, n); }
+  constructor(coll, filters = [], order = null, lim = null, after = null) { this.coll = coll; this.filters = filters; this.order = order; this.lim = lim; this.after = after; }
+  where(f, op, v) { return new Query(this.coll, [...this.filters, { f, op, v }], this.order, this.lim, this.after); }
+  orderBy(f, dir = "asc") { return new Query(this.coll, this.filters, { f, dir }, this.lim, this.after); }
+  limit(n) { return new Query(this.coll, this.filters, this.order, n, this.after); }
+  startAfter(snap) { return new Query(this.coll, this.filters, this.order, this.lim, snap); }
   async get() {
     let docs = [...store.keys()].filter((p) => p.startsWith(this.coll + "/") && p.split("/").length === this.coll.split("/").length + 1)
       .map((p) => new DocSnap(new DocRef(p)));
@@ -103,6 +104,7 @@ class Query {
       const val = (d) => { const x = d.data()[f]; return x instanceof Timestamp ? x.toMillis() : x ?? 0; };
       docs.sort((a, b) => (dir === "desc" ? val(b) - val(a) : val(a) - val(b)));
     }
+    if (this.after) { const i = docs.findIndex((d) => d.ref.path === this.after.ref.path); docs = i >= 0 ? docs.slice(i + 1) : docs; }
     if (this.lim != null) docs = docs.slice(0, this.lim);
     return { empty: docs.length === 0, docs, size: docs.length };
   }

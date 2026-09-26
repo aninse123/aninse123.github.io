@@ -37,6 +37,7 @@ const MAX_SENDS_PER_RUN = 4;
 const MAX_DRAFTS_PER_RUN = 50;
 const MAX_TASKS_PER_RUN = 200;
 const DUE_BATCH = 200;
+const DUE_MAX_PAGES = 10; // at most 2,000 due enrolments looked at per run
 const LOCK_MS = 10 * 60 * 1000;
 const RETRY_MS = 60 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
@@ -216,10 +217,21 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
 
   for (const c of open.values()) await startPending(c, now, report);
 
-  const dueSnap = await db().collection("outreachEnrolments")
-    .where("status", "==", "active").where("nextActionAt", "<=", ts(now))
-    .orderBy("nextActionAt", "asc").limit(DUE_BATCH).get();
-  const due = dueSnap.docs.filter((d) => open.has(d.data().campaignId));
+  // Due enrolments of campaigns whose window is open. Pages on when a page is
+  // taken up by campaigns outside their window, so those never hold the rest up.
+  const due = [];
+  let last = null;
+  for (let page = 0; page < DUE_MAX_PAGES && due.length < DUE_BATCH; page++) {
+    let q = db().collection("outreachEnrolments")
+      .where("status", "==", "active").where("nextActionAt", "<=", ts(now))
+      .orderBy("nextActionAt", "asc").limit(DUE_BATCH);
+    if (last) q = q.startAfter(last);
+    const snap = await q.get();
+    due.push(...snap.docs.filter((d) => open.has(d.data().campaignId)));
+    if (snap.size < DUE_BATCH) break;
+    last = snap.docs[snap.docs.length - 1];
+  }
+  due.splice(DUE_BATCH);
   due.sort((a, b) => (open.get(a.data().campaignId).priority || 2) - (open.get(b.data().campaignId).priority || 2)
     || a.data().nextActionAt.toMillis() - b.data().nextActionAt.toMillis());
   if (!due.length) return report;
