@@ -1972,7 +1972,8 @@
         // 5. Templates
         const activeEmail = templatesAll.filter(t => t.status === 'active' && (t.kind || 'email') === 'email' && !t.hidden);
         const real = activeEmail.filter(t => !TEST_NAME.test(t.name || '') && !TEST_NAME.test(t.id));
-        const testTpl = templatesAll.filter(t => TEST_NAME.test(t.name || '') || TEST_NAME.test(t.id));
+        // Issue templates made in test mode go with "Clear test data"; only the ones kept by hand are listed.
+        const testTpl = templatesAll.filter(t => !(t.purpose === 'issue' && t.isTest) && (TEST_NAME.test(t.name || '') || TEST_NAME.test(t.id)));
         add(real.length ? 'ok' : 'todo', 'Templates', real.length ? `${num(real.length)} active email template${real.length === 1 ? '' : 's'}.` : 'No real active email template yet — Settings → Templates.', real.length ? '' : 'templates');
         if (testTpl.length) add('check', 'Test templates', `${testTpl.map(t => t.name).join(', ')} — delete (or archive) before going live.`, 'templates');
         // 6. Addresses
