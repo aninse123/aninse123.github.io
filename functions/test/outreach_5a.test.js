@@ -102,6 +102,17 @@ async function webhook(evt) {
   // Company campaign guard: a people campaign can't switch type once people are in
   ok("audience type locked once people are in", (await camp({ action: "save", campaignId: cid, campaign: { audienceType: "companies" } })).err?.details?.reason === "audience_locked");
 
+  // "Emailed in the last N days" for people: off by default; counts portal conversations and relationship sends
+  const { Timestamp: TS } = require("firebase-admin/firestore");
+  store.set("outreachPeopleSends/ps1", { recipients: ["vip@fundo.pt"], at: TS.fromDate(new Date(Date.now() - 3 * 86400000)) });
+  store.set("outreachPeopleSends/ps2", { recipients: ["old@fundo.pt"], at: TS.fromDate(new Date(Date.now() - 90 * 86400000)) });
+  const cOff = (await camp({ action: "save", campaign: { name: "Sem exclusão", audienceType: "people", steps: [{ templateId: "upd" }] } })).campaignId;
+  const trio = [{ email: "ana@alfa.pt" }, { email: "vip@fundo.pt" }, { email: "old@fundo.pt" }];
+  ok("default: nobody skipped for recent contact", (await camp({ action: "previewPeople", campaignId: cOff, people: trio })).eligible === 3 && get(`outreachCampaigns/${cOff}`).exclusions.peopleContactedWithinDays === 0);
+  const cOn = (await camp({ action: "save", campaign: { name: "Com exclusão", audienceType: "people", exclusions: { peopleContactedWithinDays: 30 }, steps: [{ templateId: "upd" }] } })).campaignId;
+  const pvR = await camp({ action: "previewPeople", campaignId: cOn, people: trio });
+  ok("30 days: Ana (campaign email) and the relationship send 3 days ago skipped; 90 days ago kept", pvR.eligible === 1 && pvR.excluded.contacted_recently === 2);
+
   console.log(fail ? `\n${fail} FAILED` : "\nall 5a tests passed");
   process.exit(fail ? 1 : 0);
 })();

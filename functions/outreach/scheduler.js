@@ -25,6 +25,7 @@ const store = require("./store");
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience } = require("./campaigns");
 const { runRecurring } = require("./recurring");
+const { LIVE_ENROLMENT: LIVE_STATUSES } = require("./campaign_util");
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
@@ -126,6 +127,24 @@ async function recordSent(ref, e, campaign, step, res, { senderId, variantKey, n
     "stats.sent": FieldValue.increment(1),
     sentToday: { day, count },
   });
+  // An issue of a recurring email (5b) is one email: that person is done once it's out.
+  if (!next && campaign.kind === "issue") await endEnrolment(ref, "completed", "Issue sent");
+}
+
+// 5b: an issue's campaign with nobody left to send to is finished, and the
+// issue marked sent.
+async function finishIssueCampaigns(campDocs) {
+  let n = 0;
+  for (const d of campDocs) {
+    const c = d.data();
+    if (c.kind !== "issue") continue;
+    const live = await db().collection("outreachEnrolments").where("campaignId", "==", d.id).where("status", "in", LIVE_STATUSES).limit(1).get();
+    if (!live.empty) continue;
+    await d.ref.update({ status: "finished", finishedAt: FieldValue.serverTimestamp(), finishedBy: "scheduler" });
+    if (c.issueId) await db().doc(`outreachIssues/${c.issueId}`).update({ status: "sent", sentAt: FieldValue.serverTimestamp() }).catch(() => {});
+    n++;
+  }
+  return n;
 }
 
 // A manual step (call, LinkedIn, WhatsApp, letter, visit, other) becomes a
@@ -166,10 +185,11 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   const settings = await store.getSettings();
   // Recurring emails (5b): write the issue drafts whose date has come.
-  try { report.issues = await runRecurring(now); } catch (e) { logger.error("outreachScheduler: recurring failed", { message: e.message }); }
+  try { const rr = await runRecurring(now); report.issues = rr.created; if (rr.launched) report.issuesLaunched = rr.launched; } catch (e) { logger.error("outreachScheduler: recurring failed", { message: e.message }); }
   const campSnap = await db().collection("outreachCampaigns").where("status", "==", "active").get();
   report.campaigns = campSnap.size;
   if (campSnap.empty) return report;
+  try { const f = await finishIssueCampaigns(campSnap.docs); if (f) report.issuesFinished = f; } catch (e) { logger.error("outreachScheduler: finishing issues failed", { message: e.message }); }
 
   // Dynamic audiences (2c): once per Lisbon day, from 07:00 (C5), whatever the window.
   const lp = lisbonParts(now);

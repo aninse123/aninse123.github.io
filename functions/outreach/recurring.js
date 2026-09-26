@@ -21,8 +21,10 @@
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { REGION, ADMIN_EMAILS } = require("./config");
-const { normEmail } = require("./util");
+const { REGION, ADMIN_EMAILS, RESEND_SEND_KEY, RESEND_READ_KEY, SENDER_DOMAIN } = require("./config");
+const { normEmail, domainOf } = require("./util");
+const { sendEmail } = require("./resend");
+const { listPeople } = require("./lists");
 const store = require("./store");
 const { lisbonParts } = require("./schedule_util");
 const { CampaignError } = require("./campaign_util");
@@ -30,6 +32,7 @@ const { CampaignError } = require("./campaign_util");
 const { db, FieldValue, Timestamp } = store;
 const FREQS = ["weekly", "monthly", "quarterly"];
 const MAX_MEMBERS = 5000;
+const DRAFT_LEAD_MS = 24 * 3600 * 1000; // issues are drafted a day before their date
 
 function fail(code, reason, message) { throw new HttpsError(code, message, { reason }); }
 const intIn = (v, lo, hi, dflt) => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= lo && n <= hi ? n : dflt; };
@@ -145,15 +148,15 @@ async function setStatus({ recurringId, status }, caller) {
   return { status };
 }
 
-async function cancelDrafts(recurringId, reason) {
-  const drafts = await db().collection("outreachIssues").where("recurringId", "==", recurringId).where("status", "==", "draft").get();
+async function cancelDrafts(recurringId, reason, statuses = ["draft"]) {
+  const drafts = await db().collection("outreachIssues").where("recurringId", "==", recurringId).where("status", "in", statuses).get();
   await Promise.all(drafts.docs.map((d) => d.ref.update({ status: "cancelled", cancelledReason: reason })));
   return drafts.size;
 }
 
 async function remove({ recurringId }) {
   await readRecurring(recurringId);
-  await cancelDrafts(recurringId, "Recurring email deleted");
+  await cancelDrafts(recurringId, "Recurring email deleted", ["draft", "approved"]);
   await db().doc(`outreachRecurring/${recurringId}`).delete();
   return { ok: true };
 }
@@ -183,49 +186,84 @@ async function issueNow({ recurringId }, caller) {
   return createIssue(r, new Date(), caller);
 }
 
-// Scheduler hook: every active recurring email whose date has come.
+// Scheduler hook. Issues are drafted a day before their date (DRAFT_LEAD),
+// so there's time to edit and approve; an approved issue goes out on its date.
 async function runRecurring(now) {
-  const snap = await db().collection("outreachRecurring").where("status", "==", "active").where("nextIssueAt", "<=", Timestamp.fromDate(now)).get();
-  let created = 0;
+  const horizon = new Date(now.getTime() + DRAFT_LEAD_MS);
+  const snap = await db().collection("outreachRecurring").where("status", "==", "active").where("nextIssueAt", "<=", Timestamp.fromDate(horizon)).get();
+  let created = 0, launched = 0;
   for (const d of snap.docs) {
     const r = { id: d.id, ...d.data() };
     try {
       // Claim the date first so an overlapping run can't write it twice.
-      const claimed = await db().runTransaction(async (tx) => {
+      const sendAt = await db().runTransaction(async (tx) => {
         const cur = await tx.get(d.ref);
-        if (!cur.exists || cur.data().status !== "active" || cur.data().nextIssueAt.toMillis() > now.getTime()) return false;
-        tx.update(d.ref, { nextIssueAt: Timestamp.fromDate(nextOccurrence(r.schedule, now)) });
-        return true;
+        if (!cur.exists || cur.data().status !== "active" || cur.data().nextIssueAt.toMillis() > horizon.getTime()) return null;
+        const at = cur.data().nextIssueAt.toDate();
+        tx.update(d.ref, { nextIssueAt: Timestamp.fromDate(nextOccurrence(r.schedule, at)) });
+        return at;
       });
-      if (!claimed) continue;
-      await createIssue(r, r.nextIssueAt.toDate(), "scheduler");
+      if (!sendAt) continue;
+      await createIssue(r, sendAt, "scheduler");
       created++;
     } catch (e) { logger.error("runRecurring: issue failed", { recurringId: r.id, message: e.message }); }
   }
-  return created;
+  // Issues approved ahead of their date go out once it comes.
+  const approved = await db().collection("outreachIssues").where("status", "==", "approved").get();
+  for (const d of approved.docs) {
+    if (d.data().dueAt.toMillis() > now.getTime()) continue;
+    try { await launch(d.id, d.data().approvedBy || "scheduler"); launched++; }
+    catch (e) { logger.error("runRecurring: launch failed", { issueId: d.id, message: e.message }); }
+  }
+  return { created, launched };
 }
 
-async function approveIssue({ issueId, subject, body }, caller) {
-  if (!issueId) fail("invalid-argument", "issue_required", "Choose an issue.");
+function checkContent(subject, body) {
   if (body != null && (!String(body).trim() || String(body).length > 20000)) fail("invalid-argument", "bad_body", "The message can't be empty (up to 20,000 characters).");
   if (subject != null && (!String(subject).trim() || String(subject).length > 300)) fail("invalid-argument", "bad_subject", "The subject can't be empty (up to 300 characters).");
+}
+
+// Approve: before its date → "approved" (the scheduler sends it on the date);
+// on or after its date → out now.
+async function approveIssue({ issueId, subject, body }, caller) {
+  if (!issueId) fail("invalid-argument", "issue_required", "Choose an issue.");
+  checkContent(subject, body);
   const ref = db().doc(`outreachIssues/${issueId}`);
   const issue = await db().runTransaction(async (tx) => {
     const s = await tx.get(ref);
     if (!s.exists || s.data().status !== "draft") fail("failed-precondition", "not_waiting", "This issue is no longer waiting for approval.");
-    tx.update(ref, { status: "approving", approvedBy: caller, approvedAt: FieldValue.serverTimestamp() });
+    const upd = { status: "approved", approvedBy: caller, approvedAt: FieldValue.serverTimestamp(), lastError: null, edited: subject != null || body != null };
+    if (subject != null) upd.subject = String(subject).trim();
+    if (body != null) upd.body = String(body).trim();
+    tx.update(ref, upd);
+    return { id: s.id, ...s.data(), ...upd };
+  });
+  if (issue.dueAt.toMillis() > Date.now()) {
+    const { people } = await listPeople(issue.listId);
+    const perDay = issue.maxPerDay || 40;
+    return { scheduled: true, sendAt: issue.dueAt.toDate().toISOString(), listSize: people.length, perDay, days: Math.ceil(people.length / perDay) };
+  }
+  return launch(issueId, caller);
+}
+
+// Creates the issue's own people campaign (one email step, auto-approved,
+// paced by the recurring email's max per day) from the list as it is now.
+async function launch(issueId, caller) {
+  const ref = db().doc(`outreachIssues/${issueId}`);
+  const issue = await db().runTransaction(async (tx) => {
+    const s = await tx.get(ref);
+    if (!s.exists || s.data().status !== "approved") fail("failed-precondition", "not_approved", "This issue isn't approved.");
+    tx.update(ref, { status: "launching" });
     return { id: s.id, ...s.data() };
   });
-  const finalSubject = subject != null ? String(subject).trim() : issue.subject;
-  const finalBody = body != null ? String(body).trim() : issue.body;
   const { _internal: C } = require("./campaigns");
   try {
-    const members = await db().collection("outreachLists").doc(issue.listId).collection("members").limit(MAX_MEMBERS).get();
-    if (members.empty) fail("failed-precondition", "list_empty", `The list "${issue.listName}" has nobody in it.`);
+    const { people } = await listPeople(issue.listId, MAX_MEMBERS);
+    if (!people.length) fail("failed-precondition", "list_empty", `The list "${issue.listName}" has nobody in it.`);
     const tplRef = db().collection("outreachTemplates").doc();
     await tplRef.set({
       name: `${issue.recurringName} — #${issue.number}`, status: "active", kind: "email", purpose: "issue", hidden: true, recurringId: issue.recurringId, issueId, isTest: !!issue.isTest,
-      variants: [{ key: "A", subject: finalSubject, body: finalBody }],
+      variants: [{ key: "A", subject: issue.subject, body: issue.body }],
       createdAt: FieldValue.serverTimestamp(), createdBy: caller, updatedAt: FieldValue.serverTimestamp(),
     });
     const { campaignId } = await C.save({ campaign: {
@@ -237,28 +275,55 @@ async function approveIssue({ issueId, subject, body }, caller) {
       steps: [{ channel: "email", name: "Issue", templateId: tplRef.id }],
     } }, caller);
     await db().doc(`outreachCampaigns/${campaignId}`).update({ kind: "issue", recurringId: issue.recurringId, issueId });
-    const people = members.docs.map((m) => m.data());
     const r = await C.enrolPeople({ campaignId, people, source: { type: "manual", label: `List: ${issue.listName}` } }, caller);
     await C.setStatus({ campaignId, status: "active" }, caller);
-    await ref.update({ status: "sending", subject: finalSubject, body: finalBody, campaignId, templateId: tplRef.id, recipients: r.enrolled, skipped: r.skipped, edited: subject != null || body != null });
-    return { campaignId, enrolled: r.enrolled, skipped: r.skipped, perDay: issue.maxPerDay || 40, days: Math.ceil(r.enrolled / (issue.maxPerDay || 40)) };
+    await ref.update({ status: "sending", campaignId, templateId: tplRef.id, recipients: r.enrolled, skipped: r.skipped, launchedAt: FieldValue.serverTimestamp() });
+    const perDay = issue.maxPerDay || 40;
+    return { campaignId, enrolled: r.enrolled, skipped: r.skipped, perDay, days: Math.ceil(r.enrolled / perDay) };
   } catch (e) {
+    // Back to the queue with the reason; the edited content is kept.
     await ref.update({ status: "draft", lastError: e.message || String(e) });
     throw e;
   }
+}
+
+// "Send a test to me": the issue exactly as a person on the list would get it
+// (their name and organisation filled in), to the admin who asked. Nothing is
+// recorded as a conversation; the unsubscribe link is inactive in a test.
+async function testIssue({ issueId, subject, body }, caller) {
+  checkContent(subject, body);
+  const snap = await db().doc(`outreachIssues/${issueId || "-"}`).get();
+  if (!snap.exists) fail("not-found", "issue_not_found", "Issue not found.");
+  const issue = snap.data();
+  const { people } = await listPeople(issue.listId, 1);
+  const sample = people[0] || { name: "", org: "" };
+  const settings = await store.getSettings();
+  const { prepareEmail } = require("./send_core");
+  const p = await prepareEmail({
+    callerEmail: caller, settings, messageRef: db().collection("outreachMessages").doc(),
+    senderId: issue.senderId, subject: subject ?? issue.subject, body: body ?? issue.body,
+    person: { email: caller, name: sample.name || "", org: sample.org || "", refs: [] },
+    countsAsOutreach: false, confirmOverTarget: true,
+  });
+  const headers = Object.fromEntries(Object.entries(p.headers || {}).filter(([k]) => !/^List-Unsubscribe/i.test(k)));
+  const key = p.sender.kind === "relationship" || domainOf(p.senderId) !== SENDER_DOMAIN ? RESEND_READ_KEY.value() : RESEND_SEND_KEY.value();
+  const res = await sendEmail(key, { from: `${p.sender.displayName} <${p.senderId}>`, to: [caller], subject: `[Test] ${p.subject}`, text: p.text, html: p.html, headers });
+  await store.recordQuota(res.quota, "issue_test");
+  return { sentTo: caller, filledWith: sample.email || null };
 }
 
 async function skipIssue({ issueId }, caller) {
   const ref = db().doc(`outreachIssues/${issueId || "-"}`);
   await db().runTransaction(async (tx) => {
     const s = await tx.get(ref);
-    if (!s.exists || s.data().status !== "draft") fail("failed-precondition", "not_waiting", "This issue is no longer waiting for approval.");
+    // A draft, or an issue approved ahead of its date that hasn't gone out yet.
+    if (!s.exists || !["draft", "approved"].includes(s.data().status)) fail("failed-precondition", "not_waiting", "This issue has already gone out or was skipped.");
     tx.update(ref, { status: "skipped", skippedBy: caller, skippedAt: FieldValue.serverTimestamp() });
   });
   return { ok: true };
 }
 
-exports.outreachRecurring = onCall({ region: REGION, timeoutSeconds: 300 }, async (request) => {
+exports.outreachRecurring = onCall({ region: REGION, timeoutSeconds: 300, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY] }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
   if (!ADMIN_EMAILS.includes(caller)) fail("permission-denied", "not_admin", "Only Douro admins can manage recurring emails.");
   const data = request.data || {};
@@ -270,6 +335,7 @@ exports.outreachRecurring = onCall({ region: REGION, timeoutSeconds: 300 }, asyn
       case "issueNow": return await issueNow(data, caller);
       case "approveIssue": return await approveIssue(data, caller);
       case "skipIssue": return await skipIssue(data, caller);
+      case "testIssue": return await testIssue(data, caller);
       default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
     }
   } catch (e) {

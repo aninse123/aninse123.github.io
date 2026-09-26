@@ -54,16 +54,16 @@ function makeRes() { const r = {}; return { r, res: { status(c) { r.code = c; re
   const rid = s.recurringId;
   ok("saved active with its next date and names copied", get(`outreachRecurring/${rid}`).status === "active" && !!s.nextIssueAt && get(`outreachRecurring/${rid}`).listName === "Investidores" && get(`outreachRecurring/${rid}`).maxPerDay === 2);
 
-  // Scheduler writes the issue on its date, once
+  // Scheduler drafts the issue a day before its date, once
   store.set(`outreachRecurring/${rid}`, { ...get(`outreachRecurring/${rid}`), nextIssueAt: Timestamp.fromDate(new Date("2026-10-01T08:30:00Z")) });
-  let rep = await run("2026-10-01T08:00:00Z");
-  ok("before the date: no issue", !docs("outreachIssues").length && !rep.issues);
-  rep = await run("2026-10-01T08:31:00Z");
+  let rep = await run("2026-09-30T08:00:00Z");
+  ok("more than a day before: no issue", !docs("outreachIssues").length && !rep.issues);
+  rep = await run("2026-09-30T08:31:00Z");
   const i1 = docs("outreachIssues")[0];
-  ok("on the date: issue #1 drafted from the template", rep.issues === 1 && i1?.status === "draft" && i1.number === 1 && i1.subject === "Atualização mensal" && i1.listId === "L1");
+  ok("a day before: issue #1 drafted from the template, due on its date", rep.issues === 1 && i1?.status === "draft" && i1.number === 1 && i1.subject === "Atualização mensal" && i1.listId === "L1" && iso(i1.dueAt.toDate()) === "2026-10-01T08:30:00.000Z");
   ok("next date moved to 1 Nov", iso(get(`outreachRecurring/${rid}`).nextIssueAt.toDate()) === "2026-11-01T09:30:00.000Z");
-  await run("2026-10-01T08:41:00Z");
-  ok("a later run the same day doesn't write it again", docs("outreachIssues").length === 1);
+  await run("2026-09-30T08:41:00Z");
+  ok("a later run doesn't write it again", docs("outreachIssues").length === 1);
 
   // Off-schedule issue supersedes the waiting one
   const n2 = await rec({ action: "issueNow", recurringId: rid });
@@ -112,6 +112,35 @@ function makeRes() { const r = {}; return { r, res: { status(c) { r.code = c; re
     const r = await rec({ action: "approveIssue", issueId: n.issueId });
     return r.err?.details?.reason === "list_empty" && get(`outreachIssues/${n.issueId}`).status === "draft";
   })());
+
+  // Approved ahead of its date → goes out on the date; then finishes by itself
+  const rE = (await rec({ action: "save", recurring: { name: "Novembro", listId: "L1", templateId: "upd", senderId: "andre.rocha@douropartners.pt" } })).recurringId;
+  store.set(`outreachRecurring/${rE}`, { ...get(`outreachRecurring/${rE}`), nextIssueAt: Timestamp.fromDate(new Date("2026-11-10T10:00:00Z")) });
+  await run("2026-11-09T10:30:00Z");
+  const iE = docs("outreachIssues").find((i) => i.recurringId === rE);
+  const apE = await rec({ action: "approveIssue", issueId: iE.id, subject: "Novembro editado" });
+  ok("approve before the date: scheduled, nothing created yet", apE.scheduled === true && apE.listSize === 3 && get(`outreachIssues/${iE.id}`).status === "approved" && !get(`outreachIssues/${iE.id}`).campaignId);
+  await run("2026-11-10T09:00:00Z");
+  ok("before its time: still waiting", get(`outreachIssues/${iE.id}`).status === "approved");
+  const sentBefore = sends.length;
+  const rL = await run("2026-11-10T10:05:00Z");
+  const cE = get(`outreachIssues/${iE.id}`).campaignId;
+  ok("on its date: launched with the edited subject", rL.issuesLaunched === 1 && get(`outreachIssues/${iE.id}`).status === "sending" && get(`outreachCampaigns/${cE}`).kind === "issue");
+  await run("2026-11-10T10:15:00Z"); await run("2026-11-10T10:25:00Z");
+  const sentE = sends.slice(sentBefore);
+  ok("all 3 sent, each enrolment completed as soon as its email left", sentE.length === 3 && sentE.every((x) => x.body.subject === "Novembro editado") && docs("outreachEnrolments").filter((e) => e.campaignId === cE).every((e) => e.status === "completed" && e.stopReason === "Issue sent"));
+  const rF = await run("2026-11-10T10:35:00Z");
+  ok("then the issue campaign finishes and the issue is marked sent", rF.issuesFinished === 1 && get(`outreachCampaigns/${cE}`).status === "finished" && get(`outreachIssues/${iE.id}`).status === "sent");
+  const n6 = await rec({ action: "issueNow", recurringId: rE });
+  await rec({ action: "approveIssue", issueId: n6.issueId }); // due now → out now
+  ok("skip can't cancel an issue that has gone out", (await rec({ action: "skipIssue", issueId: n6.issueId })).err?.details?.reason === "not_waiting");
+
+  // "Send a test to me": filled with the first person on the list, to the admin only, no unsubscribe header
+  const n7 = await rec({ action: "issueNow", recurringId: rE });
+  const beforeT = sends.length, threadsT = docs("outreachThreads").length;
+  const tt = await rec({ action: "testIssue", issueId: n7.issueId, subject: "Assunto {{company.shortName}}", body: "{{contact.firstName|Caro investidor}}, teste." });
+  const tm = sends[beforeT];
+  ok("test issue: one email to the admin, [Test] subject, a real person's fields, no unsubscribe header, no conversation", tt.sentTo === "andre.rocha@douropartners.pt" && sends.length === beforeT + 1 && tm.body.to[0] === "andre.rocha@douropartners.pt" && /^\[Test\] Assunto /.test(tm.body.subject) && !/List-Unsubscribe/.test(JSON.stringify(tm.body.headers || {})) && docs("outreachThreads").length === threadsT);
 
   // Clear test data (go-live): test issues, their templates and campaigns go; lists and recurring emails stay
   store.set("outreachSettings/global", { testMode: true, complianceBlockId: "cb", campaignTestRecipient: "andrenorocha@gmail.com" });

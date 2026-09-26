@@ -422,6 +422,30 @@ async function peopleContext(campaign) {
   ctx.optedOut = new Set(opts.docs.map((d) => d.data().email));
   return ctx;
 }
+// People the portal emailed in the last `days` days: campaign / manual
+// conversations (by the person's address) and relationship sends (5c).
+async function recentlyEmailed(emails, days) {
+  const cutoff = Date.now() - days * 86400000;
+  const out = new Set();
+  const ms = (t) => (t && t.toMillis ? t.toMillis() : 0);
+  for (const group of chunks([...new Set(emails)], 30)) {
+    const [byPerson, byContact, sends] = await Promise.all([
+      db().collection("outreachThreads").where("personEmail", "in", group).get(),
+      db().collection("outreachThreads").where("contactEmail", "in", group).get(),
+      db().collection("outreachPeopleSends").where("recipients", "array-contains-any", group).get(),
+    ]);
+    byPerson.docs.forEach((d) => { if (ms(d.data().lastMessageAt) >= cutoff) out.add(d.data().personEmail); });
+    byContact.docs.forEach((d) => { if (ms(d.data().lastMessageAt) >= cutoff) out.add(d.data().contactEmail); });
+    sends.docs.forEach((d) => { if (ms(d.data().at) >= cutoff) (d.data().recipients || []).forEach((e) => group.includes(e) && out.add(e)); });
+  }
+  return out;
+}
+async function withRecent(ctx, campaign, list) {
+  const days = campaign.exclusions?.peopleContactedWithinDays || 0;
+  // A recurring email's issue always goes to the whole list.
+  if (days > 0 && campaign.kind !== "issue") ctx.recent = await recentlyEmailed(list.map((p) => p.email), days);
+  return ctx;
+}
 function assertPeople(campaign) {
   if (campaign.audienceType !== "people") fail("failed-precondition", "not_people", "This campaign is for companies — use a campaign for people.");
 }
@@ -429,7 +453,7 @@ async function previewPeople({ campaignId, people }) {
   const campaign = await getCampaign(campaignId);
   assertEnrollable(campaign); assertPeople(campaign);
   const list = cleanPeople(people);
-  const ctx = await peopleContext(campaign);
+  const ctx = await withRecent(await peopleContext(campaign), campaign, list);
   const excluded = {}; const sample = []; let eligible = 0;
   for (const group of chunks(list, READ_CHUNK)) {
     const snaps = await db().getAll(...group.map((p) => db().doc(`outreachEnrolments/${personEnrolmentId(campaignId, p.email)}`)));
@@ -448,7 +472,7 @@ async function enrolPeople({ campaignId, people, source }, caller) {
   assertEnrollable(campaign); assertPeople(campaign);
   const list = cleanPeople(people);
   const src = cleanSource(source);
-  const ctx = await peopleContext(campaign);
+  const ctx = await withRecent(await peopleContext(campaign), campaign, list);
   let enrolled = 0; const skipped = {};
   for (const group of chunks(list, TX_PARALLEL)) {
     const res = await Promise.all(group.map((p) => {

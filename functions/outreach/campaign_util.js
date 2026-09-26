@@ -188,6 +188,8 @@ function normalizeCampaign(input, existing = null) {
       allowedStages,
       requireEmail: ex.requireEmail !== false,
       ownerFilter: ["andre", "antonio"].includes(ex.ownerFilter) ? ex.ownerFilter : null,
+      // People campaigns: skip anyone the portal emailed in the last N days (0 = off, the default).
+      peopleContactedWithinDays: intIn(ex.peopleContactedWithinDays, 0, 3650, 0),
     },
     steps,
   };
@@ -302,6 +304,7 @@ function evaluatePerson(p, ctx) {
   if (ctx.alreadyEnrolled) return { ok: false, reason: "already_in_campaign" };
   if (ctx.suppressed.has(email) || ctx.suppressed.has("@" + domainOf(email))) return { ok: false, reason: "suppressed" };
   if (ctx.optedOut?.has(email)) return { ok: false, reason: "unsubscribed" };
+  if (ctx.recent?.has(email)) return { ok: false, reason: "contacted_recently" };
   return { ok: true, email };
 }
 
