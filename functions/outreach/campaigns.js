@@ -774,7 +774,8 @@ async function updateTask({ taskId, assignee, dueAt, notes }, caller) {
   if (!snap.exists || snap.data().status !== "open") fail("failed-precondition", "task_closed", "This task is no longer open.");
   const upd = { updatedAt: FieldValue.serverTimestamp(), updatedBy: caller };
   if (assignee !== undefined) {
-    if (![null, "andre", "antonio"].includes(assignee)) fail("invalid-argument", "bad_assignee", "Assign to André, António or nobody.");
+    const known = assignee === null || (/^[a-z][a-z0-9-]{1,19}$/.test(String(assignee)) && (["andre", "antonio"].includes(assignee) || (await db().doc(`teamDirectory/${assignee}`).get()).exists));
+    if (!known) fail("invalid-argument", "bad_assignee", "Assign to someone on the team, or nobody.");
     upd.assignee = assignee;
   }
   if (dueAt !== undefined) {

@@ -19,7 +19,7 @@ function cleanDynamic(d) {
     groupId: d.groupId ? String(d.groupId) : null, // portal: null = every portal investor
     categories: arr(d.categories),         // network: none = all
     phases: arr(d.phases),
-    owner: ["andre", "antonio"].includes(d.owner) ? d.owner : null,
+    owner: /^[a-z][a-z0-9-]{1,19}$/.test(d.owner || "") ? d.owner : null, // any team member's key
   };
 }
 

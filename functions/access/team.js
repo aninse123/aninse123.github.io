@@ -53,12 +53,29 @@ async function audit(by, action, target, before, after) {
   await db().collection("accessAudit").add({ by, action, target, before: before ?? null, after: after ?? null, at: FieldValue.serverTimestamp() });
 }
 
-// Keep the public login list (hashes only) in step with who may sign in.
+// Keep the public login list (hashes only) and the team directory in step
+// with the team. The directory (teamDirectory/{key}: key, name, active) is
+// what every team member reads to show owners and task assignees — it holds
+// no emails, roles or permissions.
 async function syncLoginHashes() {
   const snap = await db().collection("team").get();
   const now = new Date();
   const hashes = snap.docs.filter((d) => P.isActive(d.data(), now) || P.PARTNER_EMAILS.includes(d.id)).map((d) => sha256(d.id));
   await db().doc("config/teamEmailHashes").set({ hashes, updatedAt: FieldValue.serverTimestamp() });
+  const dir = await db().collection("teamDirectory").get();
+  const keys = new Set();
+  const batch = db().batch();
+  snap.docs.forEach((d) => {
+    const m = d.data();
+    if (!m.key) return;
+    keys.add(m.key);
+    batch.set(db().doc(`teamDirectory/${m.key}`), {
+      key: m.key, name: m.name || m.key, partner: m.roleId === "partner",
+      active: P.PARTNER_EMAILS.includes(d.id) || P.isActive(m, now), updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+  dir.docs.forEach((d) => { if (!keys.has(d.id)) batch.delete(d.ref); });
+  await batch.commit();
 }
 
 // Push the person's current permissions onto their account (if they've signed in once).
@@ -118,7 +135,8 @@ async function seed(by) {
       created++;
     }
   }
-  if (created) { await syncLoginHashes(); await audit(by, "seed", null, null, { created }); }
+  await syncLoginHashes(); // also (re)builds the team directory
+  if (created) await audit(by, "seed", null, null, { created });
   return { created };
 }
 

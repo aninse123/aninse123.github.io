@@ -55,5 +55,5 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, RESEN
     confirmOverTarget: !!input.confirmOverTarget,
   });
   const res = await deliverEmail(p);
-  return { ...res, sentBy: callerEmail, sentByOwner: OWNER_BY_ADMIN[callerEmail] || null };
+  return { ...res, sentBy: callerEmail, sentByOwner: request.auth?.token?.key || OWNER_BY_ADMIN[callerEmail] || null };
 });

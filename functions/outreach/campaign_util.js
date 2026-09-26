@@ -117,6 +117,9 @@ function normalizeStep(s, i, usedIds, reserved = new Set()) {
 // Returns the fields the Campaigns screen may set. `existing` is the stored
 // campaign (for updates): locked steps (already run for someone) can't be
 // removed or reordered, only have their content changed (C8).
+// A team member's short key (team access): andre, antonio, maria…
+const TEAM_KEY_RE = /^[a-z][a-z0-9-]{1,19}$/;
+
 function normalizeCampaign(input, existing = null) {
   const base = existing ? { ...DEFAULT_CAMPAIGN, ...existing } : DEFAULT_CAMPAIGN;
   const src = { ...base, ...(input || {}) };
@@ -174,7 +177,8 @@ function normalizeCampaign(input, existing = null) {
     name,
     description: cleanText(src.description, 500),
     priority: intIn(src.priority, 1, 3, 2),
-    assignee: ["owner", "andre", "antonio"].includes(src.assignee) ? src.assignee : "owner",
+    // Team access: "owner" (the company's owner) or any team member's key.
+    assignee: src.assignee === "owner" || TEAM_KEY_RE.test(src.assignee || "") ? src.assignee : "owner",
     approvalDefault: src.approvalDefault === "auto" ? "auto" : "approval",
     recipientPolicy: ["primary_contact", "best_person"].includes(src.recipientPolicy) ? src.recipientPolicy : "company",
     senderPolicy,
@@ -187,7 +191,7 @@ function normalizeCampaign(input, existing = null) {
       contactedWithinDays: intIn(ex.contactedWithinDays, 0, 3650, 30),
       allowedStages,
       requireEmail: ex.requireEmail !== false,
-      ownerFilter: ["andre", "antonio"].includes(ex.ownerFilter) ? ex.ownerFilter : null,
+      ownerFilter: TEAM_KEY_RE.test(ex.ownerFilter || "") ? ex.ownerFilter : null,
       // People campaigns: skip anyone the portal emailed in the last N days (0 = off, the default).
       peopleContactedWithinDays: intIn(ex.peopleContactedWithinDays, 0, 3650, 0),
     },

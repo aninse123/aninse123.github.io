@@ -103,6 +103,18 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   ok("relationship sends: Network page needs net.email, the admin notices need portal.admin", (await call("outreachPeopleSend", as("x@d.pt", ["net.view"]), { context: "network", recipients: [{ email: "a@b.pt" }], subject: "s", message: "m" })).err?.details?.reason === "not_admin"
     && (await call("outreachPeopleSend", as("x@d.pt", ["net.email"]), { context: "portal", recipients: [{ email: "a@b.pt" }], subject: "s", message: "m" })).err?.details?.reason === "not_admin");
 
+  // Team directory (owners / assignees for everyone on the team)
+  const dir = [...store.entries()].filter(([p]) => p.startsWith("teamDirectory/")).map(([, d]) => d);
+  ok("team directory: key + name + active, no emails or permissions", dir.some((d) => d.key === "andre" && d.active && d.partner) && dir.every((d) => !("email" in d) && !("perms" in d)) && dir.some((d) => d.key === "maria" && d.active === false));
+  store.set("outreachTasks/t1", { status: "open", campaignId: "c", assignee: null });
+  await team({ action: "invite", member: { email: "joana@douropartners.pt", name: "Joana Reis", key: "joana", roleId: "intern" } });
+  ok("a task can be assigned to a team member (not only André / António)", !(await call("outreachCampaign", PARTNER, { action: "updateTask", taskId: "t1", assignee: "joana" })).err && store.get("outreachTasks/t1").assignee === "joana");
+  ok("…but not to an unknown key or a path-like value", (await call("outreachCampaign", PARTNER, { action: "updateTask", taskId: "t1", assignee: "bob" })).err?.details?.reason === "bad_assignee" && (await call("outreachCampaign", PARTNER, { action: "updateTask", taskId: "t1", assignee: "../x" })).err?.details?.reason === "bad_assignee");
+  const cj = await call("outreachCampaign", PARTNER, { action: "save", campaign: { name: "Tarefas Joana", assignee: "joana", exclusions: { ownerFilter: "joana", allowedStages: ["universe"] } } });
+  ok("campaigns accept a team member as 'who does the tasks' and as owner filter", store.get(`outreachCampaigns/${cj.campaignId}`).assignee === "joana" && store.get(`outreachCampaigns/${cj.campaignId}`).exclusions.ownerFilter === "joana");
+  await team({ action: "update", email: "joana@douropartners.pt", member: { key: "joana-r" } });
+  ok("changing someone's short name updates the directory (old key removed)", !!store.get("teamDirectory/joana-r") && !store.get("teamDirectory/joana"));
+
   // A failing team lookup never locks partners or investors out
   const origDoc = F.fakeDb.doc;
   F.fakeDb.doc = (path) => (String(path).startsWith("team/") ? { get: async () => { throw new Error("firestore down"); } } : origDoc(path));

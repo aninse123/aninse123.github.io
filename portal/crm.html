@@ -298,7 +298,7 @@
       <option value="medium">🟡 Medium</option>
       <option value="low">🔴 Low</option>
     </select>
-    <select class="filter-sel" id="ownerFilter">
+    <select class="filter-sel" id="ownerFilter" data-owner-select>
       <option value="">All Owners</option>
       <option value="andre">André</option>
       <option value="antonio">António</option>
@@ -412,7 +412,7 @@
     <div class="modal-title">📋 Follow-ups</div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
       <span style="font-size:0.82rem;color:var(--text-light);">Across all investors</span>
-      <select class="filter-sel" id="fuOwnerFilter" style="margin-left:auto;">
+      <select class="filter-sel" id="fuOwnerFilter" data-owner-select style="margin-left:auto;">
         <option value="">All owners</option>
         <option value="andre">André</option>
         <option value="antonio">António</option>
@@ -470,7 +470,7 @@
       </div>
       <div class="form-group">
         <label>Owner</label>
-        <select class="field" id="invOwner">
+        <select class="field" id="invOwner" data-owner-select>
           <option value="">—</option>
           <option value="andre">André</option>
           <option value="antonio">António</option>
@@ -816,6 +816,7 @@
 <script type="module">
 import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
 import { guardPage } from './access.js';
+import { applyDirectory } from './team-dir.js';
 import { sendPeopleEmail, sendNote } from './people-send.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -973,6 +974,8 @@ onAuthStateChanged(auth, async user => {
   // Team access: may this person open this tab? (else → their home tab)
   const pageAccess = await guardPage(user, 'crm'); if (!pageAccess) return;
   window.pageAccess = pageAccess;
+  // Team access: owners / assignees = everyone on the team (not only André and António)
+  window.teamDir = await applyDirectory(OWNER_LABELS);
   currentUser = user.email;
   setNavEmail(user.email);
   startSharedReadsWatch();
@@ -2457,7 +2460,7 @@ function parseCSVText(text) {
 function processBulkRow(row) {
   const validTypes     = ['fund','institutional','family_office','private','corporate','other'];
   const validStages    = ['identified','reached_out','engaged','soft_commit','hard_commit','closed','on_hold','pass'];
-  const validOwners    = ['andre','antonio'];
+  const validOwners    = [...new Set(['andre','antonio', ...(window.teamDir || []).map(m => m.key)])]; // team members
   const validInterests = ['high','medium','low'];
   const validSources   = ['referral','conference','cold','inbound','network','other'];
   const norm = s => (s||'').toLowerCase().trim().replace(/[\s-]+/g,'_');

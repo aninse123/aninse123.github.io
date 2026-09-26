@@ -363,7 +363,7 @@
         <div class="card">
           <div class="toolbar">
             <select id="sentSender" aria-label="Filter by sender"><option value="">All senders</option></select>
-            <select id="sentOwner" aria-label="Filter by person"><option value="">Everyone</option><option value="andre">André</option><option value="antonio">António</option></select>
+            <select id="sentOwner" aria-label="Filter by person" data-owner-select><option value="">Everyone</option><option value="andre">André</option><option value="antonio">António</option></select>
             <select id="sentStatus" aria-label="Filter by status">
               <option value="">All statuses</option>
               <option value="sent">Sent</option><option value="delivered">Delivered</option>
@@ -725,6 +725,7 @@
   <script type="module">
     import { auth, db, storage, ADMIN_EMAILS, addReads, updateDoc, setDoc, addDoc, deleteDoc } from './firebase-config.js';
     import { guardPage } from './access.js';
+    import { applyDirectory } from './team-dir.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
@@ -735,7 +736,10 @@
 
     // ── Constants ──────────────────────────────────────────────
     const OWNER_BY_EMAIL = { 'andre.rocha@douropartners.pt': 'andre', 'antonio.carvalho@douropartners.pt': 'antonio' };
-    const OWNER_LABEL = { andre: 'André', antonio: 'António' };
+    const OWNER_LABEL = { andre: 'André', antonio: 'António' }; // + every team member (team-dir.js)
+    // <option>s for owner / assignee selects: active team members, plus the current value.
+    const ownerOpts = (sel) => (window.teamDir || [{ key: 'andre', label: 'André', active: true }, { key: 'antonio', label: 'António', active: true }])
+      .filter(m => m.active || m.key === sel).map(m => `<option value="${esc(m.key)}"${m.key === sel ? ' selected' : ''}>${esc(m.label)}${m.active ? '' : ' (left)'}</option>`).join('');
     const MONTHLY_QUOTA = 3000; // Resend free plan
     // Same taxonomy as searchActivities.responseCategory; "excluded" also
     // adds the address to the suppression list.
@@ -809,7 +813,9 @@
       // Team access: may this person open this tab? (else → their home tab)
       const pageAccess = await guardPage(user, 'outreach'); if (!pageAccess) return;
       window.pageAccess = pageAccess;
-      me = user.email; myOwner = OWNER_BY_EMAIL[me] || null;
+      me = user.email; myOwner = pageAccess.key || OWNER_BY_EMAIL[me] || null;
+      // Team access: owners / assignees = everyone on the team (not only André and António)
+      window.teamDir = await applyDirectory(OWNER_LABEL);
       setNavEmail(me);
       startSharedReadsWatch();
       $('loadingScreen').style.display = 'none';
@@ -937,8 +943,8 @@
 
     // ── Inbox ──────────────────────────────────────────────────
     function setupFilters() {
-      const other = myOwner === 'andre' ? 'antonio' : 'andre';
-      const owners = [['mine', 'Mine'], [other, OWNER_LABEL[other]], ['all', 'All']];
+      const others = (window.teamDir || []).filter(m => m.partner && m.key !== myOwner).map(m => [m.key, m.label]);
+      const owners = [['mine', 'Mine'], ...others, ['all', 'All']];
       $('ownerChips').innerHTML = owners.map(([k, l]) => `<button class="chip${k === ownerFilter ? ' on' : ''}" data-owner="${k}">${esc(l)}</button>`).join('');
       const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['unmatched', 'Unmatched']];
       $('stateChips').innerHTML = states.map(([k, l]) => `<button class="chip${k === stateFilter ? ' on' : ''}" data-state="${k}">${esc(l)}</button>`).join('');
@@ -2789,7 +2795,7 @@
           const phases = [['fundraising', 'Fundraising'], ['search', 'Search'], ['acquisition', 'Acquisition'], ['post_acquisition', 'Post-Acquisition'], ['general', 'General']];
           inner = `<div class="field"><label>Categories (none ticked = all)</label><div class="stage-grid">${NETWORK_CATS.map(([k, l]) => `<label class="checkline"><input type="checkbox" data-ncat="${k}"${filters.netCats.has(k) ? ' checked' : ''}> <span>${esc(l)}</span></label>`).join('')}</div></div>
             <div class="field"><label>Phases</label><div class="stage-grid">${phases.map(([k, l]) => `<label class="checkline"><input type="checkbox" data-nph="${k}"${filters.netPhases.has(k) ? ' checked' : ''}> <span>${esc(l)}</span></label>`).join('')}</div></div>
-            <div class="field"><label for="ppOwner">Owner</label><select id="ppOwner"><option value="">Anyone</option><option value="andre"${filters.netOwner === 'andre' ? ' selected' : ''}>André</option><option value="antonio"${filters.netOwner === 'antonio' ? ' selected' : ''}>António</option></select></div>`;
+            <div class="field"><label for="ppOwner">Owner</label><select id="ppOwner"><option value="">Anyone</option>${ownerOpts(filters.netOwner)}</select></div>`;
         } else if (mode === 'list') {
           inner = lists.length ? `<div class="field"><label for="ppList">Saved list</label><select id="ppList"><option value="">— Choose —</option>${lists.map(l => `<option value="${esc(l.id)}"${filters.listId === l.id ? ' selected' : ''}>${esc(l.name)} (${num(l.count || 0)})</option>`).join('')}</select></div>` : '<p class="note">No saved lists yet — create one under Campaigns → Lists of people, or save one from here.</p>';
         } else if (mode === 'paste') {
@@ -3597,7 +3603,7 @@
           </div>
           <div class="draft__meta">
             <span><button class="camp-link" style="font-size:0.76rem;" data-topencamp="${esc(t.campaignId)}">${esc(t.campaignName || 'Campaign')}</button> · ${esc(t.stepName || '')} (${(t.stepIndex ?? 0) + 1} of ${t.stepCount || '?'})</span>
-            <span>for <select data-tassign style="width:auto;padding:2px 6px;font-size:0.76rem;"><option value="">nobody</option>${Object.entries(OWNER_LABEL).map(([k, l]) => `<option value="${k}"${t.assignee === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></span>
+            <span>for <select data-tassign style="width:auto;padding:2px 6px;font-size:0.76rem;"><option value="">nobody</option>${ownerOpts(t.assignee)}</select></span>
           </div>
           ${t.instructions ? `<div class="note" style="margin-bottom:8px;"><b>To do:</b> ${esc(t.instructions)}</div>` : ''}
           <div class="task__grid">
@@ -3619,7 +3625,7 @@
       $('todoView').innerHTML = `
         <div class="card" style="padding:0;margin-bottom:14px;">
           <div class="toolbar">
-            <div class="chips" id="todoWho">${[['mine', 'Mine'], ...Object.entries(OWNER_LABEL).filter(([k]) => k !== myOwner), ['none', 'Unassigned'], ['all', 'All']].map(([k, l]) => `<button class="chip${todoWho === k ? ' on' : ''}" data-who="${k}" data-perm="out.tasks">${esc(l)}</button>`).join('')}</div>
+            <div class="chips" id="todoWho">${[['mine', 'Mine'], ...(window.teamDir || []).filter(m => m.active && m.key !== myOwner).map(m => [m.key, m.label]), ['none', 'Unassigned'], ['all', 'All']].map(([k, l]) => `<button class="chip${todoWho === k ? ' on' : ''}" data-who="${k}">${esc(l)}</button>`).join('')}</div>
             <select id="todoCh" aria-label="Channel"><option value="all">All channels</option>${Object.keys(TASK_OUTCOMES).filter(k => k !== 'letter').map(k => `<option value="${k}"${todoChannel === k ? ' selected' : ''}>${esc(CHANNEL_LABELS[k])}</option>`).join('')}</select>
             <select id="todoCamp" aria-label="Campaign"><option value="all">All campaigns</option>${campOpts.map(id => `<option value="${esc(id)}"${todoCampaign === id ? ' selected' : ''}>${esc(campaigns.find(c => c.id === id)?.name || 'Campaign')}</option>`).join('')}</select>
           </div>
@@ -3910,7 +3916,7 @@
                 <option value="best_person"${c.recipientPolicy === 'best_person' ? ' selected' : ''}>The best person — owner / gerente from People (else the company address)</option>
               </select><span class="hint">Chosen at the first email and kept for the follow-ups. People on personal addresses (gmail, sapo…) are allowed and flagged.</span></div>
             <div class="field"><label for="csAssignee">Tasks (calls, LinkedIn, letters…) go to</label>
-              <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option><option value="andre"${c.assignee === 'andre' ? ' selected' : ''}>André</option><option value="antonio"${c.assignee === 'antonio' ? ' selected' : ''}>António</option></select></div>
+              <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option>${ownerOpts(c.assignee)}</select></div>
           </div>
           <div class="row2">
             <div class="field"><label for="csMaxDay">Max emails per day (this campaign)</label><input type="text" inputmode="numeric" id="csMaxDay" value="${esc(c.pacing?.maxPerDay ?? '')}" placeholder="no own limit"${dis}>
@@ -3942,7 +3948,7 @@
             <div class="field"><label for="csRecent">Skip companies contacted in the last … days</label><input type="text" inputmode="numeric" id="csRecent" value="${esc(ex.contactedWithinDays)}"${dis}>
               <span class="hint">Outreach touches count: emails, calls, LinkedIn, WhatsApp, letters, visits (sent from the portal or logged in the Search CRM). Notes and meetings don't. 0 = off.</span></div>
             <div class="field"><label for="csOwner">Only companies owned by</label>
-              <select id="csOwner"${dis}><option value="">Anyone</option><option value="andre"${ex.ownerFilter === 'andre' ? ' selected' : ''}>André</option><option value="antonio"${ex.ownerFilter === 'antonio' ? ' selected' : ''}>António</option></select></div>
+              <select id="csOwner"${dis}><option value="">Anyone</option>${ownerOpts(ex.ownerFilter)}</select></div>
           </div>
           <div class="field"><label>Search CRM stages allowed</label>
             <div class="stage-grid" id="csStages">${STAGE_LABELS.map(([k, l]) => `<label class="checkline"><input type="checkbox" value="${k}" ${ex.allowedStages.includes(k) ? 'checked' : ''}${dis}> <span>${esc(l)}</span></label>`).join('')}</div></div>

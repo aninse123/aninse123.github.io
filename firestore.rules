@@ -234,6 +234,8 @@ service cloud.firestore {
       allow read: if request.auth != null && (request.auth.token.email == email || can('access.manage'));
     }
     match /roles/{id} { allow read: if isStaff(); }
+    // Names + short keys for owner / assignee lists (no emails or permissions).
+    match /teamDirectory/{key} { allow read: if isStaff(); }
     match /accessAudit/{id} { allow read: if can('access.manage'); }
   }
 }
