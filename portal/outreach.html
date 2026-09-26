@@ -3432,7 +3432,7 @@
           const subj = el.querySelector('[data-dsubj]').value, body = el.querySelector('[data-dbody]').value;
           const changed = (!d.isReply && subj !== d.subject) || body !== (d.draftBody || '');
           if (changed) draftEdits.set(id, { subject: subj, body }); else draftEdits.delete(id);
-          el.querySelector('[data-dact="approve" data-perm="out.approve"]').innerHTML = changed ? 'Save &amp; approve' : 'Approve';
+          el.querySelector('[data-dact="approve"]').innerHTML = changed ? 'Save &amp; approve' : 'Approve';
         };
         el.querySelector('[data-dsubj]').addEventListener('input', markEdit);
         el.querySelector('[data-dbody]').addEventListener('input', markEdit);

@@ -1375,10 +1375,10 @@ function renderContacts() {
     panel.style.display = open ? 'none' : 'block';
     btn.textContent = btn.textContent.replace(open ? '▾' : '▸', open ? '▸' : '▾');
   }));
-  el.querySelectorAll('[data-action="send-ct" data-perm="icrm.email"]').forEach(btn => btn.addEventListener('click', () => openSendEmail(Number(btn.dataset.ci))));
-  el.querySelectorAll('[data-action="edit-ct" data-perm="icrm.edit"]').forEach(btn => btn.addEventListener('click', () => openEditContact(Number(btn.dataset.ci))));
-  el.querySelectorAll('[data-action="dup-ct" data-perm="icrm.edit net.edit"]').forEach(btn => btn.addEventListener('click', () => duplicateContactToNetwork(Number(btn.dataset.ci), btn)));
-  el.querySelectorAll('[data-action="del-ct" data-perm="icrm.edit"]').forEach(btn => btn.addEventListener('click', () => deleteContact(Number(btn.dataset.ci))));
+  el.querySelectorAll('[data-action="send-ct"]').forEach(btn => btn.addEventListener('click', () => openSendEmail(Number(btn.dataset.ci))));
+  el.querySelectorAll('[data-action="edit-ct"]').forEach(btn => btn.addEventListener('click', () => openEditContact(Number(btn.dataset.ci))));
+  el.querySelectorAll('[data-action="dup-ct"]').forEach(btn => btn.addEventListener('click', () => duplicateContactToNetwork(Number(btn.dataset.ci), btn)));
+  el.querySelectorAll('[data-action="del-ct"]').forEach(btn => btn.addEventListener('click', () => deleteContact(Number(btn.dataset.ci))));
 }
 
 // ── Duplicate to Network ──────────────────────────────────────────────────────

@@ -40,6 +40,9 @@ for (const f of pages) {
   for (const m of html.matchAll(/guardPage\(user, '([a-z]+)'\)/g)) if (!TAB_PERM[m[1]]) bad.push(`${f}: guard tab ${m[1]}`);
 }
 ok(`every data-perm and page guard names a real permission${bad.length ? ' — ' + bad.join(', ') : ''}`, bad.length === 0);
+const brokenSel = [];
+for (const f of pages) for (const m of read('portal/' + f).matchAll(/\[[a-z-]+="[^"]*" data-perm="[^"]*"\]/g)) brokenSel.push(`${f}: ${m[0]}`);
+ok(`no script selector has data-perm inside it (invalid selector)${brokenSel.length ? ' — ' + brokenSel.join(', ') : ''}`, brokenSel.length === 0);
 const guarded = pages.filter(f => /guardPage\(user, '/.test(read('portal/' + f)));
 ok('every staff page is guarded (admin, budget, crm, log, network, outreach, search, team)', ['admin', 'budget', 'crm', 'log', 'network', 'outreach', 'search', 'team'].every(p => guarded.includes(p + '.html')));
 const stillEmail = pages.filter(f => /!ADMIN_EMAILS\.includes\(user\.email\)\) \{/.test(read('portal/' + f)));
