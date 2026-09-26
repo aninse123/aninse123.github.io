@@ -57,18 +57,30 @@ async function isAllowed(emailRaw) {
 
 const REJECTION_MESSAGE = "This email isn't registered in the Douro Partners portal. Please contact us at andre.rocha@douropartners.pt or antonio.carvalho@douropartners.pt.";
 
-exports.beforeSignIn = beforeUserSignedIn(async (event) => {
-  if (!(await isAllowed(event.data?.email))) {
-    throw new HttpsError("permission-denied", REJECTION_MESSAGE);
-  }
-});
+// Team access (Phase 1): a team member signs in with their role and
+// permissions as custom claims (read by the Firestore rules and callables).
+// Someone whose team access ended or is suspended is refused — unless they're
+// also a registered investor, who then signs in as an investor only. Investors
+// and partners otherwise sign in exactly as before.
+const { onTeamSignIn } = require("./access/team");
+const NO_TEAM_CLAIMS = { role: null, perms: [], key: null };
 
-exports.beforeCreate = beforeUserCreated(async (event) => {
-  if (!(await isAllowed(event.data?.email))) {
-    throw new HttpsError("permission-denied", REJECTION_MESSAGE);
-  }
-});
+async function decide(event) {
+  const email = event.data?.email;
+  const team = await onTeamSignIn(email, event.data?.uid);
+  if (team?.allowed) return { customClaims: team.claims };
+  if (!(await isAllowed(email))) throw new HttpsError("permission-denied", REJECTION_MESSAGE);
+  // An investor (or a former team member who is also an investor): no team permissions.
+  return team ? { customClaims: NO_TEAM_CLAIMS } : undefined;
+}
+
+exports.beforeSignIn = beforeUserSignedIn(decide);
+exports.beforeCreate = beforeUserCreated(decide);
 
 // Outreach module (Phase 1) — required after initializeApp() above, since its
 // modules call getFirestore()/getStorage(). See functions/outreach/.
 Object.assign(exports, require("./outreach"));
+
+// Team access (Phase 1) — see "Portal - Team Access & Roles Plan.md".
+exports.teamAccess = require("./access/team").teamAccess;
+exports.teamExpiry = require("./access/team").teamExpiry;

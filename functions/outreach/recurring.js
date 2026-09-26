@@ -19,6 +19,7 @@
 //   approveIssue { issueId, subject?, body? } send this issue to the list
 //   skipIssue   { issueId }
 
+const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 const { REGION, ADMIN_EMAILS, RESEND_SEND_KEY, RESEND_READ_KEY, SENDER_DOMAIN } = require("./config");
@@ -325,8 +326,8 @@ async function skipIssue({ issueId }, caller) {
 
 exports.outreachRecurring = onCall({ region: REGION, timeoutSeconds: 300, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY] }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
-  if (!ADMIN_EMAILS.includes(caller)) fail("permission-denied", "not_admin", "Only Douro admins can manage recurring emails.");
   const data = request.data || {};
+  if (!P.hasPerm(request, ["approveIssue", "skipIssue"].includes(data.action) ? "out.approve" : "out.campaigns")) fail("permission-denied", "not_admin", "You don't have permission to do this.");
   try {
     switch (data.action) {
       case "save": return await save(data, caller);

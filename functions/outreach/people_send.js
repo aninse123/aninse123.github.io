@@ -16,6 +16,7 @@
 // data: { recipients: [{ email, name }], subject, message, from: "andre"|"antonio"|"noreply",
 //         kind: "outreach"|undefined, combined?, docName?, docCategory?, docDescription?, docUrl? }
 
+const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 const { REGION, ADMIN_EMAILS, RESEND_READ_KEY } = require("./config");
@@ -96,7 +97,9 @@ async function peopleSend(data, caller) {
 
 exports.outreachPeopleSend = onCall({ region: REGION, secrets: [RESEND_READ_KEY], timeoutSeconds: 120 }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
-  if (!ADMIN_EMAILS.includes(caller)) fail("permission-denied", "not_admin", "Only Douro admins can send these emails.");
+  // Which page is sending decides the permission (Investor CRM, Network, or the admin notices).
+  const need = { crm: "icrm.email", network: "net.email", portal: "portal.admin" }[request.data?.context] || "portal.admin";
+  if (!P.hasPerm(request, need)) fail("permission-denied", "not_admin", "You don't have permission to send these emails.");
   try { return await peopleSend(request.data, caller); }
   catch (e) {
     if (e instanceof HttpsError) throw e;

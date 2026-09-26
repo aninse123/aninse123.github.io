@@ -152,12 +152,21 @@ const bucket = {
   deleteFiles: async ({ prefix }) => { for (const k of [...storageFiles.keys()]) if (k.startsWith(prefix)) storageFiles.delete(k); },
 };
 
+// ── firebase-admin/auth (team access): records what the server did to accounts ──
+const authCalls = [];
+const authMock = {
+  setCustomUserClaims: async (uid, claims) => { authCalls.push({ op: "claims", uid, claims }); },
+  revokeRefreshTokens: async (uid) => { authCalls.push({ op: "revoke", uid }); },
+  updateUser: async (uid, props) => { authCalls.push({ op: "update", uid, props }); },
+};
+
 // ── firebase-functions ──
 class HttpsError extends Error { constructor(code, message, details) { super(message); this.code = code; this.details = details; } }
 const functionsMock = {
   "firebase-admin/firestore": { getFirestore: () => fakeDb, FieldValue, Timestamp },
   "firebase-admin/storage": { getStorage: () => ({ bucket: () => bucket }) },
   "firebase-admin/app": { initializeApp: () => {} },
+  "firebase-admin/auth": { getAuth: () => authMock },
   "firebase-functions/v2/https": { onCall: (o, fn) => fn, onRequest: (o, fn) => fn, HttpsError },
   "firebase-functions/v2/scheduler": { onSchedule: (o, fn) => fn },
   "firebase-functions/v2/identity": { beforeUserCreated: (fn) => fn, beforeUserSignedIn: (fn) => fn, HttpsError },
@@ -170,4 +179,4 @@ Module._load = function (req, parent, isMain) {
   return origLoad.apply(this, arguments);
 };
 
-module.exports = { store, storageFiles, Timestamp, FieldValue, HttpsError, fakeDb, resetIds: () => { autoId = 0; } };
+module.exports = { store, storageFiles, authCalls, Timestamp, FieldValue, HttpsError, fakeDb, resetIds: () => { autoId = 0; } };

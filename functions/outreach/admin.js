@@ -12,6 +12,7 @@
 //                               and every campaign/enrolment created in test
 //                               mode (releasing the companies they held).
 
+const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getStorage } = require("firebase-admin/storage");
 const { REGION, ADMIN_EMAILS, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, SEED_SENDERS, SENDER_DOMAIN, RESEND_READ_KEY, RELATIONSHIP_DOMAIN, RELATIONSHIP_SENDERS, RELATIONSHIP_SENDER_CAP } = require("./config");
@@ -111,7 +112,7 @@ async function setTracking(on, callerEmail) {
 
 exports.outreachAdmin = onCall({ region: REGION, secrets: [RESEND_READ_KEY] }, async (request) => {
   const callerEmail = normEmail(request.auth?.token?.email);
-  if (!ADMIN_EMAILS.includes(callerEmail)) throw new HttpsError("permission-denied", "Only Douro admins can do this.");
+  if (!P.hasPerm(request, "out.admin")) throw new HttpsError("permission-denied", "You don't have permission to change Outreach settings.");
   const action = request.data?.action;
   if (action === "seed") return seed(callerEmail);
   if (action === "clearTestData") return clearTestData();

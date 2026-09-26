@@ -28,6 +28,7 @@
 // the full cached list, a matched CSV, or ticked rows) and arrive as ids; the
 // filter itself is stored on the campaign as `source.filterSpec` for Metrics.
 
+const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { REGION, ADMIN_EMAILS } = require("./config");
 const { normEmail } = require("./util");
@@ -798,10 +799,22 @@ async function setDoNotContact({ companyId, on, reason }, caller) {
   return { ok: true, on: !!on, stopped };
 }
 
+// Team access: the permission each action needs. Starting a campaign sends
+// emails, so it needs "approve" like approving drafts.
+const CAMPAIGN_ACTION_PERM = {
+  save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns",
+  enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
+  approve: "out.approve", skipDraft: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
+};
+function campaignActionPerm(data) {
+  if (data.action === "setStatus") return data.status === "active" ? "out.approve" : "out.campaigns";
+  return CAMPAIGN_ACTION_PERM[data.action] || "out.admin";
+}
+
 exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
-  if (!ADMIN_EMAILS.includes(caller)) fail("permission-denied", "not_admin", "Only Douro admins can manage campaigns.");
   const data = request.data || {};
+  if (!P.hasPerm(request, campaignActionPerm(data))) fail("permission-denied", "not_admin", "You don't have permission to do this.");
   try {
     switch (data.action) {
       case "save": return await save(data, caller);

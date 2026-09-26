@@ -12,6 +12,7 @@
 //   a daily cap (settings.aiDailyCap, default 100) counted in outreachDaily.aiCalls.
 
 const { defineSecret } = require("firebase-functions/params");
+const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 const { REGION, ADMIN_EMAILS } = require("./config");
@@ -137,7 +138,7 @@ async function getOpener({ companyId, templateId = null, templateBody = "", sett
 //           { action: "opener", companyId, templateId?, force? } → { text, cached }
 exports.outreachAi = onCall({ region: REGION, secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
-  if (!ADMIN_EMAILS.includes(caller)) throw new HttpsError("permission-denied", "Only Douro admins can use this.", { reason: "not_admin" });
+  if (!P.hasPerm(request, "out.draft") && !P.hasPerm(request, "out.send")) throw new HttpsError("permission-denied", "You don't have permission to use this.", { reason: "not_admin" });
   const data = request.data || {};
   const settings = await store.getSettings();
   if (data.action === "status") {
