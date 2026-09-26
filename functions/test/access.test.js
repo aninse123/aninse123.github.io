@@ -42,6 +42,8 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   ok("invited: record by email, status invited, end date kept", inv.email === "maria@douropartners.pt" && mdoc.status === "invited" && mdoc.endsAt.toMillis() > Date.now() && mdoc.invitedBy === "andre.rocha@douropartners.pt");
   ok("login list (hashes only) includes her and the partners", store.get("config/teamEmailHashes").hashes.includes(sha("maria@douropartners.pt")) && store.get("config/teamEmailHashes").hashes.includes(sha("andre.rocha@douropartners.pt")));
   ok("audit entry for the invite", [...store.entries()].some(([p, d]) => p.startsWith("accessAudit/") && d.action === "invite" && d.target === "maria@douropartners.pt"));
+  await team({ action: "invite", member: { email: "d@d.pt", name: "Data", key: "data", roleId: "viewer", endsAt: "2026-10-15", startsAt: "2026-10-01" } });
+  ok("a date from the form = that day in Lisbon (start 00:00, end 23:59:59, summer time)", store.get("team/d@d.pt").endsAt.toDate().toISOString() === "2026-10-15T22:59:59.000Z" && store.get("team/d@d.pt").startsAt.toDate().toISOString() === "2026-09-30T23:00:00.000Z");
   ok("inviting the same person again is refused", (await team({ action: "invite", member: { email: "maria@douropartners.pt", name: "M", key: "maria2", roleId: "intern" } })).err?.details?.reason === "exists");
 
   // ── Sign-in ──

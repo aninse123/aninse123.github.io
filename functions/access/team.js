@@ -22,6 +22,7 @@ const { logger } = require("firebase-functions");
 const { getFirestore, FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
 const P = require("./perms");
+const { lisbonDate } = require("../outreach/recurring");
 
 const db = () => getFirestore();
 const REGION = "us-central1";
@@ -31,7 +32,16 @@ const EMAIL_RE = /^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/i;
 const fail = (code, reason, message) => { throw new HttpsError(code, message, { reason }); };
 const norm = (e) => String(e || "").trim().toLowerCase();
 const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex");
-const tsOrNull = (v) => { if (!v) return null; const d = new Date(v); if (isNaN(d)) fail("invalid-argument", "bad_date", "A date isn't valid."); return Timestamp.fromDate(d); };
+// A date from the form ("YYYY-MM-DD") means that day in Lisbon: start = 00:00,
+// end = 23:59:59 (summer time handled). Full timestamps are taken as given.
+function tsOrNull(v, edge = "start") {
+  if (!v) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));
+  const d = m ? lisbonDate(+m[1], +m[2], +m[3], edge === "end" ? "23:59" : "00:00") : new Date(v);
+  if (isNaN(d)) fail("invalid-argument", "bad_date", "A date isn't valid.");
+  if (m && edge === "end") d.setSeconds(59);
+  return Timestamp.fromDate(d);
+}
 
 async function readRole(roleId) {
   if (roleId === "partner") return { id: "partner", ...P.DEFAULT_ROLES.partner };
@@ -79,8 +89,8 @@ function cleanMember(src, existing = {}) {
     roleId: String(src.roleId ?? existing.roleId ?? ""),
     extraPerms: P.cleanList(src.extraPerms ?? existing.extraPerms),
     removedPerms: P.cleanList(src.removedPerms ?? existing.removedPerms),
-    startsAt: "startsAt" in src ? tsOrNull(src.startsAt) : existing.startsAt ?? null,
-    endsAt: "endsAt" in src ? tsOrNull(src.endsAt) : existing.endsAt ?? null,
+    startsAt: "startsAt" in src ? tsOrNull(src.startsAt, "start") : existing.startsAt ?? null,
+    endsAt: "endsAt" in src ? tsOrNull(src.endsAt, "end") : existing.endsAt ?? null,
     ndaSigned: "ndaSigned" in src ? !!src.ndaSigned : !!existing.ndaSigned,
     notes: String(src.notes ?? existing.notes ?? "").slice(0, 1000),
   };

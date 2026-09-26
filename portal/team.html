@@ -119,10 +119,13 @@
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const call = httpsCallable(getFunctions(auth.app, 'us-central1'), 'teamAccess');
     const tsMs = (t) => (!t ? 0 : t.toMillis ? t.toMillis() : t.seconds != null ? t.seconds * 1000 : new Date(t).getTime() || 0);
-    const dateFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-    const dtFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    // Dates are Lisbon days (the server stores "until 30 Sept" as 23:59 that day in Lisbon).
+    const TZ = 'Europe/Lisbon';
+    const dateFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: TZ });
+    const dtFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: TZ });
+    const isoFmt = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: TZ });
     const day = (t) => (tsMs(t) ? dateFmt.format(new Date(tsMs(t))) : '—');
-    const isoDay = (t) => (tsMs(t) ? new Date(tsMs(t)).toISOString().slice(0, 10) : '');
+    const isoDay = (t) => (tsMs(t) ? isoFmt.format(new Date(tsMs(t))) : '');
     let toastTimer;
     function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 5000); }
     const errText = (e) => e?.message || String(e);
@@ -161,7 +164,7 @@
         addReads(snap.docChanges().length || 1); refreshReads();
         people = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.roleId === 'partner' ? 0 : 1) - (b.roleId === 'partner' ? 0 : 1) || (a.name || '').localeCompare(b.name || ''));
         $('seedBanner').hidden = people.some(p => p.roleId === 'partner');
-        renderPeople();
+        renderPeople(); renderRoles(); // the Roles grid shows how many people have each role
       }, (e) => { $('v-people').innerHTML = `<div class="err">Couldn't load the team: ${esc(errText(e))}</div>`; });
       onSnapshot(collection(db, 'roles'), (snap) => {
         addReads(snap.docChanges().length || 1); refreshReads();
@@ -206,7 +209,7 @@
           <div class="table-wrap"><table><thead><tr><th>Person</th><th>Role · tabs</th><th>Status</th><th>Access until</th><th>Last sign-in</th><th class="c">NDA</th><th></th></tr></thead>
           <tbody>${active.length ? active.map(row).join('') : '<tr><td colspan="7" class="empty">Nobody yet.</td></tr>'}</tbody></table></div></div>
         ${past.length ? `<div class="card" style="margin-top:16px;"><div class="toolbar"><h2>Former team members (${past.length})</h2></div><div class="table-wrap"><table><tbody>${past.map(row).join('')}</tbody></table></div></div>` : ''}
-        <p class="hint" style="margin-top:10px;">An invited person signs in at <b>douropartners.pt/portal</b> with a magic link sent to their email, and lands on their first tab. Every change is recorded under Activity.</p>`;
+        <p class="hint" style="margin-top:10px;">An invited person signs in at <b>${esc(location.host)}/portal</b> with a magic link sent to their email, and lands on their first tab. Every change is recorded under Activity.${location.host.startsWith('staging') ? ' Until staging is merged into main, team members sign in on staging only.' : ''}</p>`;
       $('inviteBtn').addEventListener('click', () => openPerson(null));
       $('v-people').querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => openPerson(people.find(p => p.id === b.dataset.edit))));
       $('v-people').querySelectorAll('[data-reinvite]').forEach(b => b.addEventListener('click', () => openPerson(null, people.find(p => p.id === b.dataset.reinvite))));
@@ -225,7 +228,7 @@
     function openPerson(p, from = null) {
       const editing = !!p;
       const base = p || from || {};
-      const endDefault = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+      const endDefault = isoFmt.format(new Date(Date.now() + 90 * 86400000));
       const roleOpts = roles.map(r => `<option value="${esc(r.id)}"${(base.roleId || 'intern') === r.id ? ' selected' : ''}>${esc(r.name)}</option>`).join('');
       $('modalRoot').innerHTML = `<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
         <h3 id="mTitle">${editing ? `Edit ${esc(p.name)}` : 'Invite someone'}</h3>
@@ -269,7 +272,7 @@
         const roleSet = new Set(rolePerms($('fRole').value));
         const member = {
           email: $('fEmail').value, name: $('fName').value, key: $('fKey').value, roleId: $('fRole').value,
-          startsAt: $('fStart').value || null, endsAt: $('fEnd').value ? $('fEnd').value + 'T23:59:59' : null,
+          startsAt: $('fStart').value || null, endsAt: $('fEnd').value || null, // Lisbon days; the server sets 00:00 / 23:59
           ndaSigned: $('fNda').checked, notes: $('fNotes').value,
           extraPerms: [...current].filter(x => !roleSet.has(x)), removedPerms: [...roleSet].filter(x => !current.has(x)),
         };
@@ -278,7 +281,7 @@
           if (editing) await call({ action: 'update', email: p.id, member });
           else await call({ action: 'invite', member });
           close();
-          toast(editing ? 'Saved — their page reloads with the new access.' : `Invited. ${member.name.split(' ')[0]} can now sign in at douropartners.pt/portal with ${member.email.trim()}.`);
+          toast(editing ? 'Saved — their page reloads with the new access.' : `Invited. ${member.name.split(' ')[0]} can now sign in at ${location.host}/portal with ${member.email.trim()}.`);
         } catch (e) { $('mErr').textContent = errText(e); $('mErr').hidden = false; $('mSave').disabled = false; }
       });
     }
