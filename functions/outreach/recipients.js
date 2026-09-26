@@ -13,6 +13,20 @@ const { db } = store;
 const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|general manager|owner|propriet[áa]rio|founder|fundador)/i;
 const MANAGER_RE = /(director|diretor|manager|board|conselho|administra)/i;
 
+// People contact data (search.html PERSON_CONTACT_FIELDS): what you typed
+// (email / phone) wins; otherwise what Orbis gave — orbisEmails / orbisPhones
+// lists (newest last), or the older single orbisEmail / orbisPhone.
+function personValues(p, typed, list, legacy) {
+  const out = [];
+  if (p?.[typed]) out.push(p[typed]);
+  const v = p?.[list];
+  if (Array.isArray(v)) out.push(...v.filter(Boolean).slice().reverse());
+  else if (v) out.push(v);
+  if (!out.length && p?.[legacy]) out.push(p[legacy]);
+  return out;
+}
+const personEmails = (p) => personValues(p, "email", "orbisEmails", "orbisEmail");
+
 function rankPerson(link) {
   const roles = (link.mgmtRoles || []).join(" ");
   const current = link.mgmtCurrent !== false && (link.mgmtRoles || []).length > 0;
@@ -47,7 +61,8 @@ async function companyRecipients(companyId, company) {
       snaps.forEach((s, i) => {
         if (!s.exists) return;
         const p = s.data(), l = ranked[i].l;
-        add({ kind: "person", email: p.email, name: p.name || l.personName || "", role: (l.mgmtRoles || []).join(", ") || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ""), personId: s.id, rank: ranked[i].rank });
+        const role = (l.mgmtRoles || []).join(", ") || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : "");
+        personEmails(p).forEach((email) => add({ kind: "person", email, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank }));
       });
     }
   }
@@ -69,4 +84,4 @@ function pickByPolicy(recipients, policy) {
   return company;
 }
 
-module.exports = { companyRecipients, pickByPolicy, rankPerson };
+module.exports = { companyRecipients, pickByPolicy, rankPerson, personEmails, personValues };

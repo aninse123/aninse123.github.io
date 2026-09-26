@@ -1434,7 +1434,16 @@
       if (share > 0) return 20 + share / 100;
       return 0;
     }
-    const peopleCache = new Map(); // companyId → [{ personId, name, role, email, phone, rank }]
+    const peopleCache = new Map(); // companyId → [{ personId, name, role, email, emails, phone, linkedin, rank }]
+    // Typed contact data wins; else Orbis lists (newest last) or the older single field (search.html PERSON_CONTACT_FIELDS).
+    function personValues(p, typed, list, legacy) {
+      const out = [];
+      if (p?.[typed]) out.push(p[typed]);
+      const v = p?.[list];
+      if (Array.isArray(v)) out.push(...v.filter(Boolean).slice().reverse()); else if (v) out.push(v);
+      if (!out.length && p?.[legacy]) out.push(p[legacy]);
+      return out;
+    }
     async function loadPeopleFor(companyIds) {
       for (const id of [...new Set(companyIds)].filter(x => x && !peopleCache.has(x))) {
         try {
@@ -1450,7 +1459,8 @@
           }
           peopleCache.set(id, links.map(({ l, rank }) => {
             const p = people.get(l.personId) || {};
-            return { personId: l.personId, name: p.name || l.personName || '', role: (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: String(p.email || '').trim().toLowerCase(), phone: p.phone || '', rank };
+            const emails = personValues(p, 'email', 'orbisEmails', 'orbisEmail').map(e => String(e).trim().toLowerCase());
+            return { personId: l.personId, name: p.name || l.personName || '', role: (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personValues(p, 'phone', 'orbisPhones', 'orbisPhone')[0] || '', linkedin: p.linkedin || '', rank };
           }));
         } catch (e) { console.warn('people', id, e); peopleCache.set(id, []); }
       }
@@ -1462,7 +1472,7 @@
       const add = (r) => { const e = String(r.email || '').trim().toLowerCase(); if (!/^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/i.test(e) || seen.has(e)) return; seen.add(e); out.push({ ...r, email: e, personal: PERSONAL_DOMAIN_RE.test(e) }); };
       if (c?.companyEmail) add({ kind: 'company', email: c.companyEmail, name: '', role: 'Company address' });
       (c?.contacts || []).forEach(ct => add({ kind: 'contact', email: ct.email, name: ct.name || '', role: ct.role || (ct.isPrimary ? 'Primary contact' : 'Contact') }));
-      (peopleCache.get(c?.id) || []).forEach(p => add({ kind: 'person', email: p.email, name: p.name, role: p.role, personId: p.personId }));
+      (peopleCache.get(c?.id) || []).forEach(p => (p.emails?.length ? p.emails : [p.email]).forEach(e => add({ kind: 'person', email: e, name: p.name, role: p.role, personId: p.personId })));
       return out;
     }
 
@@ -2952,7 +2962,7 @@
       (peopleCache.get(t.companyId) || []).filter(p => p.rank >= 40 || p.phone || p.email).slice(0, 3).forEach(p => {
         const bits = [`👤 ${esc(p.name)}`, p.role ? `<span class="hint">${esc(p.role)}</span>` : ''];
         if (p.phone && ['call', 'whatsapp', 'visit', 'other'].includes(ch)) bits.push(`<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>${isMobilePt(p.phone) ? ' <span class="pill pill--warn" title="Probably a personal mobile (D3)">personal?</span>' : ''}`);
-        if (ch === 'linkedin') bits.push(`<a href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(p.name + ' ' + cName)}" target="_blank" rel="noopener noreferrer">find on LinkedIn</a>`);
+        if (ch === 'linkedin') bits.push(p.linkedin ? `<a href="${esc(/^https?:/i.test(p.linkedin) ? p.linkedin : 'https://' + p.linkedin)}" target="_blank" rel="noopener noreferrer">LinkedIn profile</a>` : `<a href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(p.name + ' ' + cName)}" target="_blank" rel="noopener noreferrer">find on LinkedIn</a>`);
         if (p.email) bits.push(esc(p.email));
         lines.push(bits.filter(Boolean).join(' · '));
       });

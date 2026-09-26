@@ -43,8 +43,8 @@ function seed({ real = true } = {}) {
   store.set("searchCompanies/co3", { name: "SEM GERAL, LDA", stage: "universe", owner: "andre", companyEmail: null, contacts: [{ name: "Carlos Dias", email: "carlos.dias@semgeral.pt", isPrimary: true }] });
   // People linked to co1
   store.set("searchPeople/p1", { name: "João Silva", email: "joao.silva@gmail.com", phone: "912345678" });
-  store.set("searchPeople/p2", { name: "Maria Silva", email: "maria@silva.pt" });
-  store.set("searchPeople/p3", { name: "Antigo Gerente", email: "antigo@silva.pt" });
+  store.set("searchPeople/p2", { name: "Maria Silva", orbisEmails: ["velho@silva.pt", "maria@silva.pt"] }); // Orbis list, newest last
+  store.set("searchPeople/p3", { name: "Antigo Gerente", orbisEmail: "antigo@silva.pt" }); // older single field
   store.set("searchPersonLinks/l1", { companyId: "co1", personId: "p1", personName: "João Silva", mgmtRoles: ["Sócio-Gerente"], mgmtCurrent: true, shTotalPct: 60 });
   store.set("searchPersonLinks/l2", { companyId: "co1", personId: "p2", personName: "Maria Silva", mgmtRoles: [], shTotalPct: 40 });
   store.set("searchPersonLinks/l3", { companyId: "co1", personId: "p3", personName: "Antigo", mgmtRoles: ["Gerente"], mgmtCurrent: false });
@@ -54,8 +54,10 @@ function seed({ real = true } = {}) {
   // ── Recipient list ──
   seed();
   const list = await companyRecipients("co1", get("searchCompanies/co1"));
-  ok("list: company address, contacts with email, linked People with email — deduped", list.map((r) => r.email).join() === "geral@silva.pt,rita@silva.pt,joao.silva@gmail.com,maria@silva.pt,antigo@silva.pt");
-  ok("People ranked: current sócio-gerente first, then 40% shareholder, former manager last", list.filter((r) => r.kind === "person").map((r) => r.name).join() === "João Silva,Maria Silva,Antigo Gerente");
+  ok("list: company address, contacts with email, linked People with email (typed or Orbis) — deduped", list.map((r) => r.email).join() === "geral@silva.pt,rita@silva.pt,joao.silva@gmail.com,maria@silva.pt,velho@silva.pt,antigo@silva.pt");
+  const { personEmails } = require("../outreach/recipients.js");
+  ok("person emails: typed first, then Orbis newest-first; legacy single field only as last resort", personEmails({ email: "a@x.pt", orbisEmails: ["o1@x.pt", "o2@x.pt"], orbisEmail: "old@x.pt" }).join() === "a@x.pt,o2@x.pt,o1@x.pt" && personEmails({ orbisEmail: "old@x.pt" }).join() === "old@x.pt");
+  ok("People ranked: current sócio-gerente first, then 40% shareholder, former manager last", [...new Set(list.filter((r) => r.kind === "person").map((r) => r.name))].join() === "João Silva,Maria Silva,Antigo Gerente");
   ok("personal address flagged", list.find((r) => r.email === "joao.silva@gmail.com").personal === true && !list.find((r) => r.email === "rita@silva.pt").personal);
   ok("rank: top role beats big shareholder beats plain manager", rankPerson({ mgmtRoles: ["Gerente"], mgmtCurrent: true }) > rankPerson({ shTotalPct: 70 }) && rankPerson({ shTotalPct: 70 }) > rankPerson({ mgmtRoles: ["Director de vendas"], mgmtCurrent: true }));
   ok("policy: best person = the sócio-gerente; primary contact = first contact; company = generic", pickByPolicy(list, "best_person").name === "João Silva" && pickByPolicy(list, "primary_contact").email === "rita@silva.pt" && pickByPolicy(list, "company").email === "geral@silva.pt");

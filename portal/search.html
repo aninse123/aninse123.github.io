@@ -9414,7 +9414,8 @@ async function openSendEmail(idx){
     for (let i = 0; i < ids.length && i < 60; i += 30) {
       const ps = await getDocs(query(collection(db, 'searchPeople'), where(documentId(), 'in', ids.slice(i, i + 30).map(l => l.personId))));
       addReads(ps.size || 1);
-      ps.docs.forEach(d => { const p = d.data(); const l = ids.find(x => x.personId === d.id) || {}; if (p.email) addOpt(p.email, `👤 ${p.name || l.personName || ''}${(l.mgmtRoles || []).length ? ' (' + l.mgmtRoles.join(', ') + ')' : ''} — ${p.email}`, 'p:' + d.id); });
+      // Typed email first, else Orbis's (orbisValues — same fallback as the People profile).
+      ps.docs.forEach(d => { const p = d.data(); const l = ids.find(x => x.personId === d.id) || {}; const emails = [p.email, ...orbisValues(p, 'orbisEmails').slice().reverse()].filter(Boolean); emails.forEach(em => addOpt(em, `👤 ${p.name || l.personName || ''}${(l.mgmtRoles || []).length ? ' (' + l.mgmtRoles.join(', ') + ')' : ''} — ${em}`, 'p:' + d.id)); });
     }
     refreshReads();
   } catch (e) { console.warn('people for send', e); }
