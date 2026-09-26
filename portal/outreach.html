@@ -459,6 +459,11 @@
       <!-- ── Metrics ───────────────────────────────────────────── -->
       <!-- ── Campaigns (Phase 2) ───────────────────────────────── -->
       <section class="panel" id="panel-campaigns" hidden>
+        <div class="chips subnav" id="campTop" role="tablist" aria-label="Campaign views">
+          <button class="chip on" data-cview="campaigns">Campaigns</button>
+          <button class="chip" data-cview="lists">Lists of people</button>
+        </div>
+        <div id="listsView" hidden></div>
         <div id="campList">
           <div class="card" style="padding:0;">
             <div class="toolbar">
@@ -1383,8 +1388,10 @@
       const el = $('cFrom'); if (!el) return;
       const cur = el.value;
       const preferOwner = picked?.owner || myOwner;
-      const usable = senders.filter(s => s.status === 'active');
-      el.innerHTML = senders.map(s => `<option value="${esc(s.id)}"${s.status !== 'active' ? ' disabled' : ''}>${esc(s.displayName)} · ${esc(s.id)}${s.status !== 'active' ? ` (${esc(s.status)})` : ''}</option>`).join('')
+      // Outreach addresses first; @douropartners.pt (relationship, Phase 5) listed but never the default.
+      const usable = senders.filter(s => s.status === 'active' && s.kind !== 'relationship');
+      const ordered = [...senders.filter(s => s.kind !== 'relationship'), ...senders.filter(s => s.kind === 'relationship')];
+      el.innerHTML = ordered.map(s => `<option value="${esc(s.id)}"${s.status !== 'active' ? ' disabled' : ''}>${esc(s.displayName)} · ${esc(s.id)}${s.kind === 'relationship' ? ' (your real address — replies go to Gmail)' : ''}${s.status !== 'active' ? ` (${esc(s.status)})` : ''}</option>`).join('')
         || '<option value="">No sender addresses yet — Settings → Set up</option>';
       const keep = usable.find(s => s.id === cur);
       const pick = keep || usable.find(s => s.owner === preferOwner) || usable[0];
@@ -2196,6 +2203,7 @@
 
     function setupCampaigns() {
       $('taskTop').addEventListener('click', (e) => { const b = e.target.closest('[data-tview]'); if (b) showTaskView(b.dataset.tview); });
+      $('campTop').addEventListener('click', (e) => { const b = e.target.closest('[data-cview]'); if (!b) return; $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b)); const lists = b.dataset.cview === 'lists'; $('listsView').hidden = !lists; $('campList').hidden = lists || !!curCampId; $('campPage').hidden = lists || !curCampId; if (lists) renderLists(); });
       $('campNew').addEventListener('click', newCampaign);
       $('campBack').addEventListener('click', closeCampaign);
       $('campRefresh').addEventListener('click', loadCampCounts);
@@ -2265,7 +2273,7 @@
       $('campBody').innerHTML = list.length ? list.map(c => {
         const k = campCounts[c.id] || {};
         return `<tr>
-          <td><button class="camp-link" data-camp="${esc(c.id)}">${esc(c.name)}</button>${c.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}${c.description ? `<div class="hint">${esc(c.description)}</div>` : ''}</td>
+          <td><button class="camp-link" data-camp="${esc(c.id)}">${esc(c.name)}</button>${c.audienceType === 'people' ? ' <span class="pill pill--info">people</span>' : ''}${c.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}${c.description ? `<div class="hint">${esc(c.description)}</div>` : ''}</td>
           <td>${pill(CAMP_PILL, c.status)}</td>
           <td class="num">${n(c.stats?.enrolled || 0)}</td><td class="num">${n(k.live)}</td><td class="num">${n(k.approve)}</td>
           <td class="num">${n(c.stats?.sent || 0)}</td><td class="num">${n(k.replied)}</td>
@@ -2278,11 +2286,17 @@
       openModal('New campaign', `
         <div class="field"><label for="ncName">Name</label><input type="text" id="ncName" maxlength="100" placeholder="e.g. Metalurgia Norte — Outono 2026"></div>
         <div class="field"><label for="ncDesc">Description (optional)</label><input type="text" id="ncDesc" maxlength="500"></div>
+        <div class="field"><label>Who is it for</label>
+          <label class="checkline"><input type="radio" name="ncAud" value="companies" checked> <span><b>Companies</b> — prospects from the Search CRM (the email goes to the company or a person there)</span></label>
+          <label class="checkline"><input type="radio" name="ncAud" value="people"> <span><b>People</b> — investors, brokers, journalists, advisors, institutions… (Investor CRM, portal investors, Network, lists)</span></label>
+          <span class="hint">Can't be changed once people or companies are added.</span></div>
         <div class="field"><label for="ncAppr">Before emails go out</label>
           <select id="ncAppr"><option value="approval">Each email waits for approval (recommended to start)</option><option value="auto">Emails go out automatically</option></select>
           <span class="hint">You can change this per step later — e.g. approve the first email, send follow-ups automatically.</span></div>`,
         async () => {
-          const r = (await callCampaign({ action: 'save', campaign: { name: $('ncName').value, description: $('ncDesc').value, approvalDefault: $('ncAppr').value, steps: [] } })).data;
+          const aud = document.querySelector('input[name="ncAud"]:checked')?.value || 'companies';
+          const r = (await callCampaign({ action: 'save', campaign: { name: $('ncName').value, description: $('ncDesc').value, approvalDefault: $('ncAppr').value, audienceType: aud, steps: [] } })).data;
+          if (aud === 'people') toast('Campaign created — write its sequence, then choose who sends it (Settings) and add people.');
           toast('Campaign created — now write its sequence.');
           openCampaign(r.campaignId, 'sequence');
           return true;
@@ -2292,7 +2306,8 @@
     function openCampaign(id, sec = 'overview') {
       if ($('panel-campaigns').hidden) showTab('campaigns');
       curCampId = id; seqDraft = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = '';
-      $('campList').hidden = true; $('campPage').hidden = false;
+      $('campList').hidden = true; $('campPage').hidden = false; $('listsView').hidden = true;
+      $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.cview === 'campaigns'));
       curEnrols = []; curThreads = [];
       renderCampHeader();
       showCampSec(sec);
@@ -2453,7 +2468,7 @@
 
       $('cs-overview').innerHTML = `
         <div class="kpis">
-          ${kpi('Companies', num(total), `${num(by.pending || 0)} waiting to start`)}
+          ${kpi(c.audienceType === 'people' ? 'People' : 'Companies', num(total), `${num(by.pending || 0)} waiting to start`)}
           ${kpi('In sequence', num(by.active || 0), `${num(by.paused || 0)} paused`)}
           ${kpi('To approve', num(by.awaiting_approval || 0), by.awaiting_approval ? `<button class="camp-link" id="ovApprove" style="font-size:0.74rem;">Open the queue →</button>` : 'drafts waiting')}
           ${steps.some(s => s.channel && s.channel !== 'email') ? kpi('Tasks open', num(by.awaiting_task || 0), by.awaiting_task ? `<button class="camp-link" id="ovTasks" style="font-size:0.74rem;">Open tasks →</button>` : 'calls, LinkedIn, letters…') : ''}
@@ -2476,8 +2491,12 @@
               <thead><tr><th>Channel</th><th class="num">Done</th><th class="num">Open</th><th>Outcomes</th></tr></thead><tbody>${chanRows}</tbody></table></div>` : ''}
           </div>
           <div class="card">
+            <h3>How long each step will take</h3>
+            ${projectionHtml(c)}
+          </div>
+          <div class="card">
             <h3>Pace</h3>
-            <p class="note">The scheduler checks every 10 minutes and sends ${esc(windowText(c.sendWindow))} (Lisbon), never on national holidays. It starts up to <b>${num(c.pacing?.newPerDay || 20)}</b> new companies a day.</p>
+            <p class="note">The scheduler checks every 10 minutes and sends ${esc(windowText(c.sendWindow))} (Lisbon), never on national holidays. It starts up to <b>${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))}</b> new ${c.audienceType === 'people' ? 'people' : 'companies'} a day${c.pacing?.maxPerDay ? ` and sends at most <b>${num(c.pacing.maxPerDay)}</b> emails a day for this campaign` : ''}.</p>
             <p class="note" style="margin-top:8px;">With ${num(steps.length)} email${steps.length === 1 ? '' : 's'} per company that's about <b>${num(perDay)}</b> emails a day once the campaign is in full swing — the automations limit is <b>${num(limitN)}</b> a day for all campaigns together${perDay > limitN ? ' (<b>above the limit</b>: emails will queue up; lower the pace in Settings)' : ''}.</p>
             ${c.status === 'draft' ? '<p class="note" style="margin-top:8px;">Nothing is sent while the campaign is a draft.</p>' : ''}
           </div>
@@ -2505,7 +2524,7 @@
       const statuses = [...new Set(curEnrols.map(e => e.status))];
       const q = norm(audSearch);
       const rows = curEnrols.filter(e => (audFilter === 'all' || (audFilter === 'live' ? LIVE_ENROL.includes(e.status) : e.status === audFilter))
-        && (!q || norm(e.companyName).includes(q) || norm(e.contactEmail).includes(q)));
+        && (!q || norm(e.companyName).includes(q) || norm(e.contactEmail).includes(q) || norm(e.personName).includes(q)));
       const shown = rows.slice(0, 300);
       const canAdd = campEditable(c);
       $('cs-audience').innerHTML = `
@@ -2518,10 +2537,10 @@
             </select>
             <input type="search" id="audSearch" placeholder="Company or email…" style="max-width:240px;" value="${esc(audSearch)}">
             <button class="btn btn--ghost btn--sm" id="audRefresh">Refresh</button>
-            ${canAdd ? '<button class="btn btn--primary btn--sm" id="audAdd" style="margin-left:auto;">Add companies</button>' : ''}
+            ${canAdd ? `<button class="btn btn--primary btn--sm" id="audAdd" style="margin-left:auto;">${c.audienceType === 'people' ? 'Add people' : 'Add companies'}</button>` : ''}
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th>Company</th><th>Status</th><th>Step</th><th>Next</th><th>From</th><th>Note</th><th></th></tr></thead>
+            <thead><tr><th>${c.audienceType === 'people' ? 'Person' : 'Company'}</th><th>Status</th><th>Step</th><th>Next</th><th>From</th><th>Note</th><th></th></tr></thead>
             <tbody>${shown.length ? shown.map(e => {
               const live = LIVE_ENROL.includes(e.status);
               const next = live && e.nextActionAt && e.status === 'active' ? dtFmt.format(new Date(tsMs(e.nextActionAt))) : '';
@@ -2532,7 +2551,7 @@
                 `<button class="btn btn--danger btn--sm" data-eop="remove" data-eid="${esc(e.id)}">Remove</button>`,
               ].join(' ');
               return `<tr>
-                <td><a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div></td>
+                <td>${e.personEmail ? `<b>${esc(e.personName || e.personEmail)}</b>${e.org ? ` <span class="hint">· ${esc(e.org)}</span>` : ''}<div class="hint">${esc(e.personEmail)}${(e.refs || []).length ? ' · ' + e.refs.map(r => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[r.source] || r.source)).join(', ') : ''}</div>` : `<a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div>`}</td>
                 <td>${pill(ENROL_PILL, e.status)}</td>
                 <td style="font-size:0.8rem;">${stepLabel(e, c)}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(next)}</td>
@@ -2547,7 +2566,7 @@
       $('audFilter').addEventListener('change', (e) => { audFilter = e.target.value; renderAudience(); });
       $('audSearch').addEventListener('input', (e) => { audSearch = e.target.value; clearTimeout(renderAudience._t); renderAudience._t = setTimeout(() => { renderAudience(); $('audSearch').focus(); const v = $('audSearch'); v.setSelectionRange(v.value.length, v.value.length); }, 250); });
       $('audRefresh').addEventListener('click', loadCampaignData);
-      $('audAdd')?.addEventListener('click', openAddCompanies);
+      $('audAdd')?.addEventListener('click', () => (c.audienceType === 'people' ? openAddPeople() : openAddCompanies()));
       $('cs-audience').querySelectorAll('[data-eop]').forEach(b => b.addEventListener('click', async () => {
         const op = b.dataset.eop, eid = b.dataset.eid;
         const e = curEnrols.find(x => x.id === eid);
@@ -2575,6 +2594,268 @@
           loadCampaignData();
           return true;
         }, 'Move');
+    }
+
+    // ── Phase 5a: people ────────────────────────────────────────────────────
+    // Sources (spec §1): Investor CRM contacts, portal investors, Network
+    // contacts, Search CRM brokers, saved lists. Loaded on demand (admins can
+    // read them). A person = one email; the records they appear in are kept as refs.
+    let peopleSrc = null; // { crm, portal, network, brokers, groups, firms, stages }
+    async function loadPeopleSources() {
+      if (peopleSrc) return peopleSrc;
+      const [crm, inv, grp, nc, nf, br] = await Promise.all(['crmInvestors', 'investors', 'accessGroups', 'networkContacts', 'networkFirms', 'searchBrokers'].map(n => getDocs(collection(db, n))));
+      addReads(crm.size + inv.size + grp.size + nc.size + nf.size + br.size); refreshReads();
+      const firms = Object.fromEntries(nf.docs.map(d => [d.id, d.data().name || '']));
+      const out = { crm: [], portal: [], network: [], brokers: [], groups: grp.docs.map(d => ({ id: d.id, ...d.data() })), firms };
+      crm.docs.forEach(d => { const i = d.data(); (i.contacts || []).forEach(ct => { if (ct.email) out.crm.push({ email: String(ct.email).trim().toLowerCase(), name: ct.name || '', org: i.name || '', role: ct.role || '', stage: i.stage || '', type: i.type || '', owner: i.owner || '', refs: [{ source: 'crm', id: d.id }] }); }); });
+      inv.docs.forEach(d => { const i = d.data(); (i.emails || []).forEach(e => { if (e) out.portal.push({ email: String(e).trim().toLowerCase(), name: i.name || '', org: i.name || '', investorId: d.id, refs: [{ source: 'portal', id: d.id }] }); }); });
+      nc.docs.forEach(d => { const c = d.data(); if (c.email) out.network.push({ email: String(c.email).trim().toLowerCase(), name: c.name || '', org: firms[c.firmId] || '', role: c.role || '', categories: c.categories || [], phases: c.phases || [], owner: c.owner || '', country: c.country || '', priority: !!c.priority, refs: [{ source: 'network', id: d.id }] }); });
+      br.docs.forEach(d => { const b = d.data(); (b.contacts || []).forEach(ct => { if (ct.email) out.brokers.push({ email: String(ct.email).trim().toLowerCase(), name: ct.name || '', org: b.name || '', refs: [{ source: 'broker', id: d.id }] }); }); });
+      peopleSrc = out;
+      return out;
+    }
+    // Where an email already exists (for list validation, P2).
+    function whereIs(email, src) {
+      const e = String(email || '').trim().toLowerCase(), hits = [];
+      for (const [key, label] of [['crm', 'Investor CRM'], ['portal', 'Portal investors'], ['network', 'Network'], ['brokers', 'Brokers']]) {
+        const m = src[key].find(x => x.email === e); if (m) hits.push({ label, person: m });
+      }
+      return hits;
+    }
+    function mergePeople(list) {
+      const map = new Map();
+      list.forEach(p => { const k = p.email; if (!k) return; const cur = map.get(k); if (cur) { p.refs.forEach(r => { if (!cur.refs.some(x => x.source === r.source && x.id === r.id)) cur.refs.push(r); }); if (!cur.name && p.name) cur.name = p.name; if (!cur.org && p.org) cur.org = p.org; } else map.set(k, { email: k, name: p.name || '', org: p.org || '', refs: [...(p.refs || [])] }); });
+      return [...map.values()];
+    }
+    // Parse "email, name, organisation[, category, role]" rows (CSV or pasted; header optional).
+    function parsePeopleRows(text) {
+      const rows = parseCsv(text);
+      if (!rows.length) return [];
+      const head = rows[0].map(h => norm(h).replace(/[^a-z]/g, ''));
+      const hasHeader = head.some(h => ['email', 'emailaddress', 'name', 'nome', 'organisation', 'organization', 'organizacao', 'empresa', 'company'].includes(h));
+      const col = (names, dflt) => { const i = head.findIndex(h => names.includes(h)); return hasHeader ? i : dflt; };
+      const iE = col(['email', 'emailaddress', 'correioeletronico'], 0), iN = col(['name', 'nome'], 1), iO = col(['organisation', 'organization', 'organizacao', 'empresa', 'company', 'org'], 2), iC = col(['category', 'categoria'], 3), iR = col(['role', 'cargo', 'funcao'], 4);
+      return (hasHeader ? rows.slice(1) : rows).map(r => ({ email: String(r[iE] || '').trim().toLowerCase(), name: (r[iN] || '').trim(), org: (r[iO] || '').trim(), category: iC >= 0 ? (r[iC] || '').trim() : '', role: iR >= 0 ? (r[iR] || '').trim() : '' }));
+    }
+    const validEmail = (e) => /^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/i.test(e || '');
+    const NETWORK_CATS = [['journalist', 'Journalist'], ['banker_broker', 'Banker/Broker'], ['investor_outside_process', 'Investor (outside process)'], ['lawyer', 'Lawyer'], ['accountant', 'Accountant'], ['advisor', 'Advisor'], ['operator', 'Operator'], ['current_searcher', 'Current Searcher'], ['former_searcher', 'Former Searcher'], ['service_provider', 'Service Provider'], ['other', 'Other']];
+    // P2: people not found anywhere are created as Network contacts first.
+    async function createNetworkContacts(rows, category) {
+      const created = [];
+      for (const r of rows) {
+        const ref = await addDoc(collection(db, 'networkContacts'), {
+          name: r.name || r.email, email: r.email, phone: null, role: r.role || null, firmId: null, linkedin: null,
+          owner: myOwner || null, country: null, howWeMet: 'Added from an Outreach list', notes: r.org ? `Organisation: ${r.org}` : null,
+          priority: false, categories: [r.category && NETWORK_CATS.some(c => c[0] === r.category) ? r.category : category], phases: [],
+          createdAt: serverTimestamp(), updatedAt: serverTimestamp(), lastTouchAt: null,
+        });
+        created.push({ email: r.email, name: r.name || '', org: r.org || '', refs: [{ source: 'network', id: ref.id }] });
+        if (peopleSrc) peopleSrc.network.push({ email: r.email, name: r.name || '', org: r.org || '', categories: [category], phases: [], refs: [{ source: 'network', id: ref.id }] });
+      }
+      return created;
+    }
+
+    // The people picker, shared by "Add people" (campaign) and "New list".
+    // onDone(people[], sourceInfo) is called with the chosen, validated people.
+    function openPeoplePicker({ title, confirmLabel, onDone, allowSaveList = true }) {
+      let mode = 'crm', src = null, validated = null, busy = false;
+      const filters = { crmStages: new Set(), portalGroup: '', netCats: new Set(), netPhases: new Set(), netOwner: '', listId: '' };
+      let lists = [];
+      const selected = () => {
+        if (!src) return [];
+        if (mode === 'crm') return src.crm.filter(p => !filters.crmStages.size || filters.crmStages.has(p.stage));
+        if (mode === 'portal') { const g = src.groups.find(x => x.id === filters.portalGroup); return src.portal.filter(p => !g || (g.investorIds || []).includes(p.investorId)); }
+        if (mode === 'network') return src.network.filter(p => (!filters.netCats.size || p.categories.some(c => filters.netCats.has(c))) && (!filters.netPhases.size || p.phases.some(c => filters.netPhases.has(c))) && (!filters.netOwner || p.owner === filters.netOwner));
+        if (mode === 'brokers') return src.brokers;
+        return [];
+      };
+      const body = () => {
+        if (!src) return '<p class="note"><span class="spinner-sm" style="border-color:var(--border);border-top-color:var(--primary);"></span> Loading Investor CRM, portal investors, Network and brokers…</p>';
+        const chip = (k, l) => `<button type="button" class="chip${mode === k ? ' on' : ''}" data-pm="${k}">${esc(l)}</button>`;
+        let inner = '';
+        if (mode === 'crm') {
+          const stages = [...new Set(src.crm.map(p => p.stage).filter(Boolean))];
+          inner = `<div class="field"><label>Investor CRM stage (none ticked = all)</label><div class="stage-grid">${stages.map(st => `<label class="checkline"><input type="checkbox" data-crmst="${esc(st)}"${filters.crmStages.has(st) ? ' checked' : ''}> <span>${esc(st)}</span></label>`).join('') || '<span class="hint">No stages.</span>'}</div></div>`;
+        } else if (mode === 'portal') {
+          inner = `<div class="field"><label for="ppGroup">Access group</label><select id="ppGroup"><option value="">All portal investors</option>${src.groups.map(g => `<option value="${esc(g.id)}"${filters.portalGroup === g.id ? ' selected' : ''}>${esc(g.name)}</option>`).join('')}</select></div>`;
+        } else if (mode === 'network') {
+          const phases = [['fundraising', 'Fundraising'], ['search', 'Search'], ['acquisition', 'Acquisition'], ['post_acquisition', 'Post-Acquisition'], ['general', 'General']];
+          inner = `<div class="field"><label>Categories (none ticked = all)</label><div class="stage-grid">${NETWORK_CATS.map(([k, l]) => `<label class="checkline"><input type="checkbox" data-ncat="${k}"${filters.netCats.has(k) ? ' checked' : ''}> <span>${esc(l)}</span></label>`).join('')}</div></div>
+            <div class="field"><label>Phases</label><div class="stage-grid">${phases.map(([k, l]) => `<label class="checkline"><input type="checkbox" data-nph="${k}"${filters.netPhases.has(k) ? ' checked' : ''}> <span>${esc(l)}</span></label>`).join('')}</div></div>
+            <div class="field"><label for="ppOwner">Owner</label><select id="ppOwner"><option value="">Anyone</option><option value="andre"${filters.netOwner === 'andre' ? ' selected' : ''}>André</option><option value="antonio"${filters.netOwner === 'antonio' ? ' selected' : ''}>António</option></select></div>`;
+        } else if (mode === 'list') {
+          inner = lists.length ? `<div class="field"><label for="ppList">Saved list</label><select id="ppList"><option value="">— Choose —</option>${lists.map(l => `<option value="${esc(l.id)}"${filters.listId === l.id ? ' selected' : ''}>${esc(l.name)} (${num(l.count || 0)})</option>`).join('')}</select></div>` : '<p class="note">No saved lists yet — create one under Campaigns → Lists of people, or save one from here.</p>';
+        } else if (mode === 'paste') {
+          inner = `<div class="field"><label for="ppFile">CSV file</label><input type="file" id="ppFile" accept=".csv,.txt,text/csv"></div>
+            <div class="field"><label for="ppText">…or paste rows</label><textarea id="ppText" rows="6" spellcheck="false" placeholder="email;name;organisation&#10;ana@jornal.pt;Ana Silva;Jornal de Negócios"></textarea>
+              <span class="hint">Columns: email, name, organisation (optionally category, role). Each address is checked against the Investor CRM, portal investors, Network and brokers; people not found are created as Network contacts before they join.</span></div>
+            <button type="button" class="btn btn--ghost btn--sm" id="ppCheck">Check addresses</button>
+            <div id="ppResult" style="margin-top:10px;">${validated ? validatedHtml() : ''}</div>`;
+        } else if (mode === 'brokers') inner = `<p class="note">${num(src.brokers.length)} broker contacts with an email (Search CRM → Brokers).</p>`;
+        const count = mode === 'paste' ? (validated ? validated.found.length + validated.newOnes.length : 0) : mode === 'list' ? (lists.find(l => l.id === filters.listId)?.count || 0) : mergePeople(selected()).length;
+        return `<div class="chips" style="margin-bottom:12px;">${chip('crm', 'Investor CRM')}${chip('portal', 'Portal investors')}${chip('network', 'Network')}${chip('brokers', 'Brokers')}${chip('list', 'Saved list')}${chip('paste', 'CSV / paste')}</div>
+          ${inner}
+          <p class="note" style="margin-top:6px;"><b>${num(count)}</b> ${count === 1 ? 'person' : 'people'} selected${mode === 'paste' && validated?.newOnes.length ? ` (${num(validated.newOnes.length)} to be created in Network)` : ''}.</p>
+          ${allowSaveList ? `<label class="checkline" style="margin-top:6px;"><input type="checkbox" id="ppSave"> <span>Also save them as a list:</span> <input type="text" id="ppSaveName" placeholder="e.g. Journalists PT" style="width:auto;min-width:200px;padding:4px 8px;"></label>` : ''}`;
+      };
+      const validatedHtml = () => `<dl class="summary">
+          <dt>Rows</dt><dd>${num(validated.rows)}</dd>
+          <dt>Already exist</dt><dd>${num(validated.found.length)}${validated.found.length ? ' — ' + esc(validated.foundWhere) : ''}</dd>
+          <dt>New</dt><dd>${num(validated.newOnes.length)}${validated.newOnes.length ? ` — created as Network contacts, category <select id="ppNewCat" style="width:auto;padding:2px 6px;">${NETWORK_CATS.map(([k, l]) => `<option value="${k}"${validated.cat === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>` : ''}</dd>
+          <dt>Skipped</dt><dd>${num(validated.bad.length)}${validated.bad.length ? ' — ' + esc(validated.bad.slice(0, 6).join('; ')) : ''}</dd>
+        </dl>`;
+      const render = () => {
+        $('modalBody').innerHTML = body();
+        $('modalSave').textContent = confirmLabel;
+        if (!src) return;
+        $('modalBody').querySelectorAll('[data-pm]').forEach(b => b.addEventListener('click', async () => { mode = b.dataset.pm; if (mode === 'list' && !lists.length) { const ls = await getDocs(collection(db, 'outreachLists')); addReads(ls.size || 1); lists = ls.docs.map(d => ({ id: d.id, ...d.data() })); } render(); }));
+        $('modalBody').querySelectorAll('[data-crmst]').forEach(c => c.addEventListener('change', () => { c.checked ? filters.crmStages.add(c.dataset.crmst) : filters.crmStages.delete(c.dataset.crmst); render(); }));
+        $('modalBody').querySelectorAll('[data-ncat]').forEach(c => c.addEventListener('change', () => { c.checked ? filters.netCats.add(c.dataset.ncat) : filters.netCats.delete(c.dataset.ncat); render(); }));
+        $('modalBody').querySelectorAll('[data-nph]').forEach(c => c.addEventListener('change', () => { c.checked ? filters.netPhases.add(c.dataset.nph) : filters.netPhases.delete(c.dataset.nph); render(); }));
+        $('ppGroup')?.addEventListener('change', (e) => { filters.portalGroup = e.target.value; render(); });
+        $('ppOwner')?.addEventListener('change', (e) => { filters.netOwner = e.target.value; render(); });
+        $('ppList')?.addEventListener('change', (e) => { filters.listId = e.target.value; render(); });
+        $('ppNewCat')?.addEventListener('change', (e) => { validated.cat = e.target.value; });
+        $('ppFile')?.addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) $('ppText').value = await f.text(); });
+        $('ppCheck')?.addEventListener('click', () => {
+          const rows = parsePeopleRows($('ppText').value);
+          const found = [], newOnes = [], bad = [], seen = new Set(), where = {};
+          rows.forEach(r => {
+            if (!validEmail(r.email)) { bad.push(`${r.email || '(empty)'} — not an email`); return; }
+            if (seen.has(r.email)) { bad.push(`${r.email} — duplicate`); return; }
+            seen.add(r.email);
+            const hits = whereIs(r.email, src);
+            if (hits.length) { hits.forEach(h => { where[h.label] = (where[h.label] || 0) + 1; }); found.push(mergePeople(hits.map(h => ({ ...h.person, name: h.person.name || r.name, org: h.person.org || r.org })))[0]); }
+            else newOnes.push(r);
+          });
+          validated = { rows: rows.length, found, newOnes, bad, cat: 'other', foundWhere: Object.entries(where).map(([k, n]) => `${n} in ${k}`).join(', ') };
+          render();
+        });
+      };
+      openModal(title, '', async () => {
+        if (busy) return false;
+        let people = [], info;
+        if (mode === 'paste') {
+          if (!validated) throw new Error('Check the addresses first.');
+          busy = true;
+          try {
+            const created = validated.newOnes.length ? await createNetworkContacts(validated.newOnes, validated.cat) : [];
+            people = [...validated.found, ...created];
+            info = { type: 'csv', label: `List upload (${num(people.length)}${created.length ? `, ${num(created.length)} new in Network` : ''})` };
+            if (created.length) toast(`${num(created.length)} new Network contacts created.`);
+          } finally { busy = false; }
+        } else if (mode === 'list') {
+          if (!filters.listId) throw new Error('Choose a list.');
+          const ms = await getDocs(collection(db, 'outreachLists', filters.listId, 'members'));
+          addReads(ms.size || 1);
+          people = ms.docs.map(d => d.data());
+          info = { type: 'manual', label: `List: ${lists.find(l => l.id === filters.listId)?.name || ''}` };
+        } else {
+          people = mergePeople(selected());
+          const lbl = { crm: `Investor CRM${filters.crmStages.size ? ' · ' + [...filters.crmStages].join(', ') : ''}`, portal: `Portal investors${filters.portalGroup ? ' · ' + (src.groups.find(g => g.id === filters.portalGroup)?.name || '') : ''}`, network: `Network${filters.netCats.size ? ' · ' + [...filters.netCats].join(', ') : ''}`, brokers: 'Brokers' }[mode];
+          info = { type: 'manual', label: lbl };
+        }
+        if (!people.length) throw new Error('Nobody selected.');
+        if ($('ppSave')?.checked) {
+          const name = ($('ppSaveName').value || '').trim();
+          if (!name) throw new Error('Give the list a name, or untick "save as a list".');
+          await saveList(name, people, info.label);
+        }
+        return onDone(people, info);
+      }, confirmLabel);
+      render();
+      loadPeopleSources().then(x => { src = x; render(); }).catch(e => modalError('Could not load the contacts: ' + errText(e)));
+    }
+
+    async function saveList(name, people, sourceLabel) {
+      const ref = await addDoc(collection(db, 'outreachLists'), { name, count: people.length, source: sourceLabel || null, createdAt: serverTimestamp(), createdBy: me, updatedAt: serverTimestamp() });
+      for (let i = 0; i < people.length; i += 400) {
+        await Promise.all(people.slice(i, i + 400).map(p => setDoc(doc(db, 'outreachLists', ref.id, 'members', p.email.replace(/[^a-z0-9]/gi, '_').slice(0, 140)), { email: p.email, name: p.name || '', org: p.org || '', refs: p.refs || [], addedAt: serverTimestamp() })));
+      }
+      toast(`List "${name}" saved (${num(people.length)}).`);
+      return ref.id;
+    }
+
+    // Add people to a people campaign: pick → server preview → enrol.
+    function openAddPeople() {
+      const c = curCamp(); if (!c) return;
+      openPeoplePicker({
+        title: `Add people to "${c.name}"`, confirmLabel: 'Check people',
+        onDone: async (people, info) => {
+          const pv = (await callCampaign({ action: 'previewPeople', campaignId: c.id, people })).data;
+          const exc = Object.entries(pv.excluded).map(([k, n]) => `${num(n)} ${esc({ no_email: 'invalid address', already_in_campaign: 'already in this campaign', suppressed: 'on the suppression list', unsubscribed: 'unsubscribed from this campaign' }[k] || k)}`).join(', ');
+          setTimeout(() => openModal(`Add people to "${c.name}"`, `<dl class="summary"><dt>Selected</dt><dd>${num(pv.requested)}</dd><dt>Can be added</dt><dd><b>${num(pv.eligible)}</b></dd><dt>Excluded</dt><dd>${exc || '0'}</dd></dl>
+            <p class="note">At ${num(pv.perDay)} a day, everyone gets the first email within about <b>${num(Math.max(1, pv.daysToStart))}</b> sending day${pv.daysToStart === 1 ? '' : 's'}${c.status === 'draft' ? ' once the campaign is started' : ''}.</p>`,
+            async () => {
+              if (!pv.eligible) return true;
+              const r = (await callCampaign({ action: 'enrolPeople', campaignId: c.id, people, source: info })).data;
+              toast(`${num(r.enrolled)} people added${r.skippedTotal ? ` · ${num(r.skippedTotal)} skipped` : ''}.`);
+              loadCampaignData();
+              return true;
+            }, pv.eligible ? `Add ${num(pv.eligible)} people` : 'Close'), 50);
+          return true;
+        },
+      });
+    }
+
+    // Lists of people (Campaigns → Lists of people).
+    async function renderLists() {
+      $('listsView').innerHTML = '<div class="card"><div class="empty">Loading…</div></div>';
+      const ls = await getDocs(collection(db, 'outreachLists'));
+      addReads(ls.size || 1); refreshReads();
+      const lists = ls.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      $('listsView').innerHTML = `<div class="card" style="padding:0;">
+          <div class="toolbar"><h2 class="camp-h2">Lists of people</h2><button class="btn btn--primary btn--sm" id="listNew" style="margin-left:auto;">New list</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Name</th><th class="num">People</th><th>Built from</th><th>Created</th><th></th></tr></thead>
+          <tbody>${lists.length ? lists.map(l => `<tr><td><b>${esc(l.name)}</b></td><td class="num">${num(l.count || 0)}</td><td style="font-size:0.8rem;">${esc(l.source || '')}</td><td style="white-space:nowrap;">${esc(when(l.createdAt))}</td>
+            <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-lview="${esc(l.id)}">View</button> <button class="btn btn--danger btn--sm" data-ldel="${esc(l.id)}">Delete</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No lists yet. A list is a named group of people (e.g. "Journalists PT") built from the Investor CRM, portal investors, Network, brokers or an upload — use it in campaigns to people and recurring emails.</td></tr>'}</tbody></table></div>
+        </div>
+        <p class="hint" style="margin-top:10px;">Uploaded addresses are checked against the Investor CRM, portal investors, Network and brokers; people not found are created as Network contacts first, so everyone on a list has a record.</p>`;
+      $('listNew').addEventListener('click', () => openPeoplePicker({ title: 'New list of people', confirmLabel: 'Save list', allowSaveList: false, onDone: async (people, info) => {
+        const name = prompt('Name of the list:', ''); if (!name) return false;
+        await saveList(name.trim(), people, info.label); renderLists(); return true;
+      } }));
+      $('listsView').querySelectorAll('[data-ldel]').forEach(b => b.addEventListener('click', async () => {
+        const l = lists.find(x => x.id === b.dataset.ldel);
+        if (!confirm(`Delete the list "${l.name}"? People stay in the Investor CRM / Network; campaigns that used it keep their people.`)) return;
+        const ms = await getDocs(collection(db, 'outreachLists', l.id, 'members'));
+        await Promise.all(ms.docs.map(d => deleteDoc(d.ref)));
+        await deleteDoc(doc(db, 'outreachLists', l.id));
+        toast('List deleted.'); renderLists();
+      }));
+      $('listsView').querySelectorAll('[data-lview]').forEach(b => b.addEventListener('click', async () => {
+        const l = lists.find(x => x.id === b.dataset.lview);
+        const ms = await getDocs(collection(db, 'outreachLists', l.id, 'members'));
+        addReads(ms.size || 1); refreshReads();
+        const rows = ms.docs.map(d => d.data()).sort((a, b2) => (a.name || a.email).localeCompare(b2.name || b2.email));
+        openModal(`${l.name} (${num(rows.length)})`, `<div class="table-wrap" style="max-height:60vh;overflow:auto;"><table><thead><tr><th>Name</th><th>Organisation</th><th>Email</th><th>Records</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.org)}</td><td>${esc(r.email)}</td><td style="font-size:0.78rem;">${esc((r.refs || []).map(x => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[x.source] || x.source)).join(', '))}</td></tr>`).join('')}</tbody></table></div>`, async () => true, 'Close');
+      }));
+    }
+
+    // P4 projection: days each step needs at the effective daily pace.
+    function projectionHtml(c) {
+      const steps = c.steps || [];
+      if (!steps.length) return '<p class="note">Write the sequence first.</p>';
+      const live = curEnrols.filter(e => LIVE_ENROL.includes(e.status));
+      const globalLimit = settings?.automationBudget ?? 80;
+      const addrCap = (() => {
+        const sp = c.senderPolicy || {};
+        const pool = senders.filter(s => s.status === 'active' && (sp.mode === 'fixed' ? (sp.senderIds || []).includes(s.id) : s.kind !== 'relationship'));
+        return pool.reduce((a, s) => a + (s.dailyCap || 25), 0) || 0;
+      })();
+      const pace = Math.max(1, Math.min(c.pacing?.maxPerDay || Infinity, globalLimit, addrCap || Infinity));
+      const win = c.sendWindow || settings?.sendWindow || { days: [1, 2, 3, 4, 5] };
+      const addSendingDays = (n) => { const d = new Date(); let k = 0; while (k < n) { d.setDate(d.getDate() + 1); if ((win.days || []).includes(d.getDay())) k++; } return d; };
+      const rows = steps.map((st, i) => {
+        const left = live.filter(e => e.status === 'pending' || e.currentStep <= i).length;
+        if ((st.channel || 'email') !== 'email') return `<tr><td>${i + 1}. ${esc(st.name)}</td><td class="num">${num(left)}</td><td colspan="2" style="font-size:0.8rem;">task — as fast as you do them</td></tr>`;
+        const stepPace = i === 0 && c.audienceType !== 'people' ? Math.min(pace, c.pacing?.newPerDay || 20) : pace;
+        const days = left ? Math.ceil(left / stepPace) : 0;
+        return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">starts ${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'working'} day(s) after each previous step</div>` : ''}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td><td style="white-space:nowrap;font-size:0.8rem;">${days ? '≈ ' + dayFmt.format(addSendingDays(days)) : 'done'}</td></tr>`;
+      }).join('');
+      return `<p class="note">Effective pace: <b>${num(pace)}</b> emails a day — the lowest of this campaign's limit (${c.pacing?.maxPerDay ? num(c.pacing.maxPerDay) : 'none'}), the automations limit (${num(globalLimit)}, shared by all campaigns) and the addresses' daily caps (${num(addrCap)}).</p>
+        <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th class="num">Still to go</th><th class="num">Sending days</th><th>Done by</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <p class="hint" style="margin-top:6px;">Estimates — other campaigns share the daily limit, and approval steps wait for you. Recomputed each time the campaign is opened.</p>`;
     }
 
     // ── Add companies: by name, or a CSV list → preview → enrol ──
@@ -3316,7 +3597,7 @@
           <div class="row2">
             <div class="field"><label for="csAppr">Before emails go out (steps can override)</label>
               <select id="csAppr"${dis}><option value="approval"${c.approvalDefault !== 'auto' ? ' selected' : ''}>Each email waits for approval</option><option value="auto"${c.approvalDefault === 'auto' ? ' selected' : ''}>Emails go out automatically</option></select></div>
-            <div class="field"><label for="csRecip">Emails go to</label>
+            <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csRecip">Emails go to</label>
               <select id="csRecip"${dis}>
                 <option value="company"${(c.recipientPolicy || 'company') === 'company' ? ' selected' : ''}>The company address (geral@ / info@)</option>
                 <option value="primary_contact"${c.recipientPolicy === 'primary_contact' ? ' selected' : ''}>The primary contact (else the company address)</option>
@@ -3326,7 +3607,9 @@
               <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option><option value="andre"${c.assignee === 'andre' ? ' selected' : ''}>André</option><option value="antonio"${c.assignee === 'antonio' ? ' selected' : ''}>António</option></select></div>
           </div>
           <div class="row2">
-            <div class="field"><label for="csPace">New companies per day</label><input type="text" inputmode="numeric" id="csPace" value="${esc(c.pacing?.newPerDay || 20)}"${dis}>
+            <div class="field"><label for="csMaxDay">Max emails per day (this campaign)</label><input type="text" inputmode="numeric" id="csMaxDay" value="${esc(c.pacing?.maxPerDay ?? '')}" placeholder="no own limit"${dis}>
+              <span class="hint">Empty = only the global limits. The portal spreads the sends over the days needed — see "How long each step will take" in the Overview.</span></div>
+            <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csPace">New companies per day</label><input type="text" inputmode="numeric" id="csPace" value="${esc(c.pacing?.newPerDay || 20)}"${dis}>
               <span class="hint">Emails per day ≈ this × emails per company. The automations limit (${num(settings?.automationBudget ?? 80)}/day) is shared by all campaigns.</span></div>
           </div>
         </div>
@@ -3335,7 +3618,8 @@
           <div class="field"><label>From which addresses</label>
             <label class="checkline"><input type="radio" name="csSendMode" value="owner_rotation" ${sp.mode !== 'fixed' ? 'checked' : ''}${dis}> <span>The company owner's active addresses, least used first (any active address when the company has no owner)</span></label>
             <label class="checkline"><input type="radio" name="csSendMode" value="fixed" ${sp.mode === 'fixed' ? 'checked' : ''}${dis}> <span>Only these addresses:</span></label>
-            <div class="stage-grid" id="csSenders" style="margin:6px 0 0 24px;">${senders.map(s => `<label class="checkline"><input type="checkbox" value="${esc(s.id)}" ${(sp.senderIds || []).includes(s.id) ? 'checked' : ''}${dis}> <span>${esc(localPart(s.id))} <span class="hint">(${esc(OWNER_LABEL[s.owner] || s.owner || '')}, ${esc(s.status)})</span></span></label>`).join('')}</div>
+            <div class="stage-grid" id="csSenders" style="margin:6px 0 0 24px;">${senders.map(s => `<label class="checkline"><input type="checkbox" value="${esc(s.id)}" ${(sp.senderIds || []).includes(s.id) ? 'checked' : ''}${dis}> <span>${esc(s.kind === 'relationship' ? s.id : localPart(s.id))} <span class="hint">(${s.kind === 'relationship' ? 'your real address — replies go to Gmail' : `${esc(OWNER_LABEL[s.owner] || s.owner || '')}, ${esc(s.status)}`})</span></span></label>`).join('')}</div>
+            ${c.audienceType === 'people' ? '<span class="hint"><b>Campaigns to people need specific addresses</b> — e.g. andre.rocha@douropartners.pt for investors and press (replies to your Gmail), or an outreach address (replies in the portal Inbox).</span>' : ''}
             <span class="hint">Follow-ups always go from the address that sent the first email.</span></div>
           <div class="field"><label>Sending window</label>
             <label class="checkline"><input type="checkbox" id="csOwnWin" ${win ? 'checked' : ''}${dis}> <span>Use a different window from the global one (${esc(windowText(gw))})</span></label>
@@ -3344,7 +3628,7 @@
               <span style="display:flex;gap:6px;align-items:center;"><input type="time" id="csFrom" value="${esc((win || gw).from)}" style="width:auto;"${dis}> – <input type="time" id="csTo" value="${esc((win || gw).to)}" style="width:auto;"${dis}></span>
             </div></div>
         </div>
-        <div class="card">
+        <div class="card"${c.audienceType === 'people' ? ' hidden' : ''}>
           <h3>Who can be added</h3>
           <div class="row2">
             <div class="field"><label for="csRecent">Skip companies contacted in the last … days</label><input type="text" inputmode="numeric" id="csRecent" value="${esc(ex.contactedWithinDays)}"${dis}>
@@ -3372,6 +3656,8 @@
       $('csSave')?.addEventListener('click', async () => {
         const err = $('csErr'); err.hidden = true;
         const pace = parseInt($('csPace').value, 10), recent = parseInt($('csRecent').value, 10);
+        const maxDayRaw = $('csMaxDay').value.trim(); const maxDay = maxDayRaw ? parseInt(maxDayRaw, 10) : null;
+        if (maxDayRaw && !(maxDay >= 1 && maxDay <= 1000)) { $('csErr').textContent = 'Max emails per day must be between 1 and 1,000 (or empty).'; $('csErr').hidden = false; return; }
         const stages = [...$('csStages').querySelectorAll('input:checked')].map(i => i.value);
         const mode = root.querySelector('input[name="csSendMode"]:checked')?.value || 'owner_rotation';
         const fixed = [...$('csSenders').querySelectorAll('input:checked')].map(i => i.value);
@@ -3387,7 +3673,7 @@
         const b = $('csSave'); b.disabled = true;
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: {
           name: $('csName').value, description: $('csDesc').value, priority: Number($('csPrio').value),
-          approvalDefault: $('csAppr').value, pacing: { newPerDay: pace }, assignee: $('csAssignee').value, recipientPolicy: $('csRecip').value,
+          approvalDefault: $('csAppr').value, pacing: { newPerDay: pace, maxPerDay: maxDay }, assignee: $('csAssignee').value, recipientPolicy: $('csRecip').value,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, ownerFilter: $('csOwner').value || null },
