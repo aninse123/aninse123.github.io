@@ -119,7 +119,9 @@ async function writeActivity({ companyId, direction, subject, content, threadId,
 
 // Server-side counterpart of search.html's recomputeActivityFields() for the
 // fields outreach changes. Test traffic never touches real company fields.
-async function touchCompany(companyId, { direction, isAutoReply = false, isTest }) {
+// `outreach` (default true for outgoing touches): also moves lastOutreachAt,
+// which the campaign "contacted in the last N days" rule uses (Phase 3c).
+async function touchCompany(companyId, { direction, isAutoReply = false, isTest, outreach = true }) {
   if (!companyId || isTest) return;
   const ref = db().doc(`searchCompanies/${companyId}`);
   await db().runTransaction(async (tx) => {
@@ -128,7 +130,8 @@ async function touchCompany(companyId, { direction, isAutoReply = false, isTest 
     const c = snap.data();
     const now = Timestamp.now();
     const upd = { lastTouchAt: now, updatedAt: FieldValue.serverTimestamp() };
-    if (direction === "out") {
+    if (direction === "out" && outreach) {
+      upd.lastOutreachAt = now;
       upd.outreachAttempts = FieldValue.increment(1);
       if (!c.outreachStatus || c.outreachStatus === "none") upd.outreachStatus = "contacted";
     } else if (!isAutoReply) {

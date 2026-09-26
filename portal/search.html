@@ -9111,7 +9111,7 @@ const callOutreachCampaign = httpsCallable(outreachFns, 'outreachCampaign', { ti
 const CAMP_EXCL_LABELS = {
   not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact',
   unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
-  stage: 'stage not allowed', owner: 'other owner', recent_touch: 'touched recently', no_email: 'no email address',
+  stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
   personal_domain: 'personal email domain',
 };
 
@@ -9558,9 +9558,13 @@ async function recomputeActivityFields(c){
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));
   const lastTouchAt = past[0] ? past[0].date : null;
   const outreachAttempts = activities.filter(a => ACT[a.type]?.outreach).length;
-  const upd = { lastTouchAt, outreachAttempts, updatedAt: serverTimestamp() };
+  // lastOutreachAt (Phase 3c): latest past outreach touch — what the Outreach
+  // campaign rule "contacted in the last N days" looks at.
+  const lastOutreach = past.find(a => ACT[a.type]?.outreach);
+  const lastOutreachAt = lastOutreach ? lastOutreach.date : null;
+  const upd = { lastTouchAt, outreachAttempts, lastOutreachAt, updatedAt: serverTimestamp() };
   await updateDoc(doc(db,'searchCompanies',c.id), upd);
-  Object.assign(c, { lastTouchAt, outreachAttempts });
+  Object.assign(c, { lastTouchAt, outreachAttempts, lastOutreachAt });
   cacheCompanies();
 }
 async function logAuto(companyId, type, content){

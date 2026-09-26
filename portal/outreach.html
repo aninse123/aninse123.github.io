@@ -2000,7 +2000,7 @@
     const EXCL_LABELS = {
       not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact',
       unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
-      stage: 'stage not allowed', owner: 'other owner', recent_touch: 'touched recently', no_email: 'no email address',
+      stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
       personal_domain: 'personal email domain',
     };
     const DAY_NAMES = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
@@ -3151,8 +3151,8 @@
         <div class="card">
           <h3>Who can be added</h3>
           <div class="row2">
-            <div class="field"><label for="csRecent">Skip companies touched in the last … days</label><input type="text" inputmode="numeric" id="csRecent" value="${esc(ex.contactedWithinDays)}"${dis}>
-              <span class="hint">Any activity in the Search CRM counts (emails, calls, meetings, notes). 0 = off.</span></div>
+            <div class="field"><label for="csRecent">Skip companies contacted in the last … days</label><input type="text" inputmode="numeric" id="csRecent" value="${esc(ex.contactedWithinDays)}"${dis}>
+              <span class="hint">Outreach touches count: emails, calls, LinkedIn, WhatsApp, letters, visits (sent from the portal or logged in the Search CRM). Notes and meetings don't. 0 = off.</span></div>
             <div class="field"><label for="csOwner">Only companies owned by</label>
               <select id="csOwner"${dis}><option value="">Anyone</option><option value="andre"${ex.ownerFilter === 'andre' ? ' selected' : ''}>André</option><option value="antonio"${ex.ownerFilter === 'antonio' ? ' selected' : ''}>António</option></select></div>
           </div>

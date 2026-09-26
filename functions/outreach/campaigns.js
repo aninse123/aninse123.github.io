@@ -584,7 +584,7 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
       linkedinUrl, createdAt: FieldValue.serverTimestamp(), createdBy: caller,
     });
     activityId = ref.id;
-    await store.touchCompany(t.companyId, { direction: "out", isTest: t.isTest });
+    await store.touchCompany(t.companyId, { direction: "out", isTest: t.isTest, outreach: t.channel !== "other" });
     if (o.reply) await store.touchCompany(t.companyId, { direction: "in", isTest: t.isTest });
   }
 

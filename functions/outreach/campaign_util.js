@@ -235,7 +235,11 @@ function evaluateCompany(company, ctx) {
   if (!ex.allowedStages.includes(company.stage || "universe")) return { ok: false, reason: "stage" };
   if (ex.ownerFilter && company.owner !== ex.ownerFilter) return { ok: false, reason: "owner" };
   if (ex.contactedWithinDays > 0) {
-    const last = tsMillis(company.lastTouchAt);
+    // Phase 3c: the last outreach touch (email, call, LinkedIn, WhatsApp,
+    // letter, visit). Companies from before lastOutreachAt existed fall back
+    // to lastTouchAt only if they ever had an outreach touch.
+    const last = company.lastOutreachAt != null ? tsMillis(company.lastOutreachAt)
+      : (Number(company.outreachAttempts) > 0 ? tsMillis(company.lastTouchAt) : null);
     if (last && ctx.now - last < ex.contactedWithinDays * 86400000) return { ok: false, reason: "recent_touch" };
   }
   if (ctx.firstChannel === "email") {

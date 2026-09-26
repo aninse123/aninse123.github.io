@@ -79,7 +79,7 @@ async function makeCampaign(campaign, ids) {
   const na = await camp({ action: "completeTask", taskId: t1id, outcome: "no_answer" });
   const e1 = get(`outreachEnrolments/${c1}_c1`);
   ok("no answer: task done, sequence moves to the LinkedIn step, due now (wait 0)", na.sequence === "next" && get(`outreachTasks/${t1id}`).status === "done" && e1.status === "active" && e1.currentStep === 2 && e1.history.slice(-1)[0].result === "no_answer");
-  ok("real touch: call_attempted counted as outreach on the company", get("searchCompanies/c1").outreachAttempts >= 2 && docs("searchActivities").filter((a) => a.taskId === t1id && a.type === "call_attempted").length === 2);
+  ok("real touch: call_attempted counted as outreach on the company, lastOutreachAt set (3c)", !!get("searchCompanies/c1").lastOutreachAt && get("searchCompanies/c1").outreachAttempts >= 2 && docs("searchActivities").filter((a) => a.taskId === t1id && a.type === "call_attempted").length === 2);
   ok("step locked and channel counter on the campaign", get(`outreachCampaigns/${c1}`).lockedStepIds.includes("s2") && get(`outreachCampaigns/${c1}`).stats.tasks_call === 1);
   ok("completing a closed task refused", (await camp({ action: "completeTask", taskId: t1id, outcome: "no_answer" })).err?.details?.reason === "task_closed");
 
