@@ -57,4 +57,12 @@ function listReceivedAttachments(key, id) {
   return call(key, "GET", `/emails/receiving/${encodeURIComponent(id)}/attachments?limit=100`);
 }
 
-module.exports = { ResendError, sendEmail, getEmail, getReceivedEmail, listReceivedAttachments };
+// Phase 3d: open/click tracking is a per-domain setting in Resend.
+function listDomains(key) {
+  return call(key, "GET", "/domains");
+}
+function updateDomain(key, id, body) {
+  return call(key, "PATCH", `/domains/${encodeURIComponent(id)}`, body);
+}
+
+module.exports = { ResendError, sendEmail, getEmail, getReceivedEmail, listReceivedAttachments, listDomains, updateDomain };

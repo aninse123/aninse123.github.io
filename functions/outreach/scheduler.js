@@ -212,6 +212,28 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     const enrolmentId = doc.id;
     const step = campaign.steps?.[e.currentStep];
 
+    // Phase 3d: a rule on the previous email step ("if they clicked a link"),
+    // checked when the next step comes due.
+    const prevStep = campaign.steps?.[e.currentStep - 1];
+    const clickRule = prevStep && (prevStep.channel || "email") === "email" && !e.rulesApplied?.[prevStep.id]
+      ? (prevStep.branches || []).find((b) => b.outcome === "clicked") : null;
+    if (clickRule) {
+      const pm = await db().doc(`outreachMessages/${stepMessageId(enrolmentId, prevStep.id)}`).get();
+      if (pm.exists && pm.data().firstClickedAt) {
+        if (clickRule.action === "end") {
+          if (await endEnrolment(doc.ref, "completed", "Ended by a rule: clicked a link")) report.completed++;
+          continue;
+        }
+        const target = (campaign.steps || []).findIndex((x) => x.id === clickRule.stepId);
+        if (target > e.currentStep) {
+          const from = e.lastSentAt ? e.lastSentAt.toDate() : now;
+          await unlock(doc.ref, { currentStep: target, nextActionAt: ts(addWait(from, campaign.steps[target].wait)), [`rulesApplied.${prevStep.id}`]: "clicked" });
+          report.jumped = (report.jumped || 0) + 1;
+          continue;
+        }
+      }
+    }
+
     // Past the last step (grace period over): done, no reply.
     if (!step) {
       if (await endEnrolment(doc.ref, "completed", "Sequence finished, no reply")) report.completed++;

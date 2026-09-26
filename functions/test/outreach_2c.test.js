@@ -55,7 +55,8 @@ async function makeCampaign(campaign, ids, source) {
   ok("goto backwards refused", throwsReason(() => U.normalizeCampaign({ name: "x", steps: [{ channel: "call" }, { channel: "call", branches: [{ outcome: "no_answer", action: "goto", stepId: "s1" }] }] }), "bad_branch"));
   ok("outcome of another channel refused", throwsReason(() => U.normalizeCampaign({ name: "x", steps: [{ channel: "call", branches: [{ outcome: "accepted", action: "end" }] }] }), "bad_branch"));
   ok("two rules for one outcome refused", throwsReason(() => U.normalizeCampaign({ name: "x", steps: [{ channel: "call", branches: [{ outcome: "no_answer", action: "end" }, { outcome: "no_answer", action: "end" }] }] }), "bad_branch"));
-  ok("email steps carry no branches; 'next' rules dropped", U.normalizeCampaign({ name: "x", steps: [{ channel: "email", branches: [{ outcome: "x", action: "end" }] }, { channel: "call", branches: [{ outcome: "voicemail", action: "next" }] }] }).steps.every((s) => !s.branches.length));
+  ok("email steps: only 'clicked' rules (3d); other outcomes refused", throwsReason(() => U.normalizeCampaign({ name: "x", steps: [{ channel: "email", branches: [{ outcome: "x", action: "end" }] }] }), "bad_branch") && U.normalizeCampaign({ name: "x", steps: [{ channel: "email", branches: [{ outcome: "clicked", action: "end" }] }] }).steps[0].branches.length === 1);
+  ok("'next' rules dropped", U.normalizeCampaign({ name: "x", steps: [{ channel: "call", branches: [{ outcome: "voicemail", action: "next" }] }] }).steps[0].branches.length === 0);
 
   // ── Branches in action ──
   seed();

@@ -434,6 +434,10 @@ async function setStatus({ campaignId, status }, caller) {
     const snaps = ids.length ? await db().getAll(...ids.map((id) => db().doc(`outreachTemplates/${id}`))) : [];
     const templatesById = Object.fromEntries(snaps.filter((s) => s.exists).map((s) => [s.id, s.data()]));
     const problems = activationProblems(campaign, templatesById);
+    if ((campaign.steps || []).some((s) => (s.channel || "email") === "email" && (s.branches || []).some((b) => b.outcome === "clicked"))) {
+      const st = await store.getSettings();
+      if (!st.trackOpensClicks) problems.push('Rules on "clicked a link" need open/click tracking switched on (Settings → General).');
+    }
     if (problems.length) throw new HttpsError("failed-precondition", `Before starting: ${problems.join(" ")}`, { reason: "not_ready", problems });
     if (!campaign.startedAt) upd.startedAt = FieldValue.serverTimestamp();
   }

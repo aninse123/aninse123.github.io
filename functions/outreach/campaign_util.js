@@ -104,7 +104,8 @@ function normalizeStep(s, i, usedIds, reserved = new Set()) {
     instructions: channel === "email" ? "" : String(s.instructions ?? "").trim().slice(0, 2000),
     // Phase 2c: what a task outcome does to the sequence. Validated against
     // the final step list in normalizeCampaign (goto must point forward).
-    branches: channel === "email" ? [] : (Array.isArray(s.branches) ? s.branches : []).slice(0, 12).map((b) => ({
+    // Email steps: only "clicked a link" (Phase 3d; opens are unreliable, D7).
+    branches: (Array.isArray(s.branches) ? s.branches : []).slice(0, 12).map((b) => ({
       outcome: String(b?.outcome || ""),
       action: ["goto", "end"].includes(b?.action) ? b.action : "next",
       stepId: b?.action === "goto" ? String(b?.stepId || "") : null,
@@ -138,7 +139,7 @@ function normalizeCampaign(input, existing = null) {
   const steps = rawSteps.map((s, i) => normalizeStep(s, i, used, reserved));
 
   steps.forEach((st, i) => {
-    const valid = new Set((OUTCOMES[st.channel] || []).map((o) => o.key));
+    const valid = new Set(st.channel === "email" ? ["clicked"] : (OUTCOMES[st.channel] || []).map((o) => o.key));
     const seen = new Set();
     for (const b of st.branches) {
       if (!valid.has(b.outcome)) bad("bad_branch", `${st.name}: "${b.outcome}" isn't an outcome of a ${st.channel} step.`);

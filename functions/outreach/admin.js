@@ -2,6 +2,10 @@
 // from outside the app):
 //   { action: "seed" }          creates outreachSettings/global and the sender
 //                               registry if missing; never overwrites.
+//   { action: "setTracking", on } Phase 3d: switches open + click tracking on
+//                               or off for the outreach domain in Resend (it
+//                               can't be set per email) and records it in
+//                               outreachSettings/global.trackOpensClicks.
 //   { action: "clearTestData" } deletes every thread, message and activity
 //                               created while testMode was on, plus their
 //                               Storage files (go-live checklist, spec §13.3),
@@ -10,7 +14,8 @@
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getStorage } = require("firebase-admin/storage");
-const { REGION, ADMIN_EMAILS, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, SEED_SENDERS, SENDER_DOMAIN } = require("./config");
+const { REGION, ADMIN_EMAILS, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, SEED_SENDERS, SENDER_DOMAIN, RESEND_READ_KEY } = require("./config");
+const { listDomains, updateDomain } = require("./resend");
 const { normEmail } = require("./util");
 const store = require("./store");
 const { endEnrolment } = require("./campaigns");
@@ -70,11 +75,22 @@ async function clearTestData() {
   return { threads: threadCount, messages, activities, campaigns, enrolments, tasks };
 }
 
-exports.outreachAdmin = onCall({ region: REGION }, async (request) => {
+async function setTracking(on, callerEmail) {
+  const key = RESEND_READ_KEY.value();
+  const { data } = await listDomains(key);
+  const dom = (data?.data || []).find((d) => d.name === SENDER_DOMAIN);
+  if (!dom) throw new HttpsError("not-found", `The outreach domain ${SENDER_DOMAIN} isn't in this Resend account.`, { reason: "domain_not_found" });
+  await updateDomain(key, dom.id, { open_tracking: !!on, click_tracking: !!on });
+  await db().doc("outreachSettings/global").set({ trackOpensClicks: !!on, trackingUpdatedAt: FieldValue.serverTimestamp(), trackingUpdatedBy: callerEmail }, { merge: true });
+  return { ok: true, on: !!on, domain: SENDER_DOMAIN };
+}
+
+exports.outreachAdmin = onCall({ region: REGION, secrets: [RESEND_READ_KEY] }, async (request) => {
   const callerEmail = normEmail(request.auth?.token?.email);
   if (!ADMIN_EMAILS.includes(callerEmail)) throw new HttpsError("permission-denied", "Only Douro admins can do this.");
   const action = request.data?.action;
   if (action === "seed") return seed(callerEmail);
   if (action === "clearTestData") return clearTestData();
+  if (action === "setTracking") return setTracking(!!request.data?.on, callerEmail);
   throw new HttpsError("invalid-argument", `Unknown action "${action}".`);
 });

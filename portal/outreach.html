@@ -580,7 +580,8 @@
                 <span class="hint">Batches and sequences (Phase 2) stop here. Manual sends and replies never do.</span>
               </div>
             </div>
-            <label class="checkline"><input type="checkbox" id="gPersonal"> <span>Block personal email domains (gmail, sapo, hotmail…) — the legal rule for natural persons</span></label>
+            <label class="checkline"><input type="checkbox" id="gPersonal"> <span>Block personal email domains (gmail, sapo, hotmail…) for the company address — the legal rule for natural persons (emails to a chosen person may use any address)</span></label>
+            <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gTrack"> <span>Track opens and clicks <span class="hint">(switches Resend's tracking on for mail.douropartners-team.pt right away — adds a tracking pixel and rewrites links, which can hurt deliverability; needed for "if they clicked a link" rules)</span></span></label>
             <div class="field" style="margin-top:14px;">
               <label>Sending window (Lisbon time)</label>
               <div style="display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;" id="gDays">
@@ -1758,6 +1759,14 @@
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
       ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gCampTest'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
       $('gSave').addEventListener('click', saveGeneral);
+      $('gTrack').addEventListener('change', async (e) => {
+        const on = e.target.checked;
+        if (!confirm(on ? 'Switch open and click tracking ON for the outreach domain in Resend? Links in every outreach email will be rewritten and a tracking pixel added.' : 'Switch open and click tracking OFF? "Clicked a link" rules stop working.')) { e.target.checked = !on; return; }
+        e.target.disabled = true;
+        try { await callAdmin({ action: 'setTracking', on }); toast(on ? 'Tracking is on.' : 'Tracking is off.'); }
+        catch (err) { e.target.checked = !on; toast('Could not change tracking: ' + errText(err)); }
+        finally { e.target.disabled = false; }
+      });
       ['fEntity', 'fText'].forEach(id => $(id).addEventListener('input', renderFooterPreview));
       $('fSave').addEventListener('click', saveFooter);
       $('tplNew').addEventListener('click', () => openTemplate(null));
@@ -1800,6 +1809,7 @@
       $('gTarget').value = s.dailyTarget ?? 100;
       $('gAuto').value = s.automationBudget ?? 80;
       $('gPersonal').checked = s.blockPersonalDomains !== false;
+      $('gTrack').checked = !!s.trackOpensClicks;
       $('gTestList').value = (s.testRecipients || []).join('\n');
       const win = s.sendWindow || { days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
       $('gDays').querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = (win.days || []).includes(Number(cb.value)); });
@@ -2790,6 +2800,8 @@
       visit: [['met', 'Met', 'reply'], ['not_there', 'Not there'], ['reschedule', 'Reschedule…', 'reopen']],
       other: [['done', 'Done']],
     };
+    // Rule conditions per step type: task outcomes, or "clicked a link" on emails (3d).
+    const ruleOutcomes = (ch) => ch === 'email' ? [['clicked', 'clicked a link']] : (TASK_OUTCOMES[ch] || []);
     const outcomeLabel = (ch, k) => k === 'skipped' ? 'skipped' : k === 'sent' && ch === 'email' ? 'sent' : ((TASK_OUTCOMES[ch] || []).find(o => o[0] === k) || [k, k])[1].toLowerCase();
     const OWNER_FULL = { andre: 'André Rocha', antonio: 'António Carvalho' };
 
@@ -3114,17 +3126,17 @@
             <div class="wvars">${tplVars.map(k => { const v = (s.variants || []).find(x => x.key === k); return `<label class="wvar"><input type="checkbox" data-vk="${k}" ${all || chosenKeys.has(k) ? 'checked' : ''}${dis}> ${k} <input type="text" inputmode="numeric" data-vw="${k}" value="${esc(v ? v.weight : 1)}" aria-label="Weight ${k}"${dis}></label>`; }).join('')}</div>
             <span class="hint">Each company gets one variant, picked at random by weight. Results per variant appear in the Overview.</span></div>` : ''}
           ${ch === 'email' && i > 0 ? `<label class="checkline"><input type="checkbox" data-f="newSubject" ${s.newSubject ? 'checked' : ''}${dis}> <span>Start a new conversation with the template's subject (default: reply in the same conversation, "Re: …", quoting the previous email)</span></label>` : ''}
-          ${ch !== 'email' && (TASK_OUTCOMES[ch] || []).length > 1 ? `<div class="field" style="margin-bottom:6px;"><label>Rules (optional)</label>
+          ${ch !== 'other' && ruleOutcomes(ch).length ? `<div class="field" style="margin-bottom:6px;"><label>Rules (optional)</label>
             ${(s.branches || []).map((b, bi) => `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px;" data-br="${bi}">
-              <span class="hint">If the outcome is</span>
-              <select data-bf="outcome" style="width:auto;"${dis}>${(TASK_OUTCOMES[ch] || []).map(([k, l]) => `<option value="${k}"${b.outcome === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+              <span class="hint">${ch === 'email' ? 'If they' : 'If the outcome is'}</span>
+              <select data-bf="outcome" style="width:auto;"${dis}>${ruleOutcomes(ch).map(([k, l]) => `<option value="${k}"${b.outcome === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
               <select data-bf="target" style="width:auto;"${dis}>
                 <option value="end"${b.action === 'end' ? ' selected' : ''}>end the sequence</option>
                 ${seqDraft.map((x, xi) => xi > i && x.id ? `<option value="goto:${esc(x.id)}"${b.action === 'goto' && b.stepId === x.id ? ' selected' : ''}>go to step ${xi + 1} (${esc(x.name || CHANNEL_LABELS[x.channel || 'email'])})</option>` : '').join('')}
               </select>
               ${editable ? `<button type="button" class="btn btn--ghost btn--sm" data-brdel="${bi}">Remove</button>` : ''}</div>`).join('')}
             ${editable ? '<button type="button" class="btn btn--ghost btn--sm" data-bradd>+ Add a rule</button>' : ''}
-            <span class="hint">Other outcomes move to the next step. "Go to" only lists saved later steps — save first after adding steps.</span></div>` : ''}
+            <span class="hint">${ch === 'email' ? `Checked when the next step comes due; needs open/click tracking (Settings → General — ${settings?.trackOpensClicks ? 'on' : '<b>off now</b>'}). Otherwise the next step follows.` : 'Other outcomes move to the next step.'} "Go to" only lists saved later steps — save first after adding steps.</span></div>` : ''}
           ${ch === 'whatsapp' ? '<p class="hint">WhatsApp to a personal mobile falls under the same consent rule as email (D3) — the task flags numbers that look personal.</p>' : ''}
         </div>`;
       };
@@ -3173,7 +3185,7 @@
         el.querySelectorAll('[data-vk]').forEach(x => x.addEventListener('change', readVariants));
         el.querySelectorAll('[data-vw]').forEach(x => x.addEventListener('input', readVariants));
         el.querySelector('[data-bradd]')?.addEventListener('click', () => {
-          const first = (TASK_OUTCOMES[s.channel] || [])[0]?.[0];
+          const first = ruleOutcomes(s.channel || 'email')[0]?.[0];
           s.branches = [...(s.branches || []), { outcome: first, action: 'end', stepId: null }];
           mark(); renderSequence();
         });
