@@ -2379,7 +2379,7 @@
       $('campMeta').innerHTML = [
         `${esc(approval)} (steps can override)`,
         `sends ${esc(windowText(c.sendWindow))}${c.sendWindow ? ' (own window)' : ''}`,
-        `${num(c.pacing?.newPerDay || 20)} new companies a day`,
+        c.audienceType === 'people' ? `${c.pacing?.maxPerDay ? `max ${num(c.pacing.maxPerDay)} emails a day` : 'no own daily limit'}` : `${num(c.pacing?.newPerDay || 20)} new companies a day`,
         c.audience?.mode === 'dynamic' ? `dynamic audience${c.stats?.dynamicAdded ? ` (+${num(c.stats.dynamicAdded)} added)` : ''}` : null,
         `priority ${c.priority || 2}`,
         c.startedAt ? `started ${esc(dayFmt.format(new Date(tsMs(c.startedAt))))}` : null,
@@ -2411,7 +2411,7 @@
       try {
         if (a === 'start') {
           const live = curEnrols.filter(e => LIVE_ENROL.includes(e.status)).length;
-          if (!confirm(`Start "${c.name}"?\n\n${live ? `${num(live)} companies are waiting.` : 'No companies yet — you can add them after starting.'} The scheduler starts about ${num(c.pacing?.newPerDay || 20)} a day, inside the sending window.`)) return;
+          if (!confirm(`Start "${c.name}"?\n\n${c.audienceType === 'people' ? (live ? `${num(live)} ${live === 1 ? 'person is' : 'people are'} waiting.` : 'Nobody added yet — you can add people after starting.') : (live ? `${num(live)} companies are waiting.` : 'No companies yet — you can add them after starting.')} The scheduler starts about ${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))} a day, inside the sending window.`)) return;
           await setStatus('active', 'Campaign started.');
         }
         if (a === 'pause') await setStatus('paused', 'Campaign paused — nothing is sent until you resume.');
@@ -2447,7 +2447,8 @@
       const sent = curEnrols.reduce((a, e) => a + (e.history || []).filter(h => h.result === 'sent').length, 0);
       const kpi = (label, value, sub = '') => `<div class="kpi"><div class="kpi__label">${label}</div><div class="kpi__value">${value}</div>${sub ? `<div class="kpi__sub">${sub}</div>` : ''}</div>`;
       const steps = c.steps || [];
-      const perDay = (c.pacing?.newPerDay || 20) * Math.max(1, steps.length);
+      // A campaign's own max per day (P4) caps the estimate.
+      const perDay = Math.min((c.pacing?.newPerDay || 20) * Math.max(1, steps.length), c.pacing?.maxPerDay || Infinity);
       const limitN = settings?.automationBudget ?? 80;
 
       // Per channel: what the manual steps produced (outcome counts from history).
@@ -2485,7 +2486,7 @@
           ${kpi('In sequence', num(by.active || 0), `${num(by.paused || 0)} paused`)}
           ${kpi('To approve', num(by.awaiting_approval || 0), by.awaiting_approval ? `<button class="camp-link" id="ovApprove" style="font-size:0.74rem;">Open the queue →</button>` : 'drafts waiting')}
           ${steps.some(s => s.channel && s.channel !== 'email') ? kpi('Tasks open', num(by.awaiting_task || 0), by.awaiting_task ? `<button class="camp-link" id="ovTasks" style="font-size:0.74rem;">Open tasks →</button>` : 'calls, LinkedIn, letters…') : ''}
-          ${kpi('Emails sent', num(sent), `${num(contacted)} compan${contacted === 1 ? 'y' : 'ies'} contacted (any channel)`)}
+          ${kpi('Emails sent', num(sent), `${c.audienceType === 'people' ? `${num(contacted)} ${contacted === 1 ? 'person' : 'people'} emailed` : `${num(contacted)} compan${contacted === 1 ? 'y' : 'ies'} contacted (any channel)`}`)}
           ${kpi('Replied', num(replied), `${pctTxt(pct(replied, contacted))} of contacted`)}
           ${kpi('Positive', num(positive), 'interested · call back · referred')}
           ${kpi('Finished, no reply', num(by.completed || 0))}
@@ -2510,7 +2511,7 @@
           <div class="card">
             <h3>Pace</h3>
             <p class="note">The scheduler checks every 10 minutes and sends ${esc(windowText(c.sendWindow))} (Lisbon), never on national holidays. It starts up to <b>${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))}</b> new ${c.audienceType === 'people' ? 'people' : 'companies'} a day${c.pacing?.maxPerDay ? ` and sends at most <b>${num(c.pacing.maxPerDay)}</b> emails a day for this campaign` : ''}.</p>
-            <p class="note" style="margin-top:8px;">With ${num(steps.length)} email${steps.length === 1 ? '' : 's'} per company that's about <b>${num(perDay)}</b> emails a day once the campaign is in full swing — the automations limit is <b>${num(limitN)}</b> a day for all campaigns together${perDay > limitN ? ' (<b>above the limit</b>: emails will queue up; lower the pace in Settings)' : ''}.</p>
+            <p class="note" style="margin-top:8px;">With ${num(steps.length)} email${steps.length === 1 ? '' : 's'} per ${c.audienceType === 'people' ? 'person' : 'company'} that's about <b>${num(perDay)}</b> emails a day once the campaign is in full swing — the automations limit is <b>${num(limitN)}</b> a day for all campaigns together${perDay > limitN ? ' (<b>above the limit</b>: emails will queue up; lower the pace in Settings)' : ''}.</p>
             ${c.status === 'draft' ? '<p class="note" style="margin-top:8px;">Nothing is sent while the campaign is a draft.</p>' : ''}
           </div>
         </div>
@@ -2539,7 +2540,7 @@
       const rows = curEnrols.filter(e => (audFilter === 'all' || (audFilter === 'live' ? LIVE_ENROL.includes(e.status) : e.status === audFilter))
         && (!q || norm(e.companyName).includes(q) || norm(e.contactEmail).includes(q) || norm(e.personName).includes(q)));
       const shown = rows.slice(0, 300);
-      const canAdd = campEditable(c);
+      const canAdd = campEditable(c) && c.kind !== 'issue';
       $('cs-audience').innerHTML = `
         <div class="card" style="padding:0;">
           <div class="toolbar">
@@ -2621,7 +2622,7 @@
       const firms = Object.fromEntries(nf.docs.map(d => [d.id, d.data().name || '']));
       const out = { crm: [], portal: [], network: [], brokers: [], groups: grp.docs.map(d => ({ id: d.id, ...d.data() })), firms };
       crm.docs.forEach(d => { const i = d.data(); (i.contacts || []).forEach(ct => { if (ct.email) out.crm.push({ email: String(ct.email).trim().toLowerCase(), name: ct.name || '', org: i.name || '', role: ct.role || '', stage: i.stage || '', type: i.type || '', owner: i.owner || '', refs: [{ source: 'crm', id: d.id }] }); }); });
-      inv.docs.forEach(d => { const i = d.data(); (i.emails || []).forEach(e => { if (e) out.portal.push({ email: String(e).trim().toLowerCase(), name: i.name || '', org: i.name || '', investorId: d.id, refs: [{ source: 'portal', id: d.id }] }); }); });
+      inv.docs.forEach(d => { const i = d.data(); (i.emails || []).forEach(e => { if (e) out.portal.push({ email: String(e).trim().toLowerCase(), name: '', org: i.name || '', investorId: d.id, refs: [{ source: 'portal', id: d.id }] }); }); });
       nc.docs.forEach(d => { const c = d.data(); if (c.email) out.network.push({ email: String(c.email).trim().toLowerCase(), name: c.name || '', org: firms[c.firmId] || '', role: c.role || '', categories: c.categories || [], phases: c.phases || [], owner: c.owner || '', country: c.country || '', priority: !!c.priority, refs: [{ source: 'network', id: d.id }] }); });
       br.docs.forEach(d => { const b = d.data(); (b.contacts || []).forEach(ct => { if (ct.email) out.brokers.push({ email: String(ct.email).trim().toLowerCase(), name: ct.name || '', org: b.name || '', refs: [{ source: 'broker', id: d.id }] }); }); });
       peopleSrc = out;
