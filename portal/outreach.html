@@ -1080,7 +1080,20 @@
     }
 
     // Above the daily target the server asks for confirmation (soft limit, spec §7.6).
+    // H1 (Phase 3): Resend only reports today's count after a send, so the
+    // first send of the (UTC) day can't be checked against the target —
+    // warm-up may already have used the quota. Ask once per day.
+    function confirmFirstSendOfDay() {
+      if (usageDoc?.resendDailyUsed != null) return true;
+      const key = 'outreachFirstSendOk:' + utcDay();
+      try { if (localStorage.getItem(key)) return true; } catch (e) {}
+      const ok = confirm("First send of the day: Resend's count for today isn't known yet (it's reported after a send). Warm-up and investor emails may already have used part of today's quota, so this email could be refused.\n\nSend anyway?");
+      if (ok) { try { localStorage.setItem(key, '1'); } catch (e) {} }
+      return ok;
+    }
+
     async function sendWithConfirm(payload) {
+      if (!confirmFirstSendOfDay()) return null;
       try {
         return (await callSend(payload)).data;
       } catch (e) {
