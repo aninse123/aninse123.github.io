@@ -54,6 +54,7 @@ const DEFAULT_CAMPAIGN = {
   steps: [],
   lockedStepIds: [],           // steps that have already run for someone (C8)
   recipientPolicy: "company",  // Phase 3b: company | primary_contact | best_person
+  audienceType: "companies",   // Phase 5: companies | people (investors, brokers, press…)
 };
 
 class CampaignError extends Error {
@@ -136,6 +137,8 @@ function normalizeCampaign(input, existing = null) {
   if (rawSteps.length > MAX_STEPS) bad("too_many_steps", `A sequence can have up to ${MAX_STEPS} steps.`);
   const used = new Set();
   const reserved = new Set((existing?.steps || []).map((s) => s.id));
+  if (src.audienceType === "people" && rawSteps.some((s) => (s.channel || "email") !== "email")) bad("people_email_only", "Campaigns to people have email steps only for now.");
+  if (existing && (existing.stats?.enrolled || 0) > 0 && (src.audienceType === "people" ? "people" : "companies") !== (existing.audienceType || "companies")) bad("audience_locked", "The audience type can't change once people or companies are in the campaign.");
   const steps = rawSteps.map((s, i) => normalizeStep(s, i, used, reserved));
 
   steps.forEach((st, i) => {
@@ -176,7 +179,9 @@ function normalizeCampaign(input, existing = null) {
     recipientPolicy: ["primary_contact", "best_person"].includes(src.recipientPolicy) ? src.recipientPolicy : "company",
     senderPolicy,
     sendWindow: normalizeWindow(src.sendWindow),
-    pacing: { newPerDay: intIn(src.pacing?.newPerDay, 1, 200, 20) },
+    // P4: maxPerDay = this campaign's own daily email limit (null = only the global limits).
+    pacing: { newPerDay: intIn(src.pacing?.newPerDay, 1, 500, 20), maxPerDay: src.pacing?.maxPerDay == null || src.pacing?.maxPerDay === "" ? null : intIn(src.pacing.maxPerDay, 1, 1000, null) },
+    audienceType: src.audienceType === "people" ? "people" : "companies",
     audience: { mode: audienceMode, sources: base.audience?.sources || [] },
     exclusions: {
       contactedWithinDays: intIn(ex.contactedWithinDays, 0, 3650, 30),
@@ -192,6 +197,9 @@ function normalizeCampaign(input, existing = null) {
 // template (with the chosen variants) behind every email step.
 function activationProblems(campaign, templatesById) {
   const problems = [];
+  if (campaign.audienceType === "people" && campaign.senderPolicy?.mode !== "fixed") {
+    problems.push('Choose who sends it (Settings → "From which addresses" → specific addresses — e.g. andre.rocha@douropartners.pt).');
+  }
   if (campaign.audience?.mode === "dynamic" && !latestFilterSpec(campaign)) {
     problems.push("A dynamic audience needs companies added from the Search CRM filters first — that's the filter it keeps applying.");
   }
@@ -282,6 +290,20 @@ const EXCLUSION_LABELS = {
 };
 
 const enrolmentId = (campaignId, companyId) => `${campaignId}_${companyId}`;
+// Phase 5: one enrolment per person (email) in a people campaign.
+const crypto = require("crypto");
+const personKey = (email) => "p_" + crypto.createHash("sha1").update(normEmail(email)).digest("hex").slice(0, 20);
+const personEnrolmentId = (campaignId, email) => `${campaignId}_${personKey(email)}`;
+
+// Exclusions for a person (spec §1): invalid, already in, suppressed, opted out of this campaign/list.
+function evaluatePerson(p, ctx) {
+  const email = normEmail(p?.email);
+  if (!isValidEmail(email)) return { ok: false, reason: "no_email" };
+  if (ctx.alreadyEnrolled) return { ok: false, reason: "already_in_campaign" };
+  if (ctx.suppressed.has(email) || ctx.suppressed.has("@" + domainOf(email))) return { ok: false, reason: "suppressed" };
+  if (ctx.optedOut?.has(email)) return { ok: false, reason: "unsubscribed" };
+  return { ok: true, email };
+}
 
 // The filter a dynamic audience keeps applying: the latest "filters" source.
 function latestFilterSpec(campaign) {
@@ -332,5 +354,5 @@ module.exports = {
   CHANNELS, MANUAL_CHANNELS, TEMPLATE_KIND, templateKind,
   CAMPAIGN_STATUSES, LIVE_ENROLMENT, STAGE_KEYS, DEFAULT_ALLOWED_STAGES, VARIANT_KEYS, MAX_STEPS,
   DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems, evaluateCompany,
-  EXCLUSION_LABELS, enrolmentId, tsMillis, latestFilterSpec, matchesFilterSpec,
+  EXCLUSION_LABELS, enrolmentId, tsMillis, latestFilterSpec, matchesFilterSpec, personKey, personEnrolmentId, evaluatePerson,
 };

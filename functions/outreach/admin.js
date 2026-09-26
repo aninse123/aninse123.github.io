@@ -14,7 +14,7 @@
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getStorage } = require("firebase-admin/storage");
-const { REGION, ADMIN_EMAILS, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, SEED_SENDERS, SENDER_DOMAIN, RESEND_READ_KEY } = require("./config");
+const { REGION, ADMIN_EMAILS, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, SEED_SENDERS, SENDER_DOMAIN, RESEND_READ_KEY, RELATIONSHIP_DOMAIN, RELATIONSHIP_SENDERS, RELATIONSHIP_SENDER_CAP } = require("./config");
 const { listDomains, updateDomain } = require("./resend");
 const { normEmail } = require("./util");
 const store = require("./store");
@@ -40,6 +40,18 @@ async function seed(callerEmail) {
       updatedAt: FieldValue.serverTimestamp(), updatedBy: callerEmail,
     });
     created.push(`outreachSenders/${email}`);
+  }
+  // Phase 5: relationship senders (@douropartners.pt) — active from the start.
+  for (const r of RELATIONSHIP_SENDERS) {
+    const ref = db().doc(`outreachSenders/${r.email}`);
+    if ((await ref.get()).exists) continue;
+    await ref.set({
+      email: r.email, displayName: r.displayName, owner: r.owner, domain: RELATIONSHIP_DOMAIN, kind: "relationship",
+      status: "active", dailyCap: RELATIONSHIP_SENDER_CAP, inboundAlias: null,
+      signature: r.owner ? `${r.displayName}\nDouro Partners` : "Douro Partners", notes: "Replies go to Gmail",
+      updatedAt: FieldValue.serverTimestamp(), updatedBy: callerEmail,
+    });
+    created.push(`outreachSenders/${r.email}`);
   }
   return { created };
 }

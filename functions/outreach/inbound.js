@@ -14,7 +14,7 @@ const {
 } = require("./util");
 const { getReceivedEmail, listReceivedAttachments } = require("./resend");
 const store = require("./store");
-const { stopCompanyEnrolments } = require("./campaigns");
+const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -196,6 +196,7 @@ async function handleReceived(data) {
   // Stop rule (Phase 2 §5.4): a human reply ends the company's campaign
   // sequence; out-of-office replies don't.
   if (!autoReply && thread.companyId) await stopCompanyEnrolments(thread.companyId, "Replied", "replied");
+  else if (!autoReply && thread.enrolmentId) await stopEnrolmentById(thread.enrolmentId, "Replied", "replied");
 }
 
 module.exports = { handleReceived, matchThread };

@@ -93,7 +93,8 @@ function pickVariant(stepVariants, templateVariants, rand = Math.random()) {
 // no owner). Among those, the least used today that is under its cap and not
 // already used in this run — which spaces each address's emails a run apart.
 function pickSender({ policy, owner, senders, sentToday, usedThisRun, defaultCap }) {
-  const active = senders.filter((s) => s.status === "active");
+  // Relationship senders (@douropartners.pt) only when a campaign names them.
+  const active = senders.filter((s) => s.status === "active" && (s.kind !== "relationship" || policy?.mode === "fixed"));
   let pool = policy?.mode === "fixed"
     ? active.filter((s) => (policy.senderIds || []).includes(s.id))
     : active.filter((s) => !owner || s.owner === owner);

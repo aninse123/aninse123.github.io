@@ -148,7 +148,29 @@ async function setCompanyOutreachStatus(companyId, status, isTest) {
   await db().doc(`searchCompanies/${companyId}`).update({ outreachStatus: status, updatedAt: FieldValue.serverTimestamp() }).catch(() => {});
 }
 
+// Phase 5: a send to a person is logged where that person lives (spec §5):
+// Investor CRM → crmActivities, Network → networkActivities, portal investor
+// → activityLog. Test sends are never logged on real records.
+async function logPersonSend({ refs = [], email, subject, content, messageId, threadId, campaignId = null, createdBy, isTest }) {
+  if (isTest) return;
+  const now = Timestamp.now();
+  for (const r of refs || []) {
+    try {
+      if (r.source === "crm" && r.id) {
+        await db().collection("crmActivities").add({ investorId: r.id, type: "email", date: now, title: subject || "", content: content || null, via: "email", recipientEmails: [email], status: null, outreachMessageId: messageId, threadId, campaignId, createdAt: FieldValue.serverTimestamp(), createdBy });
+        await db().doc(`crmInvestors/${r.id}`).update({ lastTouchAt: now, updatedAt: FieldValue.serverTimestamp() }).catch(() => {});
+      } else if (r.source === "network" && r.id) {
+        await db().collection("networkActivities").add({ contactId: r.id, type: "email", date: now, title: subject || "", content: content || null, via: "email", recipientEmails: [email], status: null, outreachMessageId: messageId, threadId, campaignId, createdAt: FieldValue.serverTimestamp(), createdBy });
+        await db().doc(`networkContacts/${r.id}`).update({ lastTouchAt: now, updatedAt: FieldValue.serverTimestamp() }).catch(() => {});
+      } else if (r.source === "portal" && r.id) {
+        await db().collection("activityLog").add({ type: "email_sent", email, investorId: r.id, subject: subject || "", outreachMessageId: messageId, campaignId, timestamp: FieldValue.serverTimestamp(), by: createdBy });
+      }
+    } catch (e) { /* logging must never block the send */ }
+  }
+}
+
 module.exports = {
+  logPersonSend,
   db, FieldValue, Timestamp,
   getSettings, recordQuota, getTodayUsage, getTodayDaily, senderKey, bumpDaily,
   findSuppression, addSuppression, writeActivity, touchCompany, setCompanyOutreachStatus,

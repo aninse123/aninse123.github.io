@@ -86,6 +86,18 @@ const SEED_SENDERS = [
 ];
 const SENDER_DOMAIN = "mail.douropartners-team.pt";
 
+// Phase 5 (P3): the real addresses, for investors, press and other people
+// you already know. Never used for cold company outreach; replies go to
+// Gmail (no inbound alias). Sent with the full-access key (the sending key
+// is limited to the outreach subdomain).
+const RELATIONSHIP_DOMAIN = "douropartners.pt";
+const RELATIONSHIP_SENDERS = [
+  { email: "andre.rocha@douropartners.pt", owner: "andre", displayName: "André Rocha" },
+  { email: "antonio.carvalho@douropartners.pt", owner: "antonio", displayName: "António Carvalho" },
+  { email: "noreply@douropartners.pt", owner: null, displayName: "Douro Partners" },
+];
+const RELATIONSHIP_SENDER_CAP = 200;
+
 // Free-mail / ISP domains: shared by unrelated people, so (a) recipients on them
 // are likely natural persons and blocked while blockPersonalDomains is on
 // (Lei 41/2004, spec §10), and (b) a matching domain proves nothing when filing
@@ -111,6 +123,6 @@ module.exports = {
   REGION, ADMIN_EMAILS, OWNER_BY_ADMIN,
   RESEND_SEND_KEY, RESEND_READ_KEY, RESEND_WEBHOOK_SECRET, UNSUBSCRIBE_SECRET,
   UNSUBSCRIBE_BASE_URL, TEST_RECIPIENTS, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP,
-  SEED_SENDERS, SENDER_DOMAIN, FREE_MAIL_DOMAINS, MATCH_WINDOW_DAYS,
+  SEED_SENDERS, SENDER_DOMAIN, RELATIONSHIP_DOMAIN, RELATIONSHIP_SENDERS, RELATIONSHIP_SENDER_CAP, FREE_MAIL_DOMAINS, MATCH_WINDOW_DAYS,
   MAX_ATTACHMENT_BYTES, MAX_INLINE_HTML_BYTES, RISKY_EXTENSIONS,
 };

@@ -15,7 +15,7 @@
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { RESEND_SEND_KEY, UNSUBSCRIBE_SECRET, UNSUBSCRIBE_BASE_URL, DEFAULT_SENDER_CAP } = require("./config");
+const { RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, UNSUBSCRIBE_BASE_URL, DEFAULT_SENDER_CAP, SENDER_DOMAIN } = require("./config");
 const { normEmail, domainOf, isFreeMail, isValidEmail, isTestRecipient, checkMx, makeUnsubToken, parseAddress } = require("./util");
 const { buildContext, renderTemplate, buildPlainEmail, buildQuote, replySubject, TEST_FOOTER } = require("./render");
 const { sendEmail, ResendError } = require("./resend");
@@ -39,6 +39,9 @@ function fail(code, reason, message, extra = {}) {
 //                              campaign follow-ups set it although they are replies
 //   redirectTo               → test mode only: campaign emails go to this approved
 //                              address instead of the company (C10 rehearsal)
+//   person                   → Phase 5: { email, name, org, refs } — a person, not a company
+//                              (investor, broker, journalist…). No company; {{company.*}} uses
+//                              the organisation; logged on the person's CRM / Network record.
 //   recipient                → Phase 3b: { email } of the person to write to (the company
 //                              address, a contact or a linked person). Checked against the
 //                              company's own list; fills {{contact.firstName}}. In test mode
@@ -59,9 +62,10 @@ async function prepareEmail(opts) {
     thread = t.data();
     companyId = thread.companyId || null;
   } else {
-    companyId = String(opts.companyId || "") || null;
-    // Test sends may skip the company (pure delivery tests); real ones never.
-    if (!companyId && !isTest) fail("invalid-argument", "company_required", "Choose a company.");
+    companyId = opts.person ? null : (String(opts.companyId || "") || null);
+    // Test sends may skip the company (pure delivery tests); real ones never —
+    // unless the email is to a person (Phase 5).
+    if (!companyId && !isTest && !opts.person) fail("invalid-argument", "company_required", "Choose a company.");
     threadRef = db().collection("outreachThreads").doc();
   }
   if (companyId) {
@@ -94,14 +98,15 @@ async function prepareEmail(opts) {
     recipient = (await companyRecipients(companyId, company)).find((r) => r.email === want) || null;
     if (!recipient) fail("invalid-argument", "recipient_not_found", `${want} isn't this company's address, one of its contacts or a person linked to it.`);
   }
-  const contactName = isReply ? (thread.contactName || "") : (recipient?.kind !== "company" ? (recipient?.name || "") : "");
+  const person = !isReply && opts.person?.email ? { email: normEmail(opts.person.email), name: String(opts.person.name || ""), org: String(opts.person.org || ""), refs: Array.isArray(opts.person.refs) ? opts.person.refs.slice(0, 10) : [] } : null;
+  const contactName = isReply ? (thread.contactName || "") : person ? person.name : (recipient?.kind !== "company" ? (recipient?.name || "") : "");
 
   // ── Recipient checks ──
   const redirect = isTest && opts.redirectTo ? normEmail(opts.redirectTo) : null;
-  const intended = normEmail(isReply ? thread.contactEmail : (recipient ? recipient.email : (opts.to || company?.companyEmail)));
+  const intended = normEmail(isReply ? thread.contactEmail : person ? person.email : (recipient ? recipient.email : (opts.to || company?.companyEmail)));
   // Test mode: the email goes to the approved test address; the intended
   // recipient is only used for the wording and recorded as redirectedFrom.
-  const to = normEmail(isReply ? thread.contactEmail : (redirect || (isTest && recipient ? (opts.to || intended) : intended)));
+  const to = normEmail(isReply ? thread.contactEmail : (redirect || (isTest && (recipient || person) ? (opts.to || intended) : intended)));
   if (!isValidEmail(to)) fail("invalid-argument", "bad_recipient", to ? `"${to}" is not a valid email address.` : "This company has no email address.");
   const toDomain = domainOf(to);
   const testAllowed = isTestRecipient(to, settings.testRecipients);
@@ -114,8 +119,8 @@ async function prepareEmail(opts) {
   // recorded for CCSL); the company address keeps the personal-domain setting.
   // A reply keeps the conversation's recipient kind; a reply you type (not a
   // campaign follow-up) answers someone who wrote to us, so it isn't blocked.
-  const personLevel = recipient ? recipient.kind !== "company"
-    : isReply && (["contact", "person"].includes(thread.recipientKind) || !countsAsOutreach);
+  const personLevel = person ? true : recipient ? recipient.kind !== "company"
+    : isReply && (["contact", "person", "people"].includes(thread.recipientKind) || !countsAsOutreach);
   const personalAddress = isFreeMail(domainOf(intended));
   if (settings.blockPersonalDomains && isFreeMail(toDomain) && !testAllowed && !personLevel) {
     fail("failed-precondition", "personal_domain", `${toDomain} is a personal email domain — blocked while personal domains are off (legal rule for natural persons).`);
@@ -140,7 +145,9 @@ async function prepareEmail(opts) {
 
   // ── Content ──
   const unsubscribeUrl = UNSUBSCRIBE_BASE_URL + makeUnsubToken(messageId, UNSUBSCRIBE_SECRET.value());
-  const ctx = buildContext({ company: company || {}, contactName, sender, unsubscribeUrl, aiOpener: opts.aiOpener || "" });
+  // A person's organisation stands in for the company in {{company.*}}.
+  const ctxCompany = company || (person ? { name: person.org, emailName: person.org } : (isReply && thread.companyName ? { name: thread.companyName } : {}));
+  const ctx = buildContext({ company: ctxCompany, contactName, sender, unsubscribeUrl, aiOpener: opts.aiOpener || "" });
 
   let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null;
   if (opts.templateId) {
@@ -210,7 +217,8 @@ async function prepareEmail(opts) {
     senderId, sender, to, toDomain, subject: subject.text, bodyText: body.text, text, html, headers,
     templateId, variantKey, countsAsOutreach,
     redirectedFrom: isTest && intended && intended !== to ? intended : null,
-    contactName, recipientKind: isReply ? (thread.recipientKind || null) : (recipient?.kind || "company"),
+    contactName, recipientKind: isReply ? (thread.recipientKind || null) : person ? "people" : (recipient?.kind || "company"),
+    person,
     recipientPersonId: recipient?.personId || null, personalAddress: !isReply && personalAddress,
   };
 }
@@ -226,7 +234,8 @@ async function deliverEmail(p, { campaign = null } = {}) {
   const batch = db().batch();
   if (!isReply) {
     batch.set(threadRef, {
-      companyId, companyName: company?.name || null, contactEmail: to, contactDomain: toDomain, contactName: p.contactName || "",
+      companyId, companyName: company?.name || p.person?.org || null, contactEmail: to, contactDomain: toDomain, contactName: p.contactName || "",
+      personRefs: p.person?.refs || null, personEmail: p.person?.email || null,
       recipientKind: p.recipientKind, recipientPersonId: p.recipientPersonId, personalAddress: !!p.personalAddress,
       senderId, owner, subject: p.subject, status: "open", unread: false, unmatched: false,
       lastMessageAt: now, lastDirection: "out", rfcIds: [], lastInboundRfcId: null,
@@ -253,7 +262,10 @@ async function deliverEmail(p, { campaign = null } = {}) {
   // ── Send ──
   let result;
   try {
-    result = await sendEmail(RESEND_SEND_KEY.value(), {
+    // The sending key only covers the outreach subdomain; @douropartners.pt
+    // (relationship senders, Phase 5) goes out with the full-access key.
+    const sendKey = sender.kind === "relationship" || domainOf(senderId) !== SENDER_DOMAIN ? RESEND_READ_KEY.value() : RESEND_SEND_KEY.value();
+    result = await sendEmail(sendKey, {
       from: `${sender.displayName} <${senderId}>`,
       to: [to],
       subject: p.subject,
@@ -297,6 +309,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
     campaignId: campaign?.campaignId, stepId: campaign?.stepId, enrolmentId: campaign?.enrolmentId,
   });
   await store.touchCompany(companyId, { direction: "out", isTest });
+  if (p.person) await store.logPersonSend({ refs: p.person.refs, email: p.person.email, subject: p.subject, content: p.bodyText, messageId, threadId: threadRef.id, campaignId: campaign?.campaignId || null, createdBy: p.callerEmail, isTest });
   await store.bumpDaily(p.countsAsOutreach ? "outreachSent" : "repliesSent", { senderId, owner, extra: campaign ? ["campaignSent"] : [] });
   await store.recordQuota(result.quota, "send");
 

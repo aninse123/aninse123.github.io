@@ -66,7 +66,7 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
 
   console.log("=== seed ===");
   const seed = await call(fns.outreachAdmin, { action: "seed" });
-  ok("seed creates settings + 8 senders", seed.res.created.length === 9);
+  ok("seed creates settings + 8 outreach senders + 3 relationship senders (@douropartners.pt)", seed.res.created.length === 12 && seed.res.created.includes("outreachSenders/andre.rocha@douropartners.pt"));
   ok("an.rocha active, rocha.andre paused, andre.rocha warming",
     store.get("outreachSenders/an.rocha@mail.douropartners-team.pt").status === "active" &&
     store.get("outreachSenders/rocha.andre@mail.douropartners-team.pt").status === "paused" &&

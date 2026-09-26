@@ -13,14 +13,14 @@
 // `requestId` (optional) becomes the message id, so a retried call is a no-op.
 
 const { onCall } = require("firebase-functions/v2/https");
-const { REGION, ADMIN_EMAILS, OWNER_BY_ADMIN, RESEND_SEND_KEY, UNSUBSCRIBE_SECRET } = require("./config");
+const { REGION, ADMIN_EMAILS, OWNER_BY_ADMIN, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET } = require("./config");
 const { normEmail } = require("./util");
 const { prepareEmail, deliverEmail, fail } = require("./send_core");
 const store = require("./store");
 
 const { db } = store;
 
-exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, UNSUBSCRIBE_SECRET] }, async (request) => {
+exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET] }, async (request) => {
   const callerEmail = normEmail(request.auth?.token?.email);
   if (!ADMIN_EMAILS.includes(callerEmail)) fail("permission-denied", "not_admin", "Only Douro admins can send outreach email.");
 

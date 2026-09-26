@@ -12,7 +12,9 @@ const { verifySvixSignature, tagValue, normEmail, stripQuoted, htmlToText } = re
 const { getEmail } = require("./resend");
 const { handleReceived } = require("./inbound");
 const store = require("./store");
-const { stopCompanyEnrolments } = require("./campaigns");
+const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
+// People conversations (Phase 5) have no company: stop the conversation's own enrolment.
+const stopFor = (companyId, thread, reason) => (companyId ? stopCompanyEnrolments(companyId, reason) : stopEnrolmentById(thread?.enrolmentId, reason));
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -47,7 +49,9 @@ async function findOurMessage(data) {
 async function maybeRecordGmailReply(data) {
   const fromEmail = normEmail(data.from);
   const senderSnap = await db().doc(`outreachSenders/${fromEmail}`).get();
-  if (!senderSnap.exists || ["warming", "retired"].includes(senderSnap.data().status)) return false;
+  // Relationship senders (@douropartners.pt, Phase 5) also send investor
+  // emails outside the portal — those aren't outreach replies.
+  if (!senderSnap.exists || ["warming", "retired"].includes(senderSnap.data().status) || senderSnap.data().kind === "relationship") return false;
   const to = normEmail((data.to || [])[0]);
   if (!to) return false;
 
@@ -141,16 +145,16 @@ async function handleDeliveryEvent(type, data) {
     await store.addSuppression(recipient, { reason: "hard_bounce", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });
     await store.setCompanyOutreachStatus(companyId, "bounced", isTest);
-    await stopCompanyEnrolments(companyId, "Email bounced");
+    await stopFor(companyId, thread, "Email bounced");
   } else if (type === "email.complained") {
     await store.addSuppression(recipient, { reason: "complaint", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "closed" });
     await store.setCompanyOutreachStatus(companyId, "unsubscribed", isTest);
-    await stopCompanyEnrolments(companyId, "Marked as spam");
+    await stopFor(companyId, thread, "Marked as spam");
   } else if (type === "email.suppressed") {
     await store.addSuppression(recipient, { reason: "provider_suppressed", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });
-    await stopCompanyEnrolments(companyId, "Email suppressed by the provider");
+    await stopFor(companyId, thread, "Email suppressed by the provider");
   }
   return true;
 }

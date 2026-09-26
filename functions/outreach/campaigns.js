@@ -10,6 +10,8 @@
 //   delete      { campaignId }                       drafts only; releases every enrolled company
 //   preview     { campaignId, companyIds }           exclusion summary, writes nothing
 //   enrol       { campaignId, companyIds, source, onConflict: "skip"|"move" }
+//   previewPeople / enrolPeople { campaignId, people: [{ email, name, org, refs }], source }
+//                                                    Phase 5: campaigns to people
 //   enrolment   { enrolmentId, op: "pause"|"resume"|"remove"|"move", reason?, targetCampaignId? }
 //   setStatus   { campaignId, status: "active"|"paused"|"finished"|"archived" }
 //   approve     { messageIds, subject?, body? }        "To approve" queue (D4): the drafts
@@ -34,7 +36,7 @@ const { addWait, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
-  evaluateCompany, enrolmentId, latestFilterSpec, matchesFilterSpec,
+  evaluateCompany, enrolmentId, latestFilterSpec, matchesFilterSpec, personEnrolmentId, evaluatePerson,
 } = require("./campaign_util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -102,6 +104,10 @@ async function evalContext(campaign) {
   };
 }
 
+function assertCompanies(campaign) {
+  if (campaign.audienceType === "people") fail("failed-precondition", "not_companies", "This campaign is for people — add people, not companies.");
+}
+
 function assertEnrollable(campaign) {
   if (!["draft", "active", "paused"].includes(campaign.status)) {
     fail("failed-precondition", "campaign_closed", `This campaign is ${campaign.status} — companies can't be added.`);
@@ -124,13 +130,14 @@ async function endEnrolment(enrolRef, status, reason) {
   return db().runTransaction(async (tx) => {
     const e = await tx.get(enrolRef);
     if (!e.exists || !LIVE_ENROLMENT.includes(e.data().status)) return false;
-    const companyRef = db().doc(`searchCompanies/${e.data().companyId}`);
-    const c = await tx.get(companyRef);
+    // People enrolments (Phase 5) hold no company slot.
+    const companyRef = e.data().companyId ? db().doc(`searchCompanies/${e.data().companyId}`) : null;
+    const c = companyRef ? await tx.get(companyRef) : null;
     const draftRef = e.data().draftMessageId ? db().doc(`outreachMessages/${e.data().draftMessageId}`) : null;
     const draft = draftRef ? await tx.get(draftRef) : null;
     const taskRef = e.data().taskId ? db().doc(`outreachTasks/${e.data().taskId}`) : null;
     const task = taskRef ? await tx.get(taskRef) : null;
-    endEnrolmentWrites(tx, enrolRef, companyRef, c.exists ? c.data() : null, status, reason);
+    endEnrolmentWrites(tx, enrolRef, companyRef, c?.exists ? c.data() : null, status, reason);
     if (draft?.exists && ["draft", "approved"].includes(draft.data().status)) tx.update(draftRef, { status: "cancelled", cancelledReason: reason || status });
     if (task?.exists && task.data().status === "open") tx.update(taskRef, { status: "cancelled", cancelledReason: reason || status });
     return true;
@@ -155,6 +162,12 @@ async function liveEnrolmentRefs(field, value) {
 // "replied"; bounce, complaint, unsubscribe and do-not-contact as "stopped".
 // Called from the webhook (inbound replies, delivery events) and the
 // unsubscribe page.
+// A people conversation (Phase 5) has no company: stop its own enrolment.
+async function stopEnrolmentById(id, reason, status = "stopped") {
+  if (!id) return 0;
+  return (await endEnrolment(db().doc(`outreachEnrolments/${id}`), status, reason)) ? 1 : 0;
+}
+
 async function stopCompanyEnrolments(companyId, reason, status = "stopped") {
   if (!companyId) return 0;
   return endAll(await liveEnrolmentRefs("companyId", companyId), status, reason);
@@ -244,7 +257,7 @@ async function readCompanies(ids, campaignId) {
 
 async function preview({ campaignId, companyIds }) {
   const campaign = await getCampaign(campaignId);
-  assertEnrollable(campaign);
+  assertEnrollable(campaign); assertCompanies(campaign);
   const ids = cleanCompanyIds(companyIds);
   const ctx = await evalContext(campaign);
   const data = await readCompanies(ids, campaignId);
@@ -345,7 +358,7 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller) {
 
 async function enrol({ campaignId, companyIds, source, onConflict }, caller) {
   const campaign = await getCampaign(campaignId);
-  assertEnrollable(campaign);
+  assertEnrollable(campaign); assertCompanies(campaign);
   const ids = cleanCompanyIds(companyIds);
   const src = cleanSource(source);
   const mode = onConflict === "move" ? "move" : "skip";
@@ -384,6 +397,85 @@ async function moveEnrolment(id, targetCampaignId, caller) {
   if (r.result === "skipped") fail("failed-precondition", "cant_move", `Can't be added to "${target.name}": ${r.reason.replace(/_/g, " ")}.`);
   await db().doc(`outreachCampaigns/${target.id}`).update({ "stats.enrolled": FieldValue.increment(1) });
   return { ok: true, status: "moved", targetCampaignId: target.id };
+}
+
+// ── People (Phase 5) ────────────────────────────────────────────────────────
+function cleanPeople(people) {
+  if (!Array.isArray(people) || !people.length) fail("invalid-argument", "people_required", "No people to add.");
+  if (people.length > MAX_COMPANIES_PER_CALL) fail("invalid-argument", "too_many", `Add up to ${MAX_COMPANIES_PER_CALL} people at a time.`);
+  const seen = new Map();
+  for (const p of people) {
+    const email = normEmail(p?.email);
+    if (!email) continue;
+    const prev = seen.get(email);
+    const refs = (Array.isArray(p.refs) ? p.refs : []).filter((r) => ["crm", "network", "portal", "broker"].includes(r?.source) && typeof r.id === "string").slice(0, 10).map((r) => ({ source: r.source, id: r.id }));
+    if (prev) { prev.refs.push(...refs.filter((r) => !prev.refs.some((x) => x.source === r.source && x.id === r.id))); continue; }
+    seen.set(email, { email, name: String(p.name || "").slice(0, 120), org: String(p.org || "").slice(0, 160), refs });
+  }
+  return [...seen.values()];
+}
+async function peopleContext(campaign) {
+  const ctx = await evalContext(campaign);
+  const opts = await db().collection("outreachOptOuts").where("campaignId", "==", campaign.id).get();
+  ctx.optedOut = new Set(opts.docs.map((d) => d.data().email));
+  return ctx;
+}
+function assertPeople(campaign) {
+  if (campaign.audienceType !== "people") fail("failed-precondition", "not_people", "This campaign is for companies — use a campaign for people.");
+}
+async function previewPeople({ campaignId, people }) {
+  const campaign = await getCampaign(campaignId);
+  assertEnrollable(campaign); assertPeople(campaign);
+  const list = cleanPeople(people);
+  const ctx = await peopleContext(campaign);
+  const excluded = {}; const sample = []; let eligible = 0;
+  for (const group of chunks(list, READ_CHUNK)) {
+    const snaps = await db().getAll(...group.map((p) => db().doc(`outreachEnrolments/${personEnrolmentId(campaignId, p.email)}`)));
+    group.forEach((p, i) => {
+      const r = evaluatePerson(p, { ...ctx, alreadyEnrolled: snaps[i].exists });
+      if (r.ok) { eligible++; return; }
+      excluded[r.reason] = (excluded[r.reason] || 0) + 1;
+      if (sample.length < SAMPLE_LIMIT) sample.push({ email: p.email, name: p.name, reason: r.reason });
+    });
+  }
+  const perDay = campaign.pacing?.maxPerDay || campaign.pacing?.newPerDay || DEFAULT_CAMPAIGN.pacing.newPerDay;
+  return { requested: list.length, eligible, excluded, excludedSample: sample, perDay, daysToStart: Math.ceil(eligible / perDay) };
+}
+async function enrolPeople({ campaignId, people, source }, caller) {
+  const campaign = await getCampaign(campaignId);
+  assertEnrollable(campaign); assertPeople(campaign);
+  const list = cleanPeople(people);
+  const src = cleanSource(source);
+  const ctx = await peopleContext(campaign);
+  let enrolled = 0; const skipped = {};
+  for (const group of chunks(list, TX_PARALLEL)) {
+    const res = await Promise.all(group.map((p) => {
+      const ref = db().doc(`outreachEnrolments/${personEnrolmentId(campaignId, p.email)}`);
+      return db().runTransaction(async (tx) => {
+        const cur = await tx.get(ref);
+        const r = evaluatePerson(p, { ...ctx, alreadyEnrolled: cur.exists });
+        if (!r.ok) return r.reason;
+        tx.set(ref, {
+          campaignId: campaign.id, campaignName: campaign.name, companyId: null, companyName: p.org || "",
+          personEmail: r.email, personName: p.name, org: p.org, refs: p.refs, owner: null, contactEmail: r.email,
+          source: src.type, sourceLabel: src.label || src.type, status: "pending", stopReason: null, currentStep: 0,
+          nextActionAt: null, senderId: null, threadId: null, variants: {}, history: [], isTest: ctx.isTest,
+          enrolledAt: FieldValue.serverTimestamp(), enrolledBy: caller, endedAt: null,
+        });
+        return "enrolled";
+      });
+    }));
+    res.forEach((r) => (r === "enrolled" ? enrolled++ : (skipped[r] = (skipped[r] || 0) + 1)));
+  }
+  const skippedTotal = Object.values(skipped).reduce((a, b) => a + b, 0);
+  if (enrolled) {
+    await db().doc(`outreachCampaigns/${campaignId}`).update({
+      "stats.enrolled": FieldValue.increment(enrolled),
+      "audience.sources": FieldValue.arrayUnion({ ...src, at: Timestamp.now(), by: caller, requested: list.length, enrolled, skipped: skippedTotal }),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+  return { requested: list.length, enrolled, skipped, skippedTotal };
 }
 
 async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId }, caller) {
@@ -693,6 +785,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "enrol": return await enrol(data, caller);
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);
+      case "previewPeople": return await previewPeople(data, caller);
+      case "enrolPeople": return await enrolPeople(data, caller);
       case "approve": return await approve(data, caller);
       case "skipDraft": return await skipDraft(data, caller);
       case "completeTask": return await completeTask(data, caller);
@@ -708,5 +802,6 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
 
 // Helpers for the webhook and scheduler (step 2); index.js exports only the callable.
 exports.stopCompanyEnrolments = stopCompanyEnrolments;
+exports.stopEnrolmentById = stopEnrolmentById;
 exports.runDynamicAudience = runDynamicAudience;
 exports.endEnrolment = endEnrolment;

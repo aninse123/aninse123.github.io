@@ -10,7 +10,7 @@ const { logger } = require("firebase-functions");
 const { REGION, UNSUBSCRIBE_SECRET } = require("./config");
 const { verifyUnsubToken, normEmail, escapeHtml } = require("./util");
 const store = require("./store");
-const { stopCompanyEnrolments } = require("./campaigns");
+const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
 
 const { db, FieldValue } = store;
 
@@ -53,7 +53,8 @@ exports.outreachUnsubscribe = onRequest({ region: REGION, secrets: [UNSUBSCRIBE_
     await store.addSuppression(email, { reason: "unsubscribed", source: oneClick ? "one_click" : "link", companyId: thread?.companyId || null, by: "recipient" });
     if (msg.threadId) await db().doc(`outreachThreads/${msg.threadId}`).update({ status: "closed", unsubscribedAt: FieldValue.serverTimestamp() });
     await store.setCompanyOutreachStatus(thread?.companyId || null, "unsubscribed", !!msg.isTest);
-    await stopCompanyEnrolments(thread?.companyId || null, "Unsubscribed");
+    if (thread?.companyId) await stopCompanyEnrolments(thread.companyId, "Unsubscribed");
+    else if (thread?.enrolmentId) await stopEnrolmentById(thread.enrolmentId, "Unsubscribed");
 
     res.status(200).send(page("Removido", "<h1>Pedido registado</h1><p>Não voltará a receber emails nossos neste endereço.</p><p><small>Douro Partners</small></p>"));
   } catch (e) {

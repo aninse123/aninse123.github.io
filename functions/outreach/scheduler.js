@@ -20,7 +20,7 @@
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { REGION, RESEND_SEND_KEY, UNSUBSCRIBE_SECRET, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP } = require("./config");
+const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP } = require("./config");
 const store = require("./store");
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience } = require("./campaigns");
@@ -58,7 +58,9 @@ const stepMessageId = (enrolmentId, stepId) => `${enrolmentId}_${stepId}`.replac
 async function startPending(campaign, now, report) {
   const day = lisbonParts(now).dayKey;
   const already = campaign.startedToday?.day === day ? campaign.startedToday.count || 0 : 0;
-  const room = (campaign.pacing?.newPerDay || 20) - already;
+  // People campaigns start as many as their daily email limit allows (P4).
+  const perDay = campaign.audienceType === "people" ? (campaign.pacing?.maxPerDay || campaign.pacing?.newPerDay || 20) : (campaign.pacing?.newPerDay || 20);
+  const room = perDay - already;
   if (room <= 0 || !campaign.steps?.length) return;
   const snap = await db().collection("outreachEnrolments")
     .where("campaignId", "==", campaign.id).where("status", "==", "pending")
@@ -96,6 +98,9 @@ async function claim(ref, now) {
 
 const unlock = (ref, extra = {}) => ref.update({ lockUntil: null, ...extra });
 
+// P4: each campaign's own daily email limit (Lisbon day).
+const campaignSentToday = (campaign, day) => (campaign.sentToday?.day === day ? campaign.sentToday.count || 0 : 0);
+
 async function recordSent(ref, e, campaign, step, res, { senderId, variantKey, now }) {
   const nextIndex = e.currentStep + 1;
   const next = campaign.steps[nextIndex];
@@ -112,9 +117,13 @@ async function recordSent(ref, e, campaign, step, res, { senderId, variantKey, n
     draftMessageId: null,
     lockUntil: null,
   });
+  const day = lisbonParts(now).dayKey;
+  const count = campaignSentToday(campaign, day) + 1;
+  campaign.sentToday = { day, count };
   await db().doc(`outreachCampaigns/${campaign.id}`).update({
     lockedStepIds: FieldValue.arrayUnion(step.id),
     "stats.sent": FieldValue.increment(1),
+    sentToday: { day, count },
   });
 }
 
@@ -262,6 +271,9 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     const approval = (step.approval === "inherit" || !step.approval) ? campaign.approvalDefault : step.approval;
     const wantsDraft = approval === "approval" && !approved;
     if (!wantsDraft && !canSend) { await unlock(doc.ref); report.deferred++; continue; }
+    if (!wantsDraft && campaign.pacing?.maxPerDay && campaignSentToday(campaign, lisbonParts(now).dayKey) >= campaign.pacing.maxPerDay) {
+      await unlock(doc.ref); report.deferred++; report.campaignCap = (report.campaignCap || 0) + 1; continue;
+    }
     if (wantsDraft && report.drafts >= MAX_DRAFTS_PER_RUN) { await unlock(doc.ref); report.deferred++; continue; }
 
     // Sender: follow-ups keep the address of the first email.
@@ -303,7 +315,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       }
       // Phase 3b "Send to": chosen once (first email of the company) and kept.
       let recipient = e.recipient || null;
-      if (!isFollowUp && !recipient && (campaign.recipientPolicy || "company") !== "company") {
+      if (!e.personEmail && !isFollowUp && !recipient && (campaign.recipientPolicy || "company") !== "company") {
         const co = await db().doc(`searchCompanies/${e.companyId}`).get();
         const pick = co.exists ? pickByPolicy(await companyRecipients(e.companyId, co.data()), campaign.recipientPolicy) : null;
         if (pick) { recipient = { email: pick.email, name: pick.name || "", kind: pick.kind }; await doc.ref.update({ recipient }); }
@@ -312,7 +324,9 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         callerEmail: "scheduler", settings, messageRef,
         threadId: isFollowUp ? e.threadId : null,
         companyId: e.companyId, senderId,
-        recipient: isFollowUp ? null : recipient,
+        recipient: isFollowUp || e.personEmail ? null : recipient,
+        // Phase 5: a person (investor, broker, journalist…), not a company.
+        person: !isFollowUp && e.personEmail ? { email: e.personEmail, name: e.personName, org: e.org, refs: e.refs } : null,
         aiOpener,
         templateId: step.templateId, variantKey,
         // Approved drafts go out as approved (edited subject/body included);
@@ -370,7 +384,7 @@ exports.outreachScheduler = onSchedule({
   region: REGION,
   schedule: "every 10 minutes",
   timeZone: "Europe/Lisbon",
-  secrets: [RESEND_SEND_KEY, UNSUBSCRIBE_SECRET, ANTHROPIC_API_KEY],
+  secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, ANTHROPIC_API_KEY],
   timeoutSeconds: 540,
   retryCount: 0, // the next run picks up whatever this one left
 }, async () => {
