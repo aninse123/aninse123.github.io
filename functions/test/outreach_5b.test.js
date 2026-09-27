@@ -103,8 +103,11 @@ function makeRes() { const r = {}; return { r, res: { status(c) { r.code = c; re
   await run("2026-11-02T10:00:00Z");
   ok("paused: no issue written", docs("outreachIssues").length === before);
   const n5 = await rec({ action: "issueNow", recurringId: rid });
-  await rec({ action: "delete", recurringId: rid });
-  ok("delete: gone, waiting draft cancelled, sent issues kept", !get(`outreachRecurring/${rid}`) && get(`outreachIssues/${n5.issueId}`).status === "cancelled" && get(`outreachIssues/${n2.issueId}`).status === "sending");
+  const sendsAtDelete = sends.length;
+  const del = await rec({ action: "delete", recurringId: rid });
+  ok("delete: gone, waiting draft cancelled", !get(`outreachRecurring/${rid}`) && get(`outreachIssues/${n5.issueId}`).status === "cancelled" && del.cancelled >= 1);
+  const liveLeft = docs("outreachEnrolments").filter((e) => e.campaignId === ap.campaignId && ["pending", "active", "awaiting_approval", "awaiting_task", "paused"].includes(e.status)).length;
+  ok("delete also stops the issue part-way through sending: campaign finished, nobody left waiting, sent emails kept", del.stopped >= 1 && get(`outreachIssues/${n2.issueId}`).status === "stopped" && get(`outreachCampaigns/${ap.campaignId}`).status === "finished" && liveLeft === 0 && sends.length === sendsAtDelete);
   ok("empty list → approve refused, issue stays a draft", await (async () => {
     store.set("outreachLists/L2", { name: "Vazia", count: 0 });
     const r2 = (await rec({ action: "save", recurring: { name: "Vazia", listId: "L2", templateId: "upd", senderId: "andre.rocha@douropartners.pt" } })).recurringId;

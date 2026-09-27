@@ -3348,8 +3348,8 @@ Optional note for them:`, '');
       }));
       $('recurView').querySelectorAll('[data-rdel]').forEach(b => b.addEventListener('click', async () => {
         const r = byId(b.dataset.rdel);
-        if (!confirm(`Delete "${r.name}"? A waiting draft is cancelled; issues already sent (and their history) stay.`)) return;
-        try { await callRecurring({ action: 'delete', recurringId: r.id }); toast('Recurring email deleted.'); } catch (e) { toast(errText(e)); }
+        if (!confirm(`Delete "${r.name}"?\n\nEverything not yet out stops: a waiting or approved issue is cancelled, and an issue part-way through sending stops (nobody else gets it). Emails already sent, and their history, stay.`)) return;
+        try { const x = (await callRecurring({ action: 'delete', recurringId: r.id })).data; toast(`Recurring email deleted${x.stopped ? ` — ${x.stopped} issue stopped mid-send` : ''}.`); } catch (e) { toast(errText(e)); }
       }));
       // F4: who unsubscribed from this recurring email; a partner can put
       // someone back when they asked (reason recorded).
@@ -3376,7 +3376,7 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
         const snap = await getDocs(query(collection(db, 'outreachIssues'), where('recurringId', '==', r.id)));
         addReads(snap.size || 1); refreshReads();
         const rows = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, c) => (c.number || 0) - (a.number || 0));
-        const label = { draft: 'waiting for approval', approved: 'approved — goes out on its date', approving: 'being approved', launching: 'starting', sending: 'sending', sent: 'sent', skipped: 'skipped', cancelled: 'replaced' };
+        const label = { draft: 'waiting for approval', approved: 'approved — goes out on its date', approving: 'being approved', launching: 'starting', sending: 'sending', sent: 'sent', skipped: 'skipped', cancelled: 'replaced', stopped: 'stopped (recurring email deleted)' };
         // Delivery per issue: its campaign's messages and conversations.
         const stats = {};
         await Promise.all(rows.filter(i => i.campaignId).map(async (i) => {

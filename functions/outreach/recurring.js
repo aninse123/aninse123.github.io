@@ -155,11 +155,26 @@ async function cancelDrafts(recurringId, reason, statuses = ["draft"]) {
   return drafts.size;
 }
 
-async function remove({ recurringId }) {
+// Deleting stops everything not yet out: waiting / approved drafts are
+// cancelled and an issue part-way through sending is stopped (its campaign
+// finished — nobody else gets it). Emails already sent and their history stay.
+async function remove({ recurringId }, caller) {
   await readRecurring(recurringId);
-  await cancelDrafts(recurringId, "Recurring email deleted", ["draft", "approved"]);
+  const cancelled = await cancelDrafts(recurringId, "Recurring email deleted", ["draft", "approved"]);
+  const live = await db().collection("outreachIssues").where("recurringId", "==", recurringId).where("status", "in", ["approving", "launching", "sending"]).get();
+  const { _internal: C } = require("./campaigns");
+  let stopped = 0;
+  for (const d of live.docs) {
+    const i = d.data();
+    if (i.campaignId) {
+      const c = await db().doc(`outreachCampaigns/${i.campaignId}`).get();
+      if (c.exists && ["draft", "active", "paused"].includes(c.data().status)) await C.setStatus({ campaignId: i.campaignId, status: "finished" }, caller || "system");
+    }
+    await d.ref.update({ status: "stopped", stoppedAt: FieldValue.serverTimestamp(), stoppedBy: caller || null, stopReason: "Recurring email deleted" });
+    stopped++;
+  }
   await db().doc(`outreachRecurring/${recurringId}`).delete();
-  return { ok: true };
+  return { ok: true, cancelled, stopped };
 }
 
 // Writes an issue draft from the base template. Older waiting drafts of the
