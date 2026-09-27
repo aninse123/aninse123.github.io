@@ -25,7 +25,7 @@ const derived = Object.keys(Function(`return ${/const DERIVED = (\{[\s\S]*?\});/
 
 ok('same permission codes, labels and order on both sides', JSON.stringify(PERMS) === JSON.stringify(server.PERMS));
 ok('default roles only use known permissions', Object.values(server.DEFAULT_ROLES).every(r => r.perms.every(p => server.ALL.includes(p))));
-ok('Intern: no delete / import / export / send / admin', !['search.delete', 'search.import', 'search.export', 'out.send', 'out.admin', 'portal.admin', 'budget.view', 'icrm.view', 'access.manage'].some(p => server.DEFAULT_ROLES.intern.perms.includes(p)));
+ok('Intern: no delete / import / export / send / admin', !['search.delete', 'search.import', 'search.export', 'out.send', 'out.approve', 'out.admin', 'portal.admin', 'budget.view', 'icrm.view', 'access.manage'].some(p => server.DEFAULT_ROLES.intern.perms.includes(p)));
 
 const nav = read('portal/nav.js');
 const PAGE_PERM = Function(`return ${/const PAGE_PERM = (\{[\s\S]*?\});/.exec(nav)[1]}`)();

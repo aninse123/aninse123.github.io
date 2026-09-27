@@ -335,7 +335,7 @@
       <div class="tabs" role="tablist">
         <button class="tab active" role="tab" data-tab="inbox" aria-selected="true">Inbox<span class="count" id="unreadCount" hidden></span></button>
         <button class="tab" role="tab" data-tab="sent" aria-selected="false">Sent</button>
-        <button class="tab" role="tab" data-tab="compose" data-perm="out.send" aria-selected="false">Compose</button>
+        <button class="tab" role="tab" data-tab="compose" data-perm="out.write" aria-selected="false">Compose</button>
         <button class="tab" role="tab" data-tab="campaigns" aria-selected="false">Campaigns</button>
         <button class="tab" role="tab" data-tab="tasks" aria-selected="false">Tasks<span class="count" id="approveCount" hidden title="Tasks due today and drafts waiting for approval"></span></button>
         <button class="tab" role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
@@ -816,6 +816,10 @@
       me = user.email; myOwner = pageAccess.key || OWNER_BY_EMAIL[me] || null;
       // Team access: owners / assignees = everyone on the team (not only André and António)
       window.teamDir = await applyDirectory(OWNER_LABEL);
+      // Team access: without "send", emails wait in To approve for a partner.
+      canSend = pageAccess.can('out.send');
+      if (!canSend) { $('sendBtn').textContent = SEND_LABEL(); }
+      watchReturned();
       setNavEmail(me);
       startSharedReadsWatch();
       $('loadingScreen').style.display = 'none';
@@ -1095,7 +1099,7 @@
           <textarea id="replyText" placeholder="Write your reply…"></textarea>
           <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature, the previous message quoted below it, and the legal footer. Fields like {{company.shortName}} work here too.</span></div>
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
-        <button class="btn btn--primary" id="replyBtn" data-perm="out.send">Send reply</button>`;
+        <button class="btn btn--primary" id="replyBtn" data-perm="out.write">${esc(SEND_LABEL(true))}</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
       $('replyTpl')?.addEventListener('change', () => {
         const [tid, key] = $('replyTpl').value.split('::');
@@ -1116,9 +1120,10 @@
       const btn = $('replyBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
       try {
         const res = await sendWithConfirm({ threadId: t.id, body, requestId: requestId() });
-        if (res) { $('replyText').value = ''; toast(res.warnings?.length ? 'Reply sent. ' + res.warnings[0] : 'Reply sent.'); }
+        if (res?.draft) { $('replyText').value = ''; toast('Reply saved — it waits in Tasks → To approve until André or António sends it.'); }
+        else if (res) { $('replyText').value = ''; toast(res.warnings?.length ? 'Reply sent. ' + res.warnings[0] : 'Reply sent.'); }
       } catch (e) { err.textContent = errText(e); err.hidden = false; }
-      finally { btn.disabled = false; btn.textContent = 'Send reply'; }
+      finally { btn.disabled = false; btn.textContent = SEND_LABEL(true); }
     }
 
     // Above the daily target the server asks for confirmation (soft limit, spec §7.6).
@@ -1135,7 +1140,7 @@
     }
 
     async function sendWithConfirm(payload) {
-      if (!confirmFirstSendOfDay()) return null;
+      if (canSend && !confirmFirstSendOfDay()) return null;
       try {
         return (await callSend(payload)).data;
       } catch (e) {
@@ -1189,6 +1194,12 @@
 
     // ── Sent ───────────────────────────────────────────────────
     let sentRows = [];
+    // Message records that aren't an email that went out: drafts waiting in To
+    // approve, approved-but-not-yet-sent, cancelled / returned drafts, and a
+    // manual draft's record once its email was sent (the email is its own record).
+    const NOT_SENT = ['draft', 'approved', 'approving', 'cancelled', 'returned', 'draftSent'];
+    let canSend = true;
+    const SEND_LABEL = (reply) => (canSend ? (reply ? 'Send reply' : 'Send email') : 'Send for approval');
     async function loadSent() {
       $('sentBody').innerHTML = '<tr><td colspan="6" class="empty">Loading…</td></tr>';
       try {
@@ -1215,7 +1226,7 @@
       $('sentTpl').innerHTML = '<option value="">Any template</option><option value="__none">Written from scratch</option>' +
         usedTpl.map(id => `<option value="${esc(id)}">${esc(templatesAll.find(t => t.id === id)?.name || 'Deleted template')}</option>`).join('');
       $('sentTpl').value = curTpl;
-      const rows = sentRows.filter(m => (!sf || m.senderId === sf) && (!st || m.status === st)
+      const rows = sentRows.filter(m => !NOT_SENT.includes(m.status) && (!sf || m.senderId === sf) && (!st || m.status === st)
         && (!ow || ownerOf(m.senderId) === ow)
         && (!tp || (tp === '__none' ? !m.templateId : m.templateId === tp))
         && tsMs(m.createdAt) >= from && tsMs(m.createdAt) <= to);
@@ -1583,13 +1594,16 @@
       const btn = $('sendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
       try {
         const res = await sendWithConfirm(payload);
-        if (res) {
+        if (res?.draft) {
+          toast('Saved — it waits in Tasks → To approve until André or António sends it.');
+          $('cSubject').value = ''; $('cBody').value = ''; renderPreview();
+        } else if (res) {
           toast(res.warnings?.length ? 'Email sent. ' + res.warnings[0] : `Email sent${res.isTest ? ' (test)' : ''}.`);
           $('cSubject').value = ''; $('cBody').value = ''; renderPreview();
           selectedId = res.threadId; showTab('inbox'); openThread(res.threadId);
         }
       } catch (e) { err.textContent = errText(e); err.hidden = false; }
-      finally { btn.disabled = false; btn.textContent = 'Send email'; }
+      finally { btn.disabled = false; btn.textContent = SEND_LABEL(); }
     }
 
     // ── Metrics (spec §8.4 / §9) ───────────────────────────────
@@ -1670,7 +1684,7 @@
       $('mNote').textContent = testOnly ? 'Only test emails so far — tick "Include test emails" to see them.' : '';
 
       const st = threadStats(threads);
-      const sent = messages.filter(m => m.status !== 'queued' && m.status !== 'failed');
+      const sent = messages.filter(m => m.status !== 'queued' && m.status !== 'failed' && !NOT_SENT.includes(m.status));
       const delivered = sent.filter(m => ['delivered', 'complained'].includes(m.status)).length;
       const bounced = sent.filter(m => m.status === 'bounced').length;
       const complained = sent.filter(m => m.status === 'complained').length;
@@ -3177,7 +3191,7 @@
       let first = true;
       onSnapshot(query(collection(db, 'outreachMessages'), where('status', '==', 'draft')), (snap) => {
         countSnap(snap, first); first = false;
-        drafts = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.source === 'campaign')
+        drafts = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.source === 'campaign' || m.source === 'manual')
           .sort((a, b) => tsMs(a.createdAt) - tsMs(b.createdAt));
         const n = drafts.length + issueDrafts.length;
         $('approveChipN').textContent = n ? `(${num(n)})` : '';
@@ -3372,16 +3386,30 @@
       $('rcFreq').addEventListener('change', sync); sync();
     }
 
+    // Drafts a partner returned to the signed-in writer (last 30 days).
+    let returnedMine = [];
+    function watchReturned() {
+      if (canSend) return;
+      onSnapshot(query(collection(db, 'outreachMessages'), where('writtenBy', '==', me), where('status', '==', 'returned')), (snap) => {
+        addReads(snap.docChanges().length || 1); refreshReads();
+        const since = Date.now() - 30 * 86400000;
+        returnedMine = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => tsMs(m.returnedAt) >= since).sort((a, b) => tsMs(b.returnedAt) - tsMs(a.returnedAt));
+        if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove();
+      }, () => {});
+    }
+
     function renderApprove() {
       if (document.activeElement?.closest?.('#approveView .draft')) return; // don't wipe what's being typed
       const byCamp = {};
-      drafts.forEach(d => { byCamp[d.campaignId] = (byCamp[d.campaignId] || 0) + 1; });
+      drafts.forEach(d => { const k = d.source === 'manual' ? '__manual' : d.campaignId; byCamp[k] = (byCamp[k] || 0) + 1; });
       if (approveFilter !== 'all' && !byCamp[approveFilter]) approveFilter = 'all';
-      const list = drafts.filter(d => approveFilter === 'all' || d.campaignId === approveFilter);
+      const list = drafts.filter(d => approveFilter === 'all' || (approveFilter === '__manual' ? d.source === 'manual' : d.campaignId === approveFilter));
+      const who = (email) => (window.teamDir || []).find(m => email && m.key === (drafts.find(x => x.writtenBy === email)?.writtenByKey))?.label || String(email || '').split('@')[0];
       const shown = list.slice(0, 50);
-      const campName = (id) => campaigns.find(c => c.id === id)?.name || 'Campaign';
+      const campName = (id) => (id === '__manual' ? 'Written by the team' : campaigns.find(c => c.id === id)?.name || 'Campaign');
       const stepName = (d) => { const c = campaigns.find(x => x.id === d.campaignId); const i = (c?.steps || []).findIndex(s => s.id === d.stepId); return i < 0 ? 'Step' : `${c.steps[i].name} (${i + 1} of ${c.steps.length})`; };
       $('approveView').innerHTML = `
+        ${returnedMine.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Returned to you</h3>${returnedMine.map(m => `<div style="padding:8px 0;border-top:1px solid var(--border);"><b>${esc(m.subject || '(reply)')}</b> <span class="hint">· ${esc(m.companyName || '')} · returned ${esc(when(m.returnedAt))} by ${esc(String(m.returnedBy || '').split('@')[0])}</span>${m.returnNote ? `<div style="margin-top:4px;">“${esc(m.returnNote)}”</div>` : ''}<details style="margin-top:4px;"><summary class="hint" style="cursor:pointer;">Your text</summary><pre style="white-space:pre-wrap;font:inherit;font-size:0.85rem;margin-top:6px;">${esc(m.draftBody || '')}</pre></details></div>`).join('')}<p class="hint" style="margin-top:6px;">Write it again in Compose (or reply in the conversation) with the changes.</p></div>` : ''}
         <div class="card" style="padding:0;margin-bottom:14px;">
           <div class="toolbar">
             <select id="apFilter" aria-label="Campaign"><option value="all">All campaigns (${num(drafts.length)})</option>${Object.keys(byCamp).map(id => `<option value="${esc(id)}"${id === approveFilter ? ' selected' : ''}>${esc(campName(id))} (${num(byCamp[id])})</option>`).join('')}</select>
@@ -3400,18 +3428,24 @@
               <span class="hint">drafted ${esc(when(d.createdAt))}</span>
             </div>
             <div class="draft__meta">
-              <span><button class="camp-link" style="font-size:0.76rem;" data-opencamp="${esc(d.campaignId)}">${esc(campName(d.campaignId))}</button> · ${esc(stepName(d))}${d.variantKey ? ` · variant ${esc(d.variantKey)}` : ''}</span>
+              ${d.source === 'manual'
+                ? `<span><span class="pill pill--info">written by ${esc(who(d.writtenBy))}</span>${d.isReply ? ' · reply' : ''}${d.lastError ? ` · <span style="color:var(--danger);">last attempt failed: ${esc(d.lastError)}</span>` : ''}</span>`
+                : `<span><button class="camp-link" style="font-size:0.76rem;" data-opencamp="${esc(d.campaignId)}">${esc(campName(d.campaignId))}</button> · ${esc(stepName(d))}${d.variantKey ? ` · variant ${esc(d.variantKey)}` : ''}</span>`}
               <span>from ${esc(localPart(d.senderId))} ${test}</span>
             </div>
             <div class="field"><label>Subject</label>
               <input type="text" data-dsubj value="${esc(ed.subject ?? d.subject)}" maxlength="300"${d.isReply ? ' disabled title="A follow-up keeps the conversation\'s subject"' : ''}></div>
             <div class="field"><label>Message</label><textarea data-dbody spellcheck="true">${esc(ed.body ?? d.draftBody ?? '')}</textarea>
               ${d.isReply ? '<span class="hint">Sent as a reply in the same conversation, quoting the previous email.</span>' : ''}</div>
-            <div class="actions">
+            ${d.source === 'manual' ? `<div class="actions">
+              <button class="btn btn--primary btn--sm" data-dact="send" data-perm="out.approve">Approve and send now</button>
+              <button class="btn btn--ghost btn--sm" data-dact="return" data-perm="out.approve">Return with a note</button>
+              ${d.writtenBy === me ? '<span class="hint">Waiting for André or António.</span>' : ''}
+            </div>` : `<div class="actions">
               <button class="btn btn--primary btn--sm" data-dact="approve" data-perm="out.approve">${draftEdits.has(d.id) ? 'Save &amp; approve' : 'Approve'}</button>
               <button class="btn btn--ghost btn--sm" data-dact="skip" data-perm="out.approve" title="Drop this draft; it's written again the next working day">Skip — try the next working day</button>
               <button class="btn btn--danger btn--sm" data-dact="remove" data-perm="out.campaigns">Remove company from the campaign</button>
-            </div>
+            </div>`}
           </div>`;
         }).join('') : '<div class="card"><div class="empty">Nothing to approve. Drafts appear here when a campaign step needs approval.</div></div>'}
         ${list.length > shown.length ? `<p class="hint" style="margin-top:10px;">Showing the oldest ${num(shown.length)} of ${num(list.length)}.</p>` : ''}`;
@@ -3419,7 +3453,7 @@
       $('apFilter').addEventListener('change', (e) => { approveFilter = e.target.value; renderApprove(); });
       $('approveView').querySelectorAll('[data-opencamp]').forEach(b => b.addEventListener('click', () => { showTab('campaigns'); openCampaign(b.dataset.opencamp); }));
       $('apAll')?.addEventListener('click', async () => {
-        const ids = list.slice(0, 300).map(d => d.id);
+        const ids = list.filter(d => d.source !== 'manual').slice(0, 300).map(d => d.id);
         if (draftEdits.size && !confirm('Some drafts have unsaved edits — "Approve all" sends the original text for those. Continue?')) return;
         if (!confirm(`Approve ${num(ids.length)} emails? They go out with the next scheduler runs, within the sending window and daily limits.`)) return;
         const b = $('apAll'); b.disabled = true;
@@ -3432,7 +3466,7 @@
           const subj = el.querySelector('[data-dsubj]').value, body = el.querySelector('[data-dbody]').value;
           const changed = (!d.isReply && subj !== d.subject) || body !== (d.draftBody || '');
           if (changed) draftEdits.set(id, { subject: subj, body }); else draftEdits.delete(id);
-          el.querySelector('[data-dact="approve"]').innerHTML = changed ? 'Save &amp; approve' : 'Approve';
+          const ab = el.querySelector('[data-dact="approve"]'); if (ab) ab.innerHTML = changed ? 'Save &amp; approve' : 'Approve';
         };
         el.querySelector('[data-dsubj]').addEventListener('input', markEdit);
         el.querySelector('[data-dbody]').addEventListener('input', markEdit);
@@ -3448,6 +3482,22 @@
             r = await campCall(payload, (x) => x.approved ? 'Approved — it goes out with the next scheduler run in the sending window.' : 'This draft is no longer waiting.');
           }
           if (act === 'skip') r = await campCall({ action: 'skipDraft', messageId: id }, 'Skipped — drafted again the next working day.');
+          if (act === 'send') {
+            const ed = draftEdits.get(id);
+            if (!confirm(`Send this email written by ${who(d.writtenBy)} now, from ${d.senderId}?`)) { b.disabled = false; return; }
+            try {
+              const payload = { action: 'approveDraft', messageId: id };
+              if (ed) { payload.body = ed.body; if (!d.isReply) payload.subject = ed.subject; }
+              const res = (await callSend(payload)).data;
+              toast(`Sent${res.isTest ? ' (test)' : ''} — ${who(d.writtenBy)}'s email is in the conversation.`); r = true;
+            } catch (e) { toast(errText(e)); r = false; }
+          }
+          if (act === 'return') {
+            const note = prompt(`Return to ${who(d.writtenBy)} — what should change? (they see this note)`, '');
+            if (note === null) { b.disabled = false; return; }
+            try { await callSend({ action: 'returnDraft', messageId: id, note }); toast('Returned with your note.'); r = true; }
+            catch (e) { toast(errText(e)); r = false; }
+          }
           if (act === 'remove') {
             if (!confirm(`Remove ${d.companyName || 'this company'} from "${campName(d.campaignId)}"? The draft is discarded.`)) { b.disabled = false; return; }
             r = await campCall({ action: 'enrolment', enrolmentId: d.enrolmentId, op: 'remove', reason: 'Removed from the approval queue' }, 'Company removed from the campaign.');

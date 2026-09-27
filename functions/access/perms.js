@@ -60,8 +60,8 @@ const DEFAULT_ROLES = {
   },
   intern: {
     name: "Intern",
-    perms: ["search.view", "search.edit", "out.view", "out.tasks", "net.view"],
-    description: "Research companies, add notes and activities, do assigned tasks. No sending, deleting, importing or exporting.",
+    perms: ["search.view", "search.edit", "out.view", "out.draft", "out.tasks", "net.view"],
+    description: "Research companies, add notes and activities, do assigned tasks, write emails that a partner approves. No direct sending, deleting, importing or exporting.",
   },
   viewer: {
     name: "Viewer",
