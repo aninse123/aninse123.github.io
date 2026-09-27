@@ -169,8 +169,32 @@ async function logPersonSend({ refs = [], email, subject, content, messageId, th
   }
 }
 
+// F1: a task done for a person (call, LinkedIn, letter…) is logged where the
+// person lives — Investor CRM or Network activities (brokers and portal
+// investors keep it on the task / campaign only). Tests never touch records.
+async function logPersonTask({ refs = [], channel, type = "other", title, content, taskId, campaignId, createdBy, isTest }) {
+  if (isTest) return null;
+  const now = Timestamp.now();
+  const base = { type, date: now, title, content: content || null, via: channel, status: null, outreachTaskId: taskId, campaignId, createdAt: FieldValue.serverTimestamp(), createdBy };
+  let first = null;
+  for (const r of refs || []) {
+    try {
+      if (r.source === "crm" && r.id) {
+        const a = await db().collection("crmActivities").add({ investorId: r.id, ...base });
+        await db().doc(`crmInvestors/${r.id}`).update({ lastTouchAt: now, updatedAt: FieldValue.serverTimestamp() }).catch(() => {});
+        first = first || a.id;
+      } else if (r.source === "network" && r.id) {
+        const a = await db().collection("networkActivities").add({ contactId: r.id, ...base });
+        await db().doc(`networkContacts/${r.id}`).update({ lastTouchAt: now, updatedAt: FieldValue.serverTimestamp() }).catch(() => {});
+        first = first || a.id;
+      }
+    } catch (e) { /* logging must never block the task */ }
+  }
+  return first;
+}
+
 module.exports = {
-  logPersonSend,
+  logPersonSend, logPersonTask,
   db, FieldValue, Timestamp,
   getSettings, recordQuota, getTodayUsage, getTodayDaily, senderKey, bumpDaily,
   findSuppression, addSuppression, writeActivity, touchCompany, setCompanyOutreachStatus,

@@ -401,6 +401,10 @@
       <input type="text" class="field" id="ncLinkedin" placeholder="linkedin.com/in/…">
     </div>
     <div class="form-group">
+      <label>Postal address <span style="font-weight:400;text-transform:none;">(optional — for letters)</span></label>
+      <textarea class="field" id="ncAddress" rows="2" placeholder="Rua …, nº&#10;4000-000 Porto"></textarea>
+    </div>
+    <div class="form-group">
       <label>Categories</label>
       <div class="type-tabs" id="ncCategories"></div>
     </div>
@@ -463,6 +467,10 @@
     <div class="form-group">
       <label>LinkedIn <span style="font-weight:400;text-transform:none;">(optional)</span></label>
       <input type="text" class="field" id="fmLinkedin" placeholder="linkedin.com/company/…">
+    </div>
+    <div class="form-group">
+      <label>Postal address <span style="font-weight:400;text-transform:none;">(optional — letters to its people use it when they have none)</span></label>
+      <textarea class="field" id="fmAddress" rows="2" placeholder="Rua …, nº&#10;4000-000 Porto"></textarea>
     </div>
     <div class="form-group">
       <label>Categories</label>
@@ -822,6 +830,9 @@ onAuthStateChanged(auth, async user => {
   populateCategoryPhaseFilters();
   await Promise.all([startContactsListener(), startFirmsListener()]);
   document.getElementById('loadingScreen').style.display = 'none';
+  // ?contact=<id> (links from Outreach tasks) opens that contact.
+  const linked = new URLSearchParams(location.search).get('contact');
+  if (linked && networkContacts.some(c => c.id === linked)) openDetail(linked);
 });
 
 // ── Load ─────────────────────────────────────────────────────────────────────
@@ -1099,7 +1110,8 @@ function renderDetail() {
     <div class="info-row"><span class="info-row-label">Phone</span><span class="info-row-value">${c.phone?esc(c.phone):'—'}</span></div>
     <div class="info-row"><span class="info-row-label">Role</span><span class="info-row-value">${c.role?esc(c.role):'—'}</span></div>
     <div class="info-row"><span class="info-row-label">Firm</span><span class="info-row-value">${fName?`<a href="#" id="dFirmLink" style="color:var(--primary);">${esc(fName)}</a>`:'—'}</span></div>
-    <div class="info-row"><span class="info-row-label">LinkedIn</span><span class="info-row-value">${c.linkedin?`<a href="${esc(/^https?:\/\//.test(c.linkedin)?c.linkedin:'https://'+c.linkedin)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">Profile</a>`:'—'}</span></div>`;
+    <div class="info-row"><span class="info-row-label">LinkedIn</span><span class="info-row-value">${c.linkedin?`<a href="${esc(/^https?:\/\//.test(c.linkedin)?c.linkedin:'https://'+c.linkedin)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">Profile</a>`:'—'}</span></div>${c.postalAddress ? `
+    <div class="info-row"><span class="info-row-label">Address</span><span class="info-row-value" style="white-space:pre-line;">${esc(c.postalAddress)}</span></div>` : ''}`;
   const dFirmLink = document.getElementById('dFirmLink');
   if (dFirmLink) dFirmLink.addEventListener('click', e => { e.preventDefault(); openFirmDetail(c.firmId); });
 
@@ -1171,7 +1183,7 @@ function openQuickAddFirm() {
   editFirmId = null;
   firmModalContext = 'contact-picker';
   document.getElementById('fmModalTitle').textContent = 'New Firm';
-  ['fmName','fmWebsite','fmPhone','fmLinkedin','fmHowMet','fmNotes'].forEach(id => document.getElementById(id).value = '');
+  ['fmName','fmWebsite','fmPhone','fmLinkedin','fmAddress','fmHowMet','fmNotes'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('fmOwner').value = '';
   document.getElementById('fmCountry').value = '';
   document.getElementById('fmPriority').checked = false;
@@ -1190,6 +1202,7 @@ function openEditFirm() {
   document.getElementById('fmWebsite').value  = f.website  || '';
   document.getElementById('fmPhone').value    = f.phone    || '';
   document.getElementById('fmLinkedin').value = f.linkedin || '';
+  document.getElementById('fmAddress').value = f.postalAddress || '';
   document.getElementById('fmOwner').value    = f.owner    || '';
   document.getElementById('fmCountry').value  = f.country  || '';
   document.getElementById('fmHowMet').value   = f.howWeMet || '';
@@ -1213,6 +1226,7 @@ async function saveFirm() {
     website:  document.getElementById('fmWebsite').value.trim()  || null,
     phone:    document.getElementById('fmPhone').value.trim()    || null,
     linkedin: document.getElementById('fmLinkedin').value.trim() || null,
+    postalAddress: document.getElementById('fmAddress').value.trim() || null,
     owner:    document.getElementById('fmOwner').value           || null,
     country:  document.getElementById('fmCountry').value         || null,
     howWeMet: document.getElementById('fmHowMet').value.trim()   || null,
@@ -1301,7 +1315,7 @@ async function sendFirmEmailAll() {
 function openNewContact(prefillFirmId) {
   editContactId = null;
   document.getElementById('ctModalTitle').textContent = 'New Contact';
-  ['ncName','ncEmail','ncPhone','ncRole','ncLinkedin','ncHowMet','ncNotes'].forEach(id => document.getElementById(id).value = '');
+  ['ncName','ncEmail','ncPhone','ncRole','ncLinkedin','ncAddress','ncHowMet','ncNotes'].forEach(id => document.getElementById(id).value = '');
   populateFirmSelect();
   document.getElementById('ncFirmId').value = prefillFirmId || '';
   document.getElementById('ncOwner').value = '';
@@ -1324,6 +1338,7 @@ function openEditContact() {
   populateFirmSelect();
   document.getElementById('ncFirmId').value   = c.firmId   || '';
   document.getElementById('ncLinkedin').value = c.linkedin || '';
+  document.getElementById('ncAddress').value = c.postalAddress || '';
   document.getElementById('ncOwner').value    = c.owner    || '';
   document.getElementById('ncCountry').value  = c.country  || '';
   document.getElementById('ncHowMet').value   = c.howWeMet || '';
@@ -1348,6 +1363,7 @@ async function saveContact() {
     role:     document.getElementById('ncRole').value.trim()     || null,
     firmId:   document.getElementById('ncFirmId').value          || null,
     linkedin: document.getElementById('ncLinkedin').value.trim() || null,
+    postalAddress: document.getElementById('ncAddress').value.trim() || null, // F1: letters in people campaigns
     owner:    document.getElementById('ncOwner').value           || null,
     country:  document.getElementById('ncCountry').value         || null,
     howWeMet: document.getElementById('ncHowMet').value.trim()   || null,

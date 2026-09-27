@@ -982,6 +982,9 @@ onAuthStateChanged(auth, async user => {
   populateCountrySelects();
   await loadAll();
   document.getElementById('loadingScreen').style.display = 'none';
+  // ?investor=<id> (links from Outreach tasks) opens that investor.
+  const linkedInv = new URLSearchParams(location.search).get('investor');
+  if (linkedInv && crmInvestors.some(i => i.id === linkedInv)) openDetail(linkedInv);
 });
 
 // ── Load ─────────────────────────────────────────────────────────────────────

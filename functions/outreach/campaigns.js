@@ -731,7 +731,13 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
 
   // 1. The touch on the company (a skipped step leaves no trace there).
   let activityId = null;
-  if (o.activity) {
+  if (o.activity && !t.companyId && t.personEmail) {
+    // F1: a people campaign — the touch goes on the person's record.
+    const title = `${CHANNEL_LABEL[t.channel]} — ${o.label}${campaign.name ? ` (${campaign.name} · ${t.stepName})` : ""}`;
+    // Their activity types: call / meeting done / other (the channel is in "via").
+    const type = String(o.activity).startsWith("call") ? "call" : o.key === "met" ? "meeting_done" : "other";
+    activityId = await store.logPersonTask({ refs: t.refs, channel: t.channel, type, title, content: [note, linkedinUrl].filter(Boolean).join("\n") || null, taskId, campaignId: t.campaignId, createdBy: caller, isTest: t.isTest });
+  } else if (o.activity) {
     const title = `${t.isTest ? "[TEST] " : ""}${CHANNEL_LABEL[t.channel]} — ${o.label}${campaign.name ? ` (${campaign.name} · ${t.stepName})` : ""}`;
     const ref = await db().collection("searchActivities").add({
       companyId: t.companyId,

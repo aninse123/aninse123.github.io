@@ -164,7 +164,9 @@ async function createTask(ref, e, campaign, step, now, rand) {
     if (!cur.exists || !["open"].includes(cur.data().status)) {
       tx.set(taskRef, {
         campaignId: campaign.id, campaignName: campaign.name, enrolmentId: ref.id,
-        companyId: e.companyId, companyName: e.companyName || "",
+        companyId: e.companyId || null, companyName: e.companyName || "",
+        // F1: a people campaign's task is for the person (Network / Investor CRM / broker record).
+        ...(e.personEmail ? { personEmail: e.personEmail, personName: e.personName || "", org: e.org || "", refs: e.refs || [] } : {}),
         stepId: step.id, stepName: step.name, stepIndex: e.currentStep, stepCount: (campaign.steps || []).length,
         channel: step.channel, instructions: step.instructions || "", templateId: step.templateId || null, variantKey,
         assignee: campaign.assignee && campaign.assignee !== "owner" ? campaign.assignee : (e.owner || null),

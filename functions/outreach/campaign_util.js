@@ -140,7 +140,7 @@ function normalizeCampaign(input, existing = null) {
   if (rawSteps.length > MAX_STEPS) bad("too_many_steps", `A sequence can have up to ${MAX_STEPS} steps.`);
   const used = new Set();
   const reserved = new Set((existing?.steps || []).map((s) => s.id));
-  if (src.audienceType === "people" && rawSteps.some((s) => (s.channel || "email") !== "email")) bad("people_email_only", "Campaigns to people have email steps only for now.");
+  // F1 (27 Sep): people campaigns take every step type, like companies.
   if (existing && (existing.stats?.enrolled || 0) > 0 && (src.audienceType === "people" ? "people" : "companies") !== (existing.audienceType || "companies")) bad("audience_locked", "The audience type can't change once people or companies are in the campaign.");
   const steps = rawSteps.map((s, i) => normalizeStep(s, i, used, reserved));
 
@@ -206,7 +206,7 @@ function normalizeCampaign(input, existing = null) {
 // template (with the chosen variants) behind every email step.
 function activationProblems(campaign, templatesById) {
   const problems = [];
-  if (campaign.audienceType === "people" && campaign.senderPolicy?.mode !== "fixed") {
+  if (campaign.audienceType === "people" && campaign.senderPolicy?.mode !== "fixed" && (campaign.steps || []).some((s) => (s.channel || "email") === "email")) {
     problems.push('Choose who sends it (Settings → "From which addresses" → specific addresses — e.g. andre.rocha@douropartners.pt).');
   }
   if (campaign.audience?.mode === "dynamic" && !latestFilterSpec(campaign)) {

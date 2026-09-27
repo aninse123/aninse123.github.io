@@ -45,7 +45,7 @@ async function webhook(evt) {
   store.set("networkContacts/nc1", { name: "Rui Jornalista", email: "rui@jornal.pt", categories: ["journalist"] });
 
   // Guards
-  ok("people campaigns: email steps only for now", (await camp({ action: "save", campaign: { name: "x", audienceType: "people", steps: [{ channel: "call" }] } })).err?.details?.reason === "people_email_only");
+  ok("people campaigns take every step type (F1)", !(await camp({ action: "save", campaign: { name: "x", audienceType: "people", steps: [{ channel: "call" }, { channel: "letter" }, { channel: "linkedin" }] } })).err);
   const cid = (await camp({ action: "save", campaign: { name: "Atualização investidores", audienceType: "people", approvalDefault: "auto", pacing: { maxPerDay: 2 }, steps: [{ templateId: "upd" }, { templateId: "f2", wait: { days: 0 } }] } })).campaignId;
   ok("saved as a people campaign with its own daily limit", get(`outreachCampaigns/${cid}`).audienceType === "people" && get(`outreachCampaigns/${cid}`).pacing.maxPerDay === 2);
   ok("companies can't be added to a people campaign", (await camp({ action: "enrol", campaignId: cid, companyIds: ["x"] })).err?.details?.reason === "not_companies");

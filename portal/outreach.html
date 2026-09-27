@@ -3604,6 +3604,42 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     let tasks = [];
     let todoWho = 'mine', todoChannel = 'all', todoCampaign = 'all';
     const coCache = new Map(); // companyId → company doc (task cards and letters)
+    // F1: tasks of people campaigns — the person's records ('network:id',
+    // 'crm:id', 'broker:id', 'firm:id' → doc) and a company-shaped view of them,
+    // so scripts, letters and WhatsApp links work as for companies.
+    const personCache = new Map();
+    const PERSON_COLL = { network: 'networkContacts', crm: 'crmInvestors', broker: 'searchBrokers' };
+    async function loadPersonRecords(list) {
+      const get1 = async (k, coll, id) => { try { const s = await getDoc(doc(db, coll, id)); personCache.set(k, s.exists() ? s.data() : null); } catch (e) { personCache.set(k, null); } };
+      const need = new Map();
+      list.forEach(t => (t.refs || []).forEach(r => { const k = `${r.source}:${r.id}`; if (PERSON_COLL[r.source] && !personCache.has(k)) need.set(k, r); }));
+      await Promise.all([...need].map(([k, r]) => get1(k, PERSON_COLL[r.source], r.id)));
+      const firms = [...new Set(list.flatMap(t => (t.refs || []).filter(r => r.source === 'network').map(r => personCache.get(`network:${r.id}`)?.firmId).filter(Boolean)))].filter(id => !personCache.has(`firm:${id}`));
+      await Promise.all(firms.map(id => get1(`firm:${id}`, 'networkFirms', id)));
+      if (need.size || firms.length) { addReads(need.size + firms.length); refreshReads(); }
+    }
+    function personOf(t) {
+      const rec = (src) => { const r = (t.refs || []).find(x => x.source === src); return r ? { id: r.id, d: personCache.get(`${src}:${r.id}`) || null } : null; };
+      const net = rec('network'), crm = rec('crm'), brk = rec('broker');
+      const same = (c) => String(c?.email || '').trim().toLowerCase() === t.personEmail;
+      const crmC = (crm?.d?.contacts || []).find(same) || null, brkC = (brk?.d?.contacts || []).find(same) || null;
+      const firm = net?.d?.firmId ? personCache.get(`firm:${net.d.firmId}`) : null;
+      return {
+        name: t.personName || net?.d?.name || crmC?.name || brkC?.name || t.personEmail, email: t.personEmail,
+        org: t.org || firm?.name || crm?.d?.name || brk?.d?.name || '',
+        role: net?.d?.role || crmC?.role || brkC?.role || '',
+        phone: net?.d?.phone || crmC?.phone || brkC?.phone || '',
+        linkedin: net?.d?.linkedin || crmC?.linkedin || brkC?.linkedin || '',
+        address: String(net?.d?.postalAddress || firm?.postalAddress || '').trim(),
+        owner: net?.d?.owner || crm?.d?.owner || firm?.owner || null,
+        link: net ? `/portal/network.html?contact=${encodeURIComponent(net.id)}` : crm ? `/portal/crm.html?investor=${encodeURIComponent(crm.id)}` : null,
+      };
+    }
+    // A person seen through the company-shaped helpers ({{company.*}} = their organisation).
+    function personAsCo(p) {
+      return { name: p.org || p.name, emailName: p.org || p.name, owner: p.owner, hqAddress: p.address.replace(/\s*\n+\s*/g, ', '), contacts: [{ name: p.name, role: p.role, phone: p.phone, linkedin: p.linkedin }], _person: p };
+    }
+    const taskCo = (t) => (!t.companyId && t.personEmail ? personAsCo(personOf(t)) : coCache.get(t.companyId) || {});
 
     function watchTasks() {
       let first = true;
@@ -3652,7 +3688,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const full = m.name || OWNER_FULL[signer] || '';
       return {
         company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '' },
-        contact: { firstName: '' },
+        contact: { firstName: c?._person ? String(c._person.name || '').split(' ')[0] : '' },
         sender: { firstName: full.split(' ')[0] || '', name: full, phone: m.contactPhone || '', email: m.contactEmail || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
         unsubscribeUrl: '',
       };
@@ -3682,7 +3718,18 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     }
     const isMobilePt = (n) => /^(\+?351)?9\d{8}$/.test(String(n || '').replace(/[^\d+]/g, ''));
 
+    function personContactBox(t, p) {
+      const ch = t.channel, lines = [];
+      lines.push(`👤 <b>${esc(p.name)}</b>${p.role ? ` · <span class="hint">${esc(p.role)}</span>` : ''}${p.org ? ` · ${esc(p.org)}` : ''}`);
+      if (['call', 'whatsapp', 'visit', 'other'].includes(ch)) lines.push(p.phone ? `<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>${isMobilePt(p.phone) ? ' <span class="pill pill--warn" title="Probably a personal mobile — same consent rule as email (D3)">personal?</span>' : ''}` : '<span class="hint">No phone on their record.</span>');
+      if (ch === 'linkedin') lines.push(p.linkedin ? `<a href="${esc(/^https?:/i.test(p.linkedin) ? p.linkedin : 'https://' + p.linkedin)}" target="_blank" rel="noopener noreferrer">LinkedIn profile</a>` : `<a href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(p.name + ' ' + (p.org || ''))}" target="_blank" rel="noopener noreferrer">find on LinkedIn</a>`);
+      lines.push(esc(p.email));
+      if (['letter', 'visit'].includes(ch)) lines.push(p.address ? esc(p.address).replace(/\n/g, '<br>') : '<span class="pill pill--bad">no address</span> <span class="hint">add a postal address on their Network contact (or its firm)</span>');
+      if (p.link) lines.push(`<a href="${esc(p.link)}">Open their record</a>`);
+      return lines.map(l => `<div>${l}</div>`).join('');
+    }
     function contactBox(t, c) {
+      if (c?._person) return personContactBox(t, c._person);
       const lines = [];
       const ch = t.channel;
       const cName = emailNameOf(c);
@@ -3723,19 +3770,20 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const shown = list.slice(0, 40);
       await loadCompaniesFor(shown.map(t => t.companyId));
       await loadPeopleFor(shown.map(t => t.companyId));
+      await loadPersonRecords(shown.filter(t => !t.companyId && t.personEmail));
       if (document.activeElement?.closest?.('#todoView .task')) return;
       const campOpts = [...new Set(open.map(t => t.campaignId))];
       const eot = endOfToday();
       const dueNow = shown.filter(t => tsMs(t.dueAt) <= eot), later = shown.filter(t => tsMs(t.dueAt) > eot);
       const card = (t) => {
-        const c = coCache.get(t.companyId) || {};
+        const c = taskCo(t);
         const overdue = tsMs(t.dueAt) < new Date().setHours(0, 0, 0, 0);
         const txt = taskTemplateText(t, c);
         const outs = TASK_OUTCOMES[t.channel] || [];
         const wa = t.channel === 'whatsapp' ? waNumber(c.companyPhone || (c.contacts || []).find(p => p.phone)?.phone) : null;
         return `<div class="task${overdue ? ' task--overdue' : ''}" data-tid="${esc(t.id)}">
           <div class="task__head">
-            <span class="task__co"><span class="ch">${esc(CHANNEL_LABELS[t.channel])}</span><a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}" style="color:var(--text);">${esc(t.companyName || c.name || 'Company')}</a>${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}</span>
+            <span class="task__co"><span class="ch">${esc(CHANNEL_LABELS[t.channel])}</span>${c._person ? `${c._person.link ? `<a href="${esc(c._person.link)}" style="color:var(--text);">${esc(c._person.name)}</a>` : esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : `<a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}" style="color:var(--text);">${esc(t.companyName || c.name || 'Company')}</a>`}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}</span>
             <span class="hint">${overdue ? '<b style="color:var(--danger);">overdue</b> · ' : ''}due ${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}${t.attempts?.length ? ` · ${t.attempts.length} earlier attempt${t.attempts.length === 1 ? '' : 's'}` : ''}</span>
           </div>
           <div class="draft__meta">
@@ -3752,10 +3800,10 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
                 : `<span class="hint">No ${t.channel === 'call' ? 'script' : 'template'} for this step.</span>${wa ? ` <a href="https://wa.me/${esc(wa)}" target="_blank" rel="noopener noreferrer">Open WhatsApp chat</a>` : ''}`}
             </div>
           </div>
-          <div class="field" style="margin-bottom:8px;"><label>Notes</label><textarea data-tnotes rows="2" placeholder="What happened (saved on the company's activity)">${esc(t.notes || '')}</textarea></div>
+          <div class="field" style="margin-bottom:8px;"><label>Notes</label><textarea data-tnotes rows="2" placeholder="What happened (saved on the ${c._person ? 'person\'s record' : 'company\'s activity'})">${esc(t.notes || '')}</textarea></div>
           ${t.channel === 'linkedin' ? '<div class="field" style="margin-bottom:8px;"><label>Profile URL (optional)</label><input type="text" data-tprofile placeholder="https://www.linkedin.com/in/…"></div>' : ''}
           ${outs.some(o => o[2] === 'reopen') ? '<div class="field" style="margin-bottom:8px;max-width:260px;"><label>Next attempt (for call back / reschedule)</label><input type="date" data-treopen></div>' : ''}
-          ${outs.some(o => o[2] === 'reply') ? '<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this company</span></label>' : ''}
+          ${outs.some(o => o[2] === 'reply') ? `<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this ${c._person ? 'person' : 'company'}</span></label>` : ''}
           <div class="outcomes">${outs.map(([k, l, f]) => `<button class="btn btn--${f === 'reply' ? 'primary' : 'ghost'} btn--sm" data-tout="${k}" data-perm="out.tasks">${esc(l)}</button>`).join('')}
             <button class="btn btn--ghost btn--sm" data-tout="skipped" data-perm="out.tasks" style="margin-left:auto;" title="Move on without doing this step">Skip step</button></div>
         </div>`;
@@ -3767,7 +3815,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <select id="todoCh" aria-label="Channel"><option value="all">All channels</option>${Object.keys(TASK_OUTCOMES).filter(k => k !== 'letter').map(k => `<option value="${k}"${todoChannel === k ? ' selected' : ''}>${esc(CHANNEL_LABELS[k])}</option>`).join('')}</select>
             <select id="todoCamp" aria-label="Campaign"><option value="all">All campaigns</option>${campOpts.map(id => `<option value="${esc(id)}"${todoCampaign === id ? ' selected' : ''}>${esc(campaigns.find(c => c.id === id)?.name || 'Campaign')}</option>`).join('')}</select>
           </div>
-          <p class="hint" style="padding:10px 14px;">Calls, LinkedIn, WhatsApp, visits and other steps from campaigns. Each outcome is saved on the company's activities; the sequence waits until the task is done or skipped. Letters are under <b>Letters to print</b>.</p>
+          <p class="hint" style="padding:10px 14px;">Calls, LinkedIn, WhatsApp, visits and other steps from campaigns. Each outcome is saved on the company's activities (people: on their Investor CRM / Network record); the sequence waits until the task is done or skipped. Letters are under <b>Letters to print</b>.</p>
         </div>
         ${dueNow.length ? `<div class="day-head">Due now (${num(dueNow.length)})</div>${dueNow.map(card).join('')}` : ''}
         ${later.length ? `<div class="day-head">Later</div>${later.map(card).join('')}` : ''}
@@ -3802,7 +3850,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           if (outcome === 'skipped' && !confirm('Skip this step? The sequence moves on without it.')) return;
           el.querySelectorAll('button').forEach(x => { x.disabled = true; });
           document.activeElement?.blur();
-          const r = await campCall(payload, (x) => x.status === 'open' ? `Saved — next attempt on ${dayFmt.format(new Date(x.dueAt))}.` : x.sequence === 'stopped' ? 'Saved — the sequence stopped for this company.' : outcome === 'skipped' ? 'Step skipped.' : 'Saved.');
+          const r = await campCall(payload, (x) => x.status === 'open' ? `Saved — next attempt on ${dayFmt.format(new Date(x.dueAt))}.` : x.sequence === 'stopped' ? `Saved — the sequence stopped for this ${t.companyId ? 'company' : 'person'}.` : outcome === 'skipped' ? 'Step skipped.' : 'Saved.');
           if (!r) el.querySelectorAll('button').forEach(x => { x.disabled = false; });
         }));
       });
@@ -3813,6 +3861,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     async function renderLetters() {
       const list = tasks.filter(t => t.channel === 'letter');
       await loadCompaniesFor(list.slice(0, 200).map(t => t.companyId));
+      await loadPersonRecords(list.slice(0, 200).filter(t => !t.companyId && t.personEmail));
       letterSel = new Set([...letterSel].filter(id => list.some(t => t.id === id)));
       $('lettersView').innerHTML = `
         <div class="card" style="padding:0;">
@@ -3822,12 +3871,12 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <button class="btn btn--ghost btn--sm" id="letPosted"${letterSel.size ? '' : ' disabled'}>Mark selected as printed &amp; posted</button>
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th></th><th>Company</th><th>Address</th><th>Campaign · step</th><th>Template</th><th>Signed by</th><th>Due</th></tr></thead>
+            <thead><tr><th></th><th>To</th><th>Address</th><th>Campaign · step</th><th>Template</th><th>Signed by</th><th>Due</th></tr></thead>
             <tbody>${list.length ? list.map(t => {
-              const c = coCache.get(t.companyId) || {};
+              const c = taskCo(t);
               const addr = [c.hqAddress, [c.postcode, c.concelho].filter(Boolean).join(' ')].filter(Boolean).join(', ');
               return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}></td>
-                <td>${esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
+                <td>${c._person ? `${esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
                 <td style="font-size:0.8rem;">${esc(t.campaignName || '')} · ${esc(t.stepName || '')}</td>
                 <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
@@ -3860,11 +3909,12 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       try { const cs = await getDoc(doc(db, 'outreachCompliance', settings?.complianceBlockId || 'default')); addReads(1); entity = cs.exists() ? (cs.data().legalEntityLine || '') : ''; } catch (e) {}
       const date = new Intl.DateTimeFormat('pt-PT', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
       const pages = list.map(t => {
-        const c = coCache.get(t.companyId) || {};
+        const c = taskCo(t);
+        const addrLines = c._person ? [c._person.name, c._person.org, ...c._person.address.split(/\n+/)].filter(Boolean) : [c.name || t.companyName || '', c.hqAddress || '', [c.postcode, c.concelho].filter(Boolean).join(' ')];
         const txt = taskTemplateText(t, c) || { subject: '', body: '(no letter template on this step)' };
         const ctx = coCtx(c, signerFor(t, c));
         return `<section class="page">
-          <div class="addr">${esc(c.name || t.companyName || '')}<br>${esc(c.hqAddress || '')}<br>${esc([c.postcode, c.concelho].filter(Boolean).join(' '))}</div>
+          <div class="addr">${addrLines.map(esc).join('<br>')}</div>
           <p class="date">${esc(date)}</p>
           ${txt.subject ? `<p class="subj"><b>Assunto:</b> ${esc(txt.subject)}</p>` : ''}
           <div class="body">${esc(txt.body)}</div>
