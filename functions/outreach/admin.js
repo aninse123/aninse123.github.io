@@ -15,7 +15,7 @@
 const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getStorage } = require("firebase-admin/storage");
-const { REGION, ADMIN_EMAILS, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, SEED_SENDERS, SENDER_DOMAIN, RESEND_READ_KEY, RELATIONSHIP_DOMAIN, RELATIONSHIP_SENDERS, RELATIONSHIP_SENDER_CAP } = require("./config");
+const { REGION, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, SEED_SENDERS, SENDER_DOMAIN, RESEND_READ_KEY, RELATIONSHIP_DOMAIN, RELATIONSHIP_SENDERS, RELATIONSHIP_SENDER_CAP } = require("./config");
 const { listDomains, updateDomain } = require("./resend");
 const { normEmail } = require("./util");
 const store = require("./store");

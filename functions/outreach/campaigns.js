@@ -30,7 +30,7 @@
 
 const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { REGION, ADMIN_EMAILS } = require("./config");
+const { REGION } = require("./config");
 const { normEmail } = require("./util");
 const store = require("./store");
 const { addWait, FINAL_GRACE } = require("./schedule_util");

@@ -19,7 +19,7 @@
 const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { REGION, ADMIN_EMAILS, RESEND_READ_KEY } = require("./config");
+const { REGION, RESEND_READ_KEY } = require("./config");
 const { normEmail, isValidEmail } = require("./util");
 const store = require("./store");
 const resend = require("./resend");

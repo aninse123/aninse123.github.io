@@ -22,7 +22,7 @@
 const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { REGION, ADMIN_EMAILS, RESEND_SEND_KEY, RESEND_READ_KEY, SENDER_DOMAIN } = require("./config");
+const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, SENDER_DOMAIN } = require("./config");
 const { normEmail, domainOf } = require("./util");
 const { sendEmail } = require("./resend");
 const { listPeople } = require("./lists");
