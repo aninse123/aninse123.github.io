@@ -66,6 +66,10 @@ const docs = (coll) => [...store.entries()].filter(([p]) => p.startsWith(coll + 
   const direct = await send(PARTNER, base);
   ok("partners send directly as before", !direct.draft && sends.length === 2);
 
+  const pd = await send(PARTNER, { ...base, asDraft: true });
+  ok("a partner can ask for a draft (preview as a writer): saved, not sent", pd.draft === true && sends.length === 2 && store.get(`outreachMessages/${pd.messageId}`).status === "draft");
+  ok("asDraft doesn't let a view-only person write", (await send(VIEWER, { ...base, asDraft: true })).err?.details?.reason === "not_admin");
+
   console.log(fail ? `\n${fail} FAILED` : "\nall draft tests passed");
   process.exit(fail ? 1 : 0);
 })();

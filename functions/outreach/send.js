@@ -45,8 +45,10 @@ function draftRequest(input, isReply) {
 
 async function send(request, callerEmail) {
   const input = request.data || {};
-  const canSend = P.hasPerm(request, "out.send");
-  if (!canSend && !P.hasPerm(request, "out.draft")) fail("permission-denied", "not_admin", "You don't have permission to send outreach email.");
+  // asDraft: the page asks for a draft (a writer, or a partner previewing a
+  // writer's role) — saved for approval even if the caller may send.
+  const canSend = P.hasPerm(request, "out.send") && !input.asDraft;
+  if (!canSend && !P.hasPerm(request, "out.draft") && !P.hasPerm(request, "out.send")) fail("permission-denied", "not_admin", "You don't have permission to send outreach email.");
   const settings = await store.getSettings();
 
   // ── Idempotency: a requestId that already produced a message returns it ──

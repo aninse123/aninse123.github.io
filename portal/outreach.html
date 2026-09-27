@@ -1140,6 +1140,7 @@
     }
 
     async function sendWithConfirm(payload) {
+      if (!canSend) payload = { ...payload, asDraft: true }; // writers (and a partner previewing their role) save for approval
       if (canSend && !confirmFirstSendOfDay()) return null;
       try {
         return (await callSend(payload)).data;
