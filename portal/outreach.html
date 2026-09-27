@@ -2301,7 +2301,7 @@
       ['closed', 'Closed'], ['pass', 'Pass'], ['on_hold', 'On hold'],
     ];
     const EXCL_LABELS = {
-      not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact',
+      not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact', not_contactable: 'marked not contactable',
       unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
       stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
       personal_domain: 'personal email domain',
@@ -4152,6 +4152,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <div class="field"><label>Search CRM stages allowed</label>
             <div class="stage-grid" id="csStages">${STAGE_LABELS.map(([k, l]) => `<label class="checkline"><input type="checkbox" value="${k}" ${ex.allowedStages.includes(k) ? 'checked' : ''}${dis}> <span>${esc(l)}</span></label>`).join('')}</div></div>
           <label class="checkline"><input type="checkbox" id="csReqEmail" ${ex.requireEmail !== false ? 'checked' : ''}${dis}> <span>Skip companies without an email address</span></label>
+          <label class="checkline"><input type="checkbox" id="csInclNC" ${ex.includeNotContactable ? 'checked' : ''}${dis}> <span>Include companies marked <b>not contactable</b> in the Search CRM (left out by default; "Do not contact" is never included)</span></label>
           <div class="field" style="margin-top:14px;"><label for="csAudMode">Audience</label>
             <select id="csAudMode" style="max-width:520px;"${dis}>
               <option value="static"${c.audience?.mode !== 'dynamic' ? ' selected' : ''}>Static — only the companies you add</option>
@@ -4189,7 +4190,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           approvalDefault: $('csAppr').value, pacing: { newPerDay: pace, maxPerDay: maxDay }, assignee: $('csAssignee').value, signer: $('csSigner').value, recipientPolicy: $('csRecip').value,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,
-          exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },
+          exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, includeNotContactable: !!$('csInclNC')?.checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },
           audience: { mode: $('csAudMode').value },
         } }, 'Settings saved.');
         b.disabled = false;

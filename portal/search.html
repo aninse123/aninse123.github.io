@@ -494,6 +494,8 @@
       <div class="filter-group">CAGR% <input type="number" class="num-filter" id="cagrMin" placeholder="min"> – <input type="number" class="num-filter" id="cagrMax" placeholder="max"></div>
       <select class="filter-sel" id="lastTouchFilter"><option value="">Any time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="never">Never contacted</option></select>
       <select class="filter-sel" id="websiteFilter"><option value="">Website: Any</option><option value="yes">Has website</option><option value="no">No website</option></select>
+      <select class="filter-sel" id="tierFilter" title="Target tier (rules in Settings, or set on the company)"><option value="">Tier: Any</option><option value="A">Tier A</option><option value="B">Tier B</option><option value="C">Tier C</option><option value="AB">Tier A or B</option><option value="none">No tier</option></select>
+      <select class="filter-sel" id="contactableFilter" title="Not contactable = left out of campaigns unless a campaign includes them"><option value="">Contactable: Any</option><option value="yes">Contactable</option><option value="no">Not contactable</option></select>
       <button class="btn btn--ghost btn--sm" id="clearFiltersBtn">Clear all</button>
     </div>
 
@@ -502,6 +504,8 @@
       <div class="sel-bar" id="selBar" style="display:none;">
         <span id="selBarText"></span>
         <button class="btn btn--primary btn--sm" id="selBarAdd" data-perm="out.campaigns">📣 Add selected to campaign</button>
+        <button class="btn btn--ghost btn--sm" id="selBarTier" data-perm="search.edit">Set tier…</button>
+        <button class="btn btn--ghost btn--sm" id="selBarContactable" data-perm="search.edit">Contactable…</button>
         <button class="btn btn--ghost btn--sm" id="selBarClear">Clear selection</button>
       </div>
       <div class="table-wrap">
@@ -583,6 +587,8 @@
         <button class="btn btn--action" id="editCompanyBtn" data-perm="search.edit">✎ Edit</button>
         <button class="btn btn--action" id="addActivityBtn" data-perm="search.edit">＋ Activity</button>
         <button class="btn btn--action" id="addCoToCampaignBtn" data-perm="out.campaigns" title="Add this company to an Outreach campaign">📣 Campaign</button>
+        <select class="btn btn--action" id="tierSel" data-perm="search.edit" title="Target tier — automatic from the rules unless you choose one" style="padding-right:6px;"></select>
+        <button class="btn btn--action" id="contactableBtn" data-perm="search.edit" title="Not contactable: left out of campaigns by default (a campaign can still include it)">Not contactable</button>
         <button class="btn btn--action" id="dncBtn" data-perm="search.edit" title="Stop all outreach to this company">🚫 Do not contact</button>
         <button class="btn btn--danger btn--sm" id="deleteCompanyBtn" data-perm="search.delete">Delete</button>
       </div>
@@ -960,6 +966,17 @@
     <p class="hint" style="margin-top:14px;">Finds companies whose NIF field holds something other than a genuine 9-digit Portuguese NIF — most often a 14-digit Brazilian CNPJ picked up by an older, now-fixed import bug — and moves it to Foreign tax ID instead, clearing NIF so it's no longer mistaken for a validated Portuguese identity. Nothing is discarded. Safe to re-run — scans fresh each time rather than a fixed list.</p>
     <button class="btn btn--ghost btn--sm" id="scanBadNifBtn" style="margin-top:8px;">🔍 Scan for corrupted NIF values</button>
     <div id="badNifResult" style="margin-top:10px;font-size:0.82rem;"></div>
+
+    <div class="modal-section-title">Target tier rules</div>
+    <p class="hint" style="margin-bottom:8px;">A company gets the tier of the most specific rule that matches: a CAE / NACE code prefix (longer = more specific) beats a sub-sector, which beats a sector. A tier chosen on the company itself always wins. Tiers are filters (Search CRM and campaigns), not blocks.</p>
+    <div id="tierRuleList" style="margin-bottom:8px;"></div>
+    <div class="form-row">
+      <div class="form-group"><select class="field" id="newTierField"><option value="caeCode">CAE starts with</option><option value="naceCode">NACE starts with</option><option value="subSector">Sub-sector is</option><option value="sector">Sector is</option></select></div>
+      <div class="form-group"><input type="text" class="field" id="newTierValue" placeholder="e.g. 4941 or Logistics"></div>
+      <div class="form-group"><select class="field" id="newTierTier"><option value="A">Tier A</option><option value="B">Tier B</option><option value="C">Tier C</option></select></div>
+      <div class="form-group"><button class="btn btn--ghost" id="addTierRuleBtn" style="width:100%;">＋ Add rule</button></div>
+    </div>
+    <button class="btn btn--primary btn--sm" id="saveTierRulesBtn">Save tier rules</button> <span class="hint" id="tierRulesNote"></span>
 
     <div class="modal-section-title">Brokers</div>
     <div id="brokerList" style="margin-bottom:10px;"></div>
@@ -1429,6 +1446,8 @@ let companies = [];
 const selectedCo = new Set(); // companies ticked in the list (Add selected to campaign)
 let brokers = [];
 let fitCriteria = { ...DEFAULT_FIT };
+// T6: Target tier rules (searchConfig/targetTiers) — see tierOf().
+let tierRules = [];
 let activities = [];
 let currentCoId = null;
 let editCoId = null;
@@ -1625,6 +1644,25 @@ function orbisFinMetrics(co, orbis){
   m.computedEBITDAMargin = (m.computedRevenue && m.computedEBITDA != null) ? (m.computedEBITDA / m.computedRevenue) : null;
   return m;
 }
+// T6: Target tier A / B / C — the company's own choice (targetTierManual),
+// else the most specific rule: CAE / NACE prefix (longer wins) > sub-sector >
+// sector. Same as functions/outreach/campaign_util.js tierOf().
+function tierOf(c, rules = tierRules){
+  if (['A','B','C'].includes(c?.targetTierManual)) return c.targetTierManual;
+  let best = null, bestScore = -1;
+  for (const r of rules || []) {
+    if (!['A','B','C'].includes(r?.tier) || !['caeCode','naceCode','subSector','sector'].includes(r?.field) || !String(r.value || '').trim()) continue;
+    const want = String(r.value).trim(), have = String(c?.[r.field] ?? '').trim();
+    const code = r.field === 'caeCode' || r.field === 'naceCode';
+    const hit = code ? have.replace(/[.\s]/g, '').startsWith(want.replace(/[.\s]/g, '')) : have.toLowerCase() === want.toLowerCase();
+    if (!hit) continue;
+    const score = code ? 10 + want.length : r.field === 'subSector' ? 5 : 3;
+    if (score > bestScore) { best = r.tier; bestScore = score; }
+  }
+  return best;
+}
+const tierBadge = (c) => c.targetTier ? `<span class="badge badge-grey" style="margin-left:4px;" title="Target tier ${c.targetTier}${['A','B','C'].includes(c.targetTierManual) ? ' (set on the company)' : ' (from the rules)'}">${c.targetTier}</span>` : '';
+
 function computeFields(co){
   // Orbis first, the old grid only as fallback -- the same rule calcFit()
   // applies to fitScore, so the list columns, filters, sorting, CSV and the
@@ -1633,6 +1671,7 @@ function computeFields(co){
   const orbis = computeOrbisFit(co);
   Object.assign(co, orbis ? orbisFinMetrics(co, orbis) : legacyFinMetrics(co.financials || {}));
   co.fitScore = calcFit(co);
+  co.targetTier = tierOf(co); // T6: computed from the rules (not stored), a company's own choice wins
   // Geocode via the static PT postcode lookup tables. Postcode is free text
   // (manual entry / bulk import, no format enforcement), so pull out the first
   // 4-7 digits regardless of dash/spacing. Lookup priority: PT_POSTCODES_NOMINATIM
@@ -1878,10 +1917,12 @@ onAuthStateChanged(auth, async user => {
 
 // ── Load ─────────────────────────────────────────────────────────────────────
 async function loadAll(){
-  const [cfgSnap, brokerSnap] = await Promise.all([
+  const [cfgSnap, brokerSnap, tierSnap] = await Promise.all([
     getDoc(doc(db, 'searchConfig', 'fitCriteria')),
     getDocs(collection(db, 'searchBrokers')),
+    getDoc(doc(db, 'searchConfig', 'targetTiers')).catch(() => null),
   ]);
+  tierRules = tierSnap?.exists?.() ? (tierSnap.data().rules || []) : [];
   fitCriteria = cfgSnap.exists() ? { ...DEFAULT_FIT, ...cfgSnap.data() } : { ...DEFAULT_FIT };
   brokers = brokerSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   if (!brokers.length && window.pageAccess?.can('search.admin') !== false) await seedBrokers(); // team access: maintenance only
@@ -2818,7 +2859,7 @@ function renderSummary(){
 // Shared with the filter-input listeners near the bottom of the file and with
 // the subset-of-loaded disclaimer banner below — one list, so a filter added
 // in one place is never silently missing from the other two.
-const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter'];
+const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','priorityFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter','tierFilter','contactableFilter'];
 // Always states the true total (not just what's loaded) whenever the two
 // differ, right where people are actually looking — the results count next
 // to the table — rather than a separate banner that's easy to scan past.
@@ -2858,6 +2899,8 @@ function getFiltered(){
   const cgMax  = parseFloat(document.getElementById('cagrMax').value);
   const ltF    = document.getElementById('lastTouchFilter').value;
   const webF   = document.getElementById('websiteFilter').value;
+  const tierF  = document.getElementById('tierFilter')?.value || '';
+  const ctF    = document.getElementById('contactableFilter')?.value || '';
 
   return companies.filter(c => {
     if (search) {
@@ -2899,6 +2942,9 @@ function getFiltered(){
     }
     if (webF === 'yes' && !c.website) return false;
     if (webF === 'no' && c.website) return false;
+    if (tierF === 'none' ? !!c.targetTier : tierF === 'AB' ? !['A','B'].includes(c.targetTier) : tierF && c.targetTier !== tierF) return false;
+    if (ctF === 'yes' && c.contactable === false) return false;
+    if (ctF === 'no' && c.contactable !== false) return false;
     return true;
   });
 }
@@ -2969,7 +3015,7 @@ function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
   return `<tr class="row-clickable" data-id="${c.id}">
     <td class="sel-col" onclick="event.stopPropagation()"><input type="checkbox" class="rowSel" data-id="${esc(c.id)}" aria-label="Select ${esc(c.name)}"${selectedCo.has(c.id) ? ' checked' : ''}></td>
-    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}${c.doNotContact?.on ? ' <span class="badge badge-red" style="margin-left:4px;" title="Do not contact">🚫</span>' : ''}</td>
+    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}${c.doNotContact?.on ? ' <span class="badge badge-red" style="margin-left:4px;" title="Do not contact">🚫</span>' : ''}${c.contactable === false ? ` <span class="badge badge-grey" style="margin-left:4px;" title="Not contactable${c.contactableNote ? ' — ' + esc(c.contactableNote) : ''}">not contactable</span>` : ''}${tierBadge(c)}</td>
     <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
     <td class="sector-cell" title="${esc(c.sector||'')}${c.subSector?' › '+esc(c.subSector):''}">${esc(c.sector||'—')}${c.subSector?'<br><span style="font-size:0.72rem;">'+esc(c.subSector)+'</span>':''}</td>
     <td>${prioPill(c.priority)}</td>
@@ -3300,7 +3346,17 @@ function renderDetail(){
     ${SOURCE_LABELS[c.sourceType]?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
     ${c.activeCampaignName ? `<a class="badge badge-blue" href="/portal/outreach.html" title="In this Outreach campaign" style="text-decoration:none;">📣 ${esc(c.activeCampaignName)}</a>` : ''}
     ${c.doNotContact?.on ? `<span class="badge badge-red" title="${esc(c.doNotContact.reason || 'No reason given')}">🚫 Do not contact</span>` : ''}
+    ${c.contactable === false ? `<span class="badge badge-grey" title="${esc(c.contactableNote || 'No reason given')}">Not contactable</span>` : ''}
+    ${c.targetTier ? `<span class="badge badge-grey" title="${['A','B','C'].includes(c.targetTierManual) ? 'Set on the company' : 'From the tier rules'}">Tier ${c.targetTier}</span>` : ''}
     ${headerOwner(c, primary)}`;
+  const ctB = document.getElementById('contactableBtn');
+  if (ctB) ctB.textContent = c.contactable === false ? '✓ Contactable again' : 'Not contactable';
+  const tSel = document.getElementById('tierSel');
+  if (tSel) {
+    const auto = tierOf({ ...c, targetTierManual: null });
+    tSel.innerHTML = `<option value="">Tier: automatic${auto ? ` (${auto})` : ' (none)'}</option>` + ['A','B','C'].map(t => `<option value="${t}">Tier ${t} (set here)</option>`).join('');
+    tSel.value = ['A','B','C'].includes(c.targetTierManual) ? c.targetTierManual : '';
+  }
   const dncB = document.getElementById('dncBtn');
   if (dncB) dncB.textContent = c.doNotContact?.on ? '✓ Allow contact again' : '🚫 Do not contact';
   const pill = document.getElementById('dMeta').querySelector('.stage-pill');
@@ -9117,7 +9173,7 @@ let outreachCfg = null; // { settings, senders, templates }, loaded on first ope
 // campaign as a portable spec so Metrics can compare audiences later.
 const callOutreachCampaign = httpsCallable(outreachFns, 'outreachCampaign', { timeout: 300000 });
 const CAMP_EXCL_LABELS = {
-  not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact',
+  not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact', not_contactable: 'marked not contactable',
   unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
   stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
   personal_domain: 'personal email domain',
@@ -9153,6 +9209,8 @@ function buildFilterSpec(){
   range('computedGrowthRecent', n('cagrMin'), n('cagrMax'), 'growth', '%');
   if (v('lastTouchFilter')) add('lastTouchAt', v('lastTouchFilter') === 'never' ? 'exists' : 'within_days', v('lastTouchFilter') === 'never' ? false : Number(v('lastTouchFilter')), v('lastTouchFilter') === 'never' ? 'never touched' : `touched in the last ${v('lastTouchFilter')} days`);
   if (v('websiteFilter')) add('website', 'exists', v('websiteFilter') === 'yes', v('websiteFilter') === 'yes' ? 'with website' : 'without website');
+  if (v('tierFilter')) { const t = v('tierFilter'); if (t === 'none') add('targetTier', 'exists', false, 'no tier'); else add('targetTier', 'in', t === 'AB' ? ['A','B'] : [t], `tier ${t === 'AB' ? 'A or B' : t}`); }
+  if (v('contactableFilter')) add('contactable', 'bool', v('contactableFilter') === 'yes', v('contactableFilter') === 'yes' ? 'contactable' : 'not contactable');
   return { spec, label: label.join(' · ') };
 }
 
@@ -9346,6 +9404,79 @@ async function renderCampaignTimeline(c){
 }
 
 // ── Do not contact (Phase 2 §10) ──
+// T6: Contactable (a soft filter — campaigns leave these out unless they
+// include them) and Target tier (own choice, else the rules).
+document.getElementById('contactableBtn').addEventListener('click', async () => {
+  const c = getCompany(); const id = currentCoId; if (!id) return;
+  const makeNo = c?.contactable !== false;
+  let note = null;
+  if (makeNo) { note = prompt('Mark as NOT CONTACTABLE? Campaigns leave it out unless a campaign includes not-contactable companies. Reason (optional):', ''); if (note === null) return; }
+  try {
+    await updateDoc(doc(db, 'searchCompanies', id), { contactable: !makeNo, contactableNote: makeNo ? (note.trim() || null) : null, updatedAt: serverTimestamp() });
+    if (c) { c.contactable = !makeNo; c.contactableNote = makeNo ? (note.trim() || null) : null; }
+    renderDetail(); renderList();
+  } catch (e) { alert(e.message || String(e)); }
+});
+document.getElementById('tierSel').addEventListener('change', async (e) => {
+  const c = getCompany(); const id = currentCoId; if (!id) return;
+  const val = e.target.value || null;
+  try {
+    await updateDoc(doc(db, 'searchCompanies', id), { targetTierManual: val, updatedAt: serverTimestamp() });
+    if (c) { c.targetTierManual = val; c.targetTier = tierOf(c); }
+    renderDetail(); renderList();
+  } catch (err) { alert(err.message || String(err)); }
+});
+async function bulkSetCompanies(fields, label){
+  const list = companies.filter(c => selectedCo.has(c.id));
+  if (!list.length) return;
+  if (!confirm(`${label} for ${list.length.toLocaleString('en')} selected compan${list.length === 1 ? 'y' : 'ies'}?`)) return;
+  try {
+    await commitInChunks(list, 400, (batch, c) => { batch.update(doc(db, 'searchCompanies', c.id), { ...fields, updatedAt: serverTimestamp() }); Object.assign(c, fields); c.targetTier = tierOf(c); });
+    renderList(); alert('Done.');
+  } catch (e) { alert(e.message || String(e)); }
+}
+document.getElementById('selBarTier').addEventListener('click', () => {
+  const t = prompt('Target tier for the selected companies: A, B or C — or leave empty to go back to the rules:', '');
+  if (t === null) return;
+  const v = t.trim().toUpperCase();
+  if (v && !['A','B','C'].includes(v)) { alert('Type A, B or C (or leave it empty).'); return; }
+  bulkSetCompanies({ targetTierManual: v || null }, v ? `Set tier ${v}` : 'Go back to the tier rules');
+});
+document.getElementById('selBarContactable').addEventListener('click', () => {
+  const a = prompt('Type NO to mark the selected companies not contactable, or YES to make them contactable again:', 'NO');
+  if (a === null) return;
+  const v = a.trim().toLowerCase();
+  if (!['yes','no'].includes(v)) { alert('Type YES or NO.'); return; }
+  const note = v === 'no' ? (prompt('Reason (optional):', '') ?? '') : '';
+  bulkSetCompanies({ contactable: v === 'yes', contactableNote: v === 'no' ? (note.trim() || null) : null }, v === 'no' ? 'Mark NOT contactable' : 'Mark contactable');
+});
+// Settings → Target tier rules (search.admin).
+const TIER_FIELD_LABEL = { caeCode: 'CAE starts with', naceCode: 'NACE starts with', subSector: 'Sub-sector is', sector: 'Sector is' };
+let tierRulesDraft = [];
+function renderTierRules(){
+  const el = document.getElementById('tierRuleList'); if (!el) return;
+  el.innerHTML = tierRulesDraft.length ? tierRulesDraft.map((r, i) => `<div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.85rem;"><span style="flex:1;">${esc(TIER_FIELD_LABEL[r.field] || r.field)} <b>${esc(r.value)}</b> → Tier ${esc(r.tier)}</span><button class="btn btn--ghost btn--sm" data-tier-del="${i}">Remove</button></div>`).join('') : '<p class="hint">No rules yet — companies have no tier until you add a rule or set one on the company.</p>';
+  el.querySelectorAll('[data-tier-del]').forEach(b => b.addEventListener('click', () => { tierRulesDraft.splice(Number(b.dataset.tierDel), 1); renderTierRules(); document.getElementById('tierRulesNote').textContent = 'Not saved yet.'; }));
+}
+document.getElementById('addTierRuleBtn').addEventListener('click', () => {
+  const field = document.getElementById('newTierField').value, value = document.getElementById('newTierValue').value.trim(), tier = document.getElementById('newTierTier').value;
+  if (!value) { document.getElementById('newTierValue').focus(); return; }
+  tierRulesDraft = tierRulesDraft.filter(r => !(r.field === field && r.value.toLowerCase() === value.toLowerCase())).concat([{ field, value, tier }]);
+  document.getElementById('newTierValue').value = '';
+  renderTierRules(); document.getElementById('tierRulesNote').textContent = 'Not saved yet.';
+});
+document.getElementById('saveTierRulesBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('saveTierRulesBtn'); btn.disabled = true;
+  try {
+    await setDoc(doc(db, 'searchConfig', 'targetTiers'), { rules: tierRulesDraft, updatedAt: serverTimestamp(), updatedBy: auth.currentUser?.email || null });
+    tierRules = tierRulesDraft.map(r => ({ ...r }));
+    companies.forEach(c => { c.targetTier = tierOf(c); });
+    renderList();
+    document.getElementById('tierRulesNote').textContent = `Saved — ${companies.filter(c => c.targetTier).length.toLocaleString('en')} loaded companies have a tier.`;
+  } catch (e) { document.getElementById('tierRulesNote').textContent = 'Could not save: ' + (e.message || e); }
+  finally { btn.disabled = false; }
+});
+
 document.getElementById('dncBtn').addEventListener('click', async () => {
   const c = getCompany(); const id = currentCoId; if (!id) return;
   const on = !c?.doNotContact?.on;
@@ -9755,6 +9886,7 @@ async function saveDeal(){
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 function openSettings(){
+  tierRulesDraft = tierRules.map(r => ({ ...r })); renderTierRules(); document.getElementById('tierRulesNote').textContent = '';
   document.getElementById('setSizeFloor').value = fitCriteria.sizeFloor;
   document.getElementById('setSizeCeiling').value = fitCriteria.sizeCeiling;
   document.getElementById('setMarginTarget').value = fitCriteria.marginTarget;

@@ -37,7 +37,7 @@ const { addWait, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
-  evaluateCompany, enrolmentId, latestFilterSpec, matchesFilterSpec, personEnrolmentId, evaluatePerson,
+  evaluateCompany, enrolmentId, latestFilterSpec, matchesFilterSpec, personEnrolmentId, evaluatePerson, tierOf,
 } = require("./campaign_util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -75,7 +75,7 @@ function cleanSource(src) {
   if (type === "filters" && Array.isArray(src?.filterSpec)) {
     out.filterSpec = src.filterSpec.slice(0, 30).map((f) => ({
       field: String(f?.field || "").slice(0, 60),
-      op: ["eq", "in", "gte", "lte", "between", "contains", "prefix", "exists", "within_days"].includes(f?.op) ? f.op : "eq",
+      op: ["eq", "in", "gte", "lte", "between", "contains", "prefix", "exists", "within_days", "bool"].includes(f?.op) ? f.op : "eq",
       value: JSON.stringify(f?.value ?? null).length <= 2000 ? JSON.parse(JSON.stringify(f?.value ?? null)) : null,
     })).filter((f) => f.field);
   }
@@ -685,7 +685,13 @@ async function runDynamicAudience(campaign, now) {
     return { checked: 0, enrolled: 0, initialised: true };
   }
   const snap = await db().collection("searchCompanies").where("updatedAt", ">", since).orderBy("updatedAt", "asc").limit(2000).get();
-  const matches = snap.docs.filter((d) => !d.data().activeCampaignId && matchesFilterSpec(d.data(), spec, now.getTime())).map((d) => d.id).slice(0, DYNAMIC_MAX_PER_RUN);
+  // T6: the Target tier is computed from the rules (not stored), as on the page.
+  const byTier = spec.some((f) => f.field === "targetTier");
+  const tierRules = byTier ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
+  const matches = snap.docs.filter((d) => {
+    const c = d.data();
+    return !c.activeCampaignId && matchesFilterSpec(byTier ? { ...c, targetTier: tierOf(c, tierRules) } : c, spec, now.getTime());
+  }).map((d) => d.id).slice(0, DYNAMIC_MAX_PER_RUN);
   let enrolled = 0;
   if (matches.length) {
     const ctx = await evalContext(campaign);

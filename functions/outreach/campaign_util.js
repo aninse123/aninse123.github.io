@@ -197,6 +197,8 @@ function normalizeCampaign(input, existing = null) {
       ownerFilter: TEAM_KEY_RE.test(ex.ownerFilter || "") ? ex.ownerFilter : null,
       // People campaigns: skip anyone the portal emailed in the last N days (0 = off, the default).
       peopleContactedWithinDays: intIn(ex.peopleContactedWithinDays, 0, 3650, 0),
+      // T6: companies marked "not contactable" are left out unless this is ticked.
+      includeNotContactable: !!ex.includeNotContactable,
     },
     steps,
   };
@@ -250,6 +252,8 @@ function evaluateCompany(company, ctx) {
   if (!company) return { ok: false, reason: "not_found" };
   if (ctx.alreadyEnrolled) return { ok: false, reason: "already_in_campaign" };
   if (company.doNotContact?.on) return { ok: false, reason: "do_not_contact" };
+  // T6: a soft filter (noise), unlike Do not contact — a campaign can include them.
+  if (company.contactable === false && !ctx.exclusions?.includeNotContactable) return { ok: false, reason: "not_contactable" };
   if (["unsubscribed", "bounced"].includes(company.outreachStatus)) return { ok: false, reason: company.outreachStatus };
 
   const email = normEmail(company.companyEmail);
@@ -293,6 +297,7 @@ const EXCLUSION_LABELS = {
   stage: "stage not allowed",
   owner: "other owner",
   recent_touch: "touched recently",
+  not_contactable: "marked not contactable",
   no_email: "no email address",
   personal_domain: "personal email domain",
   in_other_campaign: "in another campaign",
@@ -328,6 +333,27 @@ const PERCENT_FIELDS = new Set(["computedEBITDAMargin", "computedGrowthRecent"])
 // Does a company match a saved Search CRM filter spec? Same rules as the
 // list filters in search.html getFiltered(), so a dynamic audience adds the
 // companies you would see with that filter.
+// T6: Target tier (A / B / C) — a company's own choice wins; otherwise the
+// most specific rule (searchConfig/targetTiers): a CAE / NACE prefix (longer
+// = more specific) beats a sub-sector, which beats a sector. Mirrored in
+// search.html tierOf().
+const TIERS = ["A", "B", "C"];
+const TIER_FIELDS = ["caeCode", "naceCode", "subSector", "sector"];
+function tierOf(c, rules = []) {
+  if (TIERS.includes(c?.targetTierManual)) return c.targetTierManual;
+  let best = null, bestScore = -1;
+  for (const r of rules || []) {
+    if (!TIERS.includes(r?.tier) || !TIER_FIELDS.includes(r?.field) || !String(r.value || "").trim()) continue;
+    const want = String(r.value).trim(), have = String(c?.[r.field] ?? "").trim();
+    const code = r.field === "caeCode" || r.field === "naceCode";
+    const hit = code ? have.replace(/[.\s]/g, "").startsWith(want.replace(/[.\s]/g, "")) : have.toLowerCase() === want.toLowerCase();
+    if (!hit) continue;
+    const score = code ? 10 + want.length : r.field === "subSector" ? 5 : 3;
+    if (score > bestScore) { best = r.tier; bestScore = score; }
+  }
+  return best;
+}
+
 function matchesFilterSpec(c, spec, now = Date.now()) {
   for (const f of spec || []) {
     let v = f.field === "legalForm" ? (c.nationalLegalForm || c.legalForm) : c[f.field];
@@ -349,6 +375,8 @@ function matchesFilterSpec(c, spec, now = Date.now()) {
       case "lte": if (v == null || Number(v) > Number(f.value)) return false; break;
       case "between": if (v == null || !Array.isArray(f.value) || Number(v) < Number(f.value[0]) || Number(v) > Number(f.value[1])) return false; break;
       case "exists": if (f.value ? !v : !!v) return false; break;
+      // T6: yes/no fields where "not set" means yes (contactable).
+      case "bool": if ((v !== false) !== !!f.value) return false; break;
       case "within_days": {
         const ms = tsMillis(v);
         if (!ms || now - ms > Number(f.value) * 86400000) return false;
@@ -364,5 +392,5 @@ module.exports = {
   CHANNELS, MANUAL_CHANNELS, TEMPLATE_KIND, templateKind,
   CAMPAIGN_STATUSES, LIVE_ENROLMENT, STAGE_KEYS, DEFAULT_ALLOWED_STAGES, VARIANT_KEYS, MAX_STEPS,
   DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems, evaluateCompany,
-  EXCLUSION_LABELS, enrolmentId, tsMillis, latestFilterSpec, matchesFilterSpec, personKey, personEnrolmentId, evaluatePerson,
+  EXCLUSION_LABELS, enrolmentId, tsMillis, latestFilterSpec, matchesFilterSpec, tierOf, TIERS, personKey, personEnrolmentId, evaluatePerson,
 };

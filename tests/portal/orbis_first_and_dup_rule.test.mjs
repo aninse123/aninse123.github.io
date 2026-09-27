@@ -37,6 +37,7 @@ const src = [
   liftFn('ramp'), liftFn('trapezoid'), liftFn('foundedYear'), liftFn('fitAge'), liftFn('legalFormOf'),
   liftFn('hasOrbisFinData'), liftFn('computeOrbisFit'), liftFn('calcFit'),
   liftFn('legacyFinMetrics'), liftFn('orbisFinMetrics'),
+  'const tierRules = [];', liftFn('tierOf'), // T6: computeFields sets targetTier
   // computeFields minus its postcode geocoding tail (needs window lookup tables)
   liftFn('computeFields').replace(/\/\/ Geocode via[\s\S]*?return co;/, 'return co;'),
   // dup rule
