@@ -2395,6 +2395,10 @@
       renderCampList();
     }
 
+    // F6: an active campaign everyone has gone through (a dynamic audience
+    // may still add companies, so it's never flagged). Finishing stays a click.
+    const nobodyLeft = (c, live) => c.status === 'active' && c.audience?.mode !== 'dynamic' && (c.stats?.enrolled || 0) > 0 && live === 0;
+
     function renderCampList() {
       const showArch = $('campShowArchived').checked;
       // Issues of recurring emails run as campaigns of their own; they're listed under Recurring emails.
@@ -2404,7 +2408,7 @@
         const k = campCounts[c.id] || {};
         return `<tr>
           <td><button class="camp-link" data-camp="${esc(c.id)}">${esc(c.name)}</button>${c.audienceType === 'people' ? ' <span class="pill pill--info">people</span>' : ''}${c.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}${c.description ? `<div class="hint">${esc(c.description)}</div>` : ''}</td>
-          <td>${pill(CAMP_PILL, c.status)}</td>
+          <td>${pill(CAMP_PILL, c.status)}${nobodyLeft(c, k.live) ? ' <span class="pill pill--warn" title="Everyone has been through every step — finish it, or add more">nobody left — finish?</span>' : ''}</td>
           <td class="num">${n(c.stats?.enrolled || 0)}</td><td class="num">${n(k.live)}</td><td class="num">${n(k.approve)}</td>
           <td class="num">${n(c.stats?.sent || 0)}</td><td class="num">${n(k.replied)}</td>
           <td style="white-space:nowrap;">${esc(when(c.updatedAt || c.createdAt))}</td></tr>`;
@@ -2471,6 +2475,7 @@
         if (id !== curCampId) return;
         curEnrols = es.docs.map(d => ({ id: d.id, ...d.data() }));
         curThreads = ts.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderCampHeader(); // F6 banner needs the enrolments
       } catch (e) { toast('Could not load the campaign: ' + errText(e)); }
       if (campSec === 'overview') renderOverview();
       if (campSec === 'audience') renderAudience();
@@ -2519,6 +2524,7 @@
       const test = !settings || settings.testMode !== false;
       const banners = [];
       if (c.status === 'paused' && c.pauseReason) banners.push(`<b>Paused automatically:</b> ${esc(c.pauseReason)} Fix it, then Resume.`);
+      if (curEnrols.length && curEnrols.every(e => e.campaignId === c.id) && nobodyLeft(c, curEnrols.filter(e => LIVE_ENROL.includes(e.status)).length)) banners.push(`<b>Nobody left:</b> everyone has been through every step. Finish the campaign${canApprove ? '' : ' (a partner)'}, or add more ${c.audienceType === 'people' ? 'people' : 'companies'}.`);
       if (c.status === 'draft' && c.startRequest) banners.push(`<b>Waiting to be started:</b> ${esc(personName(c.startRequest.by))} asked ${esc(when(c.startRequest.at))}${c.startRequest.note ? ` — “${esc(c.startRequest.note)}”` : ''}.${canApprove ? '' : ' Changing it withdraws the request.'}`);
       if (c.status === 'draft' && !c.startRequest && c.startReturn) banners.push(`<b>Returned</b> by ${esc(personName(c.startReturn.by))} ${esc(when(c.startReturn.at))}${c.startReturn.note ? `: “${esc(c.startReturn.note)}”` : ''}`);
       if (['active', 'paused'].includes(c.status) && !canApprove) banners.push('This campaign has started — only a partner can change it or add to it.');
