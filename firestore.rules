@@ -65,12 +65,18 @@ service cloud.firestore {
     // An update that only touches these fields.
     function onlyFields(fs) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fs); }
     // Email sends refresh "last touch" on the record, nothing else.
+    // "Last edited by": a team member can only stamp their own email (or leave it as it was).
+    function stampOk() {
+      return !('updatedBy' in request.resource.data)
+        || request.resource.data.updatedBy == me()
+        || (resource != null && request.resource.data.updatedBy == resource.data.get('updatedBy', null));
+    }
     function touchOnly() { return onlyFields(['lastTouchAt', 'updatedAt', 'nextContactAt', 'nextContactTime', 'nextContactTz', 'hasOverdue']); }
 
     // ── Search CRM ──
     match /searchCompanies/{id} {
       allow read: if can('search.view');
-      allow create, update: if can('search.edit');
+      allow create, update: if can('search.edit') && stampOk();
       allow delete: if can('search.delete');
     }
     match /searchActivities/{id} {
@@ -149,14 +155,14 @@ service cloud.firestore {
     // ── Network ──
     match /networkContacts/{id} {
       allow read: if can('net.view') || can('out.campaigns');
-      allow create: if can('net.edit') || can('out.campaigns'); // list uploads create Network contacts
-      allow update: if can('net.edit') || (can('net.email') && touchOnly());
+      allow create: if (can('net.edit') || can('out.campaigns')) && stampOk(); // list uploads create Network contacts
+      allow update: if (can('net.edit') && stampOk()) || (can('net.email') && touchOnly());
       allow delete: if can('net.delete');
     }
     match /networkFirms/{id} {
       allow read: if can('net.view') || can('out.campaigns');
-      allow create: if can('net.edit');
-      allow update: if can('net.edit') || (can('net.email') && touchOnly());
+      allow create: if can('net.edit') && stampOk();
+      allow update: if (can('net.edit') && stampOk()) || (can('net.email') && touchOnly());
       allow delete: if can('net.delete');
     }
     match /networkActivities/{id} {
@@ -177,8 +183,8 @@ service cloud.firestore {
     // ── Investor CRM ──
     match /crmInvestors/{id} {
       allow read: if can('icrm.view') || can('out.campaigns');
-      allow create: if can('icrm.edit');
-      allow update: if can('icrm.edit') || (can('icrm.email') && touchOnly());
+      allow create: if can('icrm.edit') && stampOk();
+      allow update: if (can('icrm.edit') && stampOk()) || (can('icrm.email') && touchOnly());
       allow delete: if can('icrm.delete');
     }
     match /crmActivities/{id} {

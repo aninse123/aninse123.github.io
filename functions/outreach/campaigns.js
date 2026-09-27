@@ -795,7 +795,7 @@ async function setDoNotContact({ companyId, on, reason }, caller) {
   const ref = db().doc(`searchCompanies/${companyId}`);
   if (!(await ref.get()).exists) fail("not-found", "company_not_found", "Company not found.");
   const r = String(reason || "").trim().slice(0, 300);
-  await ref.update({ doNotContact: { on: !!on, reason: on ? (r || null) : null, at: FieldValue.serverTimestamp(), by: caller } });
+  await ref.update({ doNotContact: { on: !!on, reason: on ? (r || null) : null, at: FieldValue.serverTimestamp(), by: caller }, updatedBy: caller, updatedByAt: FieldValue.serverTimestamp() });
   const stopped = on ? await stopCompanyEnrolments(companyId, `Marked do not contact${r ? ` — ${r}` : ""}`) : 0;
   return { ok: true, on: !!on, stopped };
 }

@@ -3,7 +3,7 @@ import { getAuth }        from "https://www.gstatic.com/firebasejs/12.13.0/fireb
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   doc, setDoc as _setDoc, addDoc as _addDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc,
-  writeBatch as _writeBatch, onSnapshot, increment
+  writeBatch as _writeBatch, onSnapshot, increment, serverTimestamp as _serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import { getStorage }     from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
 
@@ -238,9 +238,26 @@ export function watchSharedWriteCounters(callback){
 // only on success (if the underlying call throws, nothing was committed to
 // Firestore, so nothing is counted — matches how addReads only ever sees
 // results that actually came back).
+// Who changed a record (team access): an edit to a company, investor or
+// Network contact / firm also stores updatedBy (the signed-in email) and
+// updatedByAt. Pure housekeeping writes (last-touch dates, follow-up fields,
+// derived sector, people counts, campaign badges) don't count as an edit.
+const STAMPED = ['searchCompanies/', 'crmInvestors/', 'networkContacts/', 'networkFirms/'];
+const HOUSEKEEPING = new Set(['lastTouchAt', 'updatedAt', 'nextContactAt', 'nextContactTime', 'nextContactTz', 'hasOverdue',
+  'peopleCounts', 'sector', 'subSector', 'outreachStatus', 'lastOutreachAt', 'outreachAttempts',
+  'activeCampaignId', 'activeCampaignName', 'activeEnrolmentId', 'addOns']);
+export function stampEdit(ref, data) {
+  const path = ref?.path || '';
+  if (!STAMPED.some(p => path.startsWith(p)) || !data || typeof data !== 'object' || Array.isArray(data)) return data;
+  const keys = Object.keys(data);
+  if (!keys.length || keys.every(k => HOUSEKEEPING.has(k.split('.')[0]))) return data;
+  const email = auth.currentUser?.email;
+  if (!email) return data;
+  return { ...data, updatedBy: email.toLowerCase(), updatedByAt: _serverTimestamp() };
+}
 export async function addDoc(...args){ const r = await _addDoc(...args); addWrites(1); return r; }
-export async function setDoc(...args){ const r = await _setDoc(...args); addWrites(1); return r; }
-export async function updateDoc(...args){ const r = await _updateDoc(...args); addWrites(1); return r; }
+export async function setDoc(ref, data, ...rest){ const r = await _setDoc(ref, stampEdit(ref, data), ...rest); addWrites(1); return r; }
+export async function updateDoc(ref, data, ...rest){ const r = await _updateDoc(ref, rest.length ? data : stampEdit(ref, data), ...rest); addWrites(1); return r; }
 export async function deleteDoc(...args){ const r = await _deleteDoc(...args); addDeletes(1); return r; }
 // writeBatch: counted on commit(), by however many set/update/delete calls
 // were actually staged into that batch instance — not on the individual
@@ -251,8 +268,8 @@ export function writeBatch(dbArg){
   const b = _writeBatch(dbArg);
   let staged = 0, stagedDeletes = 0;
   const rawSet = b.set.bind(b), rawUpdate = b.update.bind(b), rawDelete = b.delete.bind(b), rawCommit = b.commit.bind(b);
-  b.set    = (...a) => { staged++;        return rawSet(...a); };
-  b.update = (...a) => { staged++;        return rawUpdate(...a); };
+  b.set    = (ref, data, ...rest) => { staged++; return rawSet(ref, stampEdit(ref, data), ...rest); };
+  b.update = (ref, data, ...rest) => { staged++; return rawUpdate(ref, rest.length ? data : stampEdit(ref, data), ...rest); };
   b.delete = (...a) => { stagedDeletes++; return rawDelete(...a); };
   b.commit = async (...a) => {
     const r = await rawCommit(...a);

@@ -103,6 +103,18 @@ export async function getAccess(user, { force = false } = {}) {
   return make(email, claims.role || null, Array.isArray(claims.perms) ? claims.perms : [], claims.key || null);
 }
 
+// "✎ edited by … · date" badge for a record stamped by firebase-config's stampEdit.
+const PARTNER_NAMES = { 'andre.rocha@douropartners.pt': 'André', 'antonio.carvalho@douropartners.pt': 'António' };
+export function editedBadge(rec) {
+  if (!rec?.updatedBy) return '';
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const t = rec.updatedByAt?.toMillis ? rec.updatedByAt.toMillis() : rec.updatedByAt?.seconds ? rec.updatedByAt.seconds * 1000 : 0;
+  const who = PARTNER_NAMES[rec.updatedBy] || String(rec.updatedBy).split('@')[0];
+  const when = t ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/Lisbon' }).format(new Date(t)) : '';
+  const full = t ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Lisbon' }).format(new Date(t)) : '';
+  return `<span class="badge badge-grey" title="Last edited by ${esc(rec.updatedBy)}${full ? ' · ' + esc(full) : ''}">✎ ${esc(who)}${when ? ' · ' + esc(when) : ''}</span>`;
+}
+
 // First tab this person may open ('' when none — an investor or nobody).
 export function homeFor(a) {
   for (const k of HOME_ORDER) if (a?.can(TAB_PERM[k])) return TAB_HREF[k];

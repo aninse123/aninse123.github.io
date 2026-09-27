@@ -586,7 +586,7 @@
 
 <script type="module">
 import { auth, db, ADMIN_EMAILS, addReads, addDoc, updateDoc, deleteDoc, setDoc } from './firebase-config.js';
-import { guardPage, logExport } from './access.js';
+import { guardPage, logExport, editedBadge } from './access.js';
 import { applyDirectory } from './team-dir.js';
 import { sendPeopleEmail, sendNote } from './people-send.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
@@ -1088,6 +1088,7 @@ function renderDetail() {
   document.getElementById('dMeta').innerHTML = `
     ${c.role ? `<span style="font-size:0.85rem;color:var(--text-light);">${esc(c.role)}${fName?' at '+esc(fName):''}</span>` : (fName?`<span style="font-size:0.85rem;color:var(--text-light);">${esc(fName)}</span>`:'')}
     ${c.owner?`<span class="badge badge-grey">👤 ${esc(OWNER_LABELS[c.owner]||c.owner)}</span>`:''}
+    ${editedBadge(c)}
     ${c.country?`<span class="badge badge-grey">🌍 ${esc(c.country)}</span>`:''}
     ${catBadges} ${phaseBadges}`;
 
