@@ -176,7 +176,7 @@ async function stopCompanyEnrolments(companyId, reason, status = "stopped") {
 
 // ── Actions ──────────────────────────────────────────────────────────────────
 
-async function save({ campaignId, campaign }, caller) {
+async function save({ campaignId, campaign }, caller, opts = {}) {
   if (!campaignId) {
     const settings = await store.getSettings();
     const fields = normalizeCampaign(campaign);
@@ -200,7 +200,9 @@ async function save({ campaignId, campaign }, caller) {
     // audience.sources only ever grows through enrol (arrayUnion), so an
     // update never rewrites it.
     const { audience, ...fields } = normalizeCampaign(campaign, existing);
-    tx.update(ref, { ...fields, "audience.mode": audience.mode, updatedAt: FieldValue.serverTimestamp(), updatedBy: caller });
+    // B1: a request to start covered the previous version.
+    const withdraw = existing.startRequest && opts.canApprove === false ? { startRequest: null } : {};
+    tx.update(ref, { ...fields, ...withdraw, "audience.mode": audience.mode, updatedAt: FieldValue.serverTimestamp(), updatedBy: caller });
     return { renamed: fields.name !== existing.name, name: fields.name };
   });
   if (renamed) {
@@ -420,7 +422,7 @@ async function peopleContext(campaign) {
   // An issue of a recurring email (5b) honours opt-outs from that recurring email.
   const keys = [campaign.id, campaign.recurringId].filter(Boolean);
   const opts = await db().collection("outreachOptOuts").where("campaignId", "in", keys).get();
-  ctx.optedOut = new Set(opts.docs.map((d) => d.data().email));
+  ctx.optedOut = new Set(opts.docs.map((d) => d.data()).filter((o) => !o.restoredAt).map((o) => o.email)); // F4: put back on request
   return ctx;
 }
 // People the portal emailed in the last `days` days: campaign / manual
@@ -532,6 +534,45 @@ async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId }, ca
   });
 }
 
+// What stops a campaign from starting (templates, rules that need tracking).
+async function startProblems(campaign) {
+  const ids = [...new Set((campaign.steps || []).map((s) => s.templateId).filter(Boolean))];
+  const snaps = ids.length ? await db().getAll(...ids.map((id) => db().doc(`outreachTemplates/${id}`))) : [];
+  const templatesById = Object.fromEntries(snaps.filter((s) => s.exists).map((s) => [s.id, s.data()]));
+  const problems = activationProblems(campaign, templatesById);
+  if ((campaign.steps || []).some((s) => (s.channel || "email") === "email" && (s.branches || []).some((b) => b.outcome === "clicked"))) {
+    const st = await store.getSettings();
+    if (!st.trackOpensClicks) problems.push('Rules on "clicked a link" need open/click tracking switched on (Settings → General).');
+  }
+  return problems;
+}
+
+// Team access B1: whoever prepares a campaign without "approve" asks a
+// partner to start it. The request shows in Tasks → To approve; a partner
+// starts it (setStatus active) or returns it with a note. Editing the
+// campaign afterwards (without "approve") withdraws the request.
+async function requestStart({ campaignId, note }, caller) {
+  const campaign = await getCampaign(campaignId);
+  if (campaign.status !== "draft") fail("failed-precondition", "not_draft", "Only a draft campaign can wait to be started.");
+  const problems = await startProblems(campaign);
+  if (problems.length) throw new HttpsError("failed-precondition", `Before asking: ${problems.join(" ")}`, { reason: "not_ready", problems });
+  await db().doc(`outreachCampaigns/${campaignId}`).update({
+    startRequest: { by: caller, at: FieldValue.serverTimestamp(), note: String(note || "").trim().slice(0, 1000) },
+    startReturn: null,
+  });
+  return { ok: true };
+}
+
+async function returnStart({ campaignId, note }, caller) {
+  const campaign = await getCampaign(campaignId);
+  if (campaign.status !== "draft" || !campaign.startRequest) fail("failed-precondition", "not_waiting", "Nobody is waiting for this campaign to start.");
+  await db().doc(`outreachCampaigns/${campaignId}`).update({
+    startRequest: null,
+    startReturn: { by: caller, at: FieldValue.serverTimestamp(), note: String(note || "").trim().slice(0, 1000), requestedBy: campaign.startRequest.by || null },
+  });
+  return { ok: true };
+}
+
 const TRANSITIONS = {
   active: ["draft", "paused"],
   paused: ["active"],
@@ -549,16 +590,10 @@ async function setStatus({ campaignId, status }, caller) {
   const ref = db().doc(`outreachCampaigns/${campaignId}`);
   const upd = { status, updatedAt: FieldValue.serverTimestamp(), updatedBy: caller };
   if (status === "active") {
-    const ids = [...new Set((campaign.steps || []).map((s) => s.templateId).filter(Boolean))];
-    const snaps = ids.length ? await db().getAll(...ids.map((id) => db().doc(`outreachTemplates/${id}`))) : [];
-    const templatesById = Object.fromEntries(snaps.filter((s) => s.exists).map((s) => [s.id, s.data()]));
-    const problems = activationProblems(campaign, templatesById);
-    if ((campaign.steps || []).some((s) => (s.channel || "email") === "email" && (s.branches || []).some((b) => b.outcome === "clicked"))) {
-      const st = await store.getSettings();
-      if (!st.trackOpensClicks) problems.push('Rules on "clicked a link" need open/click tracking switched on (Settings → General).');
-    }
+    const problems = await startProblems(campaign);
     if (problems.length) throw new HttpsError("failed-precondition", `Before starting: ${problems.join(" ")}`, { reason: "not_ready", problems });
     if (!campaign.startedAt) upd.startedAt = FieldValue.serverTimestamp();
+    upd.startRequest = null; upd.startReturn = null;
   }
   let ended = 0;
   if (status === "finished") {
@@ -805,10 +840,12 @@ async function setDoNotContact({ companyId, on, reason }, caller) {
 const CAMPAIGN_ACTION_PERM = {
   save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns",
   enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
+  requestStart: "out.campaigns", returnStart: "out.approve",
   approve: "out.approve", skipDraft: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
 };
 function campaignActionPerm(data) {
-  if (data.action === "setStatus") return data.status === "active" ? "out.approve" : "out.campaigns";
+  // Starting / resuming sends emails; finishing ends a live campaign.
+  if (data.action === "setStatus") return ["active", "finished"].includes(data.status) ? "out.approve" : "out.campaigns";
   return CAMPAIGN_ACTION_PERM[data.action] || "out.admin";
 }
 
@@ -816,9 +853,22 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   const caller = normEmail(request.auth?.token?.email);
   const data = request.data || {};
   if (!P.hasPerm(request, campaignActionPerm(data))) fail("permission-denied", "not_admin", "You don't have permission to do this.");
+  const canApprove = P.hasPerm(request, "out.approve");
+  // A campaign that has started sends on its own: changing it, or adding
+  // companies / people to it, needs "approve" (preparing a draft doesn't).
+  if (!canApprove) {
+    const target = data.action === "enrolment" && data.op === "move" ? data.targetCampaignId
+      : ["save", "enrol", "enrolPeople"].includes(data.action) ? data.campaignId : null;
+    if (target) {
+      const t = await db().doc(`outreachCampaigns/${target}`).get();
+      if (t.exists && ["active", "paused"].includes(t.data().status)) fail("permission-denied", "needs_approve", "This campaign has started — only a partner can change it or add to it.");
+    }
+  }
   try {
     switch (data.action) {
-      case "save": return await save(data, caller);
+      case "save": return await save(data, caller, { canApprove });
+      case "requestStart": return await requestStart(data, caller);
+      case "returnStart": return await returnStart(data, caller);
       case "duplicate": return await duplicate(data, caller);
       case "delete": return await remove(data, caller);
       case "preview": return await preview(data, caller);

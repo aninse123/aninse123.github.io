@@ -17,7 +17,9 @@ const els = {};
 const ctx = {
   document: { activeElement: null, querySelectorAll: () => [] },
   $: (id) => (els[id] ||= el()),
-  campaigns: [{ id: 'c1', name: 'Campanha', steps: [{ id: 's1', name: 'Email 1' }] }],
+  campaigns: [{ id: 'c1', name: 'Campanha', steps: [{ id: 's1', name: 'Email 1' }] },
+    { id: 'c2', name: 'Metalurgia Norte', status: 'draft', steps: [{ id: 's1' }], stats: { enrolled: 12 }, startRequest: { by: 'maria@douropartners.pt', at: null, note: 'Pronta' } },
+    { id: 'c3', name: 'Devolvida', status: 'draft', steps: [], startReturn: { by: 'andre.rocha@douropartners.pt', at: { toMillis: () => Date.now() }, note: 'Muda o assunto', requestedBy: 'andre.rocha@douropartners.pt' } }],
   drafts: [
     { id: 'd1', source: 'campaign', campaignId: 'c1', stepId: 's1', companyName: 'Empresa A', to: ['a@a.pt'], senderId: 'an.rocha@mail.douropartners-team.pt', subject: 'Olá', draftBody: 'x' },
     { id: 'd2', source: 'manual', companyName: 'Empresa B', to: ['b@b.pt'], senderId: 'an.rocha@mail.douropartners-team.pt', subject: 'Olá B', draftBody: 'y', writtenBy: 'maria@douropartners.pt', writtenByKey: 'maria', recipient: { name: 'Rui' } },
@@ -28,7 +30,7 @@ const ctx = {
 };
 vm.createContext(ctx);
 vm.runInContext([
-  line('    const DAY_NAMES ='), line('    function esc(s)'), line('    function tsMs(t)'), line('const dayFmt ='), lift('when'), line('const num ='), line('    function localPart(e)'), lift('windowText'),
+  line('    const OWNER_BY_EMAIL ='), line('    const personName ='), line('    const OWNER_LABEL ='), line('    const DAY_NAMES ='), line('    function esc(s)'), line('    function tsMs(t)'), line('const dayFmt ='), line('const timeFmt ='), line('const dtFmt ='), lift('when'), line('const num ='), line('    function localPart(e)'), lift('windowText'),
   "let approveFilter = 'all'; const draftEdits = new Map(); let returnedMine = [];",
   lift('renderApprove'),
   'globalThis.run = () => { renderApprove(); return $("approveView").innerHTML; };',
@@ -40,4 +42,6 @@ try { html = ctx.run(); } catch (e) { err = e; }
 ok(`renderApprove runs with a campaign and a manual draft${err ? ' — ' + err.message : ''}`, !err);
 ok('manual draft shows who wrote it and the approve / return buttons', /written by Maria/.test(html) && /Approve and send now/.test(html) && /Return with a note/.test(html));
 ok('campaign draft keeps its campaign / step and Approve', /Campanha/.test(html) && /Email 1/.test(html) && /data-dact="approve"/.test(html));
+ok('campaign waiting to be started: listed with who asked, the note and Start / Return', /Campaigns waiting to be started/.test(html) && /Metalurgia Norte/.test(html) && /asked by maria/.test(html) && /Pronta/.test(html) && /data-sstart="c2"/.test(html) && /data-sreturn="c2"/.test(html));
+ok('campaign returned to me: shown with the note', /Campaigns returned to you/.test(html) && /Muda o assunto/.test(html) && /returned .* by André/.test(html));
 console.log(fail ? `\n${fail} FAILED` : '\nall approve render tests passed'); process.exit(fail ? 1 : 0);

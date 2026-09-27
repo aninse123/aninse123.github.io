@@ -324,10 +324,37 @@ async function skipIssue({ issueId }, caller) {
   return { ok: true };
 }
 
+// F4: who unsubscribed from this recurring email — and putting someone back
+// when THEY asked (a partner; the record is kept with who / when / why).
+const optOutId = (recurringId, email) => `${recurringId}_${email.replace(/[^a-z0-9]/g, "_").slice(0, 120)}`;
+async function optOuts({ recurringId }) {
+  if (!recurringId) fail("invalid-argument", "recurring_required", "Choose a recurring email.");
+  const snap = await db().collection("outreachOptOuts").where("campaignId", "==", recurringId).get();
+  const ms = (t) => (t && t.toMillis ? t.toMillis() : null);
+  const rows = snap.docs.map((d) => d.data()).map((o) => ({ email: o.email, source: o.source || null, at: ms(o.at), restoredAt: ms(o.restoredAt), restoredBy: o.restoredBy || null, restoreNote: o.restoreNote || null }));
+  rows.sort((a, b) => (b.at || 0) - (a.at || 0));
+  return { optOuts: rows };
+}
+async function restoreOptOut({ recurringId, email, note }, caller) {
+  const e = normEmail(email);
+  if (!recurringId || !e) fail("invalid-argument", "email_required", "Choose the person to put back.");
+  const why = String(note || "").trim().slice(0, 500);
+  if (!why) fail("invalid-argument", "note_required", "Say why (e.g. \"asked by email on 3 Oct\") — they had unsubscribed.");
+  const ref = db().doc(`outreachOptOuts/${optOutId(recurringId, e)}`);
+  const snap = await ref.get();
+  if (!snap.exists || snap.data().restoredAt) fail("failed-precondition", "not_opted_out", "This person isn't unsubscribed from this recurring email.");
+  await ref.update({ restoredAt: FieldValue.serverTimestamp(), restoredBy: caller, restoreNote: why });
+  return { ok: true };
+}
+
+// Deleting a recurring email or putting back someone who unsubscribed is a
+// partner's call ("approve"); preparing one is "campaigns".
+const RECURRING_APPROVE = ["approveIssue", "skipIssue", "delete", "restoreOptOut"];
+
 exports.outreachRecurring = onCall({ region: REGION, timeoutSeconds: 300, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY] }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
   const data = request.data || {};
-  if (!P.hasPerm(request, ["approveIssue", "skipIssue"].includes(data.action) ? "out.approve" : "out.campaigns")) fail("permission-denied", "not_admin", "You don't have permission to do this.");
+  if (!P.hasPerm(request, RECURRING_APPROVE.includes(data.action) ? "out.approve" : "out.campaigns")) fail("permission-denied", "not_admin", "You don't have permission to do this.");
   try {
     switch (data.action) {
       case "save": return await save(data, caller);
@@ -337,6 +364,8 @@ exports.outreachRecurring = onCall({ region: REGION, timeoutSeconds: 300, secret
       case "approveIssue": return await approveIssue(data, caller);
       case "skipIssue": return await skipIssue(data, caller);
       case "testIssue": return await testIssue(data, caller);
+      case "optOuts": return await optOuts(data, caller);
+      case "restoreOptOut": return await restoreOptOut(data, caller);
       default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
     }
   } catch (e) {

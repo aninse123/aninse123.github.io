@@ -9620,7 +9620,7 @@ async function saveCloseMtg(){
   const notes = document.getElementById('closeMtgNotes').value.trim();
   const btn = document.getElementById('closeMtgSaveBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Closing…';
   try {
-    await updateDoc(doc(db,'searchActivities',closeActId), { status:outcome, closedNotes:notes||null, closedAt: serverTimestamp() });
+    await updateDoc(doc(db,'searchActivities',closeActId), { status:outcome, closedNotes:notes||null, closedAt: serverTimestamp(), closedBy: auth.currentUser?.email?.toLowerCase() || null });
     const a = activities.find(x=>x.id===closeActId); if (a){ a.status=outcome; a.closedNotes=notes||null; }
     await recomputeActivityFields(c);
     showEl('closeMtgModal', false); renderActivityLog(); renderList();

@@ -736,6 +736,7 @@
 
     // ── Constants ──────────────────────────────────────────────
     const OWNER_BY_EMAIL = { 'andre.rocha@douropartners.pt': 'andre', 'antonio.carvalho@douropartners.pt': 'antonio' };
+    const personName = (email) => { const e = String(email || '').toLowerCase(); const k = OWNER_BY_EMAIL[e]; return k ? (OWNER_LABEL[k] || k) : (e.split('@')[0] || 'someone'); };
     const OWNER_LABEL = { andre: 'André', antonio: 'António' }; // + every team member (team-dir.js)
     // <option>s for owner / assignee selects: active team members, plus the current value.
     const ownerOpts = (sel) => (window.teamDir || [{ key: 'andre', label: 'André', active: true }, { key: 'antonio', label: 'António', active: true }])
@@ -947,8 +948,13 @@
 
     // ── Inbox ──────────────────────────────────────────────────
     function setupFilters() {
-      const others = (window.teamDir || []).filter(m => m.partner && m.key !== myOwner).map(m => [m.key, m.label]);
-      const owners = [['mine', 'Mine'], ...others, ['all', 'All']];
+      // Conversations belong to the sending address — partners' only. Someone
+      // without one (an intern) would open an empty "Mine": start on All (C2).
+      const partners = (window.teamDir || []).filter(m => m.partner);
+      const hasAddress = !!OWNER_BY_EMAIL[me] || partners.some(m => m.key === myOwner);
+      if (!hasAddress && ownerFilter === 'mine') ownerFilter = 'all';
+      const others = partners.filter(m => m.key !== myOwner).map(m => [m.key, m.label]);
+      const owners = hasAddress ? [['mine', 'Mine'], ...others, ['all', 'All']] : [['all', 'All'], ...others];
       $('ownerChips').innerHTML = owners.map(([k, l]) => `<button class="chip${k === ownerFilter ? ' on' : ''}" data-owner="${k}">${esc(l)}</button>`).join('');
       const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['unmatched', 'Unmatched']];
       $('stateChips').innerHTML = states.map(([k, l]) => `<button class="chip${k === stateFilter ? ' on' : ''}" data-state="${k}">${esc(l)}</button>`).join('');
@@ -2359,6 +2365,8 @@
         campaigns = snap.docs.map(d => ({ id: d.id, ...d.data() }))
           .sort((a, b) => tsMs(b.updatedAt || b.createdAt) - tsMs(a.updatedAt || a.createdAt));
         renderCampList();
+        updateTaskBadge(); // B1: campaigns waiting to be started count in To approve
+        if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove();
         if (curCampId) {
           if (!curCamp()) { closeCampaign(); return; }
           renderCampHeader();
@@ -2495,18 +2503,25 @@
       ].filter(Boolean).map(x => `<span>${x}</span>`).join('');
 
       const acts = [];
-      if (c.status === 'draft') acts.push(['start', 'Start campaign', 'primary']);
+      const canApprove = window.pageAccess ? window.pageAccess.can('out.approve') : true;
+      // B1: without "approve", a draft is started by asking a partner.
+      if (c.status === 'draft' && canApprove) acts.push(['start', 'Start campaign', 'primary']);
+      if (c.status === 'draft' && canApprove && c.startRequest) acts.push(['returnstart', 'Return with a note', 'ghost']);
+      if (c.status === 'draft' && !canApprove && !c.startRequest) acts.push(['ask', 'Ask to start', 'primary']);
       if (c.status === 'active') acts.push(['pause', 'Pause', 'ghost'], ['finish', 'Finish', 'ghost']);
       if (c.status === 'paused') acts.push(['resume', 'Resume', 'primary'], ['finish', 'Finish', 'ghost']);
       if (c.status === 'finished') acts.push(['archive', 'Archive', 'ghost']);
       acts.push(['duplicate', 'Duplicate', 'ghost']);
       if (c.status === 'draft') acts.push(['delete', 'Delete', 'danger']);
-      $('campActions').innerHTML = acts.map(([a, l, k]) => `<button class="btn btn--${k} btn--sm" data-cact="${a}" data-perm="${['start', 'resume'].includes(a) ? 'out.approve' : 'out.campaigns'}">${l}</button>`).join('');
+      $('campActions').innerHTML = acts.map(([a, l, k]) => `<button class="btn btn--${k} btn--sm" data-cact="${a}" data-perm="${['start', 'resume', 'finish', 'returnstart'].includes(a) ? 'out.approve' : 'out.campaigns'}">${l}</button>`).join('');
       $('campActions').querySelectorAll('[data-cact]').forEach(b => b.addEventListener('click', () => campAction(b.dataset.cact, b)));
 
       const test = !settings || settings.testMode !== false;
       const banners = [];
       if (c.status === 'paused' && c.pauseReason) banners.push(`<b>Paused automatically:</b> ${esc(c.pauseReason)} Fix it, then Resume.`);
+      if (c.status === 'draft' && c.startRequest) banners.push(`<b>Waiting to be started:</b> ${esc(personName(c.startRequest.by))} asked ${esc(when(c.startRequest.at))}${c.startRequest.note ? ` — “${esc(c.startRequest.note)}”` : ''}.${canApprove ? '' : ' Changing it withdraws the request.'}`);
+      if (c.status === 'draft' && !c.startRequest && c.startReturn) banners.push(`<b>Returned</b> by ${esc(personName(c.startReturn.by))} ${esc(when(c.startReturn.at))}${c.startReturn.note ? `: “${esc(c.startReturn.note)}”` : ''}`);
+      if (['active', 'paused'].includes(c.status) && !canApprove) banners.push('This campaign has started — only a partner can change it or add to it.');
       if (test) banners.push(`<b>Test mode:</b> every email of this campaign goes to ${esc(settings?.campaignTestRecipient || 'andrenorocha@gmail.com')} instead of the company (Settings → General).`);
       $('campBanner').innerHTML = banners.map(b => `<span>${b}</span>`).join('<br>');
       $('campBanner').hidden = !banners.length;
@@ -2522,6 +2537,18 @@
           const live = curEnrols.filter(e => LIVE_ENROL.includes(e.status)).length;
           if (!confirm(`Start "${c.name}"?\n\n${c.audienceType === 'people' ? (live ? `${num(live)} ${live === 1 ? 'person is' : 'people are'} waiting.` : 'Nobody added yet — you can add people after starting.') : (live ? `${num(live)} companies are waiting.` : 'No companies yet — you can add them after starting.')} The scheduler starts about ${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))} a day, inside the sending window.`)) return;
           await setStatus('active', 'Campaign started.');
+        }
+        if (a === 'ask') {
+          const note = prompt(`Ask a partner to start "${c.name}"?
+
+Optional note for them:`, '');
+          if (note === null) return;
+          await campCall({ action: 'requestStart', campaignId: c.id, note }, 'Sent to To approve — a partner will start it.');
+        }
+        if (a === 'returnstart') {
+          const note = prompt(`Return "${c.name}" to ${personName(c.startRequest?.by)} — what should change?`, '');
+          if (note === null) return;
+          await campCall({ action: 'returnStart', campaignId: c.id, note }, 'Returned with your note.');
         }
         if (a === 'pause') await setStatus('paused', 'Campaign paused — nothing is sent until you resume.');
         if (a === 'resume') await setStatus('active', 'Campaign resumed.');
@@ -3297,7 +3324,8 @@
               <button class="btn btn--ghost btn--sm" data-rnow="${esc(r.id)}" data-perm="out.campaigns" title="Write an issue draft now, off-schedule">Issue now</button>
               <button class="btn btn--ghost btn--sm" data-redit="${esc(r.id)}" data-perm="out.campaigns">Edit</button>
               <button class="btn btn--ghost btn--sm" data-rstat="${esc(r.id)}" data-perm="out.campaigns">${r.status === 'active' ? 'Pause' : 'Resume'}</button>
-              <button class="btn btn--danger btn--sm" data-rdel="${esc(r.id)}" data-perm="out.campaigns">Delete</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. A day before each date an issue is drafted from the template into Tasks → To approve; you edit it (and can send yourself a test), approve, and it goes out on the date to the list, at the pace you set.</td></tr>'}</tbody></table></div>
+              <button class="btn btn--ghost btn--sm" data-ropt="${esc(r.id)}" title="People who unsubscribed from this recurring email">Unsubscribed</button>
+              <button class="btn btn--danger btn--sm" data-rdel="${esc(r.id)}" data-perm="out.approve">Delete</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. A day before each date an issue is drafted from the template into Tasks → To approve; you edit it (and can send yourself a test), approve, and it goes out on the date to the list, at the pace you set.</td></tr>'}</tbody></table></div>
         </div>
         <p class="hint" style="margin-top:10px;">The unsubscribe link in a recurring email removes the person from that recurring email only. A spam complaint blocks the address everywhere.</p>`;
       $('recNew').addEventListener('click', () => openRecurringModal(null));
@@ -3316,6 +3344,26 @@
         const r = byId(b.dataset.rdel);
         if (!confirm(`Delete "${r.name}"? A waiting draft is cancelled; issues already sent (and their history) stay.`)) return;
         try { await callRecurring({ action: 'delete', recurringId: r.id }); toast('Recurring email deleted.'); } catch (e) { toast(errText(e)); }
+      }));
+      // F4: who unsubscribed from this recurring email; a partner can put
+      // someone back when they asked (reason recorded).
+      $('recurView').querySelectorAll('[data-ropt]').forEach(b => b.addEventListener('click', async () => {
+        const r = byId(b.dataset.ropt);
+        let rows = [];
+        try { rows = (await callRecurring({ action: 'optOuts', recurringId: r.id })).data.optOuts || []; } catch (e) { toast(errText(e)); return; }
+        const fmt = (ms) => ms ? dayFmt.format(new Date(ms)) : '—';
+        const cur = rows.filter(o => !o.restoredAt), back = rows.filter(o => o.restoredAt);
+        openModal(`${r.name} — unsubscribed`, `
+          ${cur.length ? `<div class="table-wrap" style="max-height:50vh;overflow:auto;"><table><thead><tr><th>Email</th><th>Unsubscribed</th><th></th></tr></thead><tbody>${cur.map(o => `<tr><td>${esc(o.email)}</td><td style="white-space:nowrap;">${esc(fmt(o.at))}${o.source === 'one_click' ? ' <span class="hint">(mail app button)</span>' : ''}</td><td style="text-align:right;"><button class="btn btn--ghost btn--sm" data-oback="${esc(o.email)}" data-perm="out.approve">Put back (they asked)</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="note">Nobody has unsubscribed from this recurring email.</p>'}
+          ${back.length ? `<h3 style="font-size:0.9rem;margin:14px 0 6px;">Put back</h3><ul class="hint" style="margin:0;padding-left:18px;">${back.map(o => `<li>${esc(o.email)} — ${esc(fmt(o.restoredAt))} by ${esc(personName(o.restoredBy))}: “${esc(o.restoreNote || '')}”</li>`).join('')}</ul>` : ''}
+          <p class="hint" style="margin-top:10px;">Unsubscribing here stops only this recurring email. Put someone back only when they ask. A spam complaint or a general removal is in Settings → Suppression list.</p>`, async () => true, 'Close');
+        $('modalBody').querySelectorAll('[data-oback]').forEach(x => x.addEventListener('click', async () => {
+          const note = prompt(`Put ${x.dataset.oback} back on "${r.name}"?
+
+They unsubscribed — say how they asked to receive it again (kept on record):`, '');
+          if (note === null) return;
+          try { await callRecurring({ action: 'restoreOptOut', recurringId: r.id, email: x.dataset.oback, note }); toast(`${x.dataset.oback} gets the next issue.`); closeModal(); } catch (e) { toast(errText(e)); }
+        }));
       }));
       $('recurView').querySelectorAll('[data-rhist]').forEach(b => b.addEventListener('click', async () => {
         const r = byId(b.dataset.rhist);
@@ -3409,7 +3457,14 @@
       const shown = list.slice(0, 50);
       const campName = (id) => (id === '__manual' ? 'Written by the team' : campaigns.find(c => c.id === id)?.name || 'Campaign');
       const stepName = (d) => { const c = campaigns.find(x => x.id === d.campaignId); const i = (c?.steps || []).findIndex(s => s.id === d.stepId); return i < 0 ? 'Step' : `${c.steps[i].name} (${i + 1} of ${c.steps.length})`; };
+      // B1: campaigns someone asked to start, and ones returned to me.
+      const startReqs = campaigns.filter(c => c.status === 'draft' && c.startRequest);
+      const myLower = String(me || '').toLowerCase();
+      const startReturned = campaigns.filter(c => c.status === 'draft' && !c.startRequest && c.startReturn?.requestedBy === myLower && tsMs(c.startReturn.at) >= Date.now() - 30 * 86400000);
+      const campLine = (c) => `<button class="camp-link" data-opencamp="${esc(c.id)}">${esc(c.name)}</button> <span class="hint">· ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'companies'} · ${num((c.steps || []).length)} step${(c.steps || []).length === 1 ? '' : 's'}</span>`;
       $('approveView').innerHTML = `
+        ${startReqs.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Campaigns waiting to be started</h3>${startReqs.map(c => `<div style="padding:8px 0;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><div style="flex:1;min-width:220px;">${campLine(c)} <span class="hint">· asked by ${esc(personName(c.startRequest.by))} ${esc(when(c.startRequest.at))}</span>${c.startRequest.note ? `<div style="margin-top:4px;">“${esc(c.startRequest.note)}”</div>` : ''}</div><button class="btn btn--primary btn--sm" data-sstart="${esc(c.id)}" data-perm="out.approve">Start</button><button class="btn btn--ghost btn--sm" data-sreturn="${esc(c.id)}" data-perm="out.approve">Return with a note</button></div>`).join('')}<p class="hint" style="margin-top:6px;">Open a campaign to check its sequence and audience before starting. Starting runs the same checks as the Start button.</p></div>` : ''}
+        ${startReturned.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Campaigns returned to you</h3>${startReturned.map(c => `<div style="padding:8px 0;border-top:1px solid var(--border);">${campLine(c)} <span class="hint">· returned ${esc(when(c.startReturn.at))} by ${esc(personName(c.startReturn.by))}</span>${c.startReturn.note ? `<div style="margin-top:4px;">“${esc(c.startReturn.note)}”</div>` : ''}</div>`).join('')}<p class="hint" style="margin-top:6px;">Make the changes, then Ask to start again.</p></div>` : ''}
         ${returnedMine.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Returned to you</h3>${returnedMine.map(m => `<div style="padding:8px 0;border-top:1px solid var(--border);"><b>${esc(m.subject || '(reply)')}</b> <span class="hint">· ${esc(m.companyName || '')} · returned ${esc(when(m.returnedAt))} by ${esc(String(m.returnedBy || '').split('@')[0])}</span>${m.returnNote ? `<div style="margin-top:4px;">“${esc(m.returnNote)}”</div>` : ''}<details style="margin-top:4px;"><summary class="hint" style="cursor:pointer;">Your text</summary><pre style="white-space:pre-wrap;font:inherit;font-size:0.85rem;margin-top:6px;">${esc(m.draftBody || '')}</pre></details></div>`).join('')}<p class="hint" style="margin-top:6px;">Write it again in Compose (or reply in the conversation) with the changes.</p></div>` : ''}
         <div class="card" style="padding:0;margin-bottom:14px;">
           <div class="toolbar">
@@ -3452,6 +3507,20 @@
         ${list.length > shown.length ? `<p class="hint" style="margin-top:10px;">Showing the oldest ${num(shown.length)} of ${num(list.length)}.</p>` : ''}`;
 
       $('apFilter').addEventListener('change', (e) => { approveFilter = e.target.value; renderApprove(); });
+      $('approveView').querySelectorAll('[data-sstart]').forEach(b => b.addEventListener('click', async () => {
+        const c = campaigns.find(x => x.id === b.dataset.sstart); if (!c) return;
+        if (!confirm(`Start "${c.name}"?
+
+${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'companies'} added. The scheduler starts sending inside the sending window and daily limits.`)) return;
+        b.disabled = true;
+        if (!(await campCall({ action: 'setStatus', campaignId: c.id, status: 'active' }, 'Campaign started.'))) b.disabled = false;
+      }));
+      $('approveView').querySelectorAll('[data-sreturn]').forEach(b => b.addEventListener('click', async () => {
+        const c = campaigns.find(x => x.id === b.dataset.sreturn); if (!c) return;
+        const note = prompt(`Return "${c.name}" to ${personName(c.startRequest?.by)} — what should change?`, '');
+        if (note === null) return;
+        await campCall({ action: 'returnStart', campaignId: c.id, note }, 'Returned with your note.');
+      }));
       $('approveView').querySelectorAll('[data-opencamp]').forEach(b => b.addEventListener('click', () => { showTab('campaigns'); openCampaign(b.dataset.opencamp); }));
       $('apAll')?.addEventListener('click', async () => {
         const ids = list.filter(d => d.source !== 'manual').slice(0, 300).map(d => d.id);
@@ -3546,7 +3615,8 @@
     function updateTaskBadge() {
       const dueMine = tasks.filter(t => t.channel !== 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
       const canApprove = window.pageAccess ? window.pageAccess.can('out.approve') : true; // writers can't act on the queue
-      const n = dueMine + (canApprove ? drafts.length + issueDrafts.length : 0) + tasks.filter(t => t.channel === 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
+      const startReqs = campaigns.filter(c => c.status === 'draft' && c.startRequest).length;
+      const n = dueMine + (canApprove ? drafts.length + issueDrafts.length + startReqs : 0) + tasks.filter(t => t.channel === 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
       $('approveCount').textContent = n; $('approveCount').hidden = !n;
       $('todoChipN').textContent = dueMine ? `(${num(dueMine)} due)` : '';
     }

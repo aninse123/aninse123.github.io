@@ -83,6 +83,11 @@ service cloud.firestore {
       allow read: if can('search.view');
       allow create: if can('search.edit') && createsAsMe();
       allow update, delete: if can('search.delete') || (can('search.edit') && own());
+      // Closing an activity (e.g. a meeting someone else logged) is open to
+      // anyone who can edit — only the outcome fields change (decision B4).
+      allow update: if can('search.edit') && resource.data.get('status', '') == 'open'
+        && onlyFields(['status', 'closedNotes', 'closedAt', 'closedBy'])
+        && request.resource.data.get('closedBy', me()) == me();
     }
     match /searchPeople/{id} {
       allow read: if can('search.view');
