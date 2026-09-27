@@ -147,7 +147,10 @@ async function prepareEmail(opts) {
   const unsubscribeUrl = UNSUBSCRIBE_BASE_URL + makeUnsubToken(messageId, UNSUBSCRIBE_SECRET.value());
   // A person's organisation stands in for the company in {{company.*}}.
   const ctxCompany = company || (person ? { name: person.org, emailName: person.org } : (isReply && thread.companyName ? { name: thread.companyName } : {}));
-  const ctx = buildContext({ company: ctxCompany, contactName, sender, unsubscribeUrl, aiOpener: opts.aiOpener || "" });
+  // T4: {{sender.phone}} — the address owner's phone (Team → person).
+  let senderPhone = "";
+  if (sender.owner) { try { senderPhone = (await db().doc(`teamDirectory/${sender.owner}`).get()).data()?.contactPhone || ""; } catch (e) { /* field stays empty */ } }
+  const ctx = buildContext({ company: ctxCompany, contactName, sender: { ...sender, email: senderId, phone: senderPhone }, unsubscribeUrl, aiOpener: opts.aiOpener || "" });
 
   let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null;
   if (opts.templateId) {

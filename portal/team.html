@@ -193,13 +193,13 @@
         const custom = (p.extraPerms || []).length || (p.removedPerms || []).length;
         const partner = p.roleId === 'partner';
         return `<tr>
-          <td><b>${esc(p.name || p.id)}</b> <span class="hint">· ${esc(p.key || '')}</span><div class="hint">${esc(p.id)}</div></td>
+          <td><b>${esc(p.name || p.id)}</b> <span class="hint">· ${esc(p.key || '')}</span><div class="hint">${esc(p.id)}</div>${p.contactPhone || p.contactEmail ? `<div class="hint" title="Printed on letters and call scripts they sign">On letters: ${esc([p.contactPhone, p.contactEmail].filter(Boolean).join(' · '))}</div>` : ''}</td>
           <td>${esc(roleName(p.roleId))}${custom ? ' <span class="badge badge--amber" title="Extra or removed permissions">custom</span>' : ''}<div class="hint">${esc(tabsOf(eff).join(' · ') || 'no tabs')}</div></td>
           <td>${statusBadge(p)}</td>
           <td style="white-space:nowrap;">${partner ? '—' : esc(day(p.endsAt))}</td>
           <td style="white-space:nowrap;">${tsMs(p.lastSignInAt) ? esc(dtFmt.format(new Date(tsMs(p.lastSignInAt)))) : '<span class="hint">never</span>'}</td>
           <td class="c">${p.ndaSigned ? '✓' : '<span class="hint">—</span>'}</td>
-          <td><div class="actions">${partner ? '<span class="hint">Partner — always full access</span>' : `
+          <td><div class="actions">${partner ? `<span class="hint">Partner — always full access</span> <button class="btn btn--ghost btn--sm" data-contact="${esc(p.id)}">Contact details</button>` : `
             <button class="btn btn--ghost btn--sm" data-edit="${esc(p.id)}">Edit</button>
             ${['invited', 'active'].includes(p.status) ? `<button class="btn btn--ghost btn--sm" data-mail="${esc(p.id)}" title="${p.invitationSentAt ? 'Last sent ' + esc(day(p.invitationSentAt)) : 'Not sent yet'}">Resend invitation</button>` : ''}
             ${p.status === 'suspended' ? `<button class="btn btn--ghost btn--sm" data-act="reactivate" data-email="${esc(p.id)}">Reactivate</button>` : p.status !== 'ended' ? `<button class="btn btn--ghost btn--sm" data-act="suspend" data-email="${esc(p.id)}">Suspend</button>` : ''}
@@ -213,6 +213,15 @@
         <p class="hint" style="margin-top:10px;">An invited person signs in at <b>${esc(location.host)}/portal</b> with a magic link sent to their email, and lands on their first tab. Every change is recorded under Activity.${location.host.startsWith('staging') ? ' Until staging is merged into main, team members sign in on staging only.' : ''}</p>`;
       $('inviteBtn').addEventListener('click', () => openPerson(null));
       $('v-people').querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => openPerson(people.find(p => p.id === b.dataset.edit))));
+      // T4: the phone / email printed on letters and call scripts a partner signs.
+      $('v-people').querySelectorAll('[data-contact]').forEach(b => b.addEventListener('click', async () => {
+        const p = people.find(x => x.id === b.dataset.contact);
+        const phone = prompt(`${p.name} — phone printed on letters and call scripts:`, p.contactPhone || '');
+        if (phone === null) return;
+        const email = prompt(`${p.name} — email printed on letters (empty = ${p.id}):`, p.contactEmail || '');
+        if (email === null) return;
+        try { await call({ action: 'update', email: p.id, member: { contactPhone: phone, contactEmail: email } }); toast('Contact details saved.'); } catch (e) { toast(errText(e)); }
+      }));
       $('v-people').querySelectorAll('[data-mail]').forEach(b => b.addEventListener('click', async () => {
         const p = people.find(x => x.id === b.dataset.mail);
         if (!confirm(`Email ${p.name} the invitation again (link to ${location.host})?`)) return;
@@ -252,6 +261,11 @@
           <div class="field"><label for="fStart">Access from (optional)</label><input type="date" id="fStart" value="${esc(isoDay(base.startsAt))}"></div>
           <div class="field"><label for="fEnd">Access until</label><input type="date" id="fEnd" value="${esc(editing ? isoDay(base.endsAt) : endDefault)}"><span class="hint">Access stops by itself on this day. Empty = no end date.</span></div>
         </div>
+        <div class="row2">
+          <div class="field"><label for="fPhone">Phone on letters (optional)</label><input type="tel" id="fPhone" value="${esc(base.contactPhone || '')}" placeholder="+351 9xx xxx xxx"></div>
+          <div class="field"><label for="fCEmail">Email on letters (optional)</label><input type="email" id="fCEmail" value="${esc(base.contactEmail || '')}" placeholder="empty = the sign-in email if @douropartners.pt"></div>
+        </div>
+        <span class="hint" style="display:block;margin:-6px 0 10px;">Printed on letters and call scripts this person signs: {{sender.phone}}, {{sender.email}}.</span>
         <label class="check"><input type="checkbox" id="fNda"${base.ndaSigned ? ' checked' : ''}> NDA signed</label>
         ${editing ? '' : `<label class="check"><input type="checkbox" id="fMail" checked> Email them the invitation (from noreply@douropartners.pt, with the link to sign in at ${esc(location.host)})</label>`}
         <div class="field"><label>What they can see and do</label><span class="hint">Ticks come from the role; change them to give or take away something for this person only.</span></div>
@@ -281,7 +295,7 @@
         const member = {
           email: $('fEmail').value, name: $('fName').value, key: $('fKey').value, roleId: $('fRole').value,
           startsAt: $('fStart').value || null, endsAt: $('fEnd').value || null, // Lisbon days; the server sets 00:00 / 23:59
-          ndaSigned: $('fNda').checked, notes: $('fNotes').value,
+          ndaSigned: $('fNda').checked, notes: $('fNotes').value, contactPhone: $('fPhone').value, contactEmail: $('fCEmail').value,
           extraPerms: [...current].filter(x => !roleSet.has(x)), removedPerms: [...roleSet].filter(x => !current.has(x)),
         };
         $('mSave').disabled = true; $('mErr').hidden = true;

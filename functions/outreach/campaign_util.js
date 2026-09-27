@@ -179,6 +179,9 @@ function normalizeCampaign(input, existing = null) {
     priority: intIn(src.priority, 1, 3, 2),
     // Team access: "owner" (the company's owner) or any team member's key.
     assignee: src.assignee === "owner" || TEAM_KEY_RE.test(src.assignee || "") ? src.assignee : "owner",
+    // T4: who signs letters / call scripts (name, phone, email): the company's
+    // owner (André when there's none) or a chosen team member.
+    signer: src.signer === "owner" || TEAM_KEY_RE.test(src.signer || "") ? src.signer : "owner",
     approvalDefault: src.approvalDefault === "auto" ? "auto" : "approval",
     recipientPolicy: ["primary_contact", "best_person"].includes(src.recipientPolicy) ? src.recipientPolicy : "company",
     senderPolicy,

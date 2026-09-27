@@ -61,7 +61,8 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
       cae: company.caeDescription || company.caeCode || "",
     },
     contact: { firstName: firstName(contactName) },
-    sender: { firstName: firstName(sender.displayName), signature: sender.signature || "" },
+    // T4: sender.email = the sending address; sender.phone = its owner's (Team).
+    sender: { firstName: firstName(sender.displayName), name: sender.displayName || "", email: sender.email || "", phone: sender.phone || "", signature: sender.signature || "" },
     unsubscribeUrl,
     ai: { opener: aiOpener || "" }, // Phase 4 — written per company, only in approval steps
   };

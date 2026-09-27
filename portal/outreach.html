@@ -758,7 +758,7 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.name', 'sender.phone', 'sender.email', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
 
     const fns = getFunctions(auth.app, 'us-central1');
     const callSend = httpsCallable(fns, 'outreachSend');
@@ -1535,7 +1535,7 @@
       return {
         company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '' },
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
-        sender: { firstName: String(s.displayName || '').split(' ')[0], signature: s.signature || '' },
+        sender: { firstName: String(s.displayName || '').split(' ')[0], name: s.displayName || '', email: s.id || '', phone: (window.teamDir || []).find(m => m.key === s.owner)?.contactPhone || '', signature: s.signature || '' },
         unsubscribeUrl: 'https://douropartners.pt/u/…',
       };
     }
@@ -3633,12 +3633,20 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       }
       refreshReads();
     }
-    function coCtx(c, assignee) {
-      const full = OWNER_FULL[assignee] || OWNER_FULL[myOwner] || '';
+    // T4: who signs a letter / call script — the task's choice, else the
+    // campaign's, else the company's owner, else André.
+    function signerFor(t, c) {
+      const camp = campaigns.find(x => x.id === t?.campaignId);
+      const pick = t?.signer || (camp?.signer && camp.signer !== 'owner' ? camp.signer : null) || c?.owner || 'andre';
+      return (window.teamDir || []).some(m => m.key === pick && m.active !== false) || OWNER_FULL[pick] ? pick : 'andre'; // someone who left doesn't sign
+    }
+    function coCtx(c, signer) {
+      const m = (window.teamDir || []).find(x => x.key === signer) || {};
+      const full = m.name || OWNER_FULL[signer] || '';
       return {
         company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '' },
         contact: { firstName: '' },
-        sender: { firstName: full.split(' ')[0] || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
+        sender: { firstName: full.split(' ')[0] || '', name: full, phone: m.contactPhone || '', email: m.contactEmail || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
         unsubscribeUrl: '',
       };
     }
@@ -3656,7 +3664,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       if (!tpl) return null;
       const v = (tpl.variants || []).find(x => x.key === t.variantKey) || (tpl.variants || [])[0];
       if (!v) return null;
-      const ctx = coCtx(c, t.assignee);
+      const ctx = coCtx(c, signerFor(t, c));
       return { subject: v.subject ? fillText(v.subject, ctx) : '', body: fillText(v.body, ctx), name: tpl.name };
     }
     const telHref = (n) => 'tel:' + String(n || '').replace(/[^\d+]/g, '');
@@ -3726,6 +3734,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <div class="draft__meta">
             <span><button class="camp-link" style="font-size:0.76rem;" data-topencamp="${esc(t.campaignId)}">${esc(t.campaignName || 'Campaign')}</button> · ${esc(t.stepName || '')} (${(t.stepIndex ?? 0) + 1} of ${t.stepCount || '?'})</span>
             <span>for <select data-tassign style="width:auto;padding:2px 6px;font-size:0.76rem;"><option value="">nobody</option>${ownerOpts(t.assignee)}</select></span>
+            ${txt ? `<span title="Name, phone and email in the ${t.channel === 'call' ? 'script' : 'text'}">signed by <select data-tsigner style="width:auto;padding:2px 6px;font-size:0.76rem;">${ownerOpts(signerFor(t, c))}</select></span>` : ''}
           </div>
           ${t.instructions ? `<div class="note" style="margin-bottom:8px;"><b>To do:</b> ${esc(t.instructions)}</div>` : ''}
           <div class="task__grid">
@@ -3769,6 +3778,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         el.querySelector('[data-tassign]').addEventListener('change', async (e) => {
           await campCall({ action: 'updateTask', taskId: t.id, assignee: e.target.value || null }, `Assigned to ${OWNER_LABEL[e.target.value] || 'nobody'}.`);
         });
+        el.querySelector('[data-tsigner]')?.addEventListener('change', async (e) => {
+          await campCall({ action: 'updateTask', taskId: t.id, signer: e.target.value || null }, `Signed by ${OWNER_LABEL[e.target.value] || e.target.value}.`);
+        });
         el.querySelectorAll('[data-tout]').forEach(b => b.addEventListener('click', async () => {
           const outcome = b.dataset.tout;
           const def = (TASK_OUTCOMES[t.channel] || []).find(o => o[0] === outcome);
@@ -3803,7 +3815,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <button class="btn btn--ghost btn--sm" id="letPosted"${letterSel.size ? '' : ' disabled'}>Mark selected as printed &amp; posted</button>
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th></th><th>Company</th><th>Address</th><th>Campaign · step</th><th>Template</th><th>Due</th></tr></thead>
+            <thead><tr><th></th><th>Company</th><th>Address</th><th>Campaign · step</th><th>Template</th><th>Signed by</th><th>Due</th></tr></thead>
             <tbody>${list.length ? list.map(t => {
               const c = coCache.get(t.companyId) || {};
               const addr = [c.hqAddress, [c.postcode, c.concelho].filter(Boolean).join(' ')].filter(Boolean).join(', ');
@@ -3812,13 +3824,18 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
                 <td style="font-size:0.8rem;">${esc(t.campaignName || '')} · ${esc(t.stepName || '')}</td>
                 <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
+                <td style="white-space:nowrap;"><select data-lsigner="${esc(t.id)}" style="width:auto;padding:2px 6px;font-size:0.78rem;">${ownerOpts(signerFor(t, c))}</select>${(window.teamDir || []).find(m => m.key === signerFor(t, c))?.contactPhone ? '' : ' <span class="pill pill--warn" title="Add it in Team → Contact details">no phone</span>'}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
-            }).join('') : '<tr><td colspan="6" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
+            }).join('') : '<tr><td colspan="7" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
           </table></div>
           <p class="hint" style="padding:10px 14px;">Print on plain A4 and fold into a window envelope (address on the left). The legal entity line from Settings → Legal footer is printed at the bottom. After posting, mark them — the sequence then moves on.</p>
         </div>`;
       const sync = () => { $('letPrint').disabled = $('letPosted').disabled = !letterSel.size; $('letPrint').textContent = `Print selected (${num(letterSel.size)})`; };
       $('lettersView').querySelectorAll('[data-let]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) letterSel.add(cb.dataset.let); else letterSel.delete(cb.dataset.let); sync(); }));
+      $('lettersView').querySelectorAll('[data-lsigner]').forEach(s => s.addEventListener('change', async () => {
+        const r = await campCall({ action: 'updateTask', taskId: s.dataset.lsigner, signer: s.value || null }, `Signed by ${OWNER_LABEL[s.value] || s.value}.`);
+        if (r) { const t = tasks.find(x => x.id === s.dataset.lsigner); if (t) t.signer = s.value; renderLetters(); }
+      }));
       $('letAll')?.addEventListener('change', (e) => { letterSel = e.target.checked ? new Set(list.map(t => t.id)) : new Set(); renderLetters(); });
       $('letPrint').addEventListener('click', () => printLetters(list.filter(t => letterSel.has(t.id))));
       $('letPosted').addEventListener('click', async () => {
@@ -3838,7 +3855,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const pages = list.map(t => {
         const c = coCache.get(t.companyId) || {};
         const txt = taskTemplateText(t, c) || { subject: '', body: '(no letter template on this step)' };
-        const ctx = coCtx(c, t.assignee);
+        const ctx = coCtx(c, signerFor(t, c));
         return `<section class="page">
           <div class="addr">${esc(c.name || t.companyName || '')}<br>${esc(c.hqAddress || '')}<br>${esc([c.postcode, c.concelho].filter(Boolean).join(' '))}</div>
           <p class="date">${esc(date)}</p>
@@ -4039,6 +4056,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               </select><span class="hint">Chosen at the first email and kept for the follow-ups. People on personal addresses (gmail, sapo…) are allowed and flagged.</span></div>
             <div class="field"><label for="csAssignee">Tasks (calls, LinkedIn, letters…) go to</label>
               <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option>${ownerOpts(c.assignee)}</select></div>
+            <div class="field"><label for="csSigner">Letters and call scripts signed by</label>
+              <select id="csSigner"${dis}><option value="owner"${(c.signer || 'owner') === 'owner' ? ' selected' : ''}>The company's owner (André if none)</option>${ownerOpts(c.signer === 'owner' ? '' : c.signer)}</select>
+              <span class="hint">Their name, phone and email fill {{sender.name}}, {{sender.phone}}, {{sender.email}}. Each letter or task can be changed.</span></div>
           </div>
           <div class="row2">
             <div class="field"><label for="csMaxDay">Max emails per day (this campaign)</label><input type="text" inputmode="numeric" id="csMaxDay" value="${esc(c.pacing?.maxPerDay ?? '')}" placeholder="no own limit"${dis}>
@@ -4109,7 +4129,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         const b = $('csSave'); b.disabled = true;
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: {
           name: $('csName').value, description: $('csDesc').value, priority: Number($('csPrio').value),
-          approvalDefault: $('csAppr').value, pacing: { newPerDay: pace, maxPerDay: maxDay }, assignee: $('csAssignee').value, recipientPolicy: $('csRecip').value,
+          approvalDefault: $('csAppr').value, pacing: { newPerDay: pace, maxPerDay: maxDay }, assignee: $('csAssignee').value, signer: $('csSigner').value, recipientPolicy: $('csRecip').value,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },

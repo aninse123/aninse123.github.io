@@ -62,7 +62,8 @@ async function audit(by, action, target, before, after) {
 // Keep the public login list (hashes only) and the team directory in step
 // with the team. The directory (teamDirectory/{key}: key, name, active) is
 // what every team member reads to show owners and task assignees — it holds
-// no emails, roles or permissions.
+// no roles or permissions, and no sign-in email except a @douropartners.pt
+// one used as the contact printed on letters (T4: contactPhone / contactEmail).
 async function syncLoginHashes() {
   const snap = await db().collection("team").get();
   const now = new Date();
@@ -77,6 +78,8 @@ async function syncLoginHashes() {
     keys.add(m.key);
     batch.set(db().doc(`teamDirectory/${m.key}`), {
       key: m.key, name: m.name || m.key, partner: m.roleId === "partner",
+      contactPhone: m.contactPhone || null,
+      contactEmail: m.contactEmail || (/@douropartners\.pt$/.test(d.id) ? d.id : null),
       active: P.PARTNER_EMAILS.includes(d.id) || P.isActive(m, now), updatedAt: FieldValue.serverTimestamp(),
     });
   });
@@ -116,7 +119,12 @@ function cleanMember(src, existing = {}) {
     endsAt: "endsAt" in src ? tsOrNull(src.endsAt, "end") : existing.endsAt ?? null,
     ndaSigned: "ndaSigned" in src ? !!src.ndaSigned : !!existing.ndaSigned,
     notes: String(src.notes ?? existing.notes ?? "").slice(0, 1000),
+    // T4: printed on letters / call scripts they sign ({{sender.phone}}, {{sender.email}}).
+    contactPhone: String(src.contactPhone ?? existing.contactPhone ?? "").trim().slice(0, 30),
+    contactEmail: String(src.contactEmail ?? existing.contactEmail ?? "").trim().toLowerCase().slice(0, 120),
   };
+  if (out.contactPhone && !/^\+?[\d\s().-]{6,30}$/.test(out.contactPhone)) fail("invalid-argument", "bad_phone", "The phone number can have digits, spaces, + ( ) - only.");
+  if (out.contactEmail && !EMAIL_RE.test(out.contactEmail)) fail("invalid-argument", "bad_contact_email", "The contact email isn't valid.");
   if (out.startsAt && out.endsAt && out.endsAt.toMillis() <= out.startsAt.toMillis()) fail("invalid-argument", "bad_dates", "The end date must be after the start date.");
   return out;
 }

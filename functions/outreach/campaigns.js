@@ -803,7 +803,7 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   return { ok: true, status: o.key === "skipped" ? "skipped" : "done", sequence: moved ? (branch?.action === "goto" ? "jumped" : "next") : "unchanged", activityId };
 }
 
-async function updateTask({ taskId, assignee, dueAt, notes }, caller) {
+async function updateTask({ taskId, assignee, signer, dueAt, notes }, caller) {
   const ref = db().doc(`outreachTasks/${taskId || "_"}`);
   const snap = await ref.get();
   if (!snap.exists || snap.data().status !== "open") fail("failed-precondition", "task_closed", "This task is no longer open.");
@@ -812,6 +812,12 @@ async function updateTask({ taskId, assignee, dueAt, notes }, caller) {
     const known = assignee === null || (/^[a-z][a-z0-9-]{1,19}$/.test(String(assignee)) && (["andre", "antonio"].includes(assignee) || (await db().doc(`teamDirectory/${assignee}`).get()).exists));
     if (!known) fail("invalid-argument", "bad_assignee", "Assign to someone on the team, or nobody.");
     upd.assignee = assignee;
+  }
+  // T4: who signs this letter / script (null = the campaign's choice).
+  if (signer !== undefined) {
+    const known = signer === null || (/^[a-z][a-z0-9-]{1,19}$/.test(String(signer)) && (["andre", "antonio"].includes(signer) || (await db().doc(`teamDirectory/${signer}`).get()).exists));
+    if (!known) fail("invalid-argument", "bad_signer", "Choose someone on the team.");
+    upd.signer = signer;
   }
   if (dueAt !== undefined) {
     const d = parseDate(dueAt);
