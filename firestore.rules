@@ -199,7 +199,7 @@ service cloud.firestore {
 
     // ── Investor portal admin ──
     match /investors/{id} {
-      allow read: if can('portal.admin') || can('out.campaigns');
+      allow read: if can('portal.admin') || can('out.campaigns') || can('portal.viewas');
       allow write: if can('portal.admin');
     }
     match /accessGroups/{id} {
@@ -207,7 +207,8 @@ service cloud.firestore {
       allow write: if can('portal.admin');
     }
     match /documents/{id} {
-      allow read, write: if can('portal.admin');
+      allow read: if can('portal.admin') || can('portal.viewas'); // "View as": the documents an investor sees
+      allow write: if can('portal.admin');
     }
     match /portalMessages/{id} {
       allow write: if can('portal.admin');

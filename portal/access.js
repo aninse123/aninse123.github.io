@@ -47,7 +47,7 @@ export const PERMS = [
   ["icrm.delete", "Investor CRM", "Delete investors and any activity"],
   ["icrm.export", "Investor CRM", "Import / export CSV"],
   ["portal.admin", "Admin", "Investor portal: documents, investors & access, messages, notify"],
-  ["portal.viewas", "Admin", "Investor view (\"View as\")"],
+  ["portal.viewas", "Admin", "Investor view: see the portal as any investor, incl. their documents (read only)"],
   ["budget.view", "Budget", "See the budget"],
   ["budget.edit", "Budget", "Edit the budget"],
   ["log.view", "Activity Log", "See the portal activity log"],

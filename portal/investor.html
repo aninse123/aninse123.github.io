@@ -243,6 +243,12 @@
       You are signed in as an admin —
       <a href="/portal/admin.html">Go to Admin Panel →</a>
     </div>
+    <!-- Team access: "View as" — see the portal as a chosen investor (portal.viewas) -->
+    <div id="viewAsBar" class="admin-bar" style="display:none;">
+      <label for="viewAsSel">View the portal as</label>
+      <select id="viewAsSel" style="margin:0 8px;padding:3px 6px;font:inherit;"><option value="">— yourself —</option></select>
+      <span id="viewAsNote"></span>
+    </div>
 
     <nav class="nav">
       <div class="nav__inner">
@@ -284,6 +290,7 @@
 
   <script type="module">
     import { auth, db, ADMIN_EMAILS, addDoc } from './firebase-config.js';
+    import { getAccess } from './access.js';
     import {
       onAuthStateChanged, signOut
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -292,7 +299,11 @@
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
     // ── Activity logging ───────────────────────────────────────
+    // While a team member views the portal as an investor, nothing is logged
+    // (investors' visit and download statistics stay theirs).
+    let viewingAs = null;
     async function logEvent(type, data = {}) {
+      if (viewingAs) return;
       try {
         await addDoc(collection(db, 'activityLog'), {
           type, timestamp: serverTimestamp(), ...data
@@ -374,6 +385,27 @@
 
       const email = user.email;
       document.getElementById('userEmail').textContent = email;
+      // Team access — "View as": pick an investor, see their portal (read only).
+      let docEmails = [email];
+      const access = await getAccess(user).catch(() => null);
+      if (access?.can('portal.viewas')) {
+        const asId = new URLSearchParams(window.location.search).get('as');
+        try {
+          const invSnap = await getDocs(collection(db, 'investors'));
+          const invs = invSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(i => (i.emails || []).length).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+          const sel = document.getElementById('viewAsSel');
+          sel.innerHTML += invs.map(i => `<option value="${i.id}">${String(i.name || i.id).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))}</option>`).join('');
+          const chosen = invs.find(i => i.id === asId);
+          if (chosen) {
+            sel.value = chosen.id;
+            viewingAs = chosen;
+            docEmails = chosen.emails.slice(0, 30);
+            document.getElementById('viewAsNote').textContent = `— what ${chosen.name} sees (${chosen.emails.length} email${chosen.emails.length === 1 ? '' : 's'}). Nothing is logged while you look.`;
+          }
+          sel.addEventListener('change', () => { const u = new URL(window.location.href); if (sel.value) u.searchParams.set('as', sel.value); else u.searchParams.delete('as'); window.location.href = u.toString(); });
+          document.getElementById('viewAsBar').style.display = 'block';
+        } catch (e) { console.warn('view as', e); }
+      }
       document.getElementById('loadingScreen').style.display = 'none';
       document.getElementById('app').style.display = 'block';
 
@@ -391,10 +423,9 @@
       }
 
       try {
-        const q = query(
-          collection(db, 'documents'),
-          where('allowedEmails', 'array-contains', email)
-        );
+        const q = docEmails.length === 1
+          ? query(collection(db, 'documents'), where('allowedEmails', 'array-contains', docEmails[0]))
+          : query(collection(db, 'documents'), where('allowedEmails', 'array-contains-any', docEmails));
 
         // Fetch docs, stage config, and messages in parallel
         const messagesQ = query(collection(db, 'portalMessages'), orderBy('createdAt', 'desc'));
@@ -442,7 +473,7 @@
         snapshot.forEach(d => docs.push({ id: d.id, ...d.data() }));
         docs.sort((a, b) => (b.addedAt?.seconds || 0) - (a.addedAt?.seconds || 0));
 
-        subtitle.textContent = `${docs.length} document${docs.length !== 1 ? 's' : ''} shared with you`;
+        subtitle.textContent = `${docs.length} document${docs.length !== 1 ? 's' : ''} shared with ${viewingAs ? viewingAs.name : 'you'}`;
 
         // Category filter pills — only show if more than one category exists
         const categories = [...new Set(docs.map(d => d.category).filter(Boolean))];
