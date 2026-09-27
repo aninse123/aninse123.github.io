@@ -3405,7 +3405,7 @@
       drafts.forEach(d => { const k = d.source === 'manual' ? '__manual' : d.campaignId; byCamp[k] = (byCamp[k] || 0) + 1; });
       if (approveFilter !== 'all' && !byCamp[approveFilter]) approveFilter = 'all';
       const list = drafts.filter(d => approveFilter === 'all' || (approveFilter === '__manual' ? d.source === 'manual' : d.campaignId === approveFilter));
-      const who = (email) => (window.teamDir || []).find(m => email && m.key === (drafts.find(x => x.writtenBy === email)?.writtenByKey))?.label || String(email || '').split('@')[0];
+      const writerName = (email) => (window.teamDir || []).find(m => email && m.key === (drafts.find(x => x.writtenBy === email)?.writtenByKey))?.label || String(email || '').split('@')[0];
       const shown = list.slice(0, 50);
       const campName = (id) => (id === '__manual' ? 'Written by the team' : campaigns.find(c => c.id === id)?.name || 'Campaign');
       const stepName = (d) => { const c = campaigns.find(x => x.id === d.campaignId); const i = (c?.steps || []).findIndex(s => s.id === d.stepId); return i < 0 ? 'Step' : `${c.steps[i].name} (${i + 1} of ${c.steps.length})`; };
@@ -3430,7 +3430,7 @@
             </div>
             <div class="draft__meta">
               ${d.source === 'manual'
-                ? `<span><span class="pill pill--info">written by ${esc(who(d.writtenBy))}</span>${d.isReply ? ' · reply' : ''}${d.lastError ? ` · <span style="color:var(--danger);">last attempt failed: ${esc(d.lastError)}</span>` : ''}</span>`
+                ? `<span><span class="pill pill--info">written by ${esc(writerName(d.writtenBy))}</span>${d.isReply ? ' · reply' : ''}${d.lastError ? ` · <span style="color:var(--danger);">last attempt failed: ${esc(d.lastError)}</span>` : ''}</span>`
                 : `<span><button class="camp-link" style="font-size:0.76rem;" data-opencamp="${esc(d.campaignId)}">${esc(campName(d.campaignId))}</button> · ${esc(stepName(d))}${d.variantKey ? ` · variant ${esc(d.variantKey)}` : ''}</span>`}
               <span>from ${esc(localPart(d.senderId))} ${test}</span>
             </div>
@@ -3485,16 +3485,16 @@
           if (act === 'skip') r = await campCall({ action: 'skipDraft', messageId: id }, 'Skipped — drafted again the next working day.');
           if (act === 'send') {
             const ed = draftEdits.get(id);
-            if (!confirm(`Send this email written by ${who(d.writtenBy)} now, from ${d.senderId}?`)) { b.disabled = false; return; }
+            if (!confirm(`Send this email written by ${writerName(d.writtenBy)} now, from ${d.senderId}?`)) { b.disabled = false; return; }
             try {
               const payload = { action: 'approveDraft', messageId: id };
               if (ed) { payload.body = ed.body; if (!d.isReply) payload.subject = ed.subject; }
               const res = (await callSend(payload)).data;
-              toast(`Sent${res.isTest ? ' (test)' : ''} — ${who(d.writtenBy)}'s email is in the conversation.`); r = true;
+              toast(`Sent${res.isTest ? ' (test)' : ''} — ${writerName(d.writtenBy)}'s email is in the conversation.`); r = true;
             } catch (e) { toast(errText(e)); r = false; }
           }
           if (act === 'return') {
-            const note = prompt(`Return to ${who(d.writtenBy)} — what should change? (they see this note)`, '');
+            const note = prompt(`Return to ${writerName(d.writtenBy)} — what should change? (they see this note)`, '');
             if (note === null) { b.disabled = false; return; }
             try { await callSend({ action: 'returnDraft', messageId: id, note }); toast('Returned with your note.'); r = true; }
             catch (e) { toast(errText(e)); r = false; }
