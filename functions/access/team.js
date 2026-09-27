@@ -23,6 +23,12 @@ const { getFirestore, FieldValue, Timestamp } = require("firebase-admin/firestor
 const { getAuth } = require("firebase-admin/auth");
 const P = require("./perms");
 const { lisbonDate } = require("../outreach/recurring");
+const { sendEmail } = require("../outreach/resend");
+const { RESEND_READ_KEY } = require("../outreach/config");
+const { buildOutreachHtml } = require("../outreach/branded");
+
+// Where an invitation may point people to sign in (the page that invited them).
+const PORTAL_ORIGINS = ["https://douropartners.pt", "https://www.douropartners.pt", "https://staging--douro-partners.netlify.app"];
 
 const db = () => getFirestore();
 const REGION = "us-central1";
@@ -140,7 +146,46 @@ async function seed(by) {
   return { created };
 }
 
-async function invite({ member }, by) {
+// "You've been given access" — from noreply@douropartners.pt, replies to the
+// partner who invited. Portuguese first, English below.
+async function sendInvite(email, by, origin) {
+  const snap = await db().doc(`team/${email}`).get();
+  if (!snap.exists) fail("not-found", "not_found", "Person not found.");
+  const m = snap.data();
+  if (!P.isActive(m)) fail("failed-precondition", "not_active", "This person's access isn't active.");
+  const role = m.roleId ? await readRole(m.roleId) : null;
+  const base = PORTAL_ORIGINS.includes(origin) ? origin : "https://douropartners.pt";
+  const url = `${base}/portal/login.html`;
+  const first = String(m.name || "").trim().split(/\s+/)[0] || "";
+  const until = m.endsAt ? new Intl.DateTimeFormat("pt-PT", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Lisbon" }).format(m.endsAt.toDate()) : null;
+  const untilEn = m.endsAt ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Lisbon" }).format(m.endsAt.toDate()) : null;
+  const message = [
+    `Olá ${first},`,
+    "",
+    `Foi-lhe dado acesso ao portal da Douro Partners${role?.name ? ` (função: ${role.name})` : ""}${until ? `, até ${until}` : ""}.`,
+    "",
+    `Para entrar: abra ${url}, escreva este endereço (${email}) e siga o link que recebe por email. Não há palavra-passe.`,
+    "",
+    "Qualquer questão, responda a este email.",
+    "",
+    "—",
+    "",
+    `Hi ${first}, you've been given access to the Douro Partners portal${role?.name ? ` (role: ${role.name})` : ""}${untilEn ? ` until ${untilEn}` : ""}. To sign in, open ${url}, enter this address and follow the link we email you. No password needed.`,
+  ].join("\n");
+  const res = await sendEmail(RESEND_READ_KEY.value(), {
+    from: "Douro Partners <noreply@douropartners.pt>",
+    to: [email],
+    reply_to: by,
+    subject: "Acesso ao portal Douro Partners",
+    text: message,
+    html: buildOutreachHtml({ message }),
+  });
+  await db().doc(`team/${email}`).update({ invitationSentAt: FieldValue.serverTimestamp(), invitationSentBy: by });
+  await audit(by, "inviteEmail", email, null, { to: email, url });
+  return { sent: true, id: res.data?.id || null };
+}
+
+async function invite({ member, sendEmail: withEmail, origin }, by) {
   const email = norm(member?.email);
   if (!EMAIL_RE.test(email)) fail("invalid-argument", "bad_email", "Enter a valid email address.");
   const ref = db().doc(`team/${email}`);
@@ -155,7 +200,11 @@ async function invite({ member }, by) {
   await syncLoginHashes();
   await refreshClaims(email);
   await audit(by, "invite", email, cur.exists ? { status: cur.data().status } : null, { roleId: fields.roleId, key: fields.key, endsAt: fields.endsAt });
-  return { email };
+  let emailed = false, emailError = null;
+  if (withEmail) {
+    try { emailed = (await sendInvite(email, by, origin)).sent; } catch (e) { emailError = e.message || String(e); }
+  }
+  return { email, emailed, emailError };
 }
 
 async function update({ email: raw, member }, by) {
@@ -215,7 +264,7 @@ async function deleteRole({ roleId }, by) {
   return { ok: true };
 }
 
-exports.teamAccess = onCall({ region: REGION }, async (request) => {
+exports.teamAccess = onCall({ region: REGION, secrets: [RESEND_READ_KEY] }, async (request) => {
   const by = P.requirePerm(request, "access.manage", "Only partners can manage team access.");
   const data = request.data || {};
   switch (data.action) {
@@ -227,6 +276,7 @@ exports.teamAccess = onCall({ region: REGION }, async (request) => {
     case "end": return setStatus(norm(data.email), "ended", by, "end");
     case "saveRole": return saveRole(data, by);
     case "deleteRole": return deleteRole(data, by);
+    case "sendInvite": return sendInvite(norm(data.email), by, data.origin);
     default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
   }
 });

@@ -2,6 +2,12 @@
 // claims from the blocking functions, suspension / end dates, and the
 // permission checks in the Outreach callables.
 const F = require("./fake_firebase.js");
+// Invitation emails go to Resend: capture them, never call the real API.
+const mails = [];
+global.fetch = async (url, opts = {}) => {
+  if (String(url).endsWith("/emails") && opts.method === "POST") mails.push({ body: JSON.parse(opts.body), auth: opts.headers.Authorization });
+  return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ id: "rs_" + mails.length }) };
+};
 const crypto = require("crypto");
 const fns = require("../index.js");
 const P = require("../access/perms.js");
@@ -102,6 +108,16 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   ok("Outreach settings need out.admin", (await call("outreachAdmin", analyst, { action: "seed" })).err?.code === "permission-denied");
   ok("relationship sends: Network page needs net.email, the admin notices need portal.admin", (await call("outreachPeopleSend", as("x@d.pt", ["net.view"]), { context: "network", recipients: [{ email: "a@b.pt" }], subject: "s", message: "m" })).err?.details?.reason === "not_admin"
     && (await call("outreachPeopleSend", as("x@d.pt", ["net.email"]), { context: "portal", recipients: [{ email: "a@b.pt" }], subject: "s", message: "m" })).err?.details?.reason === "not_admin");
+
+  // Invitation email
+  const ie = await team({ action: "invite", member: { email: "ines@douropartners.pt", name: "Inês Costa", key: "ines", roleId: "intern", endsAt: "2026-12-20" }, sendEmail: true, origin: "https://staging--douro-partners.netlify.app" });
+  const mail = mails[mails.length - 1]?.body;
+  ok("invite with email: sent from noreply@douropartners.pt to her, replies to the partner, full-access key", ie.emailed === true && mail.to[0] === "ines@douropartners.pt" && /noreply@douropartners\.pt/.test(mail.from) && mail.reply_to === "andre.rocha@douropartners.pt" && mails[mails.length - 1].auth === "Bearer secret-RESEND_READ_KEY");
+  ok("…with the sign-in link of the site that invited her, her role and end date (PT + EN)", mail.text.includes("https://staging--douro-partners.netlify.app/portal/login.html") && mail.text.includes("função: Intern") && mail.text.includes("20 de dezembro de 2026") && mail.text.includes("Hi Inês"));
+  const before = mails.length;
+  await team({ action: "sendInvite", email: "ines@douropartners.pt", origin: "https://evil.example.com" });
+  ok("resend invitation; a foreign site in the link is replaced by douropartners.pt", mails.length === before + 1 && mails[mails.length - 1].body.text.includes("https://douropartners.pt/portal/login.html") && !mails[mails.length - 1].body.text.includes("evil"));
+  ok("no email unless asked", (await team({ action: "invite", member: { email: "sem@douropartners.pt", name: "Sem Email", key: "sem", roleId: "viewer" } })).emailed === false && mails.length === before + 1);
 
   // Team directory (owners / assignees for everyone on the team)
   const dir = [...store.entries()].filter(([p]) => p.startsWith("teamDirectory/")).map(([, d]) => d);

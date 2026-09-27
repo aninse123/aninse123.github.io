@@ -72,11 +72,23 @@ function make(email, role, perms, key) {
   };
 }
 
+// "Preview as" (partners only, this browser tab): show the portal with a
+// role's permissions. Only what the browser shows changes — the server still
+// treats the partner as a partner.
+const PREVIEW_KEY = 'douroPreviewAs';
+function readPreview() { try { return JSON.parse(sessionStorage.getItem(PREVIEW_KEY) || 'null'); } catch (e) { return null; } }
+export function startPreview(name, perms) { try { sessionStorage.setItem(PREVIEW_KEY, JSON.stringify({ name, perms })); } catch (e) {} }
+export function stopPreview() { try { sessionStorage.removeItem(PREVIEW_KEY); } catch (e) {} }
+
 // The person's access, from their token (force = fetch a fresh token first).
 export async function getAccess(user, { force = false } = {}) {
   if (!user?.email) return null;
   const email = user.email.trim().toLowerCase();
-  if (ADMIN_EMAILS.includes(email)) return make(email, 'partner', ALL, PARTNER_KEYS[email]);
+  if (ADMIN_EMAILS.includes(email)) {
+    const pv = readPreview();
+    if (pv && Array.isArray(pv.perms)) return { ...make(email, 'preview', pv.perms.filter(p => ALL.includes(p)), PARTNER_KEYS[email]), preview: String(pv.name || 'role') };
+    return make(email, 'partner', ALL, PARTNER_KEYS[email]);
+  }
   let claims = {};
   try { claims = (await user.getIdTokenResult(force)).claims || {}; } catch (e) { claims = {}; }
   return make(email, claims.role || null, Array.isArray(claims.perms) ? claims.perms : [], claims.key || null);
@@ -95,12 +107,22 @@ export function applyPerms(a) {
   const missing = [...ALL, ...HIDE_KEYS].filter(p => !a.keys.has(p));
   el.textContent = missing.length ? `${missing.map(p => `[data-perm~="${p}"]`).join(',\n')} { display: none !important; }` : '';
   document.documentElement.dataset.access = a.partner ? 'partner' : (a.role || 'none');
+  if (a.preview && !document.getElementById('previewBar')) {
+    const bar = document.createElement('div');
+    bar.id = 'previewBar';
+    bar.setAttribute('role', 'status');
+    bar.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:500;background:#1E2A38;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.25);display:flex;gap:12px;align-items:center;font:500 0.86rem Inter,sans-serif;max-width:calc(100vw - 32px);flex-wrap:wrap;';
+    bar.innerHTML = '<span>Previewing as <b></b> — this is what they see. You are still a partner on the server.</span><button type="button" style="font:inherit;font-weight:600;background:#fff;color:#1E2A38;border:0;border-radius:6px;padding:5px 10px;cursor:pointer;">Stop preview</button>';
+    bar.querySelector('b').textContent = a.preview;
+    bar.querySelector('button').addEventListener('click', () => { stopPreview(); window.location.href = '/portal/team.html'; });
+    document.body.appendChild(bar);
+  }
 }
 
 // Reload when the person's own team record changes (role, permissions) and
 // sign out at once when their access is suspended or ended.
 export function watchAccess(user, a) {
-  if (!user || a.partner) return;
+  if (!user || a.partner || a.preview) return;
   let first = true;
   onSnapshot(doc(db, 'team', a.email), async (snap) => {
     if (first) { first = false; return; }

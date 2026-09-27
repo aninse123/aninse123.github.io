@@ -109,7 +109,7 @@
 
   <script type="module">
     import { auth, db, addReads } from './firebase-config.js';
-    import { guardPage, PERMS, ALL, TAB_PERM } from './access.js';
+    import { guardPage, PERMS, ALL, TAB_PERM, startPreview, homeFor } from './access.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import { collection, onSnapshot, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
@@ -201,6 +201,7 @@
           <td class="c">${p.ndaSigned ? '✓' : '<span class="hint">—</span>'}</td>
           <td><div class="actions">${partner ? '<span class="hint">Partner — always full access</span>' : `
             <button class="btn btn--ghost btn--sm" data-edit="${esc(p.id)}">Edit</button>
+            ${['invited', 'active'].includes(p.status) ? `<button class="btn btn--ghost btn--sm" data-mail="${esc(p.id)}" title="${p.invitationSentAt ? 'Last sent ' + esc(day(p.invitationSentAt)) : 'Not sent yet'}">Resend invitation</button>` : ''}
             ${p.status === 'suspended' ? `<button class="btn btn--ghost btn--sm" data-act="reactivate" data-email="${esc(p.id)}">Reactivate</button>` : p.status !== 'ended' ? `<button class="btn btn--ghost btn--sm" data-act="suspend" data-email="${esc(p.id)}">Suspend</button>` : ''}
             ${p.status !== 'ended' ? `<button class="btn btn--danger btn--sm" data-act="end" data-email="${esc(p.id)}">End access</button>` : `<button class="btn btn--ghost btn--sm" data-reinvite="${esc(p.id)}">Invite again</button>`}`}</div></td></tr>`;
       };
@@ -212,6 +213,12 @@
         <p class="hint" style="margin-top:10px;">An invited person signs in at <b>${esc(location.host)}/portal</b> with a magic link sent to their email, and lands on their first tab. Every change is recorded under Activity.${location.host.startsWith('staging') ? ' Until staging is merged into main, team members sign in on staging only.' : ''}</p>`;
       $('inviteBtn').addEventListener('click', () => openPerson(null));
       $('v-people').querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => openPerson(people.find(p => p.id === b.dataset.edit))));
+      $('v-people').querySelectorAll('[data-mail]').forEach(b => b.addEventListener('click', async () => {
+        const p = people.find(x => x.id === b.dataset.mail);
+        if (!confirm(`Email ${p.name} the invitation again (link to ${location.host})?`)) return;
+        b.disabled = true;
+        try { await call({ action: 'sendInvite', email: p.id, origin: location.origin }); toast('Invitation sent.'); } catch (e) { toast(errText(e)); } finally { b.disabled = false; }
+      }));
       $('v-people').querySelectorAll('[data-reinvite]').forEach(b => b.addEventListener('click', () => openPerson(null, people.find(p => p.id === b.dataset.reinvite))));
       $('v-people').querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', async () => {
         const p = people.find(x => x.id === b.dataset.email);
@@ -246,6 +253,7 @@
           <div class="field"><label for="fEnd">Access until</label><input type="date" id="fEnd" value="${esc(editing ? isoDay(base.endsAt) : endDefault)}"><span class="hint">Access stops by itself on this day. Empty = no end date.</span></div>
         </div>
         <label class="check"><input type="checkbox" id="fNda"${base.ndaSigned ? ' checked' : ''}> NDA signed</label>
+        ${editing ? '' : `<label class="check"><input type="checkbox" id="fMail" checked> Email them the invitation (from noreply@douropartners.pt, with the link to sign in at ${esc(location.host)})</label>`}
         <div class="field"><label>What they can see and do</label><span class="hint">Ticks come from the role; change them to give or take away something for this person only.</span></div>
         <div class="perm-list" id="fPerms"></div>
         <div class="field"><label for="fNotes">Notes</label><textarea id="fNotes" rows="2">${esc(base.notes || '')}</textarea></div>
@@ -279,9 +287,14 @@
         $('mSave').disabled = true; $('mErr').hidden = true;
         try {
           if (editing) await call({ action: 'update', email: p.id, member });
-          else await call({ action: 'invite', member });
+          let res = null;
+          if (!editing) res = (await call({ action: 'invite', member, sendEmail: $('fMail').checked, origin: location.origin })).data;
           close();
-          toast(editing ? 'Saved — their page reloads with the new access.' : `Invited. ${member.name.split(' ')[0]} can now sign in at ${location.host}/portal with ${member.email.trim()}.`);
+          const first = member.name.split(' ')[0];
+          toast(editing ? 'Saved — their page reloads with the new access.'
+            : res?.emailed ? `Invited — ${first} has an email with the link to sign in at ${location.host}.`
+            : res?.emailError ? `Invited, but the email failed (${res.emailError}). Use "Resend invitation".`
+            : `Invited. ${first} can now sign in at ${location.host}/portal with ${member.email.trim()}.`);
         } catch (e) { $('mErr').textContent = errText(e); $('mErr').hidden = false; $('mSave').disabled = false; }
       });
     }
@@ -294,7 +307,7 @@
           <div class="toolbar"><h2>Roles</h2><span class="hint">A role is a template; a person can have extra or removed permissions on top.</span><button class="btn btn--primary btn--sm" id="newRoleBtn" style="margin-left:auto;">New role</button></div>
           <div class="table-wrap"><table class="matrix"><thead><tr><th>Permission</th>${cols.map(r => `<th class="c">${esc(r.name)}<div class="hint" style="text-transform:none;letter-spacing:0;font-weight:500;">${count(r.id)} ${count(r.id) === 1 ? 'person' : 'people'}</div></th>`).join('')}</tr></thead>
           <tbody>${GROUPS.map(g => `<tr class="grp"><td colspan="${cols.length + 1}">${esc(g)}</td></tr>${PERMS.filter(x => x[1] === g).map(([code, , label]) => `<tr><td>${esc(label)}<div class="hint">${esc(code)}</div></td>${cols.map(r => `<td class="c"><input type="checkbox" aria-label="${esc(r.name)}: ${esc(label)}" data-role="${esc(r.id)}" data-code="${esc(code)}"${(r.perms || []).includes(code) ? ' checked' : ''}${r.locked || code === 'access.manage' ? ' disabled' : ''}></td>`).join('')}</tr>`).join('')}`).join('')}
-            <tr><td></td>${cols.map(r => `<td class="c">${r.locked ? '<span class="hint">fixed</span>' : `<div class="actions" style="justify-content:center;"><button class="btn btn--ghost btn--sm" data-saverole="${esc(r.id)}">Save</button>${count(r.id) ? '' : `<button class="btn btn--danger btn--sm" data-delrole="${esc(r.id)}">Delete</button>`}</div>`}</td>`).join('')}</tr>
+            <tr><td></td>${cols.map(r => `<td class="c">${r.locked ? '<span class="hint">fixed</span>' : `<div class="actions" style="justify-content:center;"><button class="btn btn--ghost btn--sm" data-preview="${esc(r.id)}" title="See the portal as this role, in this tab">Preview</button><button class="btn btn--ghost btn--sm" data-saverole="${esc(r.id)}">Save</button>${count(r.id) ? '' : `<button class="btn btn--danger btn--sm" data-delrole="${esc(r.id)}">Delete</button>`}</div>`}</td>`).join('')}</tr>
           </tbody></table></div></div>
         <p class="hint" style="margin-top:10px;">Managing team access stays with partners. Saving a role updates everyone who has it at once.</p>`;
       $('newRoleBtn').addEventListener('click', async () => {
@@ -303,6 +316,12 @@
         const src = roles.find(r => r.name.toLowerCase() === String(copy || '').trim().toLowerCase());
         try { await call({ action: 'saveRole', role: { name, perms: src?.perms || [] } }); toast(`Role "${name}" created — tick its permissions and Save.`); } catch (e) { toast(errText(e)); }
       });
+      $('v-roles').querySelectorAll('[data-preview]').forEach(b => b.addEventListener('click', () => {
+        const r = roles.find(x => x.id === b.dataset.preview);
+        startPreview(r.name, r.perms || []);
+        const home = homeFor({ can: (p) => (r.perms || []).includes(p) });
+        window.location.href = home || '/portal/investor.html';
+      }));
       $('v-roles').querySelectorAll('[data-saverole]').forEach(b => b.addEventListener('click', async () => {
         const id = b.dataset.saverole, r = roles.find(x => x.id === id);
         const perms = [...$('v-roles').querySelectorAll(`[data-role="${id}"]:checked`)].map(c => c.dataset.code);
@@ -323,7 +342,7 @@
       try {
         const snap = await getDocs(query(collection(db, 'accessAudit'), orderBy('at', 'desc'), limit(150)));
         addReads(snap.size || 1); refreshReads();
-        const label = { seed: 'Set up team access', invite: 'Invited', update: 'Changed', suspend: 'Suspended', reactivate: 'Reactivated', end: 'Ended access', expired: 'Access ended (end date)', saveRole: 'Changed role', createRole: 'Created role', deleteRole: 'Deleted role', signIn: 'Signed in' };
+        const label = { inviteEmail: 'Invitation emailed', seed: 'Set up team access', invite: 'Invited', update: 'Changed', suspend: 'Suspended', reactivate: 'Reactivated', end: 'Ended access', expired: 'Access ended (end date)', saveRole: 'Changed role', createRole: 'Created role', deleteRole: 'Deleted role', signIn: 'Signed in' };
         const detail = (a) => {
           if (!a.after) return '';
           return Object.entries(a.after).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') || '—' : v && typeof v.toMillis === 'function' ? dateFmt.format(new Date(v.toMillis())) : typeof v === 'object' && v !== null ? '…' : v}`).join(' · ');

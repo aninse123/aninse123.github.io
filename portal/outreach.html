@@ -3544,7 +3544,8 @@
     const mineOrOpen = (t) => !t.assignee || t.assignee === myOwner;
     function updateTaskBadge() {
       const dueMine = tasks.filter(t => t.channel !== 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
-      const n = dueMine + drafts.length + issueDrafts.length + tasks.filter(t => t.channel === 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
+      const canApprove = window.pageAccess ? window.pageAccess.can('out.approve') : true; // writers can't act on the queue
+      const n = dueMine + (canApprove ? drafts.length + issueDrafts.length : 0) + tasks.filter(t => t.channel === 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
       $('approveCount').textContent = n; $('approveCount').hidden = !n;
       $('todoChipN').textContent = dueMine ? `(${num(dueMine)} due)` : '';
     }
