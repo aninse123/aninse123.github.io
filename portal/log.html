@@ -254,10 +254,11 @@
       budget_deleted:          { label: 'Budget item deleted', cls: 'badge--red'   },
       company_deleted:         { label: 'Company deleted',     cls: 'badge--red'   },
       search_import:           { label: 'Companies imported',  cls: 'badge--blue'  },
+      data_export:             { label: 'Data exported',       cls: 'badge--grey'  },
     };
 
     const INVESTOR_EVENTS = new Set(['login','logout','portal_visit','doc_downloaded']);
-    const ADMIN_EVENTS    = new Set(['doc_added','doc_edited','doc_deleted','access_granted','access_revoked','access_updated','investor_created','investor_edited','investor_deleted','stage_changed','group_created','group_updated','group_deleted','message_published','message_updated','message_deleted','notification_sent','settings_updated','budget_added','budget_edited','budget_deleted','company_deleted','search_import']);
+    const ADMIN_EVENTS    = new Set(['data_export', 'doc_added','doc_edited','doc_deleted','access_granted','access_revoked','access_updated','investor_created','investor_edited','investor_deleted','stage_changed','group_created','group_updated','group_deleted','message_published','message_updated','message_deleted','notification_sent','settings_updated','budget_added','budget_edited','budget_deleted','company_deleted','search_import']);
 
     initNav('log');
 
@@ -363,6 +364,7 @@
 
     function buildLogDetail(l) {
       switch (l.type) {
+        case 'data_export':    return `${l.page || ''}: ${Number(l.rows || 0).toLocaleString('en-GB')} rows${l.what ? ' · ' + l.what : ''}`;
         case 'doc_downloaded':
         case 'doc_added':
         case 'doc_edited':

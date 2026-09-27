@@ -1233,7 +1233,7 @@
 <script src="./vendor/pt-postcodes.js?v=cp7-nominatim-1"></script>
 <script type="module">
 import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES, FIRESTORE_PROJECT_ID } from './firebase-config.js';
-import { guardPage } from './access.js';
+import { guardPage, logExport } from './access.js';
 import { applyDirectory } from './team-dir.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -3168,6 +3168,7 @@ async function exportMapCsv(){
   const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download:`douro-search-map-${todayStr()}.csv` });
   a.click(); URL.revokeObjectURL(a.href);
+  logExport('Search CRM map', list.length, mapMode === 'custom' ? 'custom selection' : 'filtered');
 }
 
 // ── Saved map lists (searchMapLists) ──────────────────────────────────────────
@@ -10204,6 +10205,7 @@ async function exportCsv(keys, finMetrics = [], finYears = [], onProgress){
   const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download:`douro-search-${todayStr()}.csv` });
   a.click(); URL.revokeObjectURL(a.href);
+  logExport('Search CRM', list.length, `${fields.length} columns`);
 }
 
 // ── Bulk import ──────────────────────────────────────────────────────────────

@@ -10,8 +10,17 @@
 // the person lacks x, including elements rendered later (lists, dialogs).
 //
 // Keep PERMS in sync with functions/access/perms.js (tests/portal parity test).
-import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
-import { doc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+import { auth, db, ADMIN_EMAILS, addDoc } from './firebase-config.js';
+import { doc, onSnapshot, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+// Every CSV export is recorded in the Activity Log (who, which page, how many
+// rows) — hiding the Export button is a friction, this is the trail.
+export async function logExport(page, rows, what = '') {
+  const email = auth.currentUser?.email?.toLowerCase();
+  if (!email) return;
+  try { await addDoc(collection(db, 'activityLog'), { type: 'data_export', email, page, rows: Number(rows) || 0, what: String(what).slice(0, 200), timestamp: serverTimestamp() }); }
+  catch (e) { /* the export itself already happened; never block it */ }
+}
 
 export const PERMS = [
   ["search.view", "Search CRM", "See companies, people and activities"],
