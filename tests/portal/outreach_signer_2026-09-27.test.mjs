@@ -31,6 +31,8 @@ let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' :
 ok('campaign "owner": the company owner signs', signerFor({ campaignId: 'k1' }, { owner: 'antonio' }) === 'antonio');
 ok('no owner: André signs', signerFor({ campaignId: 'k1' }, {}) === 'andre');
 ok('campaign names someone: they sign, whoever owns the company', signerFor({ campaignId: 'k2' }, { owner: 'andre' }) === 'antonio');
+ok('a call: whoever makes it introduces themselves (then the owner)', signerFor({ campaignId: 'k1', channel: 'call', assignee: 'maria' }, { owner: 'andre' }) === 'maria' && signerFor({ campaignId: 'k1', channel: 'call' }, { owner: 'antonio' }) === 'antonio');
+ok('a letter: the owner, even when someone else prints it', signerFor({ campaignId: 'k1', channel: 'letter', assignee: 'maria' }, { owner: 'andre' }) === 'andre');
 ok('the task\'s own choice wins', signerFor({ campaignId: 'k2', signer: 'maria' }, { owner: 'andre' }) === 'maria');
 ok('someone no longer on the team: André', signerFor({ campaignId: 'k1' }, { owner: 'ghost' }) === 'andre' && signerFor({ campaignId: 'k1' }, { owner: 'rui' }) === 'andre');
 const letter = 'Contacte-me: {{sender.phone}} · {{sender.email}}\n{{sender.name}}';

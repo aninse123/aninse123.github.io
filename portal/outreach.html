@@ -3640,10 +3640,11 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       refreshReads();
     }
     // T4: who signs a letter / call script — the task's choice, else the
-    // campaign's, else the company's owner, else André.
+    // campaign's, else (a call) whoever makes it, else the company's owner,
+    // else André. A call script says "fala {{sender.firstName}}".
     function signerFor(t, c) {
       const camp = campaigns.find(x => x.id === t?.campaignId);
-      const pick = t?.signer || (camp?.signer && camp.signer !== 'owner' ? camp.signer : null) || c?.owner || 'andre';
+      const pick = t?.signer || (camp?.signer && camp.signer !== 'owner' ? camp.signer : null) || (t?.channel === 'call' ? t?.assignee : null) || c?.owner || 'andre';
       return (window.teamDir || []).some(m => m.key === pick && m.active !== false) || OWNER_FULL[pick] ? pick : 'andre'; // someone who left doesn't sign
     }
     function coCtx(c, signer) {
@@ -4063,7 +4064,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <div class="field"><label for="csAssignee">Tasks (calls, LinkedIn, letters…) go to</label>
               <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option>${ownerOpts(c.assignee)}</select></div>
             <div class="field"><label for="csSigner">Letters and call scripts signed by</label>
-              <select id="csSigner"${dis}><option value="owner"${(c.signer || 'owner') === 'owner' ? ' selected' : ''}>The company's owner (André if none)</option>${ownerOpts(c.signer === 'owner' ? '' : c.signer)}</select>
+              <select id="csSigner"${dis}><option value="owner"${(c.signer || 'owner') === 'owner' ? ' selected' : ''}>Default — letters: the company's owner (André if none); calls: whoever makes the call</option>${ownerOpts(c.signer === 'owner' ? '' : c.signer)}</select>
               <span class="hint">Their name, phone and email fill {{sender.name}}, {{sender.phone}}, {{sender.email}}. Each letter or task can be changed.</span></div>
           </div>
           <div class="row2">
