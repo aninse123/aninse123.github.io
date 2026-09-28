@@ -45,6 +45,12 @@ const MAX_ATTEMPTS = 3;
 // What a failed check means for the enrolment (reasons from send_core).
 const STOP = new Set(["suppressed", "personal_domain", "bad_recipient", "no_mx", "company_not_found", "thread_not_found", "do_not_contact"]);
 const STOP_RUN = new Set(["over_target", "daily_quota_exceeded"]);
+// What a held enrolment shows (Audience → Note), so it never keeps a stale
+// reason from an earlier run.
+function holdText(reason, msg) {
+  if (reason === "daily_quota_exceeded") return "Held: Resend's daily sending quota is used up. Tries again tomorrow in the sending window.";
+  return `Held: ${String(msg || "the Resend account reached today's limit.").replace(/\s*Confirm to send anyway\.?\s*$/, "")} Tries again tomorrow in the sending window.`;
+}
 const DEFER = new Set(["sender_cap", "sender_not_active", "sender_not_usable", "sender_not_found"]);
 // test_mode here = the campaign test address isn't on the approved list.
 const PAUSE_CAMPAIGN = new Set(["template_not_found", "template_empty", "compliance_missing", "sender_required", "test_mode"]);
@@ -307,7 +313,12 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
 
     const approval = (step.approval === "inherit" || !step.approval) ? campaign.approvalDefault : step.approval;
     const wantsDraft = approval === "approval" && !approved;
-    if (!wantsDraft && !canSend) { await unlock(doc.ref); report.deferred++; continue; }
+    if (!wantsDraft && !canSend) {
+      const why = report.stoppedSends ? report.stoppedSendsText
+        : campaignSent >= budget ? `Held: today's automations limit (${budget} emails for all campaigns) is reached. Tries again tomorrow.` : null;
+      await unlock(doc.ref, why ? { lastError: why } : {});
+      report.deferred++; continue;
+    }
     if (!wantsDraft && campaign.pacing?.maxPerDay && campaignSentToday(campaign, lisbonParts(now).dayKey) >= campaign.pacing.maxPerDay) {
       await unlock(doc.ref); report.deferred++; report.campaignCap = (report.campaignCap || 0) + 1; continue;
     }
@@ -392,8 +403,9 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       if (STOP.has(reason)) {
         if (await endEnrolment(doc.ref, "stopped", msg)) report.stopped++;
       } else if (STOP_RUN.has(reason)) {
-        await unlock(doc.ref);
         report.stoppedSends = reason;
+        report.stoppedSendsText = holdText(reason, msg);
+        await unlock(doc.ref, { lastError: report.stoppedSendsText });
       } else if (DEFER.has(reason)) {
         await unlock(doc.ref, { lastError: msg });
         report.deferred++;

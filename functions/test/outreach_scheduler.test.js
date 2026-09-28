@@ -226,6 +226,7 @@ const TUE = "2026-09-29T10:30:00+01:00";
   const cT = await makeCampaign({ name: "Alvo", approvalDefault: "auto", steps: [{ templateId: "t1" }] }, ["c1"]);
   const rt = await run(TUE);
   ok("account over its daily target: sending stops, nothing lost", rt.stoppedSends === "over_target" && rt.sent === 0 && get(`outreachEnrolments/${cT}_c1`).currentStep === 0 && get(`outreachEnrolments/${cT}_c1`).lockUntil === null);
+  ok("the held enrolment says why (Resend daily limit), not a stale reason", /^Held: The Resend account has already sent\/received 100 emails today \(target 100\)\. Tries again tomorrow/.test(get(`outreachEnrolments/${cT}_c1`).lastError || ""));
 
   seedBase();
   store.set(`outreachUsage/${dayKey()}`, { resendDailyUsed: 100, portalTotalAtReading: 0 });
