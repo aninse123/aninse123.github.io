@@ -275,14 +275,26 @@ function start() {
   $('q').addEventListener('input', () => { clearTimeout(searchTimer); const q = $('q').value; searchTimer = setTimeout(() => runSearch(q), 320); });
   $('searchForm').addEventListener('submit', (e) => { e.preventDefault(); clearTimeout(searchTimer); $('q').blur(); runSearch($('q').value); });
   $('backBtn').addEventListener('click', () => { if (history.length > 1) history.back(); else location.hash = ''; });
-  $('signOutBtn').addEventListener('click', async () => { await signOut(auth); location.replace('/portal/login.html?next=/portal/m/'); });
+  $('signOutBtn').addEventListener('click', async () => { await signOut(auth); toLogin(); });
   window.addEventListener('hashchange', route);
   route();
 }
 
+// Full-screen web app from the home screen ("Open as Web App" on iOS): the
+// email link signs in Safari, never this app — show how to re-add it instead.
+export function isStandalone(nav = navigator, mm = (q) => window.matchMedia?.(q)) {
+  return nav?.standalone === true || !!mm?.('(display-mode: standalone)')?.matches || !!mm?.('(display-mode: fullscreen)')?.matches;
+}
+function showStandaloneHelp() {
+  $('loading').hidden = true; $('app').hidden = true;
+  $('standaloneUrl').textContent = location.origin + '/portal/m/';
+  $('standaloneHelp').hidden = false;
+}
+const toLogin = () => (isStandalone() ? showStandaloneHelp() : location.replace('/portal/login.html?next=/portal/m/'));
+
 if (typeof window !== 'undefined' && document.getElementById('app')) {
   onAuthStateChanged(auth, async (user) => {
-    if (!user) { location.replace('/portal/login.html?next=/portal/m/'); return; }
+    if (!user) { toLogin(); return; }
     const a = await getAccess(user).catch(() => null);
     $('loading').hidden = true;
     if (!a?.can('search.view')) { $('noAccess').hidden = false; return; }

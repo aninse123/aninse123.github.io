@@ -84,6 +84,8 @@
     .act__body { font-size: 0.86rem; margin-top: 2px; white-space: pre-wrap; }
     .foot { text-align: center; font-size: 0.88rem; margin: 22px 0 0; }
     .center { max-width: 420px; margin: 18vh auto 0; text-align: center; padding: 0 16px; }
+    .steps { text-align: left; padding-left: 20px; margin: 4px 0 8px; font-size: 0.92rem; }
+    .steps li { margin-bottom: 8px; }
     .spin { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--navy); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .spin { animation: none; } details.card > summary::after { transition: none; } }
@@ -94,6 +96,19 @@
   <div id="noAccess" class="center" hidden>
     <h1 style="font:600 1.3rem var(--serif);">No access to the Search CRM</h1>
     <p class="hint">Ask André or António to give your account "See companies, people and activities" in Team &amp; access.</p>
+  </div>
+
+  <!-- Opened as a full-screen web app (iOS "Open as Web App"): the email
+       sign-in link opens in Safari, so it can never sign in here. -->
+  <div id="standaloneHelp" class="center" hidden>
+    <h1 style="font:600 1.3rem var(--serif);margin-bottom:8px;">Open Douro in Safari</h1>
+    <p class="hint" style="text-align:left;">Signing in doesn't work in the home-screen app: the email link always opens in Safari, which keeps its own sign-in. To fix it once:</p>
+    <ol class="steps">
+      <li>Long-press the Douro icon → <b>Remove App</b> → <b>Delete from Home Screen</b>.</li>
+      <li>In Safari, open <b id="standaloneUrl"></b> and sign in.</li>
+      <li>Tap Share → <b>Add to Home Screen</b> → switch <b>off “Open as Web App”</b> → <b>Add</b>.</li>
+    </ol>
+    <p class="hint" style="text-align:left;">The icon then opens in Safari, where you stay signed in.</p>
   </div>
 
   <div id="app" hidden>

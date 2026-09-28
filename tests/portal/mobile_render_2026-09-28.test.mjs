@@ -13,7 +13,7 @@ const ctx = { console, Intl, URLSearchParams, localStorage: { getItem: () => nul
 vm.createContext(ctx);
 vm.runInContext(helpersSrc + '\nglobalThis.H = { deburr, onlyDigits, personNameKey, nifFromAny, foundedYear, legalFormOf, personAge, controlTier, linkIsCurrent, linkIsShareholder, linkIsManager, fmtPctOwn, resolveOwnership, orbisValues, STAGES, FINANCIALS_YEARS, tierOf, setTierRules };', ctx);
 vm.runInContext('const auth = { app: {} }; const getFunctions = () => ({}); const httpsCallable = () => async () => ({ data: {} });\n'
-  + appSrc + '\nglobalThis.A = { money, keyFinancials, companyRowHtml, personRowHtml, companyHtml, personHtml, setDir: (d) => { dir = d; } };', ctx);
+  + appSrc + '\nglobalThis.A = { isStandalone, money, keyFinancials, companyRowHtml, personRowHtml, companyHtml, personHtml, setDir: (d) => { dir = d; } };', ctx);
 const { A, H } = ctx;
 
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
@@ -62,4 +62,6 @@ const ph = A.personHtml(person, plinks);
 ok('person: corporate shareholder with Open company', /Company \(shareholder\)/.test(ph) && /href="#c\/g1">Open company/.test(ph));
 ok('person: phone to tap and Orbis email', /href="tel:\+351222000000"/.test(ph) && /mailto:geral@holdingx\.pt/.test(ph));
 ok('person: current position links to the company with % and tier; previous listed', /href="#c\/c1"/.test(ph) && /Shareholder 70%/.test(ph) && /Control/.test(ph) && /Previous positions/.test(ph) && /Administrador/.test(ph));
+const mm = (on) => (q) => ({ matches: on === q });
+ok('full-screen web app detected (iOS standalone or display-mode), Safari tab not', A.isStandalone({ standalone: true }, mm(null)) && A.isStandalone({}, mm('(display-mode: standalone)')) && !A.isStandalone({ standalone: false }, mm(null)));
 console.log(fail ? `\n${fail} FAILED` : '\nall mobile render tests passed'); process.exit(fail ? 1 : 0);
