@@ -101,13 +101,56 @@ function renderRecents() {
     ? `<h2 class="sec">Recently viewed</h2><div class="list">${r.map((x) => `<a class="row" href="#${x.t}/${encodeURIComponent(x.id)}"><span class="row__main"><span class="row__title">${esc(x.name)}</span><span class="row__sub">${x.t === 'c' ? 'Company' : 'Person'}</span></span><span class="chev" aria-hidden="true">›</span></a>`).join('')}</div>`
     : '<p class="hint">Search by company name, person name or NIF.</p>';
 }
+// ── Keeping reads low ──
+// A name search needs 3 characters (the server refuses fewer too); answers are
+// remembered for this visit; and when the last answer was complete (every
+// match seen), a longer query is narrowed here with no reads at all.
+export const MIN_NAME = 3;
+const STOP = new Set(['lda', 'sa', 'unipessoal', 'limitada', 'sgps', 'eireli', 'ltda', 'de', 'da', 'do', 'dos', 'das', 'e']);
+export const normQ = (q) => H.deburr(q).replace(/[^a-z0-9]+/g, ' ').trim();
+export function nifDigits(q) {   // same rule as the server's nifQuery
+  const s = String(q || '').trim().replace(/^pt/i, '');
+  const d = H.onlyDigits(s);
+  return d.length >= 3 && d.length === s.replace(/[\s.\-]/g, '').length ? d : null;
+}
+const queryTokens = (q) => normQ(q).split(' ').filter((w) => w.length > 1 && !STOP.has(w));
+function nameMatches(name, tokens) {
+  const n = normQ(name), words = n.split(' ');
+  return tokens.every((t) => words.some((w) => w.startsWith(t)) || n.includes(t));
+}
+// Narrow a complete earlier answer to a longer query (null = ask the server).
+export function narrowFrom(prev, q) {
+  if (!prev || !prev.r.companiesComplete || !prev.r.peopleComplete) return null;
+  const d = nifDigits(q);
+  let keep;
+  if (d) {
+    if (!prev.digits || !d.startsWith(prev.digits)) return null;
+    keep = (x) => H.onlyDigits(x.nif).startsWith(d) || H.onlyDigits(x.foreignTaxId).startsWith(d);
+  } else {
+    if (prev.digits || !normQ(q).startsWith(prev.norm)) return null;
+    const tokens = queryTokens(q);
+    keep = (x) => nameMatches(x.name, tokens);
+  }
+  return { ...prev.r, companies: prev.r.companies.filter(keep), people: prev.r.people.filter(keep), narrowed: true };
+}
+const answers = new Map();   // this visit only
+let lastComplete = null;     // { norm, digits, r }
+
 async function runSearch(q) {
   const seq = ++searchSeq;
-  if (q.trim().length < 2) { renderRecents(); return; }
-  $('results').innerHTML = '<p class="hint">Searching…</p>';
-  let r;
-  try { r = (await callSearch({ q })).data; }
-  catch (e) { if (seq === searchSeq) $('results').innerHTML = `<p class="hint err">${esc(e.message || 'Search failed — try again.')}</p>`; return; }
+  const text = q.trim(), digits = nifDigits(text);
+  if (!text) { renderRecents(); return; }
+  if (!digits && text.length < MIN_NAME) { $('results').innerHTML = `<p class="hint">Type at least ${MIN_NAME} letters (or a NIF).</p>`; return; }
+  const key = digits ? 'nif:' + digits : 'name:' + normQ(text);
+  let r = answers.get(key) || narrowFrom(lastComplete, text);
+  if (!r) {
+    $('results').innerHTML = '<p class="hint">Searching…</p>';
+    try { r = (await callSearch({ q: text })).data; }
+    catch (e) { if (seq === searchSeq) $('results').innerHTML = `<p class="hint err">${esc(e.message || 'Search failed — try again.')}</p>`; return; }
+    if (answers.size > 60) answers.delete(answers.keys().next().value);
+    answers.set(key, r);
+  }
+  if (r.companiesComplete && r.peopleComplete) lastComplete = { norm: normQ(text), digits, r };
   if (seq !== searchSeq) return;
   const block = (title, items, more, row) => items.length ? `<h2 class="sec">${title} <span class="n">${items.length}${more ? '+' : ''}</span></h2><div class="list">${items.map(row).join('')}</div>${more ? '<p class="hint">More matches — add a word to narrow it down.</p>' : ''}` : '';
   const html = block('Companies', r.companies, r.moreCompanies, companyRowHtml) + block('People', r.people, r.morePeople, personRowHtml);
@@ -116,7 +159,7 @@ async function runSearch(q) {
 function showSearch() {
   show('search', 'Douro', false);
   const q = $('q').value;
-  if (q.trim().length >= 2) runSearch(q); else renderRecents();
+  if (q.trim()) runSearch(q); else renderRecents();   // coming back: the remembered answer, 0 reads
 }
 
 const section = (title, body, open = true, id = '') => `<details class="card"${open ? ' open' : ''}${id ? ` id="${id}"` : ''}><summary>${title}</summary><div class="card__body">${body}</div></details>`;
@@ -272,7 +315,7 @@ function route() {
 }
 
 function start() {
-  $('q').addEventListener('input', () => { clearTimeout(searchTimer); const q = $('q').value; searchTimer = setTimeout(() => runSearch(q), 320); });
+  $('q').addEventListener('input', () => { clearTimeout(searchTimer); const q = $('q').value; searchTimer = setTimeout(() => runSearch(q), 600); });
   $('searchForm').addEventListener('submit', (e) => { e.preventDefault(); clearTimeout(searchTimer); $('q').blur(); runSearch($('q').value); });
   $('backBtn').addEventListener('click', () => { if (history.length > 1) history.back(); else location.hash = ''; });
   $('signOutBtn').addEventListener('click', async () => { await signOut(auth); toLogin(); });

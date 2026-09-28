@@ -47,6 +47,15 @@ function person(id, name, extra = {}) {
   ok("NIF prefix: company 508123456 and the corporate holder 508999888", r4.mode === "nif" && r4.companies.map((c) => c.id).join() === "c1" && r4.people.map((p) => p.id).join() === "e1" && r4.people[0].matchedCompanyId === "c9");
   ok("exact NIF", (await call("509000222")).companies.map((c) => c.id).join() === "c3");
   ok("too short: nothing searched", (await call("n")).mode === "short");
+  ok("2 letters: nothing searched either (0 reads); 3 letters search", (await call("no")).mode === "short" && (await call("nor")).mode === "name");
+  ok("a 3-digit NIF still searches", (await call("508")).mode === "nif");
+  ok("most selective word = the longest", M.mostSelective(["DO", "NORTE", "SUL"]) === "NORTE" && M.mostSelective(["ANA", "RUI"]) === "ANA");
+  ok("small result: marked complete (the phone may narrow it itself)", r1.companiesComplete === true && r1.peopleComplete === true && !r1.moreCompanies);
+  for (let i = 0; i < 30; i++) company(`z${i}`, `ALFA EMPRESA ${i}`);
+  const rz = await call("alfa");
+  ok("many matches: at most 25 shown, reads capped at 26, marked incomplete with 'more'", rz.companies.length === 25 && M.LIMIT === 26 && rz.moreCompanies === true && rz.companiesComplete === false);
+  const rz2 = await call("alfa empresa 7");
+  ok("several words: scanned by the most selective word, refined by every word", rz2.companies.every((c) => /ALFA EMPRESA/.test(c.name)));
   ok("intern with Search CRM access can search", !(await call("norte", INTERN)).err);
   ok("without Search CRM access: refused", (await call("norte", NOSEARCH)).err?.details?.reason === "no_permission");
   ok("signed out: refused", (await call("norte", {})).err?.details?.reason === "unauthenticated");
