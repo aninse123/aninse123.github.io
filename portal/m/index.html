@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#1E2A38">
+  <title>Douro Search</title>
+  <!-- Home screen: opens in Safari (display "browser"), so the portal's email
+       sign-in link works as on the desktop. -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="icon" href="/assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --navy: #1E2A38; --primary: #4A6B8A; --bg: #F7F3EC; --card: #FFFFFF; --text: #2C2C2C; --muted: #6B7280;
+      --border: #E4DFD4; --good: #2F7D4F; --good-bg: #E3F2E8; --bad: #A33A3A; --bad-bg: #F8E4E4; --warn: #8A5A00; --warn-bg: #FBEFD5;
+      --info: #1D4ED8; --info-bg: #DBEAFE; --pill: #EEEAE2;
+      --serif: 'Playfair Display', Georgia, serif; --sans: 'Inter', -apple-system, system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--sans); }
+    a { color: var(--primary); }
+    [hidden] { display: none !important; }
+    .bar { position: sticky; top: 0; z-index: 10; background: var(--navy); color: #fff; padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px; display: flex; align-items: center; gap: 10px; }
+    .bar h1 { font: 600 1.05rem var(--serif); margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar button { appearance: none; border: 0; background: rgba(255,255,255,0.12); color: #fff; font: 500 0.9rem var(--sans); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+    .search { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 50px); z-index: 9; background: var(--bg); padding: 12px 16px 8px; }
+    .search input { width: 100%; font: 16px var(--sans); padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--text); }
+    .search input:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+    main { max-width: 720px; margin: 0 auto; padding: 0 16px calc(env(safe-area-inset-bottom, 0px) + 32px); }
+    .hint { color: var(--muted); font-size: 0.9rem; padding: 12px 2px; margin: 0; }
+    .hint.err { color: var(--bad); }
+    .hint.small { font-size: 0.78rem; padding: 6px 0 0; }
+    h2.sec { font: 600 0.78rem var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 18px 2px 8px; }
+    .n { font: 500 0.78rem var(--sans); color: var(--muted); margin-left: 4px; }
+    .list { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; text-decoration: none; color: inherit; border-top: 1px solid var(--border); min-height: 52px; }
+    .row:first-child { border-top: 0; }
+    .row:active { background: var(--pill); }
+    .row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .row__title { font-weight: 600; overflow-wrap: anywhere; }
+    .row__sub { font-size: 0.82rem; color: var(--muted); overflow-wrap: anywhere; }
+    .row__side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+    .chev { color: var(--muted); font-size: 1.3rem; }
+    .pill { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--pill); color: var(--muted); white-space: nowrap; }
+    .pill.tier { background: var(--navy); color: #fff; }
+    .pill.bad { background: var(--bad-bg); color: var(--bad); } .pill.good { background: var(--good-bg); color: var(--good); }
+    .pill.warn { background: var(--warn-bg); color: var(--warn); } .pill.info { background: var(--info-bg); color: var(--info); }
+    /* Stage colours (same as the desktop) */
+    .s-universe { background:#F3F4F6; color:#6B7280; } .s-screened { background:#E0E7FF; color:#4338CA; } .s-outreach { background:#DBEAFE; color:#1D4ED8; }
+    .s-engaged { background:#EDE9FE; color:#7C3AED; } .s-teaser_received, .s-under_nda, .s-cim_received { background:#FCE7F3; color:#BE185D; }
+    .s-nbo, .s-loi, .s-due_diligence, .s-financing, .s-closing { background:#FEF3C7; color:#B45309; } .s-closed { background:#D1FAE5; color:#047857; }
+    .s-pass { background:#FEE2E2; color:#B91C1C; } .s-on_hold { background:#F3F4F6; color:#6B7280; }
+    .head { padding: 16px 2px 8px; }
+    .head h1 { font: 600 1.45rem/1.2 var(--serif); margin: 0 0 4px; text-wrap: balance; overflow-wrap: anywhere; }
+    .head__sub { color: var(--muted); margin: 0 0 8px; font-size: 0.9rem; }
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+    .btn { display: inline-block; margin-top: 12px; background: var(--navy); color: #fff; text-decoration: none; font-weight: 600; padding: 9px 16px; border-radius: 10px; }
+    details.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-top: 12px; }
+    details.card > summary { list-style: none; cursor: pointer; padding: 13px 14px; font-weight: 600; display: flex; align-items: center; gap: 4px; }
+    details.card > summary::-webkit-details-marker { display: none; }
+    details.card > summary::after { content: '›'; margin-left: auto; color: var(--muted); font-size: 1.2rem; transform: rotate(90deg); transition: transform .15s; }
+    details.card:not([open]) > summary::after { transform: rotate(0deg); }
+    .card__body { padding: 0 14px 14px; }
+    .card__body .list { border-radius: 10px; }
+    details.sub { margin-top: 10px; } details.sub > summary { cursor: pointer; color: var(--primary); font-size: 0.9rem; padding: 6px 0; }
+    .kv { display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 7px 0; border-top: 1px solid var(--border); font-size: 0.92rem; }
+    .kv:first-child { border-top: 0; }
+    .kv .k { color: var(--muted); } .kv .v { overflow-wrap: anywhere; }
+    .muted { color: var(--muted); font-weight: 400; }
+    .note { font-size: 0.85rem; color: var(--muted); background: var(--bg); border-radius: 8px; padding: 8px 10px; margin: 0 0 10px; }
+    .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table.fin { border-collapse: collapse; font-size: 0.86rem; font-variant-numeric: tabular-nums; min-width: 100%; }
+    table.fin th, table.fin td { padding: 7px 10px; border-top: 1px solid var(--border); text-align: right; white-space: nowrap; }
+    table.fin thead th { border-top: 0; color: var(--muted); font-weight: 600; }
+    table.fin tbody th { text-align: left; font-weight: 500; position: sticky; left: 0; background: var(--card); }
+    .contact { padding: 10px 0; border-top: 1px solid var(--border); } .contact:first-child { border-top: 0; }
+    .acts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; font-size: 0.9rem; }
+    .act { padding: 10px 14px; border-top: 1px solid var(--border); } .act:first-child { border-top: 0; }
+    .act__body { font-size: 0.86rem; margin-top: 2px; white-space: pre-wrap; }
+    .foot { text-align: center; font-size: 0.88rem; margin: 22px 0 0; }
+    .center { max-width: 420px; margin: 18vh auto 0; text-align: center; padding: 0 16px; }
+    .spin { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--navy); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spin { animation: none; } details.card > summary::after { transition: none; } }
+  </style>
+</head>
+<body>
+  <div id="loading" class="center"><div class="spin" role="status" aria-label="Loading"></div></div>
+  <div id="noAccess" class="center" hidden>
+    <h1 style="font:600 1.3rem var(--serif);">No access to the Search CRM</h1>
+    <p class="hint">Ask André or António to give your account "See companies, people and activities" in Team &amp; access.</p>
+  </div>
+
+  <div id="app" hidden>
+    <div class="bar">
+      <button id="backBtn" type="button" aria-label="Back" hidden>‹ Back</button>
+      <h1 id="barTitle">Douro</h1>
+      <button id="signOutBtn" type="button">Sign out</button>
+    </div>
+
+    <section id="viewSearch">
+      <form class="search" id="searchForm" role="search">
+        <input id="q" type="search" inputmode="search" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+               placeholder="Company, person or NIF" aria-label="Search companies, people or NIF">
+      </form>
+      <main><div id="results"></div><p class="hint small" style="text-align:center;margin-top:18px;">Signed in as <span id="who"></span></p></main>
+    </section>
+
+    <section id="viewDetail" hidden>
+      <main id="detail"></main>
+    </section>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

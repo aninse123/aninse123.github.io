@@ -82,6 +82,9 @@ class Query {
   orderBy(f, dir = "asc") { return new Query(this.coll, this.filters, { f, dir }, this.lim, this.after); }
   limit(n) { return new Query(this.coll, this.filters, this.order, n, this.after); }
   startAfter(snap) { return new Query(this.coll, this.filters, this.order, this.lim, snap); }
+  // Field projection (admin SDK select): reads the same documents; the fake
+  // keeps whole bodies (tests only check which documents come back).
+  select() { return this; }
   async get() {
     let docs = [...store.keys()].filter((p) => p.startsWith(this.coll + "/") && p.split("/").length === this.coll.split("/").length + 1)
       .map((p) => new DocSnap(new DocRef(p)));
@@ -89,6 +92,7 @@ class Query {
       docs = docs.filter((d) => {
         const x = d.data()[f];
         if (op === "==") return JSON.stringify(x) === JSON.stringify(v);
+        if (op === "array-contains") return Array.isArray(x) && x.includes(v);
         if (op === "array-contains-any") return Array.isArray(x) && x.some((y) => v.includes(y));
         if (op === "in") return v.some((y) => JSON.stringify(x) === JSON.stringify(y));
         if (op === "<=" || op === "<" || op === ">=" || op === ">") {
@@ -102,7 +106,8 @@ class Query {
     if (this.order) {
       const { f, dir } = this.order;
       const val = (d) => { const x = d.data()[f]; return x instanceof Timestamp ? x.toMillis() : x ?? 0; };
-      docs.sort((a, b) => (dir === "desc" ? val(b) - val(a) : val(a) - val(b)));
+      const cmp = (a, b) => (typeof a === "string" || typeof b === "string" ? String(a).localeCompare(String(b)) : a - b);
+      docs.sort((a, b) => (dir === "desc" ? cmp(val(b), val(a)) : cmp(val(a), val(b))));
     }
     if (this.after) { const i = docs.findIndex((d) => d.ref.path === this.after.ref.path); docs = i >= 0 ? docs.slice(i + 1) : docs; }
     if (this.lim != null) docs = docs.slice(0, this.lim);

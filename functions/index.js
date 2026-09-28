@@ -89,3 +89,6 @@ Object.assign(exports, require("./outreach"));
 // Team access (Phase 1) — see "Portal - Team Access & Roles Plan.md".
 exports.teamAccess = require("./access/team").teamAccess;
 exports.teamExpiry = require("./access/team").teamExpiry;
+
+// Mobile app (portal/m/) — Search CRM search from the phone.
+exports.mobileSearch = require("./mobile/search").mobileSearch;

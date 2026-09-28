@@ -239,7 +239,11 @@
     const INVESTOR_URL = window.location.origin + '/portal/investor.html';
     const LOGIN_URL    = window.location.origin + '/portal/login.html';
 
-    const actionCodeSettings = { url: LOGIN_URL, handleCodeInApp: true };
+    // ?next=/portal/m/ — come back to the page that sent you here (the mobile
+    // app). Only portal paths on this site; anything else is ignored.
+    function safeNext(v) { const s = String(v || ''); return /^\/portal\/[A-Za-z0-9/._-]*$/.test(s) && !s.includes('//') && !s.includes('..') ? s : null; }
+    const NEXT = safeNext(new URLSearchParams(window.location.search).get('next'));
+    const actionCodeSettings = { url: LOGIN_URL + (NEXT ? '?next=' + encodeURIComponent(NEXT) : ''), handleCodeInApp: true };
 
     let sentToEmail = '';
 
@@ -266,7 +270,7 @@
     // Already signed in → redirect
     onAuthStateChanged(auth, async (user) => {
       if (user && !isSignInWithEmailLink(auth, window.location.href)) {
-        window.location.href = await landingFor(user);
+        window.location.href = NEXT || await landingFor(user);
       }
     });
 
@@ -281,7 +285,7 @@
         signInWithEmailLink(auth, email, window.location.href)
           .then(async (cred) => {
             window.localStorage.removeItem('emailForSignIn');
-            window.location.href = await landingFor(cred.user, '?login=1');
+            window.location.href = NEXT || await landingFor(cred.user, '?login=1');
           })
           .catch(err => {
             const msg = document.getElementById('processMsg');
