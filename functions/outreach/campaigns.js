@@ -29,6 +29,7 @@
 // filter itself is stored on the campaign as `source.filterSpec` for Metrics.
 
 const P = require("../access/perms"); // team access: who may call what
+const Feat = require("../features"); // feature switches (Team & access → Features)
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { REGION } = require("./config");
 const { normEmail } = require("./util");
@@ -872,6 +873,17 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   const data = request.data || {};
   if (!P.hasPerm(request, campaignActionPerm(data))) fail("permission-denied", "not_admin", "You don't have permission to do this.");
   const canApprove = P.hasPerm(request, "out.approve");
+  // Feature switches: Outreach, then company or people campaigns by audience.
+  // "Do not contact" (Search CRM) is a safety control and never switched.
+  if (data.action !== "setDoNotContact") {
+    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview"].includes(data.action) ? "outreach.campaigns" : null;
+    if (data.action === "save") {
+      let aud = data.campaign?.audienceType;
+      if (!aud && data.campaignId) { const c = await db().doc(`outreachCampaigns/${data.campaignId}`).get(); aud = c.exists ? c.data().audienceType : null; }
+      sub = aud === "people" ? "outreach.people" : "outreach.campaigns";
+    }
+    await Feat.requireFeature(request, "outreach", ...(sub ? [sub] : []));
+  }
   // A campaign that has started sends on its own: changing it, or adding
   // companies / people to it, needs "approve" (preparing a draft doesn't).
   if (!canApprove) {

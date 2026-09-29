@@ -369,7 +369,7 @@
       <div class="sec-title" style="display:flex;justify-content:space-between;align-items:center;">
         <span>Contacts</span>
         <div style="display:flex;gap:6px;">
-          <button class="btn btn--ghost btn--sm" id="emailAllBtn" data-perm="icrm.email" style="display:none;">✉ Email All</button>
+          <button class="btn btn--ghost btn--sm" id="emailAllBtn" data-perm="icrm.email" data-feature="outreach.relationship" style="display:none;">✉ Email All</button>
           <button class="btn btn--ghost btn--sm" id="duplicateContactsBtn" data-perm="icrm.edit net.edit" style="display:none;">📤 Duplicate to Network</button>
         </div>
       </div>
@@ -1365,7 +1365,7 @@ function renderContacts() {
       ${c.notes ? `<div class="contact-detail" style="margin-top:4px;font-style:italic;">${esc(c.notes)}</div>` : ''}
       ${emailHistory}
       <div class="contact-foot">
-        ${c.email ? `<button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="send-ct" data-perm="icrm.email" title="Send email">✉</button>` : ''}
+        ${c.email ? `<button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="send-ct" data-perm="icrm.email" data-feature="outreach.relationship" title="Send email">✉</button>` : ''}
         <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="edit-ct" data-perm="icrm.edit">✏</button>
         <button class="btn btn--ghost btn--icon" data-ci="${i}" data-action="dup-ct" data-perm="icrm.edit net.edit" title="Duplicate to Network">📤</button>
         <button class="btn btn--danger btn--icon" data-ci="${i}" data-action="del-ct" data-perm="icrm.edit">🗑</button>

@@ -95,11 +95,14 @@ async function peopleSend(data, caller) {
   return { sent: emails.length, skipped, isTest: !!redirect };
 }
 
+const Feat = require("../features"); // feature switches (Team & access → Features)
 exports.outreachPeopleSend = onCall({ region: REGION, secrets: [RESEND_READ_KEY], timeoutSeconds: 120 }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
   // Which page is sending decides the permission (Investor CRM, Network, or the admin notices).
   const need = { crm: "icrm.email", network: "net.email", portal: "portal.admin" }[request.data?.context] || "portal.admin";
   if (!P.hasPerm(request, need)) fail("permission-denied", "not_admin", "You don't have permission to send these emails.");
+  // Relationship emails are a switchable feature; Admin notices to investors never are.
+  if (["crm", "network"].includes(request.data?.context)) await Feat.requireFeature(request, "outreach.relationship");
   try { return await peopleSend(request.data, caller); }
   catch (e) {
     if (e instanceof HttpsError) throw e;

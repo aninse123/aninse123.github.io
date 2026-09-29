@@ -206,7 +206,11 @@ async function issueNow({ recurringId }, caller) {
 // so there's time to edit and approve; an approved issue goes out on its date.
 async function runRecurring(now) {
   const horizon = new Date(now.getTime() + DRAFT_LEAD_MS);
-  const snap = await db().collection("outreachRecurring").where("status", "==", "active").where("nextIssueAt", "<=", Timestamp.fromDate(horizon)).get();
+  // Kill switch: Off writes no new issues (dates are not skipped — they're
+  // drafted once it's back on); Test only while Outreach is in test mode.
+  const drafting = await Feat.jobState("kill.recurring.drafting");
+  const mayDraft = drafting === "on" || (drafting === "test" && !!(await store.getSettings()).testMode);
+  const snap = mayDraft ? await db().collection("outreachRecurring").where("status", "==", "active").where("nextIssueAt", "<=", Timestamp.fromDate(horizon)).get() : { docs: [] };
   let created = 0, launched = 0;
   for (const d of snap.docs) {
     const r = { id: d.id, ...d.data() };
@@ -366,7 +370,9 @@ async function restoreOptOut({ recurringId, email, note }, caller) {
 // partner's call ("approve"); preparing one is "campaigns".
 const RECURRING_APPROVE = ["approveIssue", "skipIssue", "delete", "restoreOptOut"];
 
+const Feat = require("../features"); // feature switches (Team & access → Features)
 exports.outreachRecurring = onCall({ region: REGION, timeoutSeconds: 300, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY] }, async (request) => {
+  await Feat.requireFeature(request, "outreach", "outreach.recurring");
   const caller = normEmail(request.auth?.token?.email);
   const data = request.data || {};
   if (!P.hasPerm(request, RECURRING_APPROVE.includes(data.action) ? "out.approve" : "out.campaigns")) fail("permission-denied", "not_admin", "You don't have permission to do this.");

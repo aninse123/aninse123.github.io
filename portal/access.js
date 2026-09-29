@@ -12,6 +12,7 @@
 // Keep PERMS in sync with functions/access/perms.js (tests/portal parity test).
 import { auth, db, ADMIN_EMAILS, addDoc } from './firebase-config.js';
 import { doc, onSnapshot, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+import { startFeatures, isOn, onFeaturesChange, PAGE_FEATURE } from './features.js';
 
 // Every CSV export is recorded in the Activity Log (who, which page, how many
 // rows) — hiding the Export button is a friction, this is the trail.
@@ -51,6 +52,7 @@ export const PERMS = [
   ["budget.view", "Budget", "See the budget"],
   ["budget.edit", "Budget", "Edit the budget"],
   ["log.view", "Activity Log", "See the portal activity log"],
+  ["features.test", "Team & access", "Test features before release (sees features switched to Test)"],
   ["access.manage", "Team & access", "Manage people, roles and access"],
 ];
 export const ALL = PERMS.map(p => p[0]);
@@ -116,8 +118,10 @@ export function editedBadge(rec) {
 }
 
 // First tab this person may open ('' when none — an investor or nobody).
+// A tab whose feature is switched off doesn't count (feature switches).
+const tabFeatureOn = (k) => !PAGE_FEATURE[k] || isOn(PAGE_FEATURE[k]);
 export function homeFor(a) {
-  for (const k of HOME_ORDER) if (a?.can(TAB_PERM[k])) return TAB_HREF[k];
+  for (const k of HOME_ORDER) if (a?.can(TAB_PERM[k]) && tabFeatureOn(k)) return TAB_HREF[k];
   return '';
 }
 
@@ -163,12 +167,15 @@ export function watchAccess(user, a) {
 export async function guardPage(user, tabKey) {
   if (!user) { window.location.href = '/portal/login.html'; return null; }
   const a = await getAccess(user);
-  if (!a.can(TAB_PERM[tabKey])) {
+  await startFeatures(a); // feature switches: hide what's Off, badge what's in Test
+  if (!a.can(TAB_PERM[tabKey]) || !tabFeatureOn(tabKey)) {
     const home = homeFor(a);
     window.location.href = home || '/portal/investor.html';
     return null;
   }
   applyPerms(a);
   watchAccess(user, a);
+  // A tab switched off while someone is on it: send them to their home tab.
+  onFeaturesChange(() => { if (!tabFeatureOn(tabKey)) window.location.href = homeFor(a) || '/portal/investor.html'; });
   return a;
 }

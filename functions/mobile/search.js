@@ -130,8 +130,10 @@ async function search(q) {
   };
 }
 
+const Feat = require("../features"); // feature switches
 exports.mobileSearch = onCall({ region: REGION }, async (request) => {
   P.requirePerm(request, "search.view");
+  await Feat.requireFeature(request, "mobile");
   try { return await search(request.data?.q); }
   catch (e) { throw new HttpsError("internal", "Search failed — try again.", { reason: "search_failed" }); }
 });

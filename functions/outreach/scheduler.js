@@ -29,6 +29,7 @@ const { LIVE_ENROLMENT: LIVE_STATUSES } = require("./campaign_util");
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
+const Feat = require("../features"); // kill switches (Team & access → Features)
 const { lisbonParts, isWindowOpen, addWait, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -192,11 +193,17 @@ async function pauseCampaign(campaign, reason) {
 
 async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.random } = {}) {
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
+  // Kill switches (production setting — jobs serve both sites): Off stops
+  // it all; Test moves / sends test campaigns only.
+  const [schedState, sendState, aiState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai")]);
+  if (schedState === "off") { report.killed = "scheduler"; return report; }
+  const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
   // Recurring emails (5b): write the issue drafts whose date has come.
   try { const rr = await runRecurring(now); report.issues = rr.created; if (rr.launched) report.issuesLaunched = rr.launched; } catch (e) { logger.error("outreachScheduler: recurring failed", { message: e.message }); }
-  const campSnap = await db().collection("outreachCampaigns").where("status", "==", "active").get();
-  report.campaigns = campSnap.size;
+  const campSnap0 = await db().collection("outreachCampaigns").where("status", "==", "active").get();
+  const campSnap = schedState === "test" ? { docs: campSnap0.docs.filter((d) => d.data().isTest), empty: !campSnap0.docs.some((d) => d.data().isTest) } : campSnap0;
+  report.campaigns = campSnap.docs.length;
   if (campSnap.empty) return report;
   try { const f = await finishIssueCampaigns(campSnap.docs); if (f) report.issuesFinished = f; } catch (e) { logger.error("outreachScheduler: finishing issues failed", { message: e.message }); }
 
@@ -257,7 +264,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   for (const doc of due) {
     const campaign = open.get(doc.data().campaignId);
     if (!campaign || campaign.status !== "active") continue; // paused earlier in this run
-    const canSend = !report.stoppedSends && sendsThisRun < MAX_SENDS_PER_RUN && campaignSent < budget;
+    const canSend = !report.stoppedSends && sendsThisRun < MAX_SENDS_PER_RUN && campaignSent < budget && allowed(sendState, campaign);
     if (!canSend && report.drafts >= MAX_DRAFTS_PER_RUN && report.tasks >= MAX_TASKS_PER_RUN) break;
 
     const e = await claim(doc.ref, now);
@@ -314,7 +321,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     const approval = (step.approval === "inherit" || !step.approval) ? campaign.approvalDefault : step.approval;
     const wantsDraft = approval === "approval" && !approved;
     if (!wantsDraft && !canSend) {
-      const why = report.stoppedSends ? report.stoppedSendsText
+      const why = !allowed(sendState, campaign) ? "Held: automatic sending is switched off (Team & access → Features). Sends again when it's back on."
+        : report.stoppedSends ? report.stoppedSendsText
         : campaignSent >= budget ? `Held: today's automations limit (${budget} emails for all campaigns) is reached. Tries again tomorrow.` : null;
       await unlock(doc.ref, why ? { lastError: why } : {});
       report.deferred++; continue;
@@ -356,7 +364,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       // fallback ({{ai.opener|…}}) is used, or the company pauses with the reason.
       let aiOpener = "";
       const variantBody = ((tpl?.variants || []).find((v) => v.key === variantKey) || (tpl?.variants || [])[0] || {}).body || "";
-      if (wantsDraft && /\{\{\s*ai\.opener/.test(variantBody)) {
+      if (wantsDraft && allowed(aiState, campaign) && /\{\{\s*ai\.opener/.test(variantBody)) {
         try {
           aiOpener = (await getOpener({ companyId: e.companyId, templateId: step.templateId, templateBody: variantBody, settings, apiKey: ANTHROPIC_API_KEY.value() })).text;
         } catch (aiErr) { logger.warn("outreachScheduler: AI opener unavailable", { enrolmentId, reason: aiErr.details?.reason || aiErr.message }); }

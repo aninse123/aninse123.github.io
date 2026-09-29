@@ -145,7 +145,9 @@ async function returnDraft(request, callerEmail) {
   return { ok: true };
 }
 
+const Feat = require("../features"); // feature switches (Team & access → Features)
 exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET] }, async (request) => {
+  await Feat.requireFeature(request, "outreach");
   const callerEmail = normEmail(request.auth?.token?.email);
   const action = request.data?.action;
   if (action === "approveDraft" || action === "returnDraft") {

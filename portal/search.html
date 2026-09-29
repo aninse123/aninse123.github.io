@@ -431,7 +431,7 @@
         <button class="btn btn--ghost" id="companyStatsBtn">📊 Company Stats</button>
         <button class="btn btn--ghost" id="peopleStatsBtn">👥 People Stats</button>
         <button class="btn btn--ghost" id="exportBtn" data-perm="search.export">⬇ Export CSV</button>
-        <button class="btn btn--ghost" id="addToCampaignBtn" data-perm="out.campaigns" title="Add the companies in the current list (filters) to an Outreach campaign">📣 Add to campaign</button>
+        <button class="btn btn--ghost" id="addToCampaignBtn" data-perm="out.campaigns" data-feature="outreach outreach.campaigns" title="Add the companies in the current list (filters) to an Outreach campaign">📣 Add to campaign</button>
         <button class="btn btn--ghost" id="bulkImportBtn" data-perm="search.import">⬆ Bulk Import</button>
         <button class="btn btn--ghost" id="peopleImportBtn" data-perm="search.import">🧑‍💼 Import People</button>
         <button class="btn btn--ghost" id="companiesImportBtn" data-perm="search.import">🏢 Import Companies</button>
@@ -494,8 +494,8 @@
       <div class="filter-group">CAGR% <input type="number" class="num-filter" id="cagrMin" placeholder="min"> – <input type="number" class="num-filter" id="cagrMax" placeholder="max"></div>
       <select class="filter-sel" id="lastTouchFilter"><option value="">Any time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="never">Never contacted</option></select>
       <select class="filter-sel" id="websiteFilter"><option value="">Website: Any</option><option value="yes">Has website</option><option value="no">No website</option></select>
-      <select class="filter-sel" id="tierFilter" title="Target tier (rules in Settings, or set on the company)"><option value="">Tier: Any</option><option value="A">Tier A</option><option value="B">Tier B</option><option value="C">Tier C</option><option value="AB">Tier A or B</option><option value="none">No tier</option></select>
-      <select class="filter-sel" id="contactableFilter" title="Not contactable = left out of campaigns unless a campaign includes them"><option value="">Contactable: Any</option><option value="yes">Contactable</option><option value="no">Not contactable</option></select>
+      <select class="filter-sel" id="tierFilter" data-feature="search.tier" title="Target tier (rules in Settings, or set on the company)"><option value="">Tier: Any</option><option value="A">Tier A</option><option value="B">Tier B</option><option value="C">Tier C</option><option value="AB">Tier A or B</option><option value="none">No tier</option></select>
+      <select class="filter-sel" id="contactableFilter" data-feature="search.tier" title="Not contactable = left out of campaigns unless a campaign includes them"><option value="">Contactable: Any</option><option value="yes">Contactable</option><option value="no">Not contactable</option></select>
       <button class="btn btn--ghost btn--sm" id="clearFiltersBtn">Clear all</button>
     </div>
 
@@ -503,9 +503,9 @@
     <div class="table-card" id="tableCard">
       <div class="sel-bar" id="selBar" style="display:none;">
         <span id="selBarText"></span>
-        <button class="btn btn--primary btn--sm" id="selBarAdd" data-perm="out.campaigns">📣 Add selected to campaign</button>
-        <button class="btn btn--ghost btn--sm" id="selBarTier" data-perm="search.edit">Set tier…</button>
-        <button class="btn btn--ghost btn--sm" id="selBarContactable" data-perm="search.edit">Contactable…</button>
+        <button class="btn btn--primary btn--sm" id="selBarAdd" data-perm="out.campaigns" data-feature="outreach outreach.campaigns">📣 Add selected to campaign</button>
+        <button class="btn btn--ghost btn--sm" id="selBarTier" data-perm="search.edit" data-feature="search.tier">Set tier…</button>
+        <button class="btn btn--ghost btn--sm" id="selBarContactable" data-perm="search.edit" data-feature="search.tier">Contactable…</button>
         <button class="btn btn--ghost btn--sm" id="selBarClear">Clear selection</button>
       </div>
       <div class="table-wrap">
@@ -586,9 +586,9 @@
       <div class="detail-header-actions">
         <button class="btn btn--action" id="editCompanyBtn" data-perm="search.edit">✎ Edit</button>
         <button class="btn btn--action" id="addActivityBtn" data-perm="search.edit">＋ Activity</button>
-        <button class="btn btn--action" id="addCoToCampaignBtn" data-perm="out.campaigns" title="Add this company to an Outreach campaign">📣 Campaign</button>
-        <select class="btn btn--action" id="tierSel" data-perm="search.edit" title="Target tier — automatic from the rules unless you choose one" style="padding-right:6px;"></select>
-        <button class="btn btn--action" id="contactableBtn" data-perm="search.edit" title="Not contactable: left out of campaigns by default (a campaign can still include it)">Not contactable</button>
+        <button class="btn btn--action" id="addCoToCampaignBtn" data-perm="out.campaigns" data-feature="outreach outreach.campaigns" title="Add this company to an Outreach campaign">📣 Campaign</button>
+        <select class="btn btn--action" id="tierSel" data-perm="search.edit" data-feature="search.tier" title="Target tier — automatic from the rules unless you choose one" style="padding-right:6px;"></select>
+        <button class="btn btn--action" id="contactableBtn" data-perm="search.edit" data-feature="search.tier" title="Not contactable: left out of campaigns by default (a campaign can still include it)">Not contactable</button>
         <button class="btn btn--action" id="dncBtn" data-perm="search.edit" title="Stop all outreach to this company">🚫 Do not contact</button>
         <button class="btn btn--danger btn--sm" id="deleteCompanyBtn" data-perm="search.delete">Delete</button>
       </div>
@@ -967,6 +967,7 @@
     <button class="btn btn--ghost btn--sm" id="scanBadNifBtn" style="margin-top:8px;">🔍 Scan for corrupted NIF values</button>
     <div id="badNifResult" style="margin-top:10px;font-size:0.82rem;"></div>
 
+    <div data-feature="search.tier">
     <div class="modal-section-title">Target tier rules</div>
     <p class="hint" style="margin-bottom:8px;">A company gets the tier of the most specific rule that matches: a CAE / NACE code prefix (longer = more specific) beats a sub-sector, which beats a sector. A tier chosen on the company itself always wins. Tiers are filters (Search CRM and campaigns), not blocks.</p>
     <div id="tierRuleList" style="margin-bottom:8px;"></div>
@@ -977,6 +978,7 @@
       <div class="form-group"><button class="btn btn--ghost" id="addTierRuleBtn" style="width:100%;">＋ Add rule</button></div>
     </div>
     <button class="btn btn--primary btn--sm" id="saveTierRulesBtn">Save tier rules</button> <span class="hint" id="tierRulesNote"></span>
+    </div>
 
     <div class="modal-section-title">Brokers</div>
     <div id="brokerList" style="margin-bottom:10px;"></div>
@@ -1661,7 +1663,7 @@ function tierOf(c, rules = tierRules){
   }
   return best;
 }
-const tierBadge = (c) => c.targetTier ? `<span class="badge badge-grey" style="margin-left:4px;" title="Target tier ${c.targetTier}${['A','B','C'].includes(c.targetTierManual) ? ' (set on the company)' : ' (from the rules)'}">${c.targetTier}</span>` : '';
+const tierBadge = (c) => c.targetTier ? `<span class="badge badge-grey" data-feature="search.tier" style="margin-left:4px;" title="Target tier ${c.targetTier}${['A','B','C'].includes(c.targetTierManual) ? ' (set on the company)' : ' (from the rules)'}">${c.targetTier}</span>` : '';
 
 function computeFields(co){
   // Orbis first, the old grid only as fallback -- the same rule calcFit()
@@ -3015,7 +3017,7 @@ function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
   return `<tr class="row-clickable" data-id="${c.id}">
     <td class="sel-col" onclick="event.stopPropagation()"><input type="checkbox" class="rowSel" data-id="${esc(c.id)}" aria-label="Select ${esc(c.name)}"${selectedCo.has(c.id) ? ' checked' : ''}></td>
-    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}${c.doNotContact?.on ? ' <span class="badge badge-red" style="margin-left:4px;" title="Do not contact">🚫</span>' : ''}${c.contactable === false ? ` <span class="badge badge-grey" style="margin-left:4px;" title="Not contactable${c.contactableNote ? ' — ' + esc(c.contactableNote) : ''}">not contactable</span>` : ''}${tierBadge(c)}</td>
+    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}${c.doNotContact?.on ? ' <span class="badge badge-red" style="margin-left:4px;" title="Do not contact">🚫</span>' : ''}${c.contactable === false ? ` <span class="badge badge-grey" data-feature="search.tier" style="margin-left:4px;" title="Not contactable${c.contactableNote ? ' — ' + esc(c.contactableNote) : ''}">not contactable</span>` : ''}${tierBadge(c)}</td>
     <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
     <td class="sector-cell" title="${esc(c.sector||'')}${c.subSector?' › '+esc(c.subSector):''}">${esc(c.sector||'—')}${c.subSector?'<br><span style="font-size:0.72rem;">'+esc(c.subSector)+'</span>':''}</td>
     <td>${prioPill(c.priority)}</td>
@@ -3346,8 +3348,8 @@ function renderDetail(){
     ${SOURCE_LABELS[c.sourceType]?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
     ${c.activeCampaignName ? `<a class="badge badge-blue" href="/portal/outreach.html" title="In this Outreach campaign" style="text-decoration:none;">📣 ${esc(c.activeCampaignName)}</a>` : ''}
     ${c.doNotContact?.on ? `<span class="badge badge-red" title="${esc(c.doNotContact.reason || 'No reason given')}">🚫 Do not contact</span>` : ''}
-    ${c.contactable === false ? `<span class="badge badge-grey" title="${esc(c.contactableNote || 'No reason given')}">Not contactable</span>` : ''}
-    ${c.targetTier ? `<span class="badge badge-grey" title="${['A','B','C'].includes(c.targetTierManual) ? 'Set on the company' : 'From the tier rules'}">Tier ${c.targetTier}</span>` : ''}
+    ${c.contactable === false ? `<span class="badge badge-grey" data-feature="search.tier" title="${esc(c.contactableNote || 'No reason given')}">Not contactable</span>` : ''}
+    ${c.targetTier ? `<span class="badge badge-grey" data-feature="search.tier" title="${['A','B','C'].includes(c.targetTierManual) ? 'Set on the company' : 'From the tier rules'}">Tier ${c.targetTier}</span>` : ''}
     ${headerOwner(c, primary)}`;
   const ctB = document.getElementById('contactableBtn');
   if (ctB) ctB.textContent = c.contactable === false ? '✓ Contactable again' : 'Not contactable';
@@ -3899,7 +3901,7 @@ function renderContacts(c){
           ${emailHistory}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          ${ct.email?`<button class="btn btn--icon btn--ghost" data-sendct="${i}" data-perm="out.send" title="Send email">✉</button>`:''}
+          ${ct.email?`<button class="btn btn--icon btn--ghost" data-sendct="${i}" data-perm="out.send" data-feature="outreach" title="Send email">✉</button>`:''}
           <button class="btn btn--icon btn--ghost" data-editct="${i}" data-perm="search.edit">✎</button>
           <button class="btn btn--icon btn--danger" data-rmct="${i}" data-perm="search.edit">✕</button>
         </div>
@@ -3912,7 +3914,7 @@ function renderContacts(c){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
         <div class="sec-title" style="margin:0;">Contacts</div>
         <div style="display:flex;gap:8px;">
-          <button class="btn btn--ghost btn--sm" id="emailCompanyBtn" data-perm="out.send"${c.companyEmail ? '' : ' disabled title="No company email on file"'}>✉ Email company</button>
+          <button class="btn btn--ghost btn--sm" id="emailCompanyBtn" data-perm="out.send" data-feature="outreach"${c.companyEmail ? '' : ' disabled title="No company email on file"'}>✉ Email company</button>
           <button class="btn btn--primary btn--sm" id="addContactBtn" data-perm="search.edit">＋ Add Contact</button>
         </div>
       </div>${list}

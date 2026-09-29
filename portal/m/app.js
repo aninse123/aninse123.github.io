@@ -11,6 +11,7 @@ import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/
 import { doc, getDoc, getDocs, collection, query, where, limit } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
 import * as H from './crm-helpers.js';
+import { startFeatures, isOn } from '../features.js';
 
 const $ = (id) => document.getElementById(id);
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -341,6 +342,9 @@ if (typeof window !== 'undefined' && document.getElementById('app')) {
     const a = await getAccess(user).catch(() => null);
     $('loading').hidden = true;
     if (!a?.can('search.view')) { $('noAccess').hidden = false; return; }
+    // Feature switch "Douro mobile": Off (or Test for non-testers) → not available yet.
+    await startFeatures(a);
+    if (!isOn('mobile')) { $('noAccess').querySelector('h1').textContent = 'Douro mobile isn\u2019t available yet'; $('noAccess').querySelector('.hint').textContent = 'It is being tested and will be switched on soon.'; $('noAccess').hidden = false; return; }
     $('who').textContent = user.email;
     [dir] = await Promise.all([
       loadDirectory().catch(() => []),

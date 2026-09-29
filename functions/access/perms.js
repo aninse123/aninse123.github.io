@@ -45,6 +45,7 @@ const PERMS = [
   ["budget.view", "Budget", "See the budget"],
   ["budget.edit", "Budget", "Edit the budget"],
   ["log.view", "Activity Log", "See the portal activity log"],
+  ["features.test", "Team & access", "Test features before release (sees features switched to Test)"],
   ["access.manage", "Team & access", "Manage people, roles and access"],
 ];
 const ALL = PERMS.map((p) => p[0]);

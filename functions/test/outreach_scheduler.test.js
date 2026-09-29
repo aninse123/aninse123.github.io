@@ -187,6 +187,9 @@ const TUE = "2026-09-29T10:30:00+01:00";
   ok("approve: draft approved, company back in the queue now", ap.approved === 1 && get(`outreachMessages/${d1}`).status === "approved" && get(`outreachMessages/${d1}`).edited === true && get(`outreachEnrolments/${cD}_c1`).status === "active");
   ok("approving twice is skipped", (await camp({ action: "approve", messageIds: [d1] })).skipped.not_a_draft === 1);
   const beforeAp = sends().length;
+  // Approving stamps "due now" with the real clock; pin it to the simulated
+  // day so the test doesn't depend on today's date.
+  store.set(`outreachEnrolments/${cD}_c1`, { ...get(`outreachEnrolments/${cD}_c1`), nextActionAt: Timestamp.fromDate(new Date("2026-09-29T10:45:00+01:00")) });
   const rap = await run("2026-09-29T10:50:00+01:00");
   const apSend = sends().slice(beforeAp)[0]?.body;
   ok("approved draft sent by the scheduler with the edits (variables rendered)", rap.sent === 1 && apSend.subject === "Assunto revisto" && /Texto revisto para Empresa 1/.test(apSend.text));

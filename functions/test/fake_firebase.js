@@ -1,3 +1,5 @@
+// Feature switches: tests without an HTTP request count as staging (release switches On).
+process.env.FEATURE_TEST_SITE = process.env.FEATURE_TEST_SITE || "staging";
 // Minimal in-memory stand-ins for firebase-admin (Firestore + Storage) and
 // firebase-functions, just enough to exercise functions/outreach end to end
 // without the emulator (no Java on this machine).

@@ -110,7 +110,9 @@ async function setTracking(on, callerEmail) {
   return { ok: true, on: !!on, domain: SENDER_DOMAIN };
 }
 
+const Feat = require("../features"); // feature switches (Team & access → Features)
 exports.outreachAdmin = onCall({ region: REGION, secrets: [RESEND_READ_KEY] }, async (request) => {
+  await Feat.requireFeature(request, "outreach");
   const callerEmail = normEmail(request.auth?.token?.email);
   if (!P.hasPerm(request, "out.admin")) throw new HttpsError("permission-denied", "You don't have permission to change Outreach settings.");
   const action = request.data?.action;

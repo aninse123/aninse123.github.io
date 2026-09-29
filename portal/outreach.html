@@ -466,8 +466,8 @@
       <section class="panel" id="panel-campaigns" hidden>
         <div class="chips subnav" id="campTop" role="tablist" aria-label="Campaign views">
           <button class="chip on" data-cview="campaigns">Campaigns</button>
-          <button class="chip" data-cview="recurring">Recurring emails</button>
-          <button class="chip" data-cview="lists">Lists of people</button>
+          <button class="chip" data-cview="recurring" data-feature="outreach.recurring">Recurring emails</button>
+          <button class="chip" data-cview="lists" data-feature="outreach.people">Lists of people</button>
         </div>
         <div id="listsView" hidden></div>
         <div id="recurView" hidden></div>
@@ -520,7 +520,7 @@
           <button class="chip" data-tview="letters">Letters to print <span id="lettersChipN"></span></button>
         </div>
         <div id="todoView"></div>
-        <div id="issueView" hidden></div>
+        <div id="issueView" data-feature="outreach.recurring" hidden></div>
         <div id="approveView" hidden></div>
         <div id="lettersView" hidden></div>
       </section>
@@ -619,7 +619,7 @@
               <select id="gCampTest" style="max-width:360px;"></select>
               <span class="hint">While test mode is on, every campaign email goes here instead of the company (the company is still used for the wording and the history), so a campaign can be rehearsed end to end.</span>
             </div>
-            <div class="field" id="aiBox">
+            <div class="field" id="aiBox" data-feature="outreach.ai">
               <label>AI openings ({{ai.opener}})</label>
               <label class="checkline"><input type="checkbox" id="gAiOn"> <span>Write an opening sentence per company with Claude <span class="hint">— only company business data is sent (sector, activity, region, age, size, trend; never names, emails or phones). Used only in steps that need approval and in Compose's "Suggest an opening".</span></span></label>
               <div class="row2" style="margin-top:8px;">
@@ -725,6 +725,7 @@
   <script type="module">
     import { auth, db, storage, addReads, updateDoc, setDoc, addDoc, deleteDoc } from './firebase-config.js';
     import { guardPage } from './access.js';
+    import { isOn } from './features.js';
     import { applyDirectory } from './team-dir.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -1307,7 +1308,7 @@
 
     function setupCompose() {
       $('varButtons').innerHTML = VARS.filter(v => !v.startsWith('ai.')).map(v => `<button type="button" class="var" data-var="${esc(v)}">{{${esc(v)}}}</button>`).join('')
-        + ' <button type="button" class="btn btn--ghost btn--sm" id="aiSuggest" title="Phase 4: an opening sentence written for this company from its Search CRM data (off until set up in Settings)">✨ Suggest an opening</button>';
+        + ' <button type="button" class="btn btn--ghost btn--sm" id="aiSuggest" data-feature="outreach.ai" title="Phase 4: an opening sentence written for this company from its Search CRM data (off until set up in Settings)">✨ Suggest an opening</button>';
       $('aiSuggest').addEventListener('click', async () => {
         if (!picked) { toast('Choose a company first.'); return; }
         const b = $('aiSuggest'); b.disabled = true; b.textContent = '✨ Writing…';
@@ -2421,8 +2422,8 @@
         <div class="field"><label for="ncName">Name</label><input type="text" id="ncName" maxlength="100" placeholder="e.g. Metalurgia Norte — Outono 2026"></div>
         <div class="field"><label for="ncDesc">Description (optional)</label><input type="text" id="ncDesc" maxlength="500"></div>
         <div class="field"><label>Who is it for</label>
-          <label class="checkline"><input type="radio" name="ncAud" value="companies" checked> <span><b>Companies</b> — prospects from the Search CRM (the email goes to the company or a person there)</span></label>
-          <label class="checkline"><input type="radio" name="ncAud" value="people"> <span><b>People</b> — investors, brokers, journalists, advisors, institutions… (Investor CRM, portal investors, Network, lists)</span></label>
+          <label class="checkline" data-feature="outreach.campaigns"><input type="radio" name="ncAud" value="companies" checked> <span><b>Companies</b> — prospects from the Search CRM (the email goes to the company or a person there)</span></label>
+          <label class="checkline" data-feature="outreach.people"><input type="radio" name="ncAud" value="people"> <span><b>People</b> — investors, brokers, journalists, advisors, institutions… (Investor CRM, portal investors, Network, lists)</span></label>
           <span class="hint">Can't be changed once people or companies are added.</span></div>
         <div class="field"><label for="ncAppr">Before emails go out</label>
           <select id="ncAppr"><option value="approval">Each email waits for approval (recommended to start)</option><option value="auto">Emails go out automatically</option></select>
@@ -2434,6 +2435,8 @@
           openCampaign(r.campaignId, 'sequence');
           return true;
         }, 'Create');
+      // Feature switches: company campaigns switched off → start on People.
+      if (!isOn('outreach.campaigns')) { const p = document.querySelector('input[name="ncAud"][value="people"]'); if (p) p.checked = true; }
     }
 
     function openCampaign(id, sec = 'overview') {
@@ -4152,7 +4155,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <div class="field"><label>Search CRM stages allowed</label>
             <div class="stage-grid" id="csStages">${STAGE_LABELS.map(([k, l]) => `<label class="checkline"><input type="checkbox" value="${k}" ${ex.allowedStages.includes(k) ? 'checked' : ''}${dis}> <span>${esc(l)}</span></label>`).join('')}</div></div>
           <label class="checkline"><input type="checkbox" id="csReqEmail" ${ex.requireEmail !== false ? 'checked' : ''}${dis}> <span>Skip companies without an email address</span></label>
-          <label class="checkline"><input type="checkbox" id="csInclNC" ${ex.includeNotContactable ? 'checked' : ''}${dis}> <span>Include companies marked <b>not contactable</b> in the Search CRM (left out by default; "Do not contact" is never included)</span></label>
+          <label class="checkline" data-feature="search.tier"><input type="checkbox" id="csInclNC" ${ex.includeNotContactable ? 'checked' : ''}${dis}> <span>Include companies marked <b>not contactable</b> in the Search CRM (left out by default; "Do not contact" is never included)</span></label>
           <div class="field" style="margin-top:14px;"><label for="csAudMode">Audience</label>
             <select id="csAudMode" style="max-width:520px;"${dis}>
               <option value="static"${c.audience?.mode !== 'dynamic' ? ' selected' : ''}>Static — only the companies you add</option>

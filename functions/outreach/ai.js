@@ -136,7 +136,9 @@ async function getOpener({ companyId, templateId = null, templateBody = "", sett
 
 // Callable: { action: "status" } → { enabled, keyConfigured, model, cap, usedToday }
 //           { action: "opener", companyId, templateId?, force? } → { text, cached }
+const Feat = require("../features"); // feature switches (Team & access → Features)
 exports.outreachAi = onCall({ region: REGION, secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 }, async (request) => {
+  await Feat.requireFeature(request, "outreach", "outreach.ai", "kill.ai");
   const caller = normEmail(request.auth?.token?.email);
   if (!P.hasPerm(request, "out.draft") && !P.hasPerm(request, "out.send")) throw new HttpsError("permission-denied", "You don't have permission to use this.", { reason: "not_admin" });
   const data = request.data || {};

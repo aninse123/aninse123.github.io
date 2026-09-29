@@ -92,3 +92,6 @@ exports.teamExpiry = require("./access/team").teamExpiry;
 
 // Mobile app (portal/m/) — Search CRM search from the phone.
 exports.mobileSearch = require("./mobile/search").mobileSearch;
+
+// Feature switches (Team & access → Features) — see "Portal - Feature Switches Plan.md".
+exports.featureAdmin = require("./features/admin").featureAdmin;

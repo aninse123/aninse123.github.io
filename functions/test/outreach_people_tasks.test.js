@@ -48,6 +48,8 @@ const TUE = "2026-09-29T10:30:00+01:00", WED = "2026-09-30T10:30:00+01:00";
   const e = docs("outreachEnrolments").find((x) => x.personEmail === "rui@firm.pt");
   ok("the sequence moves on to the letter step", e.status === "active" && e.currentStep === 1);
 
+  // The wait is counted from the real clock; pin it to the simulated day.
+  store.set(`outreachEnrolments/${e.id}`, { ...store.get(`outreachEnrolments/${e.id}`), nextActionAt: F.Timestamp.fromDate(new Date("2026-09-30T09:00:00+01:00")) });
   await run(WED);
   const letter = docs("outreachTasks").find((x) => x.personEmail === "rui@firm.pt" && x.channel === "letter");
   ok("next step: a letter task for the person", !!letter && letter.personName === "Rui Broker");

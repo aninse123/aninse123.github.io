@@ -32,6 +32,8 @@ const PAGES = [
 // Team access: the permission that shows each link (access.js hides the rest;
 // links stay invisible until the page knows who is signed in).
 const PAGE_PERM = { investor: 'portal.viewas', admin: 'portal.admin', crm: 'icrm.view', search: 'search.view', outreach: 'out.view', network: 'net.view', budget: 'budget.view', log: 'log.view', team: 'access.manage' };
+// Feature switches: a tab that is a feature as a whole (features.js PAGE_FEATURE).
+const PAGE_FEATURE_ATTR = { outreach: 'outreach' };
 
 let sharedReads = null;
 let sharedWrites = null;
@@ -55,7 +57,7 @@ export function initNav(activeKey, opts = {}) {
   if (!mount) return;
 
   const links = PAGES.map(p =>
-    `<a href="${p.href}" class="nav__link${p.key === activeKey ? ' active' : ''}" data-perm="${PAGE_PERM[p.key]}">${p.label}${p.badge ? `<span class="nav__badge" id="${p.badge}" hidden></span>` : ''}</a>`
+    `<a href="${p.href}" class="nav__link${p.key === activeKey ? ' active' : ''}" data-perm="${PAGE_PERM[p.key]}"${PAGE_FEATURE_ATTR[p.key] ? ` data-feature="${PAGE_FEATURE_ATTR[p.key]}"` : ''}>${p.label}${p.badge ? `<span class="nav__badge" id="${p.badge}" hidden></span>` : ''}</a>`
   ).join('\n        ');
 
   mount.innerHTML = `

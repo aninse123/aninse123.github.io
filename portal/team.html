@@ -30,6 +30,14 @@
     .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
     .chip { padding: 6px 14px; border-radius: 100px; border: 1px solid var(--border); background: var(--white); font: inherit; font-size: 0.85rem; cursor: pointer; color: var(--text); }
     .chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+    /* Features tab */
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .seg button { font: inherit; font-size: 0.78rem; font-weight: 600; padding: 5px 10px; border: 0; background: var(--white); color: var(--text-light); cursor: pointer; }
+    .seg button + button { border-left: 1px solid var(--border); }
+    .seg button.on.off { background: #F0EDE8; color: var(--text); } .seg button.on.test { background: #B45309; color: #fff; } .seg button.on.on { background: var(--secondary); color: #fff; }
+    .seg button:disabled { cursor: default; opacity: .6; }
+    .feat-area td { background: #FAF8F4; font-weight: 600; font-size: 0.78rem; letter-spacing: .05em; text-transform: uppercase; color: var(--text-light); }
+    .feat-desc { font-size: 0.78rem; color: var(--text-light); margin-top: 2px; max-width: 46ch; }
     .card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
     .toolbar { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: #FAFAF8; flex-wrap: wrap; }
     .toolbar h2 { font-size: 1rem; font-weight: 600; }
@@ -98,10 +106,12 @@
       <div class="chips" role="tablist" aria-label="Views">
         <button class="chip on" data-view="people">People</button>
         <button class="chip" data-view="roles">Roles</button>
+        <button class="chip" data-view="features">Features</button>
         <button class="chip" data-view="audit">Activity</button>
       </div>
       <section id="v-people"></section>
       <section id="v-roles" hidden></section>
+      <section id="v-features" hidden></section>
       <section id="v-audit" hidden></section>
     </main>
   </div>
@@ -111,6 +121,7 @@
   <script type="module">
     import { auth, db, addReads } from './firebase-config.js';
     import { guardPage, PERMS, ALL, TAB_PERM, startPreview, homeFor } from './access.js';
+    import { FEATURES, stateOf, currentFlags, onFeaturesChange, SITE } from './features.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import { collection, onSnapshot, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
@@ -151,8 +162,9 @@
     document.querySelector('.chips').addEventListener('click', (e) => {
       const b = e.target.closest('[data-view]'); if (!b) return;
       document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b));
-      ['people', 'roles', 'audit'].forEach(v => { $('v-' + v).hidden = v !== b.dataset.view; });
+      ['people', 'roles', 'features', 'audit'].forEach(v => { $('v-' + v).hidden = v !== b.dataset.view; });
       if (b.dataset.view === 'audit') renderAudit();
+      if (b.dataset.view === 'features') renderFeatures();
     });
     $('seedBtn').addEventListener('click', async () => {
       $('seedBtn').disabled = true;
@@ -352,12 +364,71 @@
       }));
     }
 
+    // ── Features (feature switches; partners) ──
+    // Off / Test / On per site; changes go through featureAdmin (audited).
+    const featureCall = httpsCallable(getFunctions(auth.app, 'us-central1'), 'featureAdmin');
+    const READY_DAYS = 30;
+    let featFilter = 'all';
+    onFeaturesChange(() => { if (!$('v-features').hidden) renderFeatures(); });
+    function renderFeatures() {
+      if (document.activeElement?.closest?.('#v-features') && document.activeElement.tagName === 'INPUT') return;
+      const flags = currentFlags();
+      const ready = (f) => f.kind === 'release' && stateOf(flags, f.key, 'production') === 'on' && flags[f.key]?.onSince && Date.now() - tsMs(flags[f.key].onSince) > READY_DAYS * 86400000;
+      const shown = FEATURES.filter((f) => featFilter === 'all' || (featFilter === 'test' && (stateOf(flags, f.key, 'staging') === 'test' || stateOf(flags, f.key, 'production') === 'test'))
+        || (featFilter === 'kill' && f.kind === 'kill') || (featFilter === 'ready' && ready(f)));
+      const seg = (f, site) => {
+        const st = stateOf(flags, f.key, site), stored = flags[f.key]?.[site];
+        return `<div class="seg" role="group" aria-label="${esc(f.name)} on ${site}">${['off', 'test', 'on'].map((s) => `<button type="button" class="${s}${st === s ? ' on' : ''}" data-fkey="${esc(f.key)}" data-site="${site}" data-state="${s}" aria-pressed="${st === s}">${s === 'off' ? 'Off' : s === 'test' ? 'Test' : 'On'}</button>`).join('')}</div>${stored ? '' : '<div class="hint" style="font-size:0.72rem;margin-top:3px;">default</div>'}`;
+      };
+      let lastArea = '';
+      const rows = shown.map((f) => {
+        const x = flags[f.key] || {};
+        const head = f.area !== lastArea ? `<tr class="feat-area"><td colspan="5">${esc(f.area)}</td></tr>` : '';
+        lastArea = f.area;
+        return head + `<tr>
+          <td><b>${esc(f.name)}</b> <span class="badge ${f.kind === 'kill' ? 'badge--red' : 'badge--blue'}">${f.kind === 'kill' ? 'Kill switch' : 'Release'}</span>${ready(f) ? ' <span class="badge badge--green" title="On in production for 30+ days — the switch can be removed from the code">Ready to remove</span>' : ''}
+            <div class="feat-desc">${esc(f.description)}</div>${x.note ? `<div class="feat-desc">📝 ${esc(x.note)}</div>` : ''}</td>
+          <td>${seg(f, 'staging')}</td>
+          <td>${seg(f, 'production')}</td>
+          <td style="white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-testers="${esc(f.key)}" title="${esc((x.testers || []).join(', ') || 'No extra testers')}">${(x.testers || []).length ? `${x.testers.length} tester${x.testers.length === 1 ? '' : 's'}` : 'Testers'}</button> <button class="btn btn--ghost btn--sm" data-note="${esc(f.key)}">Note</button></td>
+          <td class="hint" style="white-space:nowrap;font-size:0.78rem;">${x.updatedBy ? `${esc(String(x.updatedBy).split('@')[0])}<br>${tsMs(x.updatedAt) ? esc(dtFmt.format(new Date(tsMs(x.updatedAt)))) : ''}` : '—'}</td></tr>`;
+      }).join('');
+      const chip = (k, l) => `<button class="chip${featFilter === k ? ' on' : ''}" data-ffilter="${k}">${l}</button>`;
+      $('v-features').innerHTML = `<div class="card">
+          <div class="toolbar"><h2>Features</h2><div class="chips" style="margin:0;">${chip('all', 'All')}${chip('test', 'In test now')}${chip('kill', 'Kill switches')}${chip('ready', 'Ready to remove')}</div></div>
+          <p class="hint" style="padding:0 16px 10px;">Off = nobody (the server refuses it) · Test = only testers (permission "Test features before release", or named here), with a TEST badge · On = everyone with the normal permission. Staging and production are set separately; you're on <b>${esc(SITE)}</b>. Kill switches follow the production setting — background jobs serve both sites. To see what someone without the tester permission sees, use Preview on the Roles tab.</p>
+          <div class="table-wrap"><table><thead><tr><th>Feature</th><th>Staging</th><th>Production</th><th></th><th>Last change</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5" class="empty">Nothing here.</td></tr>'}</tbody></table></div></div>`;
+      $('v-features').querySelectorAll('[data-ffilter]').forEach((b) => b.addEventListener('click', () => { featFilter = b.dataset.ffilter; renderFeatures(); }));
+      $('v-features').querySelectorAll('[data-fkey]').forEach((b) => b.addEventListener('click', async () => {
+        const f = FEATURES.find((x) => x.key === b.dataset.fkey), site = b.dataset.site, state = b.dataset.state;
+        if (stateOf(currentFlags(), f.key, site) === state) return;
+        if (f.kind === 'kill' && state === 'off' && !confirm(`Turn OFF "${f.name}"?\n\n${f.description}`)) return;
+        if (f.kind === 'release' && site === 'production' && state === 'on' && !confirm(`Release "${f.name}" to everyone on douropartners.pt?`)) return;
+        b.closest('.seg').querySelectorAll('button').forEach((x) => { x.disabled = true; });
+        try { await featureCall({ action: 'set', key: f.key, site, state }); toast(`${f.name}: ${state === 'on' ? 'On' : state === 'test' ? 'Test' : 'Off'} on ${site}.`); }
+        catch (e) { toast(errText(e)); renderFeatures(); }
+      }));
+      $('v-features').querySelectorAll('[data-testers]').forEach((b) => b.addEventListener('click', async () => {
+        const key = b.dataset.testers, cur = (currentFlags()[key]?.testers || []).join(', ');
+        const v = prompt('Extra testers for this switch (emails, comma-separated). People with the "Test features before release" permission are always testers.', cur);
+        if (v === null) return;
+        try { await featureCall({ action: 'setTesters', key, testers: v.split(/[,;\s]+/).filter(Boolean) }); toast('Testers saved.'); } catch (e) { toast(errText(e)); }
+      }));
+      $('v-features').querySelectorAll('[data-note]').forEach((b) => b.addEventListener('click', async () => {
+        const key = b.dataset.note;
+        const v = prompt('Note (e.g. why it is in Test, who is testing):', currentFlags()[key]?.note || '');
+        if (v === null) return;
+        try { await featureCall({ action: 'setNote', key, note: v }); toast('Note saved.'); } catch (e) { toast(errText(e)); }
+      }));
+    }
+
     async function renderAudit() {
       $('v-audit').innerHTML = '<div class="card"><div class="empty">Loading…</div></div>';
       try {
         const snap = await getDocs(query(collection(db, 'accessAudit'), orderBy('at', 'desc'), limit(150)));
         addReads(snap.size || 1); refreshReads();
-        const label = { inviteEmail: 'Invitation emailed', seed: 'Set up team access', invite: 'Invited', update: 'Changed', suspend: 'Suspended', reactivate: 'Reactivated', end: 'Ended access', expired: 'Access ended (end date)', saveRole: 'Changed role', createRole: 'Created role', deleteRole: 'Deleted role', signIn: 'Signed in' };
+        const label = { feature: 'Feature switch', inviteEmail: 'Invitation emailed', seed: 'Set up team access', invite: 'Invited', update: 'Changed', suspend: 'Suspended', reactivate: 'Reactivated', end: 'Ended access', expired: 'Access ended (end date)', saveRole: 'Changed role', createRole: 'Created role', deleteRole: 'Deleted role', signIn: 'Signed in' };
         const detail = (a) => {
           if (!a.after) return '';
           return Object.entries(a.after).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') || '—' : v && typeof v.toMillis === 'function' ? dateFmt.format(new Date(v.toMillis())) : typeof v === 'object' && v !== null ? '…' : v}`).join(' · ');
