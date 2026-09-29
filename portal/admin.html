@@ -135,6 +135,11 @@
       text-transform: uppercase; letter-spacing: 0.08em;
       color: var(--text); margin-bottom: 6px;
     }
+    /* Any text-like box outside a form group gets the same look (zero specificity: other rules win). */
+    :where(input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="url"], input[type="date"], input[type="time"], input[type="search"]) {
+      padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius);
+      font-family: var(--font-sans); font-size: 0.9rem; color: var(--text); background: var(--white);
+    }
     .form-group input,
     .form-group select,
     .form-group textarea {

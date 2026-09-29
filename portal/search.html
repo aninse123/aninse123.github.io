@@ -588,7 +588,7 @@
         <button class="btn btn--action" id="editCompanyBtn" data-perm="search.edit" data-coedit>✎ Edit</button>
         <button class="btn btn--action" id="addActivityBtn" data-perm="search.activity">＋ Activity</button>
         <button class="btn btn--action" id="addCoToCampaignBtn" data-perm="out.campaigns" data-feature="outreach outreach.campaigns" title="Add this company to an Outreach campaign">📣 Campaign</button>
-        <select class="btn btn--action" id="tierSel" data-perm="search.flags" title="Tier — from the tier rules unless you choose one here" style="padding-right:6px;"></select>
+        <select class="btn btn--action" id="tierSel" title="Tier — from the tier rules unless you choose one here" style="padding-right:6px;"></select>
         <button class="btn btn--action" id="contactableBtn" data-perm="search.flags" data-feature="search.tier" title="Not contactable: left out of campaigns by default (a campaign can still include it)">Not contactable</button>
         <button class="btn btn--action" id="dncBtn" data-perm="search.flags" title="Stop all outreach to this company">🚫 Do not contact</button>
         <button class="btn btn--danger btn--sm" id="deleteCompanyBtn" data-perm="search.delete">Delete</button>
@@ -1457,6 +1457,9 @@ let fitCriteria = { ...DEFAULT_FIT };
 // T6: Target tier rules (searchConfig/targetTiers) — see tierOf(). The rules
 // only count while the "search.tier" switch is on (tierRules = the active set).
 let tierRulesStored = [];
+// Companies created in this tab: kept in the list even when they fall outside
+// the bounded "most recently touched" window (a new company has no last touch).
+const keepInView = new Set();
 let tierRules = [];
 let activities = [];
 let currentCoId = null;
@@ -2017,7 +2020,10 @@ function startCompaniesListener(){
           snap.docs.forEach(d => byId.set(d.id, { id: d.id, ...d.data() }));
           companies = [...byId.values()];
         } else {
+          const kept = companies.filter(c => keepInView.has(c.id));
           companies = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          const inWindow = new Set(companies.map(c => c.id));
+          kept.forEach(c => { if (!inWindow.has(c.id)) companies.push(c); });
           dataAsOf = null; // bounded window is always live
         }
         companies.forEach(computeFields);
@@ -3376,6 +3382,10 @@ function renderDetail(){
     const auto = tierOf({ ...c, priority: null, targetTierManual: null });
     tSel.innerHTML = `<option value="">Tier: from the rules${auto ? ` (${auto})` : ' (none)'}</option>` + ['A','B','C'].map(t => `<option value="${t}">Tier ${t} (set here)</option>`).join('');
     tSel.value = ownTier(c) || '';
+    // B5: shown to everyone, changed only with "Set Do not contact, contactable and tier".
+    const canFlag = !window.pageAccess || window.pageAccess.can('search.flags');
+    tSel.disabled = !canFlag;
+    tSel.title = canFlag ? 'Tier — from the tier rules unless you choose one here' : 'Tier (only people who can set tiers change it)';
   }
   const dncB = document.getElementById('dncBtn');
   if (dncB) dncB.textContent = c.doNotContact?.on ? '✓ Allow contact again' : '🚫 Do not contact';
@@ -9083,11 +9093,9 @@ async function saveCompany(){
       // A brand-new company has lastTouchAt:null (creating/editing a profile
       // doesn't count as a "touch" — see recomputeActivityFields's AUTO_TYPES),
       // so it sorts outside the bounded default window until someone logs a
-      // real activity against it. Without this, the next unrelated bounded
-      // snapshot update would silently drop it from view (replace-mode, since
-      // it's absent from the bounded query's results) even while its detail
-      // page is still open.
-      await loadCompaniesWithProgress();
+      // real activity against it. Keep it in view for this tab instead of
+      // loading the whole database (that took minutes in a fresh browser).
+      keepInView.add(ref.id);
     }
     cacheCompanies();
     showEl('companyModal', false);
