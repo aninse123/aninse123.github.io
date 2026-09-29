@@ -49,11 +49,11 @@ parts = [
     lift_fn("linkIsCurrent"), lift_line("linkIsShareholder"), lift_line("linkIsManager"), lift_line("fmtPctOwn"),
     lift_fn("resolveOwnership"), lift_const_block("LEGACY_ORBIS_FIELD"), lift_fn("orbisValues"),
     lift_const_block("STAGES"), lift_line("FINANCIALS_YEARS"),
-    lift_fn("tierOf"),  # reads the module-level tierRules below, as on the desktop
+    lift_fn("ownTier"), lift_fn("tierOf"),  # reads the module-level tierRules below, as on the desktop
 ]
 names = ["deburr", "onlyDigits", "PERSON_SALUT", "personNameKey", "nifFromAny", "foundedYear", "legalFormOf", "personAge",
          "controlTier", "linkIsCurrent", "linkIsShareholder", "linkIsManager", "fmtPctOwn", "resolveOwnership",
-         "LEGACY_ORBIS_FIELD", "orbisValues", "STAGES", "FINANCIALS_YEARS", "tierOf"]
+         "LEGACY_ORBIS_FIELD", "orbisValues", "STAGES", "FINANCIALS_YEARS", "ownTier", "tierOf"]
 
 body = (
     "// Search CRM helpers for the mobile app, COPIED VERBATIM from portal/search.html\n"

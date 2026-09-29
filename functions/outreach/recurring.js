@@ -366,16 +366,17 @@ async function restoreOptOut({ recurringId, email, note }, caller) {
   return { ok: true };
 }
 
-// Deleting a recurring email or putting back someone who unsubscribed is a
-// partner's call ("approve"); preparing one is "campaigns".
-const RECURRING_APPROVE = ["approveIssue", "skipIssue", "delete", "restoreOptOut"];
+// Recurring emails go to investors and run on their own: managing them is a
+// partner's call ("approve") — only the Unsubscribed list can be viewed with
+// "campaigns" (André, 29 Sep).
+const RECURRING_VIEW = ["optOuts"];
 
 const Feat = require("../features"); // feature switches (Team & access → Features)
 exports.outreachRecurring = onCall({ region: REGION, timeoutSeconds: 300, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY] }, async (request) => {
   await Feat.requireFeature(request, "outreach", "outreach.recurring");
   const caller = normEmail(request.auth?.token?.email);
   const data = request.data || {};
-  if (!P.hasPerm(request, RECURRING_APPROVE.includes(data.action) ? "out.approve" : "out.campaigns")) fail("permission-denied", "not_admin", "You don't have permission to do this.");
+  if (!P.hasPerm(request, RECURRING_VIEW.includes(data.action) ? "out.campaigns" : "out.approve")) fail("permission-denied", "not_admin", "You don't have permission to do this.");
   try {
     switch (data.action) {
       case "save": return await save(data, caller);

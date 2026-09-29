@@ -143,8 +143,13 @@ const STAGES = {
   on_hold:         { label: 'On Hold',          cls: 's-on_hold' },
 };
 const FINANCIALS_YEARS = ['2016','2017','2018','2019','2020','2021','2022','2023','2024','2025'];
+function ownTier(c){
+  const t = String(c?.priority || c?.targetTierManual || '').toUpperCase();
+  return ['A','B','C'].includes(t) ? t : null;
+}
 function tierOf(c, rules = tierRules){
-  if (['A','B','C'].includes(c?.targetTierManual)) return c.targetTierManual;
+  const own = ownTier(c);
+  if (own) return own;
   let best = null, bestScore = -1;
   for (const r of rules || []) {
     if (!['A','B','C'].includes(r?.tier) || !['caeCode','naceCode','subSector','sector'].includes(r?.field) || !String(r.value || '').trim()) continue;
@@ -158,4 +163,4 @@ function tierOf(c, rules = tierRules){
   return best;
 }
 
-export { deburr, onlyDigits, PERSON_SALUT, personNameKey, nifFromAny, foundedYear, legalFormOf, personAge, controlTier, linkIsCurrent, linkIsShareholder, linkIsManager, fmtPctOwn, resolveOwnership, LEGACY_ORBIS_FIELD, orbisValues, STAGES, FINANCIALS_YEARS, tierOf };
+export { deburr, onlyDigits, PERSON_SALUT, personNameKey, nifFromAny, foundedYear, legalFormOf, personAge, controlTier, linkIsCurrent, linkIsShareholder, linkIsManager, fmtPctOwn, resolveOwnership, LEGACY_ORBIS_FIELD, orbisValues, STAGES, FINANCIALS_YEARS, ownTier, tierOf };

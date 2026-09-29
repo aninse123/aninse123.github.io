@@ -49,7 +49,7 @@ function nifQuery(q) {
   return d.length >= 3 && d.length === s.replace(/[\s.\-]/g, "").length ? d : null;
 }
 
-const COMPANY_FIELDS = ["name", "nif", "foreignTaxId", "concelho", "city", "sector", "subSector", "caeCode", "naceCode", "stage", "owner", "doNotContact", "contactable", "targetTierManual", "nameKey", "nameTokens"];
+const COMPANY_FIELDS = ["name", "nif", "foreignTaxId", "concelho", "city", "sector", "subSector", "caeCode", "naceCode", "stage", "owner", "doNotContact", "contactable", "priority", "targetTierManual", "nameKey", "nameTokens"];
 const PERSON_FIELDS = ["name", "entityType", "country", "nationality", "linkCount", "currentLinkCount", "nif", "matchedCompanyId", "nameKey", "nameTokens"];
 
 const everyWord = (tokens) => (x) => tokens.every((t) => (x.nameTokens || []).includes(t) || String(x.nameKey || "").includes(t));
@@ -106,7 +106,7 @@ async function byNif(digits) {
 const companyRow = (c) => ({
   id: c.id, name: c.name || "", nif: c.nif || "", foreignTaxId: c.foreignTaxId || "", town: c.concelho || c.city || "", sector: c.sector || "", subSector: c.subSector || "",
   caeCode: c.caeCode || "", naceCode: c.naceCode || "", stage: c.stage || "universe", owner: c.owner || null,
-  doNotContact: !!c.doNotContact?.on, contactable: c.contactable !== false, targetTierManual: c.targetTierManual || null,
+  doNotContact: !!c.doNotContact?.on, contactable: c.contactable !== false, priority: c.priority || null, targetTierManual: c.targetTierManual || null,
 });
 const personRow = (p) => ({
   id: p.id, name: p.name || "", entityType: p.entityType || "person", country: p.country || "", nif: p.nif || "",

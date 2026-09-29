@@ -290,12 +290,22 @@
           .catch(err => {
             const msg = document.getElementById('processMsg');
             msg.className   = 'message--error';
-            msg.textContent = 'Sign-in failed: ' + (err.message || 'Invalid or expired link. Please request a new one.');
+            msg.textContent = signInError(err);
             showForm();
           });
       } else {
         showForm();
       }
+    }
+
+    // A refusal from the portal's sign-in check arrives wrapped in a technical
+    // message; show just its sentence (e.g. the NDA or the no-access message).
+    function signInError(err) {
+      const raw = String(err?.message || '');
+      const m = raw.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (m) { try { return JSON.parse('"' + m[1] + '"'); } catch (e) { return m[1]; } }
+      if (/expired|invalid-action-code/i.test(raw)) return 'This sign-in link has expired or was already used. Please request a new one.';
+      return 'Sign-in failed: ' + (raw || 'Invalid or expired link. Please request a new one.');
     }
 
     // SHA-256 → hex (matches how the admin builds the scrambled list)
@@ -328,7 +338,7 @@
     async function sendLink(email) {
       const registered = await isRegistered(email);
       if (!registered) {
-        throw new Error('This email isn\'t registered in our investor portal. Please contact us at andre.rocha@douropartners.pt or antonio.carvalho@douropartners.pt.');
+        throw new Error('NO_ACCESS');
       }
       await sendSignInLinkToEmail(auth, email, actionCodeSettings);
       window.localStorage.setItem('emailForSignIn', email);
@@ -350,9 +360,10 @@
         showSent(email);
         document.getElementById('loginForm').reset();
       } catch (err) {
-        const isNotRegistered = err.message && err.message.includes('isn\'t registered');
-        errMsg.innerHTML = isNotRegistered
-          ? 'This email isn\'t registered in our investor portal. Please contact <a href="mailto:andre.rocha@douropartners.pt" style="color:#B33A3A;font-weight:600;">André</a> or <a href="mailto:antonio.carvalho@douropartners.pt" style="color:#B33A3A;font-weight:600;">António</a>.'
+        // D3: neutral — the same words for investors and the team.
+        const noAccess = err.message === 'NO_ACCESS';
+        errMsg.innerHTML = noAccess
+          ? 'This email doesn\'t have access to the portal. If you think it should, contact <a href="mailto:andre.rocha@douropartners.pt" style="color:#B33A3A;font-weight:600;">André</a> or <a href="mailto:antonio.carvalho@douropartners.pt" style="color:#B33A3A;font-weight:600;">António</a>.'
           : (err.message || 'Something went wrong. Please try again.');
         errMsg.style.display = 'block';
       } finally {

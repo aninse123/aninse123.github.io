@@ -42,6 +42,6 @@ try { html = ctx.run(); } catch (e) { err = e; }
 ok(`renderApprove runs with a campaign and a manual draft${err ? ' — ' + err.message : ''}`, !err);
 ok('manual draft shows who wrote it and the approve / return buttons', /written by Maria/.test(html) && /Approve and send now/.test(html) && /Return with a note/.test(html));
 ok('campaign draft keeps its campaign / step and Approve', /Campanha/.test(html) && /Email 1/.test(html) && /data-dact="approve"/.test(html));
-ok('campaign waiting to be started: listed with who asked, the note and Start / Return', /Campaigns waiting to be started/.test(html) && /Metalurgia Norte/.test(html) && /asked by maria/.test(html) && /Pronta/.test(html) && /data-sstart="c2"/.test(html) && /data-sreturn="c2"/.test(html));
+ok('campaign waiting for a partner: listed with who asked, the note and Start / Return', /Campaigns waiting for a partner/.test(html) && /Metalurgia Norte/.test(html) && /asked by maria/.test(html) && /Pronta/.test(html) && /data-sstart="c2"/.test(html) && /data-sreturn="c2"/.test(html));
 ok('campaign returned to me: shown with the note', /Campaigns returned to you/.test(html) && /Muda o assunto/.test(html) && /returned .* by André/.test(html));
 console.log(fail ? `\n${fail} FAILED` : '\nall approve render tests passed'); process.exit(fail ? 1 : 0);

@@ -554,11 +554,12 @@ async function startProblems(campaign) {
 // campaign afterwards (without "approve") withdraws the request.
 async function requestStart({ campaignId, note }, caller) {
   const campaign = await getCampaign(campaignId);
-  if (campaign.status !== "draft") fail("failed-precondition", "not_draft", "Only a draft campaign can wait to be started.");
+  // A draft waits to be started; a paused campaign waits to be resumed.
+  if (!["draft", "paused"].includes(campaign.status)) fail("failed-precondition", "not_draft", "Only a draft or paused campaign can wait for a partner.");
   const problems = await startProblems(campaign);
   if (problems.length) throw new HttpsError("failed-precondition", `Before asking: ${problems.join(" ")}`, { reason: "not_ready", problems });
   await db().doc(`outreachCampaigns/${campaignId}`).update({
-    startRequest: { by: caller, at: FieldValue.serverTimestamp(), note: String(note || "").trim().slice(0, 1000) },
+    startRequest: { by: caller, at: FieldValue.serverTimestamp(), note: String(note || "").trim().slice(0, 1000), kind: campaign.status === "paused" ? "resume" : "start" },
     startReturn: null,
   });
   return { ok: true };
@@ -566,7 +567,7 @@ async function requestStart({ campaignId, note }, caller) {
 
 async function returnStart({ campaignId, note }, caller) {
   const campaign = await getCampaign(campaignId);
-  if (campaign.status !== "draft" || !campaign.startRequest) fail("failed-precondition", "not_waiting", "Nobody is waiting for this campaign to start.");
+  if (!["draft", "paused"].includes(campaign.status) || !campaign.startRequest) fail("failed-precondition", "not_waiting", "Nobody is waiting for this campaign to start.");
   await db().doc(`outreachCampaigns/${campaignId}`).update({
     startRequest: null,
     startReturn: { by: caller, at: FieldValue.serverTimestamp(), note: String(note || "").trim().slice(0, 1000), requestedBy: campaign.startRequest.by || null },
@@ -686,9 +687,10 @@ async function runDynamicAudience(campaign, now) {
     return { checked: 0, enrolled: 0, initialised: true };
   }
   const snap = await db().collection("searchCompanies").where("updatedAt", ">", since).orderBy("updatedAt", "asc").limit(2000).get();
-  // T6: the Target tier is computed from the rules (not stored), as on the page.
+  // T6: the Tier is computed (set on the company, else the rules), as on the
+  // page; the rules only count while the "search.tier" switch isn't off.
   const byTier = spec.some((f) => f.field === "targetTier");
-  const tierRules = byTier ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
+  const tierRules = byTier && (await Feat.jobState("search.tier")) !== "off" ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
   const matches = snap.docs.filter((d) => {
     const c = d.data();
     return !c.activeCampaignId && matchesFilterSpec(byTier ? { ...c, targetTier: tierOf(c, tierRules) } : c, spec, now.getTime());
@@ -887,11 +889,17 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   // A campaign that has started sends on its own: changing it, or adding
   // companies / people to it, needs "approve" (preparing a draft doesn't).
   if (!canApprove) {
-    const target = data.action === "enrolment" && data.op === "move" ? data.targetCampaignId
-      : ["save", "enrol", "enrolPeople"].includes(data.action) ? data.campaignId : null;
-    if (target) {
+    const targets = [];
+    if (["save", "enrol", "enrolPeople"].includes(data.action)) targets.push(data.campaignId);
+    if (data.action === "enrolment") {
+      // Removing, pausing or moving someone in a running campaign is a change too.
+      const en = data.enrolmentId ? await db().doc(`outreachEnrolments/${data.enrolmentId}`).get() : null;
+      if (en?.exists) targets.push(en.data().campaignId);
+      if (data.op === "move") targets.push(data.targetCampaignId);
+    }
+    for (const target of targets.filter(Boolean)) {
       const t = await db().doc(`outreachCampaigns/${target}`).get();
-      if (t.exists && ["active", "paused"].includes(t.data().status)) fail("permission-denied", "needs_approve", "This campaign has started — only a partner can change it or add to it.");
+      if (t.exists && ["active", "paused"].includes(t.data().status)) fail("permission-denied", "needs_approve", "This campaign has started — only a partner can change it.");
     }
   }
   try {

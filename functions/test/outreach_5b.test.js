@@ -48,6 +48,14 @@ function makeRes() { const r = {}; return { r, res: { status(c) { r.code = c; re
     .forEach(([email, name, org, refs]) => store.set(`outreachLists/L1/members/${email.replace(/[^a-z0-9]/g, "_")}`, { email, name, org, refs }));
   store.set("crmInvestors/inv1", { name: "Fundo Alfa", contacts: [{ name: "Ana Pinto", email: "ana@alfa.pt" }] });
 
+  // B10: recurring emails are partner-only (out.approve); campaign writers only see opt-outs
+  const WRITER = { auth: { token: { email: "maria@douropartners.pt", perms: ["out.view", "out.campaigns", "out.draft"], key: "maria" } } };
+  const recAs = async (who, data) => { try { return await fns.outreachRecurring({ ...who, data }); } catch (e) { return { err: e }; } };
+  ok("B10: a campaign writer can't create, change or send recurring emails", (await recAs(WRITER, { action: "save", recurring: { name: "x", listId: "L1", templateId: "upd" } })).err?.details?.reason === "not_admin"
+    && (await recAs(WRITER, { action: "issueNow", recurringId: "r1" })).err?.details?.reason === "not_admin"
+    && (await recAs(WRITER, { action: "delete", recurringId: "r1" })).err?.details?.reason === "not_admin");
+  ok("B10: …but still sees the opt-outs", (await recAs(WRITER, { action: "optOuts" })).err?.details?.reason !== "not_admin");
+
   // Save
   ok("needs a list", (await rec({ action: "save", recurring: { name: "Update", templateId: "upd", senderId: "andre.rocha@douropartners.pt" } })).err?.details?.reason === "list_required");
   const s = await rec({ action: "save", recurring: { name: "Atualização mensal a investidores", listId: "L1", templateId: "upd", senderId: "andre.rocha@douropartners.pt", schedule: { freq: "monthly", day: 1, time: "09:30" }, maxPerDay: 2 } });

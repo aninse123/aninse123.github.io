@@ -333,14 +333,16 @@ const PERCENT_FIELDS = new Set(["computedEBITDAMargin", "computedGrowthRecent"])
 // Does a company match a saved Search CRM filter spec? Same rules as the
 // list filters in search.html getFiltered(), so a dynamic audience adds the
 // companies you would see with that filter.
-// T6: Target tier (A / B / C) — a company's own choice wins; otherwise the
-// most specific rule (searchConfig/targetTiers): a CAE / NACE prefix (longer
-// = more specific) beats a sub-sector, which beats a sector. Mirrored in
-// search.html tierOf().
+// T6 / F1: Tier (A / B / C) — the tier set on the company wins (the
+// "priority" field, a/b/c; older companies may carry targetTierManual);
+// otherwise the most specific rule (searchConfig/targetTiers): a CAE / NACE
+// prefix (longer = more specific) beats a sub-sector, which beats a sector.
+// Mirrored in search.html tierOf().
 const TIERS = ["A", "B", "C"];
 const TIER_FIELDS = ["caeCode", "naceCode", "subSector", "sector"];
 function tierOf(c, rules = []) {
-  if (TIERS.includes(c?.targetTierManual)) return c.targetTierManual;
+  const own = String(c?.priority || c?.targetTierManual || "").toUpperCase();
+  if (TIERS.includes(own)) return own;
   let best = null, bestScore = -1;
   for (const r of rules || []) {
     if (!TIERS.includes(r?.tier) || !TIER_FIELDS.includes(r?.field) || !String(r.value || "").trim()) continue;

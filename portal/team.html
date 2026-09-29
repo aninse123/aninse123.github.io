@@ -205,16 +205,18 @@
         const eff = effective(p);
         const custom = (p.extraPerms || []).length || (p.removedPerms || []).length;
         const partner = p.roleId === 'partner';
+        const live = ['invited', 'active'].includes(p.status);
+        const ndaWait = !partner && live && !p.ndaSigned; // G2: can't sign in until the NDA is ticked
         return `<tr>
           <td><b>${esc(p.name || p.id)}</b> <span class="hint">· ${esc(p.key || '')}</span><div class="hint">${esc(p.id)}</div>${p.contactPhone || p.contactEmail ? `<div class="hint" title="Printed on letters and call scripts they sign">On letters: ${esc([p.contactPhone, p.contactEmail].filter(Boolean).join(' · '))}</div>` : ''}</td>
-          <td>${esc(roleName(p.roleId))}${custom ? ' <span class="badge badge--amber" title="Extra or removed permissions">custom</span>' : ''}<div class="hint">${esc(tabsOf(eff).join(' · ') || 'no tabs')}</div></td>
-          <td>${statusBadge(p)}</td>
+          <td>${esc(roleName(p.roleId))}${custom ? ' <span class="badge badge--amber" title="Extra or removed permissions">custom</span>' : ''}<div class="hint">${partner ? 'Partner — always full access' : esc(tabsOf(eff).join(' · ') || 'no tabs')}</div></td>
+          <td>${statusBadge(p)}${ndaWait ? ' <span class="badge badge--amber" title="They can\'t sign in until the NDA is recorded — Edit → tick NDA signed">waiting for NDA</span>' : ''}</td>
           <td style="white-space:nowrap;">${partner ? '—' : esc(day(p.endsAt))}</td>
           <td style="white-space:nowrap;">${tsMs(p.lastSignInAt) ? esc(dtFmt.format(new Date(tsMs(p.lastSignInAt)))) : '<span class="hint">never</span>'}</td>
           <td class="c">${p.ndaSigned ? '✓' : '<span class="hint">—</span>'}</td>
-          <td><div class="actions">${partner ? `<span class="hint">Partner — always full access</span> <button class="btn btn--ghost btn--sm" data-contact="${esc(p.id)}">Contact details</button>` : `
+          <td><div class="actions">${partner ? `<button class="btn btn--ghost btn--sm" data-contact="${esc(p.id)}">Contact details</button>` : `
             <button class="btn btn--ghost btn--sm" data-edit="${esc(p.id)}">Edit</button>
-            ${['invited', 'active'].includes(p.status) ? `<button class="btn btn--ghost btn--sm" data-mail="${esc(p.id)}" title="${p.invitationSentAt ? 'Last sent ' + esc(day(p.invitationSentAt)) : 'Not sent yet'}">Resend invitation</button>` : ''}
+            ${live ? `<button class="btn btn--ghost btn--sm" data-mail="${esc(p.id)}"${ndaWait ? ' disabled' : ''} title="${ndaWait ? 'Tick NDA signed first (Edit)' : p.invitationSentAt ? 'Last sent ' + esc(day(p.invitationSentAt)) : 'Not sent yet'}">${p.invitationSentAt ? 'Resend invitation' : 'Send invitation'}</button>` : ''}
             ${p.status === 'suspended' ? `<button class="btn btn--ghost btn--sm" data-act="reactivate" data-email="${esc(p.id)}">Reactivate</button>` : p.status !== 'ended' ? `<button class="btn btn--ghost btn--sm" data-act="suspend" data-email="${esc(p.id)}">Suspend</button>` : ''}
             ${p.status !== 'ended' ? `<button class="btn btn--danger btn--sm" data-act="end" data-email="${esc(p.id)}">End access</button>` : `<button class="btn btn--ghost btn--sm" data-reinvite="${esc(p.id)}">Invite again</button>`}`}</div></td></tr>`;
       };
@@ -227,17 +229,11 @@
       $('inviteBtn').addEventListener('click', () => openPerson(null));
       $('v-people').querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => openPerson(people.find(p => p.id === b.dataset.edit))));
       // T4: the phone / email printed on letters and call scripts a partner signs.
-      $('v-people').querySelectorAll('[data-contact]').forEach(b => b.addEventListener('click', async () => {
-        const p = people.find(x => x.id === b.dataset.contact);
-        const phone = prompt(`${p.name} — phone printed on letters and call scripts:`, p.contactPhone || '');
-        if (phone === null) return;
-        const email = prompt(`${p.name} — email printed on letters (empty = ${p.id}):`, p.contactEmail || '');
-        if (email === null) return;
-        try { await call({ action: 'update', email: p.id, member: { contactPhone: phone, contactEmail: email } }); toast('Contact details saved.'); } catch (e) { toast(errText(e)); }
-      }));
+      $('v-people').querySelectorAll('[data-contact]').forEach(b => b.addEventListener('click', () => openContact(people.find(x => x.id === b.dataset.contact))));
       $('v-people').querySelectorAll('[data-mail]').forEach(b => b.addEventListener('click', async () => {
         const p = people.find(x => x.id === b.dataset.mail);
-        if (!confirm(`Email ${p.name} the invitation again (link to ${location.host})?`)) return;
+        const lang = p.inviteLang === 'en' ? 'English' : 'Portuguese';
+        if (!confirm(`Email ${p.name} the invitation${p.invitationSentAt ? ' again' : ''} — in ${lang}, with the link to ${location.host}? (Change the language under Edit.)`)) return;
         b.disabled = true;
         try { await call({ action: 'sendInvite', email: p.id, origin: location.origin }); toast('Invitation sent.'); } catch (e) { toast(errText(e)); } finally { b.disabled = false; }
       }));
@@ -250,6 +246,29 @@
         try { await call({ action: b.dataset.act, email: p.id }); toast({ suspend: 'Suspended — signed out.', reactivate: 'Access restored.', end: 'Access ended.' }[b.dataset.act]); }
         catch (e) { toast(errText(e)); b.disabled = false; }
       }));
+    }
+
+    // A3 / T4: the phone and email printed on letters and call scripts a partner signs.
+    function openContact(p) {
+      $('modalRoot').innerHTML = `<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="cTitle" style="max-width:520px;">
+        <h3 id="cTitle">Contact details — ${esc(p.name)}</h3>
+        <div class="err" id="cErr" hidden></div>
+        <div class="row2">
+          <div class="field"><label for="cPhone">Phone on letters</label><input type="tel" id="cPhone" value="${esc(p.contactPhone || '')}" placeholder="+351 9xx xxx xxx"></div>
+          <div class="field"><label for="cEmail">Email on letters</label><input type="email" id="cEmail" value="${esc(p.contactEmail || '')}" placeholder="empty = ${esc(p.id)}"></div>
+        </div>
+        <span class="hint" style="display:block;margin:-6px 0 10px;">Printed on letters and call scripts ${esc(String(p.name || '').split(' ')[0])} signs: {{sender.phone}}, {{sender.email}}.</span>
+        <div class="modal-actions"><button class="btn btn--ghost" id="cCancel">Cancel</button><button class="btn btn--primary" id="cSave">Save</button></div>
+      </div></div>`;
+      const close = () => { $('modalRoot').innerHTML = ''; };
+      $('cCancel').addEventListener('click', close);
+      $('modalRoot').querySelector('.modal-bg').addEventListener('click', (e) => { if (e.target.classList.contains('modal-bg')) close(); });
+      $('cSave').addEventListener('click', async () => {
+        $('cSave').disabled = true; $('cErr').hidden = true;
+        try { await call({ action: 'update', email: p.id, member: { contactPhone: $('cPhone').value, contactEmail: $('cEmail').value } }); close(); toast('Contact details saved.'); }
+        catch (e) { $('cErr').textContent = errText(e); $('cErr').hidden = false; $('cSave').disabled = false; }
+      });
+      $('cPhone').focus();
     }
 
     // Invite / edit a person. Permissions: ticks start from the role; any
@@ -279,8 +298,9 @@
           <div class="field"><label for="fCEmail">Email on letters (optional)</label><input type="email" id="fCEmail" value="${esc(base.contactEmail || '')}" placeholder="empty = the sign-in email if @douropartners.pt"></div>
         </div>
         <span class="hint" style="display:block;margin:-6px 0 10px;">Printed on letters and call scripts this person signs: {{sender.phone}}, {{sender.email}}.</span>
-        <label class="check"><input type="checkbox" id="fNda"${base.ndaSigned ? ' checked' : ''}> NDA signed</label>
-        ${editing ? '' : `<label class="check"><input type="checkbox" id="fMail" checked> Email them the invitation (from noreply@douropartners.pt, with the link to sign in at ${esc(location.host)})</label>`}
+        <label class="check"><input type="checkbox" id="fNda"${base.ndaSigned ? ' checked' : ''}> NDA signed <span class="hint">— they can't sign in until this is ticked</span></label>
+        <div class="field" style="max-width:260px;"><label for="fLang">Invitation language</label><select id="fLang"><option value="pt"${base.inviteLang !== 'en' ? ' selected' : ''}>Portuguese</option><option value="en"${base.inviteLang === 'en' ? ' selected' : ''}>English</option></select></div>
+        ${editing ? '' : `<label class="check"><input type="checkbox" id="fMail"> Email them the invitation (from noreply@douropartners.pt, with the link to sign in at ${esc(location.host)})</label><span class="hint" id="fMailHint" style="display:block;margin:-4px 0 10px;"></span>`}
         <div class="field"><label>What they can see and do</label><span class="hint">Ticks come from the role; change them to give or take away something for this person only.</span></div>
         <div class="perm-list" id="fPerms"></div>
         <div class="field"><label for="fNotes">Notes</label><textarea id="fNotes" rows="2">${esc(base.notes || '')}</textarea></div>
@@ -292,6 +312,15 @@
       document.addEventListener('keydown', function onKey(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } });
       if (!editing) $('fName').addEventListener('input', () => { if (!$('fKey').dataset.touched) $('fKey').value = ($('fName').value.trim().split(/\s+/)[0] || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9-]/g, ''); });
       $('fKey').addEventListener('input', () => { $('fKey').dataset.touched = '1'; });
+      // G2: the invitation can only go once the NDA is ticked.
+      const syncMail = () => {
+        if (editing) return;
+        const nda = $('fNda').checked;
+        $('fMail').disabled = !nda;
+        if (!nda) $('fMail').checked = false; else if (!$('fMail').dataset.touched) $('fMail').checked = true;
+        $('fMailHint').textContent = nda ? '' : 'Tick "NDA signed" first — the invitation can be sent once the NDA is recorded (Send invitation, in the list).';
+      };
+      if (!editing) { $('fMail').addEventListener('change', () => { $('fMail').dataset.touched = '1'; }); $('fNda').addEventListener('change', syncMail); syncMail(); }
       let current = new Set(editing ? effective(p) : rolePerms($('fRole').value));
       const drawPerms = () => {
         const roleSet = new Set(rolePerms($('fRole').value));
@@ -308,7 +337,7 @@
         const member = {
           email: $('fEmail').value, name: $('fName').value, key: $('fKey').value, roleId: $('fRole').value,
           startsAt: $('fStart').value || null, endsAt: $('fEnd').value || null, // Lisbon days; the server sets 00:00 / 23:59
-          ndaSigned: $('fNda').checked, notes: $('fNotes').value, contactPhone: $('fPhone').value, contactEmail: $('fCEmail').value,
+          ndaSigned: $('fNda').checked, inviteLang: $('fLang').value, notes: $('fNotes').value, contactPhone: $('fPhone').value, contactEmail: $('fCEmail').value,
           extraPerms: [...current].filter(x => !roleSet.has(x)), removedPerms: [...roleSet].filter(x => !current.has(x)),
         };
         $('mSave').disabled = true; $('mErr').hidden = true;
@@ -318,9 +347,10 @@
           if (!editing) res = (await call({ action: 'invite', member, sendEmail: $('fMail').checked, origin: location.origin })).data;
           close();
           const first = member.name.split(' ')[0];
-          toast(editing ? 'Saved — their page reloads with the new access.'
+          toast(editing ? (member.ndaSigned && !p.ndaSigned && !p.invitationSentAt ? 'Saved — NDA recorded. Use "Send invitation" to email them the link.' : 'Saved — their page reloads with the new access.')
             : res?.emailed ? `Invited — ${first} has an email with the link to sign in at ${location.host}.`
             : res?.emailError ? `Invited, but the email failed (${res.emailError}). Use "Resend invitation".`
+            : !member.ndaSigned ? `Invited — waiting for the NDA. ${first} can sign in once you tick "NDA signed" (Edit); then use "Send invitation".`
             : `Invited. ${first} can now sign in at ${location.host}/portal with ${member.email.trim()}.`);
         } catch (e) { $('mErr').textContent = errText(e); $('mErr').hidden = false; $('mSave').disabled = false; }
       });

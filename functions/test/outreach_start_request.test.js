@@ -57,8 +57,19 @@ const camp = (id) => store.get(`outreachCampaigns/${id}`);
   ok("intern can't finish it", (await call({ action: "setStatus", campaignId: id, status: "finished" }, INTERN)).err?.details?.reason === "not_admin");
   ok("intern can pause it (safety)", !(await call({ action: "setStatus", campaignId: id, status: "paused" }, INTERN)).err && camp(id).status === "paused");
   ok("still can't edit while paused", (await call({ action: "save", campaignId: id, campaign: { name: "X", steps: [{ templateId: "t1" }] } }, INTERN)).err?.details?.reason === "needs_approve");
-  ok("asking to start a campaign that isn't a draft is refused", (await call({ action: "requestStart", campaignId: id }, INTERN)).err?.details?.reason === "not_draft");
-  ok("partner still adds companies to a started campaign", !(await call({ action: "enrol", campaignId: id, companyIds: ["c2"] }, PARTNER)).err);
+  // B9 / B10: once running, only partners change it — also removing / moving people.
+  const en1 = `${id}_c1`;
+  ok("B9: intern can't remove a company from a started campaign", (await call({ action: "enrolment", enrolmentId: en1, op: "remove" }, INTERN)).err?.details?.reason === "needs_approve");
+  ok("B9: …nor pause or move one", (await call({ action: "enrolment", enrolmentId: en1, op: "pause" }, INTERN)).err?.details?.reason === "needs_approve"
+    && (await call({ action: "enrolment", enrolmentId: en1, op: "move", targetCampaignId: made.campaignId }, INTERN)).err?.details?.reason === "needs_approve");
+  ok("B10: intern asks to resume a paused campaign", !(await call({ action: "requestStart", campaignId: id, note: "Corrigi o assunto" }, INTERN)).err && camp(id).startRequest?.kind === "resume" && camp(id).status === "paused");
+  ok("B10: partner returns it with a note — stays paused", !(await call({ action: "returnStart", campaignId: id, note: "Ainda não" }, PARTNER)).err && camp(id).status === "paused" && !camp(id).startRequest && camp(id).startReturn?.note === "Ainda não");
+  await call({ action: "setStatus", campaignId: id, status: "finished" }, PARTNER);
+  ok("asking to start a finished campaign is refused", (await call({ action: "requestStart", campaignId: id }, INTERN)).err?.details?.reason === "not_draft");
+  const id2 = (await call({ action: "save", campaign: { name: "Segunda", steps: [{ templateId: "t1" }] } }, PARTNER)).campaignId;
+  await call({ action: "enrol", campaignId: id2, companyIds: ["c1"] }, PARTNER);
+  await call({ action: "setStatus", campaignId: id2, status: "active" }, PARTNER);
+  ok("partner still adds companies to a started campaign", !(await call({ action: "enrol", campaignId: id2, companyIds: ["c2"] }, PARTNER)).err);
 
   console.log(fail ? `\n${fail} FAILED` : "\nall start-request tests passed");
   process.exit(fail ? 1 : 0);

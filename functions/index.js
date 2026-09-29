@@ -55,7 +55,10 @@ async function isAllowed(emailRaw) {
   return emails.includes(email);
 }
 
-const REJECTION_MESSAGE = "This email isn't registered in the Douro Partners portal. Please contact us at andre.rocha@douropartners.pt or antonio.carvalho@douropartners.pt.";
+// D3: neutral — the same words for investors and the team.
+const REJECTION_MESSAGE = "This email doesn't have access to the portal. If you think it should, contact André (andre.rocha@douropartners.pt) or António (antonio.carvalho@douropartners.pt).";
+// G2: a team member whose NDA isn't recorded yet can't sign in.
+const NDA_MESSAGE = "Your access starts once your NDA is recorded. Contact André (andre.rocha@douropartners.pt) or António (antonio.carvalho@douropartners.pt).";
 
 // Team access (Phase 1): a team member signs in with their role and
 // permissions as custom claims (read by the Firestore rules and callables).
@@ -74,7 +77,7 @@ async function decide(event) {
   try { team = await onTeamSignIn(email, event.data?.uid); }
   catch (e) { console.error("team sign-in lookup failed", e?.message || e); team = null; }
   if (team?.allowed) return { customClaims: team.claims };
-  if (!(await isAllowed(email))) throw new HttpsError("permission-denied", REJECTION_MESSAGE);
+  if (!(await isAllowed(email))) throw new HttpsError("permission-denied", team?.reason === "nda" ? NDA_MESSAGE : REJECTION_MESSAGE);
   // An investor (or a former team member who is also an investor): no team permissions.
   return team ? { customClaims: NO_TEAM_CLAIMS } : undefined;
 }

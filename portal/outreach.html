@@ -390,6 +390,7 @@
         <div class="compose">
           <div class="card">
             <h2>New email</h2>
+            <div class="banner banner--warn" id="composeReturnedBanner" hidden style="margin-bottom:14px;"></div>
             <div class="banner banner--warn" id="composeTestBanner" hidden style="margin-bottom:14px;">
               <span>Test mode is on: the email can only go to an approved test address. The company is used for the variables and the history.</span>
             </div>
@@ -2516,6 +2517,8 @@
       if (c.status === 'draft' && canApprove) acts.push(['start', 'Start campaign', 'primary']);
       if (c.status === 'draft' && canApprove && c.startRequest) acts.push(['returnstart', 'Return with a note', 'ghost']);
       if (c.status === 'draft' && !canApprove && !c.startRequest) acts.push(['ask', 'Ask to start', 'primary']);
+      if (c.status === 'paused' && !canApprove && !c.startRequest) acts.push(['ask', 'Ask to resume', 'primary']);
+      if (c.status === 'paused' && canApprove && c.startRequest) acts.push(['returnstart', 'Return with a note', 'ghost']);
       if (c.status === 'active') acts.push(['pause', 'Pause', 'ghost'], ['finish', 'Finish', 'ghost']);
       if (c.status === 'paused') acts.push(['resume', 'Resume', 'primary'], ['finish', 'Finish', 'ghost']);
       if (c.status === 'finished') acts.push(['archive', 'Archive', 'ghost']);
@@ -2528,8 +2531,8 @@
       const banners = [];
       if (c.status === 'paused' && c.pauseReason) banners.push(`<b>Paused automatically:</b> ${esc(c.pauseReason)} Fix it, then Resume.`);
       if (curEnrols.length && curEnrols.every(e => e.campaignId === c.id) && nobodyLeft(c, curEnrols.filter(e => LIVE_ENROL.includes(e.status)).length)) banners.push(`<b>Nobody left:</b> everyone has been through every step. Finish the campaign${canApprove ? '' : ' (a partner)'}, or add more ${c.audienceType === 'people' ? 'people' : 'companies'}.`);
-      if (c.status === 'draft' && c.startRequest) banners.push(`<b>Waiting to be started:</b> ${esc(personName(c.startRequest.by))} asked ${esc(when(c.startRequest.at))}${c.startRequest.note ? ` — “${esc(c.startRequest.note)}”` : ''}.${canApprove ? '' : ' Changing it withdraws the request.'}`);
-      if (c.status === 'draft' && !c.startRequest && c.startReturn) banners.push(`<b>Returned</b> by ${esc(personName(c.startReturn.by))} ${esc(when(c.startReturn.at))}${c.startReturn.note ? `: “${esc(c.startReturn.note)}”` : ''}`);
+      if (['draft', 'paused'].includes(c.status) && c.startRequest) banners.push(`<b>Waiting to be ${c.status === 'paused' ? 'resumed' : 'started'}:</b> ${esc(personName(c.startRequest.by))} asked ${esc(when(c.startRequest.at))}${c.startRequest.note ? ` — “${esc(c.startRequest.note)}”` : ''}.${canApprove ? '' : ' Changing it withdraws the request.'}`);
+      if (['draft', 'paused'].includes(c.status) && !c.startRequest && c.startReturn) banners.push(`<b>Returned by ${esc(personName(c.startReturn.by))}</b> ${esc(when(c.startReturn.at))} — ${c.startReturn.note ? `“${esc(c.startReturn.note)}”` : 'no note'}. Make the changes, then ${c.status === 'paused' ? 'Ask to resume' : 'Ask to start'} again.`);
       if (['active', 'paused'].includes(c.status) && !canApprove) banners.push('This campaign has started — only a partner can change it or add to it.');
       if (test) banners.push(`<b>Test mode:</b> every email of this campaign goes to ${esc(settings?.campaignTestRecipient || 'andrenorocha@gmail.com')} instead of the company (Settings → General).`);
       $('campBanner').innerHTML = banners.map(b => `<span>${b}</span>`).join('<br>');
@@ -2548,7 +2551,7 @@
           await setStatus('active', 'Campaign started.');
         }
         if (a === 'ask') {
-          const note = prompt(`Ask a partner to start "${c.name}"?
+          const note = prompt(`Ask a partner to ${c.status === 'paused' ? 'resume' : 'start'} "${c.name}"?
 
 Optional note for them:`, '');
           if (note === null) return;
@@ -2559,7 +2562,7 @@ Optional note for them:`, '');
           if (note === null) return;
           await campCall({ action: 'returnStart', campaignId: c.id, note }, 'Returned with your note.');
         }
-        if (a === 'pause') await setStatus('paused', 'Campaign paused — nothing is sent until you resume.');
+        if (a === 'pause') await setStatus('paused', canApprove ? 'Campaign paused — nothing is sent until you resume.' : 'Campaign paused — nothing is sent until a partner resumes it (Ask to resume).');
         if (a === 'resume') await setStatus('active', 'Campaign resumed.');
         if (a === 'finish') {
           if (!confirm(`Finish "${c.name}"? Every company still in it leaves the campaign and nothing more is sent. This can't be undone (you can duplicate it).`)) return;
@@ -3319,7 +3322,7 @@ Optional note for them:`, '');
     function renderRecurring() {
       const st = { active: 'good', paused: 'warn' };
       $('recurView').innerHTML = `<div class="card" style="padding:0;">
-          <div class="toolbar"><h2 class="camp-h2">Recurring emails</h2><button class="btn btn--primary btn--sm" id="recNew" data-perm="out.campaigns" style="margin-left:auto;">New recurring email</button></div>
+          <div class="toolbar"><h2 class="camp-h2">Recurring emails</h2><button class="btn btn--primary btn--sm" id="recNew" data-perm="out.approve" style="margin-left:auto;">New recurring email</button></div>
           <div class="table-wrap"><table><thead><tr><th>Name</th><th>When</th><th>To</th><th>From</th><th>Next issue</th><th class="num">Issues</th><th>Status</th><th></th></tr></thead>
           <tbody>${recurring.length ? recurring.map(r => `<tr>
             <td><b>${esc(r.name)}</b>${r.description ? `<div class="hint">${esc(r.description)}</div>` : ''}</td>
@@ -3330,9 +3333,9 @@ Optional note for them:`, '');
             <td class="num"><button class="camp-link" data-rhist="${esc(r.id)}">${num(r.issueCount || 0)}</button></td>
             <td><span class="pill${st[r.status] ? ' pill--' + st[r.status] : ''}">${esc(r.status)}</span></td>
             <td style="text-align:right;white-space:nowrap;">
-              <button class="btn btn--ghost btn--sm" data-rnow="${esc(r.id)}" data-perm="out.campaigns" title="Write an issue draft now, off-schedule">Issue now</button>
-              <button class="btn btn--ghost btn--sm" data-redit="${esc(r.id)}" data-perm="out.campaigns">Edit</button>
-              <button class="btn btn--ghost btn--sm" data-rstat="${esc(r.id)}" data-perm="out.campaigns">${r.status === 'active' ? 'Pause' : 'Resume'}</button>
+              <button class="btn btn--ghost btn--sm" data-rnow="${esc(r.id)}" data-perm="out.approve" title="Write an issue draft now, off-schedule">Issue now</button>
+              <button class="btn btn--ghost btn--sm" data-redit="${esc(r.id)}" data-perm="out.approve">Edit</button>
+              <button class="btn btn--ghost btn--sm" data-rstat="${esc(r.id)}" data-perm="out.approve">${r.status === 'active' ? 'Pause' : 'Resume'}</button>
               <button class="btn btn--ghost btn--sm" data-ropt="${esc(r.id)}" title="People who unsubscribed from this recurring email">Unsubscribed</button>
               <button class="btn btn--danger btn--sm" data-rdel="${esc(r.id)}" data-perm="out.approve">Delete</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. A day before each date an issue is drafted from the template into Tasks → To approve; you edit it (and can send yourself a test), approve, and it goes out on the date to the list, at the pace you set.</td></tr>'}</tbody></table></div>
         </div>
@@ -3453,6 +3456,14 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
         const since = Date.now() - 30 * 86400000;
         returnedMine = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => tsMs(m.returnedAt) >= since).sort((a, b) => tsMs(b.returnedAt) - tsMs(a.returnedAt));
         if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove();
+        // C2: tell the writer where to find it.
+        const b = $('composeReturnedBanner');
+        if (b) {
+          b.hidden = !returnedMine.length;
+          b.innerHTML = returnedMine.length ? `<span><b>${returnedMine.length} email${returnedMine.length === 1 ? '' : 's'} you wrote ${returnedMine.length === 1 ? 'was' : 'were'} returned with a note.</b> See Tasks → To approve → “Returned to you”.</span> <button type="button" class="btn btn--ghost btn--sm" id="seeReturnedBtn">Show</button>` : '';
+          $('seeReturnedBtn')?.addEventListener('click', () => { showTab('tasks'); document.querySelector('[data-tview="approve"]')?.click(); });
+        }
+        updateTaskBadge();
       }, () => {});
     }
 
@@ -3467,13 +3478,13 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       const campName = (id) => (id === '__manual' ? 'Written by the team' : campaigns.find(c => c.id === id)?.name || 'Campaign');
       const stepName = (d) => { const c = campaigns.find(x => x.id === d.campaignId); const i = (c?.steps || []).findIndex(s => s.id === d.stepId); return i < 0 ? 'Step' : `${c.steps[i].name} (${i + 1} of ${c.steps.length})`; };
       // B1: campaigns someone asked to start, and ones returned to me.
-      const startReqs = campaigns.filter(c => c.status === 'draft' && c.startRequest);
+      const startReqs = campaigns.filter(c => ['draft', 'paused'].includes(c.status) && c.startRequest);
       const myLower = String(me || '').toLowerCase();
-      const startReturned = campaigns.filter(c => c.status === 'draft' && !c.startRequest && c.startReturn?.requestedBy === myLower && tsMs(c.startReturn.at) >= Date.now() - 30 * 86400000);
+      const startReturned = campaigns.filter(c => ['draft', 'paused'].includes(c.status) && !c.startRequest && c.startReturn?.requestedBy === myLower && tsMs(c.startReturn.at) >= Date.now() - 30 * 86400000);
       const campLine = (c) => `<button class="camp-link" data-opencamp="${esc(c.id)}">${esc(c.name)}</button> <span class="hint">· ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'companies'} · ${num((c.steps || []).length)} step${(c.steps || []).length === 1 ? '' : 's'}</span>`;
       $('approveView').innerHTML = `
-        ${startReqs.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Campaigns waiting to be started</h3>${startReqs.map(c => `<div style="padding:8px 0;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><div style="flex:1;min-width:220px;">${campLine(c)} <span class="hint">· asked by ${esc(personName(c.startRequest.by))} ${esc(when(c.startRequest.at))}</span>${c.startRequest.note ? `<div style="margin-top:4px;">“${esc(c.startRequest.note)}”</div>` : ''}</div><button class="btn btn--primary btn--sm" data-sstart="${esc(c.id)}" data-perm="out.approve">Start</button><button class="btn btn--ghost btn--sm" data-sreturn="${esc(c.id)}" data-perm="out.approve">Return with a note</button></div>`).join('')}<p class="hint" style="margin-top:6px;">Open a campaign to check its sequence and audience before starting. Starting runs the same checks as the Start button.</p></div>` : ''}
-        ${startReturned.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Campaigns returned to you</h3>${startReturned.map(c => `<div style="padding:8px 0;border-top:1px solid var(--border);">${campLine(c)} <span class="hint">· returned ${esc(when(c.startReturn.at))} by ${esc(personName(c.startReturn.by))}</span>${c.startReturn.note ? `<div style="margin-top:4px;">“${esc(c.startReturn.note)}”</div>` : ''}</div>`).join('')}<p class="hint" style="margin-top:6px;">Make the changes, then Ask to start again.</p></div>` : ''}
+        ${startReqs.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Campaigns waiting for a partner</h3>${startReqs.map(c => `<div style="padding:8px 0;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><div style="flex:1;min-width:220px;">${campLine(c)} <span class="pill pill--info">${c.status === 'paused' ? 'resume' : 'start'}</span> <span class="hint">· asked by ${esc(personName(c.startRequest.by))} ${esc(when(c.startRequest.at))}</span>${c.startRequest.note ? `<div style="margin-top:4px;">“${esc(c.startRequest.note)}”</div>` : ''}</div><button class="btn btn--primary btn--sm" data-sstart="${esc(c.id)}" data-perm="out.approve">${c.status === 'paused' ? 'Resume' : 'Start'}</button><button class="btn btn--ghost btn--sm" data-sreturn="${esc(c.id)}" data-perm="out.approve">Return with a note</button></div>`).join('')}<p class="hint" style="margin-top:6px;">Open a campaign to check its sequence and audience before starting. Starting runs the same checks as the Start button.</p></div>` : ''}
+        ${startReturned.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Campaigns returned to you — changes asked</h3>${startReturned.map(c => `<div style="padding:10px 0;border-top:1px solid var(--border);"><div><b>${esc(c.name)}</b> <span class="hint">· returned ${esc(when(c.startReturn.at))} by ${esc(personName(c.startReturn.by))}</span></div><div class="banner banner--warn" style="margin:6px 0;">${c.startReturn.note ? `“${esc(c.startReturn.note)}”` : 'No note.'}</div><button class="btn btn--primary btn--sm" data-opencamp="${esc(c.id)}">Open the campaign</button> <span class="hint">Make the changes, then click ${c.status === 'paused' ? 'Ask to resume' : 'Ask to start'} again.</span></div>`).join('')}</div>` : ''}
         ${returnedMine.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Returned to you</h3>${returnedMine.map(m => `<div style="padding:8px 0;border-top:1px solid var(--border);"><b>${esc(m.subject || '(reply)')}</b> <span class="hint">· ${esc(m.companyName || '')} · returned ${esc(when(m.returnedAt))} by ${esc(String(m.returnedBy || '').split('@')[0])}</span>${m.returnNote ? `<div style="margin-top:4px;">“${esc(m.returnNote)}”</div>` : ''}<details style="margin-top:4px;"><summary class="hint" style="cursor:pointer;">Your text</summary><pre style="white-space:pre-wrap;font:inherit;font-size:0.85rem;margin-top:6px;">${esc(m.draftBody || '')}</pre></details></div>`).join('')}<p class="hint" style="margin-top:6px;">Write it again in Compose (or reply in the conversation) with the changes.</p></div>` : ''}
         <div class="card" style="padding:0;margin-bottom:14px;">
           <div class="toolbar">
@@ -3660,8 +3671,11 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     function updateTaskBadge() {
       const dueMine = tasks.filter(t => t.channel !== 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
       const canApprove = window.pageAccess ? window.pageAccess.can('out.approve') : true; // writers can't act on the queue
-      const startReqs = campaigns.filter(c => c.status === 'draft' && c.startRequest).length;
-      const n = dueMine + (canApprove ? drafts.length + issueDrafts.length + startReqs : 0) + tasks.filter(t => t.channel === 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
+      const startReqs = campaigns.filter(c => ['draft', 'paused'].includes(c.status) && c.startRequest).length;
+      // Writers: what came back to them (emails and campaigns returned with a note).
+      const myLower = String(me || '').toLowerCase();
+      const back = canApprove ? 0 : returnedMine.length + campaigns.filter(c => !c.startRequest && c.startReturn?.requestedBy === myLower && tsMs(c.startReturn.at) >= Date.now() - 30 * 86400000).length;
+      const n = dueMine + back + (canApprove ? drafts.length + issueDrafts.length + startReqs : 0) + tasks.filter(t => t.channel === 'letter' && mineOrOpen(t) && tsMs(t.dueAt) <= endOfToday()).length;
       $('approveCount').textContent = n; $('approveCount').hidden = !n;
       $('todoChipN').textContent = dueMine ? `(${num(dueMine)} due)` : '';
     }

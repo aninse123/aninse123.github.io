@@ -348,7 +348,7 @@ if (typeof window !== 'undefined' && document.getElementById('app')) {
     $('who').textContent = user.email;
     [dir] = await Promise.all([
       loadDirectory().catch(() => []),
-      getDoc(doc(db, 'searchConfig', 'targetTiers')).then((s) => H.setTierRules(s.exists() ? s.data().rules : [])).catch(() => {}),
+      isOn('search.tier') ? getDoc(doc(db, 'searchConfig', 'targetTiers')).then((s) => H.setTierRules(s.exists() ? s.data().rules : [])).catch(() => {}) : null, // tier rules only while the switch is on
     ]);
     $('app').hidden = false;
     start();

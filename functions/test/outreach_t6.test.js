@@ -47,9 +47,18 @@ const camp = async (data) => { try { return await fns.outreachCampaign({ ...ADMI
   store.set("searchCompanies/d2", { name: "D2", stage: "universe", caeCode: "62010", updatedAt: Timestamp.now() });
   store.set("searchCompanies/d3", { name: "D3", stage: "universe", caeCode: "62010", targetTierManual: "A", updatedAt: Timestamp.now() });
   const dyn = { id: "dyn1", name: "Tier A", status: "active", steps: [{ id: "s1", channel: "call" }], exclusions: { ...U.DEFAULT_CAMPAIGN.exclusions, requireEmail: false }, audience: { mode: "dynamic", lastEvaluatedAt: past, sources: [{ type: "filters", filterSpec: [{ field: "targetTier", op: "in", value: ["A"] }] }] } };
+  store.set("searchCompanies/d4", { name: "D4", stage: "universe", caeCode: "62010", priority: "a", updatedAt: Timestamp.now() }); // F1: tier set on the company = the old Priority
+  const Feat = require("../features");
+  store.set("config/features", { flags: { "search.tier": { production: "off", staging: "on" } } }); Feat._reset();
   store.set("outreachCampaigns/dyn1", dyn);
-  const d = await runDynamicAudience(dyn, new Date());
-  ok("dynamic audience by tier: rule match (CAE 4941) and own choice added, the rest not", d.enrolled === 2 && store.get("outreachEnrolments/dyn1_d1") && store.get("outreachEnrolments/dyn1_d3") && !store.get("outreachEnrolments/dyn1_d2"));
+  const d0 = await runDynamicAudience(dyn, new Date());
+  ok("switch off: the rules don't count — only tiers set on the company (priority, or the older field)", d0.enrolled === 2 && store.get("outreachEnrolments/dyn1_d3") && store.get("outreachEnrolments/dyn1_d4") && !store.get("outreachEnrolments/dyn1_d1"));
+  store.set("config/features", { flags: { "search.tier": { production: "on", staging: "on" } } }); Feat._reset();
+  const dynB = { ...dyn, id: "dyn2" };
+  store.set("outreachCampaigns/dyn2", dynB);
+  ["d3", "d4"].forEach((k) => store.set(`searchCompanies/${k}`, { ...store.get(`searchCompanies/${k}`), activeCampaignId: "dyn1" }));
+  const d = await runDynamicAudience(dynB, new Date());
+  ok("dynamic audience by tier (switch on): rule match (CAE 4941) added, the rest not", d.enrolled === 1 && store.get("outreachEnrolments/dyn2_d1") && !store.get("outreachEnrolments/dyn2_d2"));
 
   console.log(fail ? `\n${fail} FAILED` : "\nall T6 tests passed");
   process.exit(fail ? 1 : 0);

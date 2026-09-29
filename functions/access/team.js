@@ -2,7 +2,8 @@
 //
 // Actions (request.data.action):
 //   seed                        create the partners' team records and the default roles (never overwrites)
-//   invite  { member }          add a person: email, name, key, roleId, endsAt?, startsAt?, notes?, ndaSigned?
+//   invite  { member }          add a person: email, name, key, roleId, endsAt?, startsAt?, notes?, ndaSigned?, inviteLang?
+//   sendInvite { email, lang? } the invitation email (pt or en) — only once the NDA is ticked (G2 / G3)
 //   update  { email, member }   change name / key / role / extra & removed permissions / dates / NDA / notes
 //   suspend { email }           stop access now (sessions revoked, account disabled)
 //   reactivate { email }        undo suspend (within dates)
@@ -118,6 +119,8 @@ function cleanMember(src, existing = {}) {
     startsAt: "startsAt" in src ? tsOrNull(src.startsAt, "start") : existing.startsAt ?? null,
     endsAt: "endsAt" in src ? tsOrNull(src.endsAt, "end") : existing.endsAt ?? null,
     ndaSigned: "ndaSigned" in src ? !!src.ndaSigned : !!existing.ndaSigned,
+    // G3: the invitation goes in one language, chosen when inviting.
+    inviteLang: ["pt", "en"].includes(src.inviteLang) ? src.inviteLang : (existing.inviteLang || "pt"),
     notes: String(src.notes ?? existing.notes ?? "").slice(0, 1000),
     // T4: printed on letters / call scripts they sign ({{sender.phone}}, {{sender.email}}).
     contactPhone: String(src.contactPhone ?? existing.contactPhone ?? "").trim().slice(0, 30),
@@ -155,41 +158,62 @@ async function seed(by) {
 }
 
 // "You've been given access" — from noreply@douropartners.pt, replies to the
-// partner who invited. Portuguese first, English below.
-async function sendInvite(email, by, origin) {
+// partner who invited. One language (G3: pt or en, chosen when inviting),
+// and only once the NDA is recorded (G2) — partners excepted.
+function inviteMessage(lang, { first, roleName, endsAt, url, email }) {
+  const fmt = (loc) => (endsAt ? new Intl.DateTimeFormat(loc, { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Lisbon" }).format(endsAt.toDate()) : null);
+  if (lang === "en") {
+    const until = fmt("en-GB");
+    return {
+      subject: "Your access to the Douro Partners portal",
+      message: [
+        `Hi ${first},`,
+        "",
+        `You've been given access to the Douro Partners portal${roleName ? ` (role: ${roleName})` : ""}${until ? `, until ${until}` : ""}.`,
+        "",
+        `To sign in: open ${url}, enter this address (${email}) and follow the link we email you. No password needed.`,
+        "",
+        "Any questions, just reply to this email.",
+      ].join("\n"),
+    };
+  }
+  const until = fmt("pt-PT");
+  return {
+    subject: "Acesso ao portal Douro Partners",
+    message: [
+      `Olá ${first},`,
+      "",
+      `Já tens acesso ao portal da Douro Partners${roleName ? ` (função: ${roleName})` : ""}${until ? `, até ${until}` : ""}.`,
+      "",
+      `Para entrares: abre ${url}, escreve este endereço (${email}) e segue o link que vais receber por email. Não há palavra-passe.`,
+      "",
+      "Qualquer dúvida, responde a este email.",
+    ].join("\n"),
+  };
+}
+
+async function sendInvite(email, by, origin, lang) {
   const snap = await db().doc(`team/${email}`).get();
   if (!snap.exists) fail("not-found", "not_found", "Person not found.");
   const m = snap.data();
   if (!P.isActive(m)) fail("failed-precondition", "not_active", "This person's access isn't active.");
+  if (m.roleId !== "partner" && !P.PARTNER_EMAILS.includes(email) && !m.ndaSigned) fail("failed-precondition", "nda_missing", "Tick \"NDA signed\" first — the invitation can only be sent once the NDA is recorded.");
   const role = m.roleId ? await readRole(m.roleId) : null;
   const base = PORTAL_ORIGINS.includes(origin) ? origin : "https://douropartners.pt";
   const url = `${base}/portal/login.html`;
   const first = String(m.name || "").trim().split(/\s+/)[0] || "";
-  const until = m.endsAt ? new Intl.DateTimeFormat("pt-PT", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Lisbon" }).format(m.endsAt.toDate()) : null;
-  const untilEn = m.endsAt ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Lisbon" }).format(m.endsAt.toDate()) : null;
-  const message = [
-    `Olá ${first},`,
-    "",
-    `Já tens acesso ao portal da Douro Partners${role?.name ? ` (função: ${role.name})` : ""}${until ? `, até ${until}` : ""}.`,
-    "",
-    `Para entrares: abre ${url}, escreve este endereço (${email}) e segue o link que vais receber por email. Não há palavra-passe.`,
-    "",
-    "Qualquer dúvida, responde a este email.",
-    "",
-    "—",
-    "",
-    `Hi ${first}, you've been given access to the Douro Partners portal${role?.name ? ` (role: ${role.name})` : ""}${untilEn ? ` until ${untilEn}` : ""}. To sign in, open ${url}, enter this address and follow the link we email you. No password needed.`,
-  ].join("\n");
+  const language = ["pt", "en"].includes(lang) ? lang : (m.inviteLang === "en" ? "en" : "pt");
+  const { subject, message } = inviteMessage(language, { first, roleName: role?.name || "", endsAt: m.endsAt || null, url, email });
   const res = await sendEmail(RESEND_READ_KEY.value(), {
     from: "Douro Partners <noreply@douropartners.pt>",
     to: [email],
     reply_to: by,
-    subject: "Acesso ao portal Douro Partners",
+    subject,
     text: message,
     html: buildOutreachHtml({ message }),
   });
-  await db().doc(`team/${email}`).update({ invitationSentAt: FieldValue.serverTimestamp(), invitationSentBy: by });
-  await audit(by, "inviteEmail", email, null, { to: email, url });
+  await db().doc(`team/${email}`).update({ invitationSentAt: FieldValue.serverTimestamp(), invitationSentBy: by, inviteLang: language });
+  await audit(by, "inviteEmail", email, null, { to: email, url, lang: language });
   return { sent: true, id: res.data?.id || null };
 }
 
@@ -210,7 +234,7 @@ async function invite({ member, sendEmail: withEmail, origin }, by) {
   await audit(by, "invite", email, cur.exists ? { status: cur.data().status } : null, { roleId: fields.roleId, key: fields.key, endsAt: fields.endsAt });
   let emailed = false, emailError = null;
   if (withEmail) {
-    try { emailed = (await sendInvite(email, by, origin)).sent; } catch (e) { emailError = e.message || String(e); }
+    try { emailed = (await sendInvite(email, by, origin, fields.inviteLang)).sent; } catch (e) { emailError = e.message || String(e); }
   }
   return { email, emailed, emailError };
 }
@@ -284,7 +308,7 @@ exports.teamAccess = onCall({ region: REGION, secrets: [RESEND_READ_KEY] }, asyn
     case "end": return setStatus(norm(data.email), "ended", by, "end");
     case "saveRole": return saveRole(data, by);
     case "deleteRole": return deleteRole(data, by);
-    case "sendInvite": return sendInvite(norm(data.email), by, data.origin);
+    case "sendInvite": return sendInvite(norm(data.email), by, data.origin, data.lang);
     default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
   }
 });
@@ -314,6 +338,7 @@ async function onTeamSignIn(email, uid) {
   if (!snap.exists && !P.PARTNER_EMAILS.includes(e)) return null;
   const m = snap.exists ? snap.data() : null;
   if (m && !P.isActive(m) && !P.PARTNER_EMAILS.includes(e)) return { allowed: false };
+  if (m && !m.ndaSigned && m.roleId !== "partner" && !P.PARTNER_EMAILS.includes(e)) return { allowed: false, reason: "nda" };
   const role = m?.roleId ? await readRole(m.roleId) : null;
   const claims = P.claimsFor(e, m, role);
   if (m) {
@@ -327,4 +352,5 @@ async function onTeamSignIn(email, uid) {
 
 exports.runTeamExpiry = runTeamExpiry;
 exports.onTeamSignIn = onTeamSignIn;
+exports.inviteMessage = inviteMessage;
 exports.syncLoginHashes = syncLoginHashes;

@@ -62,6 +62,15 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   store.set("config/allowedEmailHashes", { hashes: [sha("investor@fundo.pt")] });
   ok("an investor signs in as before (no team claims)", (await signIn("investor@fundo.pt")).res === undefined);
   ok("a stranger is refused", (await signIn("random@gmail.com")).err?.code === "permission-denied");
+  ok("D3: …with the neutral message", /doesn't have access to the portal/.test((await signIn("random@gmail.com")).err?.message || ""));
+  // G2: no NDA recorded → no sign-in (partners excepted), with its own message
+  await team({ action: "invite", member: { email: "rita@douropartners.pt", name: "Rita Sousa", key: "rita", roleId: "intern" } });
+  const rn = await signIn("rita@douropartners.pt");
+  ok("G2: team member without the NDA: sign-in refused with the NDA message, still invited", rn.err?.code === "permission-denied" && /NDA is recorded/.test(rn.err.message) && store.get("team/rita@douropartners.pt").status === "invited");
+  await team({ action: "update", email: "rita@douropartners.pt", member: { ndaSigned: true } });
+  ok("G2: NDA ticked → signs in", (await signIn("rita@douropartners.pt")).res?.customClaims?.key === "rita");
+  store.set("team/antonio.carvalho@douropartners.pt", { ...store.get("team/antonio.carvalho@douropartners.pt"), ndaSigned: false });
+  ok("G2: partners are exempt", (await signIn("antonio.carvalho@douropartners.pt", "uid-antonio")).res?.customClaims?.role === "partner");
 
   // ── Changes reach her account at once ──
   authCalls.length = 0;
@@ -72,7 +81,7 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   authCalls.length = 0;
   const sr = await team({ action: "saveRole", roleId: "intern", role: { name: "Intern", perms: ["search.view", "out.view", "access.manage"] } });
   const cl2 = authCalls.find((c) => c.op === "claims" && c.uid === "uid-maria")?.claims;
-  ok("editing a role updates everyone with it; managing access can't be given to a role", sr.updated === 1 && cl2 && !cl2.perms.includes("search.edit") && !store.get("roles/intern").perms.includes("access.manage"));
+  ok("editing a role updates everyone with it (Maria and Rita); managing access can't be given to a role", sr.updated === 2 && cl2 && !cl2.perms.includes("search.edit") && !store.get("roles/intern").perms.includes("access.manage"));
   ok("the Partner role can't be edited", (await team({ action: "saveRole", roleId: "partner", role: { name: "x", perms: [] } })).err?.details?.reason === "partner_locked");
   ok("a role in use can't be deleted", (await team({ action: "deleteRole", roleId: "intern" })).err?.details?.reason === "role_in_use");
 
@@ -110,14 +119,24 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
     && (await call("outreachPeopleSend", as("x@d.pt", ["net.email"]), { context: "portal", recipients: [{ email: "a@b.pt" }], subject: "s", message: "m" })).err?.details?.reason === "not_admin");
 
   // Invitation email
-  const ie = await team({ action: "invite", member: { email: "ines@douropartners.pt", name: "Inês Costa", key: "ines", roleId: "intern", endsAt: "2026-12-20" }, sendEmail: true, origin: "https://staging--douro-partners.netlify.app" });
+  const m0 = mails.length;
+  const ie0 = await team({ action: "invite", member: { email: "ines@douropartners.pt", name: "Inês Costa", key: "ines", roleId: "intern", endsAt: "2026-12-20" }, sendEmail: true, origin: "https://staging--douro-partners.netlify.app" });
+  ok("G2: invite without the NDA: person added, but no email until the NDA is recorded", !!store.get("team/ines@douropartners.pt") && ie0.emailed === false && /NDA/.test(ie0.emailError || "") && mails.length === m0);
+  ok("G2: …and Send invitation is refused too", (await team({ action: "sendInvite", email: "ines@douropartners.pt" })).err?.details?.reason === "nda_missing" && mails.length === m0);
+  await team({ action: "update", email: "ines@douropartners.pt", member: { ndaSigned: true } });
+  const ie = await team({ action: "sendInvite", email: "ines@douropartners.pt", origin: "https://staging--douro-partners.netlify.app" });
   const mail = mails[mails.length - 1]?.body;
-  ok("invite with email: sent from noreply@douropartners.pt to her, replies to the partner, full-access key", ie.emailed === true && mail.to[0] === "ines@douropartners.pt" && /noreply@douropartners\.pt/.test(mail.from) && mail.reply_to === "andre.rocha@douropartners.pt" && mails[mails.length - 1].auth === "Bearer secret-RESEND_READ_KEY");
-  ok("…with the sign-in link of the site that invited her, her role and end date (PT + EN)", mail.text.includes("https://staging--douro-partners.netlify.app/portal/login.html") && mail.text.includes("função: Intern") && mail.text.includes("20 de dezembro de 2026") && mail.text.includes("Hi Inês"));
+  ok("invite with email: sent from noreply@douropartners.pt to her, replies to the partner, full-access key", ie.sent === true && mail.to[0] === "ines@douropartners.pt" && /noreply@douropartners\.pt/.test(mail.from) && mail.reply_to === "andre.rocha@douropartners.pt" && mails[mails.length - 1].auth === "Bearer secret-RESEND_READ_KEY");
+  ok("G3: …in Portuguese only (default): the sign-in link of the site that invited her, her role and end date", mail.subject === "Acesso ao portal Douro Partners" && mail.text.includes("https://staging--douro-partners.netlify.app/portal/login.html") && mail.text.includes("função: Intern") && mail.text.includes("20 de dezembro de 2026") && !mail.text.includes("Hi Inês"));
   const before = mails.length;
-  await team({ action: "sendInvite", email: "ines@douropartners.pt", origin: "https://evil.example.com" });
-  ok("resend invitation; a foreign site in the link is replaced by douropartners.pt", mails.length === before + 1 && mails[mails.length - 1].body.text.includes("https://douropartners.pt/portal/login.html") && !mails[mails.length - 1].body.text.includes("evil"));
-  ok("no email unless asked", (await team({ action: "invite", member: { email: "sem@douropartners.pt", name: "Sem Email", key: "sem", roleId: "viewer" } })).emailed === false && mails.length === before + 1);
+  await team({ action: "sendInvite", email: "ines@douropartners.pt", origin: "https://evil.example.com", lang: "en" });
+  const en = mails[mails.length - 1].body;
+  ok("G3: resend in English: English subject and text, no Portuguese; a foreign site in the link is replaced by douropartners.pt", mails.length === before + 1 && en.subject === "Your access to the Douro Partners portal" && en.text.includes("Hi Inês") && en.text.includes("role: Intern") && en.text.includes("20 December 2026") && !en.text.includes("Olá") && en.text.includes("https://douropartners.pt/portal/login.html") && !en.text.includes("evil") && store.get("team/ines@douropartners.pt").inviteLang === "en");
+  await team({ action: "invite", member: { email: "eva@douropartners.pt", name: "Eva Lima", key: "eva", roleId: "viewer", ndaSigned: true, inviteLang: "en" }, sendEmail: true });
+  ok("G3: the language chosen on the invite form is used", mails.length === before + 2 && mails[mails.length - 1].body.subject === "Your access to the Douro Partners portal");
+  ok("G3: inviteMessage has one language each", !T.inviteMessage("pt", { first: "A", roleName: "", endsAt: null, url: "u", email: "e" }).message.includes("Hi ") && !T.inviteMessage("en", { first: "A", roleName: "", endsAt: null, url: "u", email: "e" }).message.includes("Olá"));
+  const before2 = mails.length;
+  ok("no email unless asked", (await team({ action: "invite", member: { email: "sem@douropartners.pt", name: "Sem Email", key: "sem", roleId: "viewer", ndaSigned: true } })).emailed === false && mails.length === before2);
 
   // Team directory (owners / assignees for everyone on the team)
   const dir = [...store.entries()].filter(([p]) => p.startsWith("teamDirectory/")).map(([, d]) => d);

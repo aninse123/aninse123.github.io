@@ -72,32 +72,56 @@ service cloud.firestore {
         || (resource != null && request.resource.data.updatedBy == resource.data.get('updatedBy', null));
     }
     function touchOnly() { return onlyFields(['lastTouchAt', 'updatedAt', 'nextContactAt', 'nextContactTime', 'nextContactTz', 'hasOverdue']); }
+    // ── Search CRM edit split (30 Sep): own vs any company, deal, flags ──
+    function changes(fs) { return request.resource.data.diff(resource.data).affectedKeys().hasAny(fs); }
+    function dealFields() { return ['stage', 'reasonExcluded', 'dealSource', 'brokerId', 'dealSizeBand', 'projectName', 'askingPrice', 'targetEV', 'targetMultiple',
+      'introCallDate', 'teaserDate', 'ndaSentDate', 'ndaSignedDate', 'cimDate', 'nboDate', 'loiSubmittedDate', 'loiSignedDate', 'exclusivityEnd',
+      'ddStartDate', 'financingDate', 'closingDate', 'loiTerms', 'dealNotes']; }
+    function flagFields() { return ['priority', 'contactable', 'contactableNote', 'targetTierManual', 'doNotContact']; }
+    function stampFields() { return ['updatedAt', 'updatedBy', 'updatedByAt']; }
+    // Bookkeeping written when an activity is logged or closed (last touch, attempts).
+    function activityTouch() { return onlyFields(['lastTouchAt', 'outreachAttempts', 'lastOutreachAt', 'updatedAt', 'nextContactAt', 'nextContactTime', 'nextContactTz', 'hasOverdue']); }
+    // Edit any company, or (search.edit) only companies they own.
+    function companyEditor(owner) { return can('search.editall') || (can('search.edit') && owner != null && owner == request.auth.token.get('key', '~')); }
+    // Activities are never edited or deleted: only closed once (outcome), or
+    // marked when their record is deleted (the history is kept).
+    function closeOnly() { return resource.data.get('status', '') == 'open' && onlyFields(['status', 'closedNotes', 'closedAt', 'closedBy']); }
+    function recordDeletedOnly() { return onlyFields(['recordDeleted', 'recordName', 'recordDeletedAt', 'recordDeletedBy']); }
 
     // ── Search CRM ──
     match /searchCompanies/{id} {
       allow read: if can('search.view');
-      allow create, update: if can('search.edit') && stampOk();
+      allow create: if canAny(['search.edit', 'search.editall', 'search.import']) && stampOk();
+      allow update: if stampOk() && (
+        (companyEditor(resource.data.get('owner', null))
+          && (!changes(dealFields()) || can('search.deal'))
+          && (!changes(flagFields()) || can('search.flags'))
+          && (!changes(['owner']) || can('search.editall')))
+        || (can('search.activity') && activityTouch())
+        || (can('search.deal') && onlyFields(dealFields().concat(stampFields())))
+        || (can('search.flags') && onlyFields(flagFields().concat(stampFields())))
+        || (can('search.import') && can('search.editall')));
       allow delete: if can('search.delete');
     }
     match /searchActivities/{id} {
       allow read: if can('search.view');
-      allow create: if can('search.edit') && createsAsMe();
-      allow update, delete: if can('search.delete') || (can('search.edit') && own());
-      // Closing an activity (e.g. a meeting someone else logged) is open to
-      // anyone who can edit — only the outcome fields change (decision B4).
-      allow update: if can('search.edit') && resource.data.get('status', '') == 'open'
-        && onlyFields(['status', 'closedNotes', 'closedAt', 'closedBy'])
-        && request.resource.data.get('closedBy', me()) == me();
+      allow create: if canAny(['search.activity', 'search.deal', 'search.edit', 'search.editall']) && createsAsMe();
+      // Never edited or deleted (source of truth): closed once by anyone who
+      // logs activities (B4), or marked when the company is deleted.
+      allow update: if (can('search.activity') && closeOnly() && request.resource.data.get('closedBy', me()) == me())
+        || (can('search.delete') && recordDeletedOnly());
     }
     match /searchPeople/{id} {
       allow read: if can('search.view');
-      allow create, update: if can('search.edit');
+      allow create, update: if canAny(['search.edit', 'search.editall']);
       allow delete: if can('search.delete');
     }
+    // A person ↔ company link follows the company: any company (editall) or
+    // one the person owns (search.edit) — one read of the company to check.
     match /searchPersonLinks/{id} {
       allow read: if can('search.view');
-      allow create, update: if can('search.edit');
-      allow delete: if can('search.delete') || can('search.edit');
+      allow create, update: if can('search.editall') || (can('search.edit') && companyEditor(get(/databases/$(database)/documents/searchCompanies/$(request.resource.data.companyId)).data.get('owner', null)));
+      allow delete: if can('search.delete') || can('search.editall') || (can('search.edit') && companyEditor(get(/databases/$(database)/documents/searchCompanies/$(resource.data.companyId)).data.get('owner', null)));
     }
     match /searchMapLists/{id} {
       allow read: if can('search.view');
@@ -173,16 +197,18 @@ service cloud.firestore {
     match /networkActivities/{id} {
       allow read: if can('net.view');
       allow create: if canAny(['net.edit', 'net.email']) && createsAsMe();
-      allow update, delete: if can('net.delete') || (can('net.edit') && own());
+      // Never edited or deleted: closed / cancelled once, or marked when the record is deleted.
+      allow update: if (can('net.edit') && closeOnly()) || (can('net.delete') && recordDeletedOnly());
     }
     match /networkFirmActivities/{id} {
       allow read: if can('net.view');
       allow create: if canAny(['net.edit', 'net.email']) && createsAsMe();
-      allow update, delete: if can('net.delete') || (can('net.edit') && own());
+      // Never edited or deleted: closed / cancelled once, or marked when the record is deleted.
+      allow update: if (can('net.edit') && closeOnly()) || (can('net.delete') && recordDeletedOnly());
     }
     match /networkConfig/{id} {
       allow read: if can('net.view') || can('out.campaigns');
-      allow write: if can('net.edit');
+      allow write: if can('net.categories');
     }
 
     // ── Investor CRM ──
@@ -195,7 +221,8 @@ service cloud.firestore {
     match /crmActivities/{id} {
       allow read: if can('icrm.view');
       allow create: if canAny(['icrm.edit', 'icrm.email']) && createsAsMe();
-      allow update, delete: if can('icrm.delete') || (can('icrm.edit') && own());
+      // Never edited or deleted: closed / cancelled once, or marked when the investor is deleted.
+      allow update: if (can('icrm.edit') && closeOnly()) || (can('icrm.delete') && recordDeletedOnly());
     }
     match /crmConfig/{id} {
       allow read: if can('icrm.view');

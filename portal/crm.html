@@ -1739,7 +1739,7 @@ async function saveInvestor() {
 
 async function deleteInvestor() {
   const inv = getInvestor(); if (!inv) return;
-  document.getElementById('deleteDesc').textContent = `Delete "${inv.name}"? All activities and contacts will be permanently removed. This cannot be undone.`;
+  document.getElementById('deleteDesc').textContent = `Delete "${inv.name}"? Its contacts are removed; its activity history is kept (marked "investor deleted"). This cannot be undone.`;
   showEl('deleteModal', true);
 }
 
@@ -1747,9 +1747,10 @@ async function confirmDelete() {
   const btn = document.getElementById('deleteConfirmBtn');
   btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Deleting…';
   try {
-    // Delete activities
+    // Activities are the source of truth: kept, marked as belonging to a deleted investor.
+    const invName = crmInvestors.find(i => i.id === currentInvId)?.name || null;
     const snap = await getDocs(query(collection(db,'crmActivities'), where('investorId','==',currentInvId)));
-    await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    await Promise.all(snap.docs.map(d => updateDoc(d.ref, { recordDeleted: true, recordName: invName, recordDeletedAt: serverTimestamp(), recordDeletedBy: auth.currentUser?.email?.toLowerCase() || null })));
     await deleteDoc(doc(db,'crmInvestors',currentInvId));
     crmInvestors = crmInvestors.filter(i => i.id !== currentInvId);
     showEl('deleteModal',false);

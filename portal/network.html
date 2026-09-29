@@ -179,7 +179,7 @@
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn--ghost" id="followupsBtn">📋 Follow-ups</button>
-      <button class="btn btn--ghost btn--icon" id="categorySettingsBtn" data-perm="net.edit" title="Edit categories">⚙</button>
+      <button class="btn btn--ghost btn--icon" id="categorySettingsBtn" data-perm="net.categories" title="Edit categories">⚙</button>
       <button class="btn btn--primary" id="newContactBtn" data-perm="net.edit">＋ New Contact</button>
     </div>
   </div>
@@ -1404,14 +1404,17 @@ async function confirmDelete() {
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Deleting…';
   try {
     if (deleteTarget === 'firm') {
+      // Activities are the source of truth: kept, marked as belonging to a deleted firm.
+      const firmName = firms.find(f => f.id === currentFirmId)?.name || null;
       const snap = await getDocs(query(collection(db,'networkFirmActivities'), where('firmId','==',currentFirmId)));
-      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+      await Promise.all(snap.docs.map(d => updateDoc(d.ref, { recordDeleted: true, recordName: firmName, recordDeletedAt: serverTimestamp(), recordDeletedBy: auth.currentUser?.email?.toLowerCase() || null })));
       await deleteDoc(doc(db,'networkFirms',currentFirmId));
       showEl('deleteModal', false);
       showFirmDetail(false);
     } else {
+      const contactName = networkContacts.find(c => c.id === currentContactId)?.name || null;
       const snap = await getDocs(query(collection(db,'networkActivities'), where('contactId','==',currentContactId)));
-      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+      await Promise.all(snap.docs.map(d => updateDoc(d.ref, { recordDeleted: true, recordName: contactName, recordDeletedAt: serverTimestamp(), recordDeletedBy: auth.currentUser?.email?.toLowerCase() || null })));
       await deleteDoc(doc(db,'networkContacts',currentContactId));
       showEl('deleteModal', false);
       showDetail(false);
