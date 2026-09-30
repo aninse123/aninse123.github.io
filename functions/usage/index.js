@@ -238,7 +238,7 @@ async function senderAlerts(list) {
 
 // ── Callable + daily job ──
 const usageAdmin = onCall({ region: REGION, timeoutSeconds: 300 }, async (request) => {
-  if (!P.hasPerm(request, "access.manage")) throw new HttpsError("permission-denied", "Only partners can see usage.", { reason: "no_permission" });
+  if (!P.hasPerm(request, "usage.view")) throw new HttpsError("permission-denied", "Only the Admin can see usage.", { reason: "no_permission" });
   const action = request.data?.action;
   if (action === "refresh") return refreshUsage({ days: request.data?.backfill ? BACKFILL_DAYS : 7 });
   throw new HttpsError("invalid-argument", "Unknown action.", { reason: "bad_action" });

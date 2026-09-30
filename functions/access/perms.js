@@ -5,14 +5,19 @@
 // A person = team/{email}: one role + optional extra / removed permissions,
 // status and dates. Their effective permissions travel as custom claims on
 // the sign-in token ({ role, perms, key }), so Firestore rules check
-// request.auth.token.perms without extra reads. Partners (the two founders)
-// always have everything, also by email as a fallback.
+// request.auth.token.perms without extra reads.
+//
+// Admin / Partner split (30 Sep): the Admin (André, by email) has everything;
+// Partners (the two founders, by email) have everything except the
+// Admin-only permissions. Nobody else — no role, no extra permission — can
+// hold an Admin-only permission. Both levels are fixed (not editable).
 //
 // Keep in sync with portal/access.js (tests/portal/access_parity test).
 
 const { HttpsError } = require("firebase-functions/v2/https");
 
 const PARTNER_EMAILS = ["andre.rocha@douropartners.pt", "antonio.carvalho@douropartners.pt"];
+const ADMIN_EMAILS = ["andre.rocha@douropartners.pt"];
 const PARTNER_KEYS = { "andre.rocha@douropartners.pt": "andre", "antonio.carvalho@douropartners.pt": "antonio" };
 
 // [code, tab, label] — the tab groups them in the Team & access matrix.
@@ -25,7 +30,7 @@ const PERMS = [
   ["search.flags", "Search CRM", "Set Do not contact, contactable and tier"],
   ["search.stats", "Search CRM", "See Company / People statistics"],
   ["search.delete", "Search CRM", "Delete companies and any activity"],
-  ["search.import", "Search CRM", "Import companies and people"],
+  ["search.import", "Search CRM", "Import companies and people (Admin)"],
   ["search.export", "Search CRM", "Export CSV (hides the button — not a lock)"],
   ["search.admin", "Search CRM", "Settings, fit criteria, brokers, maintenance"],
   ["out.view", "Outreach", "See Inbox, Sent, Metrics, campaigns, tasks"],
@@ -34,7 +39,8 @@ const PERMS = [
   ["out.approve", "Outreach", "Approve drafts and issues"],
   ["out.tasks", "Outreach", "Do tasks (calls, LinkedIn, letters…)"],
   ["out.campaigns", "Outreach", "Create and run campaigns, lists, recurring emails"],
-  ["out.admin", "Outreach", "Addresses, templates, legal footer, suppression, go live"],
+  ["out.templates", "Outreach", "Edit templates; add to the suppression list"],
+  ["out.admin", "Outreach", "Outreach settings: sending addresses, limits, sending window, test mode and go live, AI, legal footer; remove from the suppression list (Admin)"],
   ["net.view", "Network", "See contacts and firms"],
   ["net.edit", "Network", "Edit contacts and firms; add activities (never edited or deleted)"],
   ["net.categories", "Network", "Manage Network categories"],
@@ -51,19 +57,26 @@ const PERMS = [
   ["budget.view", "Budget", "See the budget"],
   ["budget.edit", "Budget", "Edit the budget"],
   ["log.view", "Activity Log", "See the portal activity log"],
-  ["features.test", "Team & access", "Test features before release (sees features switched to Test)"],
-  ["access.manage", "Team & access", "Manage people, roles and access"],
+  ["features.test", "Team & access", "Test features before release (sees features switched to Test) (Admin)"],
+  ["features.manage", "Team & access", "Manage feature switches: Off / Test / On, testers, kill switches (Admin)"],
+  ["usage.view", "Team & access", "See usage (database, emails, activity) and usage alerts (Admin)"],
+  ["access.manage", "Team & access", "Manage people, roles and access (Admin)"],
 ];
 const ALL = PERMS.map((p) => p[0]);
 const IS_PERM = new Set(ALL);
+// Only the Admin holds these (never a Partner, a role or an extra permission).
+const ADMIN_ONLY = ["access.manage", "features.manage", "usage.view", "features.test", "out.admin", "search.import"];
+const PARTNER_PERMS = ALL.filter((p) => !ADMIN_ONLY.includes(p));
+const withoutAdminOnly = (list) => list.filter((p) => !ADMIN_ONLY.includes(p));
 
-// Default roles (editable in Team & access, except Partner).
+// Default roles (editable in Team & access, except Admin and Partner).
 const DEFAULT_ROLES = {
-  partner: { name: "Partner", locked: true, perms: ALL, description: "Founders — everything, always." },
+  admin: { name: "Admin", locked: true, perms: ALL, description: "André — everything, always." },
+  partner: { name: "Partner", locked: true, perms: PARTNER_PERMS, description: "Founders — everything except the Admin-only permissions." },
   analyst: {
     name: "Analyst",
-    perms: ["search.view", "search.edit", "search.editall", "search.activity", "search.deal", "search.stats", "search.import", "search.export", "out.view", "out.draft", "out.tasks", "out.campaigns", "net.view", "net.edit", "icrm.view"],
-    description: "Full-time team member: research, imports, campaigns prepared for approval.",
+    perms: ["search.view", "search.edit", "search.editall", "search.activity", "search.deal", "search.stats", "search.export", "out.view", "out.draft", "out.tasks", "out.campaigns", "net.view", "net.edit", "icrm.view"],
+    description: "Full-time team member: research, campaigns prepared for approval.",
   },
   intern: {
     name: "Intern",
@@ -79,15 +92,17 @@ const DEFAULT_ROLES = {
 
 const cleanList = (v) => [...new Set((Array.isArray(v) ? v : []).map(String).filter((p) => IS_PERM.has(p)))];
 
-// role perms + extra − removed. Partner = everything (computed, so new
-// permissions apply to partners automatically).
+// role perms + extra − removed, never Admin-only. Admin = everything,
+// Partner = everything but Admin-only (computed, so new permissions apply
+// automatically).
 function effectivePerms(member, role) {
   if (!member) return [];
-  if (member.roleId === "partner" || role?.locked) return ALL.slice();
+  if (member.roleId === "admin") return ALL.slice();
+  if (member.roleId === "partner") return PARTNER_PERMS.slice();
   const set = new Set(cleanList(role?.perms));
   cleanList(member.extraPerms).forEach((p) => set.add(p));
   cleanList(member.removedPerms).forEach((p) => set.delete(p));
-  return ALL.filter((p) => set.has(p));
+  return withoutAdminOnly(ALL.filter((p) => set.has(p)));
 }
 
 // Active and inside its dates?
@@ -100,10 +115,12 @@ function isActive(member, now = new Date()) {
   return true;
 }
 
-// Custom claims for a sign-in token. Partners by email always get everything.
+// Custom claims for a sign-in token. By email: the Admin gets everything,
+// a Partner everything but Admin-only.
 function claimsFor(email, member, role) {
   const e = String(email || "").trim().toLowerCase();
-  if (PARTNER_EMAILS.includes(e)) return { role: "partner", perms: ALL.slice(), key: member?.key || PARTNER_KEYS[e] };
+  if (ADMIN_EMAILS.includes(e)) return { role: "admin", perms: ALL.slice(), key: member?.key || PARTNER_KEYS[e] };
+  if (PARTNER_EMAILS.includes(e)) return { role: "partner", perms: PARTNER_PERMS.slice(), key: member?.key || PARTNER_KEYS[e] };
   if (!isActive(member)) return { role: null, perms: [], key: null };
   return { role: member.roleId || null, perms: effectivePerms(member, role), key: member.key || null };
 }
@@ -114,10 +131,13 @@ function callerOf(request) {
 }
 function hasPerm(request, perm) {
   const email = callerOf(request);
+  if (ADMIN_EMAILS.includes(email)) return true;
+  if (ADMIN_ONLY.includes(perm)) return false; // whatever an old token says
   if (PARTNER_EMAILS.includes(email)) return true;
   const perms = request.auth?.token?.perms;
   return Array.isArray(perms) && perms.includes(perm);
 }
+const isAdminEmail = (email) => ADMIN_EMAILS.includes(String(email || "").trim().toLowerCase());
 // Throws permission-denied unless the caller holds one of `perms`.
 function requirePerm(request, perms, message = "You don't have permission to do this.") {
   const list = Array.isArray(perms) ? perms : [perms];
@@ -126,4 +146,4 @@ function requirePerm(request, perms, message = "You don't have permission to do 
   return callerOf(request);
 }
 
-module.exports = { PARTNER_EMAILS, PARTNER_KEYS, PERMS, ALL, DEFAULT_ROLES, cleanList, effectivePerms, isActive, claimsFor, callerOf, hasPerm, requirePerm };
+module.exports = { PARTNER_EMAILS, PARTNER_KEYS, ADMIN_EMAILS, ADMIN_ONLY, PARTNER_PERMS, isAdminEmail, PERMS, ALL, DEFAULT_ROLES, cleanList, effectivePerms, isActive, claimsFor, callerOf, hasPerm, requirePerm };

@@ -32,7 +32,7 @@ export const PERMS = [
   ["search.flags", "Search CRM", "Set Do not contact, contactable and tier"],
   ["search.stats", "Search CRM", "See Company / People statistics"],
   ["search.delete", "Search CRM", "Delete companies and any activity"],
-  ["search.import", "Search CRM", "Import companies and people"],
+  ["search.import", "Search CRM", "Import companies and people (Admin)"],
   ["search.export", "Search CRM", "Export CSV (hides the button — not a lock)"],
   ["search.admin", "Search CRM", "Settings, fit criteria, brokers, maintenance"],
   ["out.view", "Outreach", "See Inbox, Sent, Metrics, campaigns, tasks"],
@@ -41,7 +41,8 @@ export const PERMS = [
   ["out.approve", "Outreach", "Approve drafts and issues"],
   ["out.tasks", "Outreach", "Do tasks (calls, LinkedIn, letters…)"],
   ["out.campaigns", "Outreach", "Create and run campaigns, lists, recurring emails"],
-  ["out.admin", "Outreach", "Addresses, templates, legal footer, suppression, go live"],
+  ["out.templates", "Outreach", "Edit templates; add to the suppression list"],
+  ["out.admin", "Outreach", "Outreach settings: sending addresses, limits, sending window, test mode and go live, AI, legal footer; remove from the suppression list (Admin)"],
   ["net.view", "Network", "See contacts and firms"],
   ["net.edit", "Network", "Edit contacts and firms; add activities (never edited or deleted)"],
   ["net.categories", "Network", "Manage Network categories"],
@@ -58,11 +59,18 @@ export const PERMS = [
   ["budget.view", "Budget", "See the budget"],
   ["budget.edit", "Budget", "Edit the budget"],
   ["log.view", "Activity Log", "See the portal activity log"],
-  ["features.test", "Team & access", "Test features before release (sees features switched to Test)"],
-  ["access.manage", "Team & access", "Manage people, roles and access"],
+  ["features.test", "Team & access", "Test features before release (sees features switched to Test) (Admin)"],
+  ["features.manage", "Team & access", "Manage feature switches: Off / Test / On, testers, kill switches (Admin)"],
+  ["usage.view", "Team & access", "See usage (database, emails, activity) and usage alerts (Admin)"],
+  ["access.manage", "Team & access", "Manage people, roles and access (Admin)"],
 ];
 export const ALL = PERMS.map(p => p[0]);
 const PARTNER_KEYS = { 'andre.rocha@douropartners.pt': 'andre', 'antonio.carvalho@douropartners.pt': 'antonio' };
+// Admin / Partner split (30 Sep) — same as functions/access/perms.js: the
+// Admin (André) has everything; partners everything but these.
+export const ADMIN_ONLY = ['access.manage', 'features.manage', 'usage.view', 'features.test', 'out.admin', 'search.import'];
+export const PARTNER_PERMS = ALL.filter(p => !ADMIN_ONLY.includes(p));
+const ADMIN_EMAIL = 'andre.rocha@douropartners.pt';
 
 // Which permission opens each tab, and the order used to pick someone's home tab.
 export const TAB_PERM = { investor: 'portal.viewas', admin: 'portal.admin', crm: 'icrm.view', search: 'search.view', outreach: 'out.view', network: 'net.view', budget: 'budget.view', log: 'log.view', team: 'access.manage' };
@@ -73,6 +81,7 @@ const HOME_ORDER = ['admin', 'search', 'outreach', 'network', 'crm', 'budget', '
 // (data-perm="out.write" = can send, draft or administer Outreach).
 const DERIVED = {
   'out.write': ['out.send', 'out.draft', 'out.admin'],
+  'out.settings': ['out.admin', 'out.templates'], // Outreach → Settings (templates for partners)
   'out.start': ['out.approve'],
 };
 const HIDE_KEYS = [...Object.keys(DERIVED)];
@@ -82,7 +91,8 @@ function make(email, role, perms, key) {
   for (const [k, any] of Object.entries(DERIVED)) if (any.some(p => set.has(p))) set.add(k);
   return {
     email, role, key, perms: ALL.filter(p => set.has(p)), keys: set,
-    partner: role === 'partner',
+    partner: role === 'partner' || role === 'admin',
+    admin: role === 'admin',
     staff: set.size > 0,
     can: (p) => set.has(p),
     canAny: (ps) => ps.some(p => set.has(p)),
@@ -101,11 +111,12 @@ export function stopPreview() { try { sessionStorage.removeItem(PREVIEW_KEY); } 
 export async function getAccess(user, { force = false } = {}) {
   if (!user?.email) return null;
   const email = user.email.trim().toLowerCase();
-  if (ADMIN_EMAILS.includes(email)) {
+  if (email === ADMIN_EMAIL) {
     const pv = readPreview();
     if (pv && Array.isArray(pv.perms)) return { ...make(email, 'preview', pv.perms.filter(p => ALL.includes(p)), PARTNER_KEYS[email]), preview: String(pv.name || 'role') };
-    return make(email, 'partner', ALL, PARTNER_KEYS[email]);
+    return make(email, 'admin', ALL, PARTNER_KEYS[email]);
   }
+  if (ADMIN_EMAILS.includes(email)) return make(email, 'partner', PARTNER_PERMS, PARTNER_KEYS[email]);
   let claims = {};
   try { claims = (await user.getIdTokenResult(force)).claims || {}; } catch (e) { claims = {}; }
   return make(email, claims.role || null, Array.isArray(claims.perms) ? claims.perms : [], claims.key || null);
@@ -143,7 +154,7 @@ export function applyPerms(a) {
     bar.id = 'previewBar';
     bar.setAttribute('role', 'status');
     bar.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:500;background:#1E2A38;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.25);display:flex;gap:12px;align-items:center;font:500 0.86rem Inter,sans-serif;max-width:calc(100vw - 32px);flex-wrap:wrap;';
-    bar.innerHTML = '<span>Previewing as <b></b> — this is what they see. You are still a partner on the server.</span><button type="button" style="font:inherit;font-weight:600;background:#fff;color:#1E2A38;border:0;border-radius:6px;padding:5px 10px;cursor:pointer;">Stop preview</button>';
+    bar.innerHTML = '<span>Previewing as <b></b> — this is what they see. On the server you are still the Admin.</span><button type="button" style="font:inherit;font-weight:600;background:#fff;color:#1E2A38;border:0;border-radius:6px;padding:5px 10px;cursor:pointer;">Stop preview</button>';
     bar.querySelector('b').textContent = a.preview;
     bar.querySelector('button').addEventListener('click', () => { stopPreview(); window.location.href = '/portal/team.html'; });
     document.body.appendChild(bar);

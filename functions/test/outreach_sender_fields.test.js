@@ -24,7 +24,7 @@ const camp = async (data) => { try { return await fns.outreachCampaign({ ...PART
   ok("bad contact email refused", (await team({ action: "update", email: "andre.rocha@douropartners.pt", member: { contactEmail: "nope" } })).err?.details?.reason === "bad_contact_email");
   const u = await team({ action: "update", email: "andre.rocha@douropartners.pt", member: { contactPhone: "+351 912 345 678" } });
   const dir = store.get("teamDirectory/andre");
-  ok("partner saves a phone: stored and in the directory; email defaults to the @douropartners.pt sign-in", !u.err && store.get("team/andre.rocha@douropartners.pt").roleId === "partner" && dir.contactPhone === "+351 912 345 678" && dir.contactEmail === "andre.rocha@douropartners.pt");
+  ok("the Admin (a partner) saves a phone: stored and in the directory; email defaults to the @douropartners.pt sign-in", !u.err && store.get("team/andre.rocha@douropartners.pt").roleId === "admin" && dir.contactPhone === "+351 912 345 678" && dir.contactEmail === "andre.rocha@douropartners.pt");
   await team({ action: "invite", member: { email: "maria@gmail.com", name: "Maria Silva", key: "maria", roleId: "intern" } });
   ok("a personal sign-in email never goes into the directory", store.get("teamDirectory/maria").contactEmail === null);
 

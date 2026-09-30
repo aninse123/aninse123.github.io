@@ -20,7 +20,7 @@ onWriteCountChange(() => refreshWrites());
 
 const PAGES = [
   { key: 'investor', href: '/portal/investor.html', label: 'Investor view' },
-  { key: 'admin',    href: '/portal/admin.html',    label: 'Admin' },
+  { key: 'admin',    href: '/portal/admin.html',    label: 'Investor portal' }, // was "Admin" (renamed 30 Sep: "Admin" is now the top level)
   { key: 'crm',      href: '/portal/crm.html',      label: 'Investor CRM' },
   { key: 'search',   href: '/portal/search.html',   label: 'Search CRM' },
   { key: 'outreach', href: '/portal/outreach.html', label: 'Outreach', badge: 'navOutreachBadge' },
@@ -245,7 +245,7 @@ export function startSharedReadsWatch() {
   startUsageAlerts();
 }
 
-// Usage alerts (partners — "access.manage"): a strip under the menu when a day
+// Usage alerts (the Admin — "usage.view"): a strip under the menu when a day
 // passes 80% of a free database limit, or a sending address nears its cap
 // (usageAlerts/current, kept by the Outreach scheduler).
 let usageManager = false, usageSenders = [];
@@ -253,7 +253,8 @@ async function startUsageAlerts() {
   try {
     const u = auth.currentUser; if (!u || usageManager) return;
     const perms = (await u.getIdTokenResult()).claims.perms || [];
-    if (!perms.includes('access.manage')) return;
+    const isAdmin = String(u.email || '').toLowerCase() === 'andre.rocha@douropartners.pt';
+    if (!isAdmin && !perms.includes('usage.view')) return; // the Admin
     usageManager = true;
     onSnapshot(doc(db, 'usageAlerts', 'current'), (s) => { addReads(1); usageSenders = s.data()?.senders || []; renderUsageAlert(); }, () => {});
     renderUsageAlert();

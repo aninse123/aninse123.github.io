@@ -25,10 +25,14 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
 
 (async () => {
   // ── Permission maths ──
-  ok("partner = every permission, also any added later", P.effectivePerms({ roleId: "partner" }, null).length === P.ALL.length);
+  ok("admin = every permission, also any added later; partner = all but Admin-only", P.effectivePerms({ roleId: "admin" }, null).length === P.ALL.length && P.effectivePerms({ roleId: "partner" }, null).length === P.ALL.length - P.ADMIN_ONLY.length && P.ADMIN_ONLY.every((x) => !P.effectivePerms({ roleId: "partner" }, null).includes(x)));
+  ok("Admin-only: people & roles, feature switches, usage, testing features, Outreach settings, Search CRM import", JSON.stringify([...P.ADMIN_ONLY].sort()) === JSON.stringify(["access.manage", "features.manage", "features.test", "out.admin", "search.import", "usage.view"]));
+  ok("no role or extra permission can give an Admin-only permission", P.effectivePerms({ roleId: "x", extraPerms: ["access.manage", "out.admin"] }, { perms: ["search.view", "usage.view", "search.import"] }).join() === "search.view");
   ok("role + extra − removed", JSON.stringify(P.effectivePerms({ roleId: "x", extraPerms: ["net.edit", "bogus"], removedPerms: ["search.edit"] }, { perms: ["search.view", "search.edit"] })) === JSON.stringify(["search.view", "net.edit"]));
   ok("dates: before start / after end → not active; suspended → not active", !P.isActive({ status: "active", startsAt: new Date(Date.now() + 86400000) }) && !P.isActive({ status: "active", endsAt: new Date(Date.now() - 1000) }) && !P.isActive({ status: "suspended" }) && P.isActive({ status: "invited" }));
-  ok("partner by email always gets everything, even without a team record", P.claimsFor("antonio.carvalho@douropartners.pt", null, null).perms.length === P.ALL.length);
+  ok("by email, even without a team record: André = Admin (everything), António = Partner (all but Admin-only)", P.claimsFor("andre.rocha@douropartners.pt", null, null).role === "admin" && P.claimsFor("andre.rocha@douropartners.pt", null, null).perms.length === P.ALL.length && P.claimsFor("antonio.carvalho@douropartners.pt", null, null).role === "partner" && P.claimsFor("antonio.carvalho@douropartners.pt", null, null).perms.length === P.PARTNER_PERMS.length);
+  const ANT = { auth: { token: { email: "antonio.carvalho@douropartners.pt", perms: P.ALL } } }; // an old token that still lists everything
+  ok("server checks: a partner is refused Admin-only permissions whatever their token says; everything else passes", !P.hasPerm(ANT, "access.manage") && !P.hasPerm(ANT, "features.manage") && !P.hasPerm(ANT, "usage.view") && !P.hasPerm(ANT, "out.admin") && !P.hasPerm(ANT, "search.import") && P.hasPerm(ANT, "out.templates") && P.hasPerm(ANT, "search.delete") && P.hasPerm(ANT, "portal.admin") && P.hasPerm(PARTNER, "access.manage"));
 
   // ── Only partners manage access ──
   ok("an intern can't use Team & access", (await team({ action: "seed" }, as("maria@douropartners.pt", ["search.view"]))).err?.details?.reason === "no_permission");
@@ -58,7 +62,10 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   ok("first sign-in: allowed, claims = Intern permissions + key", mc?.role === "intern" && mc.key === "maria" && mc.perms.includes("search.edit") && !mc.perms.includes("search.delete") && !mc.perms.includes("out.send"));
   ok("…and becomes active with her user id recorded", store.get("team/maria@douropartners.pt").status === "active" && store.get("team/maria@douropartners.pt").uid === "uid-maria");
   const ps = await signIn("andre.rocha@douropartners.pt", "uid-andre");
-  ok("partner signs in with everything", ps.res?.customClaims?.role === "partner" && ps.res.customClaims.perms.length === P.ALL.length);
+  ok("the Admin signs in with everything", ps.res?.customClaims?.role === "admin" && ps.res.customClaims.perms.length === P.ALL.length);
+  const as2 = await signIn("antonio.carvalho@douropartners.pt", "uid-antonio");
+  ok("a partner signs in with everything but Admin-only", as2.res?.customClaims?.role === "partner" && as2.res.customClaims.perms.length === P.PARTNER_PERMS.length && !as2.res.customClaims.perms.includes("access.manage"));
+  ok("a partner can't use Team & access, feature switches or usage", (await team({ action: "seed" }, ANT)).err?.details?.reason === "no_permission" && (await call("featureAdmin", ANT, { action: "set", key: "mobile", site: "staging", state: "on" })).err?.details?.reason === "no_permission" && (await call("usageAdmin", ANT, { action: "refresh" })).err?.details?.reason === "no_permission");
   store.set("config/allowedEmailHashes", { hashes: [sha("investor@fundo.pt")] });
   ok("an investor signs in as before (no team claims)", (await signIn("investor@fundo.pt")).res === undefined);
   ok("a stranger is refused", (await signIn("random@gmail.com")).err?.code === "permission-denied");
@@ -156,6 +163,17 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   ok("team lookup error: partner still signs in (by email)", !(await signIn("antonio.carvalho@douropartners.pt")).err);
   ok("team lookup error: investor still signs in", !(await signIn("investor@fundo.pt")).err);
   F.fakeDb.doc = origDoc;
+
+  // Admin / Partner split: "Refresh everyone's access"
+  store.set("team/andre.rocha@douropartners.pt", { ...store.get("team/andre.rocha@douropartners.pt"), roleId: "partner" });
+  store.set("roles/analyst", { ...store.get("roles/analyst"), perms: ["search.view", "search.import", "out.admin", "usage.view"] });
+  authCalls.length = 0;
+  const ra = await team({ action: "refreshAll" });
+  ok("refreshAll: André's record says Admin; stored roles lose Admin-only ticks; everyone signed in gets current permissions", store.get("team/andre.rocha@douropartners.pt").roleId === "admin" && JSON.stringify(store.get("roles/analyst").perms) === '["search.view"]' && ra.rolesCleaned >= 1 && ra.refreshed >= 1 && authCalls.some((c) => c.op === "claims"));
+  ok("…and it's in the access log", [...store.entries()].some(([k, d]) => k.startsWith("accessAudit/") && d.action === "refreshAll"));
+  await team({ action: "saveRole", roleId: "intern", role: { name: "Intern", perms: ["search.view", "out.templates", "out.admin", "search.import", "features.test"] } });
+  ok("saving a role drops Admin-only permissions (templates can still be given)", JSON.stringify(store.get("roles/intern").perms) === '["search.view","out.templates"]');
+  ok("the Admin role can't be edited, deleted or given", (await team({ action: "saveRole", roleId: "admin", role: { name: "x", perms: [] } })).err?.details?.reason === "partner_locked" && (await team({ action: "deleteRole", roleId: "admin" })).err?.details?.reason === "partner_locked" && (await team({ action: "invite", member: { email: "z@d.pt", name: "Z", key: "zz", roleId: "admin" } })).err?.details?.reason === "partner_locked");
 
   console.log(fail ? `\n${fail} FAILED` : "\nall access tests passed");
   process.exit(fail ? 1 : 0);

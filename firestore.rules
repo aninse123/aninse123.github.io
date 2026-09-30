@@ -2,17 +2,33 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isAdmin() {
+    // The two founders (by email, as before).
+    function isPartner() {
       return request.auth != null &&
              request.auth.token.email in [
                'andre.rocha@douropartners.pt',
                'antonio.carvalho@douropartners.pt'
              ];
     }
-
-    // Admins have full access to all collections
-    match /{document=**} {
-      allow read, write: if isAdmin();
+    // Admin / Partner split (30 Sep): the Admin (André) keeps full access to
+    // everything. Partners keep full access except the Admin-only records,
+    // which they can't change directly (the server functions still can).
+    function isOwner() {
+      return request.auth != null && request.auth.token.email == 'andre.rocha@douropartners.pt';
+    }
+    function adminOnly(coll, docId) {
+      return coll in ['team', 'roles', 'accessAudit', 'usageDaily', 'usageFirestore', 'usageMonthly', 'usageAlerts',
+                      'outreachSettings', 'outreachSenders', 'outreachCompliance']
+        || (coll == 'config' && docId in ['features', 'teamEmailHashes']);
+    }
+    match /{coll}/{docId} {
+      allow read, create, update: if isOwner() || (isPartner() && !adminOnly(coll, docId));
+      // Removing someone from the suppression list (they could be emailed again) is Admin-only.
+      allow delete: if isOwner() || (isPartner() && !adminOnly(coll, docId) && coll != 'outreachSuppression');
+    }
+    // Sub-collections ({sub} makes sure this never matches a top-level record: {rest=**} alone can match nothing).
+    match /{coll}/{docId}/{sub}/{rest=**} {
+      allow read, write: if isOwner() || (isPartner() && !adminOnly(coll, docId));
     }
 
     // Investors can read documents where their email is listed
@@ -153,24 +169,22 @@ service cloud.firestore {
     match /outreachPeopleSends/{id} { allow read: if can('out.view'); }
     match /outreachTemplates/{id} {
       allow read: if can('out.view') || can('search.view');
-      allow write: if can('out.admin');
+      allow write: if can('out.templates');
     }
+    // Outreach settings, sending addresses, legal footer: the Admin (catch-all above).
     match /outreachSenders/{id} {
       allow read: if can('out.view') || can('search.view');
-      allow write: if can('out.admin');
     }
     match /outreachSettings/{id} {
       allow read: if isStaff();
-      allow write: if can('out.admin');
     }
     match /outreachCompliance/{id} {
       allow read: if can('out.view');
-      allow write: if can('out.admin');
     }
     match /outreachSuppression/{id} {
       allow read: if can('out.view');
       allow create, update: if canAny(['out.send', 'out.draft', 'out.admin']);
-      allow delete: if can('out.admin');
+      // delete: the Admin only (catch-all above)
     }
     match /outreachLists/{id} {
       allow read: if can('out.view');
@@ -267,19 +281,15 @@ service cloud.firestore {
     }
     match /dailyReadCounters/{day} { allow read, write: if isStaff(); }
     match /dailyWriteCounters/{day} { allow read, write: if isStaff(); }
-    // Usage tab (partners): written only by the server (functions/usage).
-    match /usageDaily/{day} { allow read: if can('access.manage'); }
-    match /usageFirestore/{day} { allow read: if can('access.manage'); }
-    match /usageMonthly/{month} { allow read: if can('access.manage'); }
-    match /usageAlerts/{id} { allow read: if can('access.manage'); }
+    // Usage tab: the Admin reads (catch-all above); written only by the server (functions/usage).
 
     // ── Team & access (written only by the teamAccess callable) ──
     match /team/{email} {
-      allow read: if request.auth != null && (request.auth.token.email == email || can('access.manage'));
+      allow read: if request.auth != null && request.auth.token.email == email; // + the Admin (catch-all)
     }
     match /roles/{id} { allow read: if isStaff(); }
     // Names + short keys for owner / assignee lists (no emails or permissions).
     match /teamDirectory/{key} { allow read: if isStaff(); }
-    match /accessAudit/{id} { allow read: if can('access.manage'); }
+    // accessAudit: the Admin only (catch-all above).
   }
 }

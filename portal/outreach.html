@@ -339,7 +339,7 @@
         <button class="tab" role="tab" data-tab="campaigns" aria-selected="false">Campaigns</button>
         <button class="tab" role="tab" data-tab="tasks" aria-selected="false">Tasks<span class="count" id="approveCount" hidden title="Tasks due today and drafts waiting for approval"></span></button>
         <button class="tab" role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
-        <button class="tab" role="tab" data-tab="settings" data-perm="out.admin" aria-selected="false">Settings</button>
+        <button class="tab" role="tab" data-tab="settings" data-perm="out.settings" aria-selected="false">Settings</button>
       </div>
 
       <!-- ── Inbox ─────────────────────────────────────────────── -->
@@ -570,16 +570,16 @@
       <!-- ── Settings ──────────────────────────────────────────── -->
       <section class="panel" id="panel-settings" hidden>
         <div class="chips subnav" id="setNav" role="tablist" aria-label="Settings sections">
-          <button class="chip on" data-sec="general">General</button>
-          <button class="chip" data-sec="senders">Addresses</button>
-          <button class="chip" data-sec="footer">Legal footer</button>
+          <button class="chip on" data-sec="general" data-perm="out.admin">General</button>
+          <button class="chip" data-sec="senders" data-perm="out.admin">Addresses</button>
+          <button class="chip" data-sec="footer" data-perm="out.admin">Legal footer</button>
           <button class="chip" data-sec="templates">Templates</button>
           <button class="chip" data-sec="suppression">Suppression list</button>
         </div>
 
         <div class="settings">
           <!-- General -->
-          <div class="card setsec" id="sec-general">
+          <div class="card setsec" id="sec-general" data-perm="out.admin">
             <h2>General</h2>
             <div class="banner" id="testModeBanner" style="margin-bottom:16px;"></div>
             <div class="row2">
@@ -646,7 +646,7 @@
           </div>
 
           <!-- Addresses -->
-          <div class="card setsec" id="sec-senders" hidden style="padding:0;">
+          <div class="card setsec" id="sec-senders" data-perm="out.admin" hidden style="padding:0;">
             <div style="padding:18px 20px 6px;"><h2 style="margin:0;">Sender addresses</h2>
               <p class="hint" style="margin-top:6px;">An address can start new outreach only when it's <b>active</b>: its warm-up is stopped in Instantly and ImprovMX forwards it to Resend as a second destination (<code>&lt;alias&gt;@…resend.app</code>), so replies reach the portal.</p></div>
             <div class="table-wrap">
@@ -658,7 +658,7 @@
           </div>
 
           <!-- Legal footer -->
-          <div class="card setsec" id="sec-footer" hidden>
+          <div class="card setsec" id="sec-footer" data-perm="out.admin" hidden>
             <h2>Legal footer</h2>
             <p class="hint" style="margin-bottom:14px;">Added to the bottom of every outreach email. Required before test mode can be switched off. Draft for CCSL to review — not legal advice. Keep <code>{{unsubscribeUrl}}</code> in the text: it becomes each recipient's one-click removal link.</p>
             <div class="field">
@@ -844,7 +844,9 @@
       if (name === 'metrics') loadMetrics(); // (re)renders at the now-visible width
       if (name === 'campaigns') { if (curCampId) loadCampaignData(); else loadCampCounts(); }
       if (name === 'tasks') showTaskView(taskView);
-      if (name === 'settings' && !$('sec-general').hidden) renderReadiness();
+      // Admin / Partner split: a partner's Settings are Templates and the suppression list.
+      if (name === 'settings' && !window.pageAccess?.can('out.admin') && !$('sec-general').hidden) showSec('templates');
+      else if (name === 'settings' && !$('sec-general').hidden) renderReadiness();
     }
 
     // ── Live data ──────────────────────────────────────────────
@@ -2250,7 +2252,7 @@
           <td>${esc(s.id)}${s.scope === 'domain' ? ' <span class="pill">whole domain</span>' : ''}</td>
           <td>${esc(REASON_LABEL[s.reason] || s.reason || '—')}</td><td>${esc(s.source || '—')}</td>
           <td style="white-space:nowrap;">${s.at ? esc(dtFmt.format(new Date(tsMs(s.at)))) : ''}</td>
-          <td style="text-align:right;"><button class="btn btn--ghost btn--sm" data-unsup="${esc(s.id)}">Remove</button></td></tr>`).join('')
+          <td style="text-align:right;"><button class="btn btn--ghost btn--sm" data-unsup="${esc(s.id)}" data-perm="out.admin" title="Only the Admin removes someone from the list (they could be emailed again)">Remove</button></td></tr>`).join('')
         : `<tr><td colspan="5" class="empty">${suppression.length ? 'Nothing matches.' : 'The list is empty.'}</td></tr>`;
       $('supBody').querySelectorAll('[data-unsup]').forEach(b => b.addEventListener('click', async () => {
         const id = b.dataset.unsup; const s = suppression.find(x => x.id === id);

@@ -35,8 +35,10 @@ const reason = async (p) => { try { await p; return "ok"; } catch (e) { return e
   ok("production, nothing stored: Outreach is Off — even for a partner", !(await Feat.isOnFor(partner(PROD), "outreach")));
   ok("staging, nothing stored: Outreach On", await Feat.isOnFor(intern(STAGING), "outreach"));
   setFlags({ outreach: { production: "test" } });
-  ok("production Test: partners (testers) yes, intern no", (await Feat.isOnFor(partner(PROD), "outreach")) && !(await Feat.isOnFor(intern(PROD), "outreach")));
-  ok("intern with the tester permission: yes", await Feat.isOnFor(intern(PROD, ["features.test"]), "outreach"));
+  ok("production Test: the Admin (tester) yes, intern no", (await Feat.isOnFor(partner(PROD), "outreach")) && !(await Feat.isOnFor(intern(PROD), "outreach")));
+  ok("Admin / Partner split: testing features is Admin-only — an intern with the permission in an old token: no", !(await Feat.isOnFor(intern(PROD, ["features.test"]), "outreach")));
+  const antonio = { auth: { token: { email: "antonio.carvalho@douropartners.pt" } }, rawRequest: { headers: { origin: "https://douropartners.pt" } } };
+  ok("…and António (Partner) doesn't see features in Test unless named on the switch", !(await Feat.isOnFor(antonio, "outreach")));
   setFlags({ outreach: { production: "test", testers: ["maria@douropartners.pt"] } });
   ok("intern named as a tester on the switch: yes", await Feat.isOnFor(intern(PROD), "outreach"));
   setFlags({ outreach: { production: "on", staging: "off" } });

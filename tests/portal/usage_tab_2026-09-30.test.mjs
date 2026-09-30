@@ -12,7 +12,7 @@ ok('writes / deletes: by person and by site', /payload\.byUserW = \{ \[who\]: in
 ok('site: douropartners.pt (and www) = production, anything else = staging', /\['douropartners\.pt', 'www\.douropartners\.pt'\]\.includes\(String\(location\.hostname\)\.toLowerCase\(\)\)\) \? 'production' : 'staging'/.test(cfg));
 ok('person: the team short name from the sign-in token, else the email\'s start', /usageWho = usageKey\(r\.claims\.key \|\| local\)/.test(cfg));
 
-ok('Team page: a Usage tab that loads on open (and via #usage / #usage-db / #usage-email / #usage-activity)', /data-view="usage">Usage<\/button>/.test(team) && /if \(b\.dataset\.view === 'usage'\) renderUsage\(\);/.test(team) && /location\.hash\.match\(\/\^#usage\(\?:-\(db\|email\|activity\)\)\?\$\/\)/.test(team));
+ok('Team page: a Usage tab (Admin: usage.view) that loads on open (and via #usage / #usage-db / #usage-email / #usage-activity)', /data-view="usage" data-perm="usage\.view">Usage<\/button>/.test(team) && /if \(b\.dataset\.view === 'usage'\) renderUsage\(\);/.test(team) && /location\.hash\.match\(\/\^#usage\(\?:-\(db\|email\|activity\)\)\?\$\/\)/.test(team));
 ok('Usage: three views — Database, Emails, Activity — each loading only what it shows', /const USAGE_VIEWS = \[\['db', 'Database'\], \['email', 'Emails'\], \['activity', 'Activity'\]\];/.test(team) && /if \(view === 'db' && !c\.db\)/.test(team) && /if \(\(view === 'email' \|\| view === 'activity'\) && !c\.daily\)/.test(team) && /if \(view === 'email' && !c\.extra\)/.test(team));
 ok('Alert strip links to the right view (database alerts → Database, senders → Emails)', /team\.html#usage-\$\{dbAlert \? 'db' : 'email'\}/.test(nav));
 ok('Backfill: older days without exact figures are fetched once per session (up to 42 days back)', /const BACKFILL_DAYS = 42;/.test(team) && /function needsBackfill\(D\)/.test(team) && /usageCall\(\{ action: 'refresh', backfill: true \}\)/.test(team) && /sessionStorage\.setItem\('usageBackfilled', '1'\)/.test(team));
@@ -23,11 +23,9 @@ ok('Usage: the missing-permission note names the service account and the role', 
 ok('Usage: server refresh at most every 10 minutes unless Refresh is clicked', /Date\.now\(\) - last < 10 \* 60000/.test(team) && /renderUsage\(true\)/.test(team));
 ok('Usage: sections for database, per person, emails, addresses, emails per person, activity', ['Database per day', 'Per person per day', 'Emails per day', 'Sending addresses', 'Emails per person', 'Activity per person', 'Activity per day'].every((h) => team.includes(`<h2>${h}</h2>`)));
 
-ok('Alerts: only for people who manage access (partners for now)', /if \(!perms\.includes\('access\.manage'\)\) return;/.test(nav));
+ok('Alerts: the Admin only (by email, or the usage permission)', /if \(!isAdmin && !perms\.includes\('usage\.view'\)\) return;/.test(nav));
 ok('Alerts: 80% of each free limit, and senders near their cap', /r >= 0\.8 \* FREE_TIER_DAILY_READS/.test(nav) && /w >= 0\.8 \* FREE_TIER_DAILY_WRITES/.test(nav) && /d >= 0\.8 \* FREE_TIER_DAILY_DELETES/.test(nav) && /usageSenders\.forEach/.test(nav));
 
-for (const c of ['usageDaily', 'usageFirestore', 'usageMonthly', 'usageAlerts']) {
-  ok(`rules: ${c} readable by partners only, written by the server`, new RegExp(`match /${c}/\\{[a-z]+\\} \\{ allow read: if can\\('access\\.manage'\\); \\}`).test(rules));
-}
+ok('rules: usage records are Admin-only (partners excluded from the catch-all; no other rule grants them)', ['usageDaily', 'usageFirestore', 'usageMonthly', 'usageAlerts'].every((c) => rules.includes(`'${c}'`) && !new RegExp(`match /${c}/`).test(rules)));
 
 console.log(fail ? `\n${fail} FAILED` : '\nall usage tab tests passed'); process.exit(fail ? 1 : 0);

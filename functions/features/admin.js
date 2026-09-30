@@ -34,7 +34,7 @@ async function change(key, by, mutate) {
 }
 
 exports.featureAdmin = onCall({ region: REGION }, async (request) => {
-  const by = P.requirePerm(request, "access.manage", "Only partners change feature switches.");
+  const by = P.requirePerm(request, "features.manage", "Only the Admin changes feature switches.");
   const d = request.data || {};
   switch (d.action) {
     case "set": {
