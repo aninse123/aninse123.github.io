@@ -34,7 +34,8 @@
     .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .seg button { font: inherit; font-size: 0.78rem; font-weight: 600; padding: 5px 10px; border: 0; background: var(--white); color: var(--text-light); cursor: pointer; }
     .seg button + button { border-left: 1px solid var(--border); }
-    .seg button.on.off { background: #F0EDE8; color: var(--text); } .seg button.on.test { background: #B45309; color: #fff; } .seg button.on.on { background: var(--secondary); color: #fff; }
+    /* "sel" marks the chosen state (not "on": the On button itself is class "on"). */
+    .seg button.sel.off { background: #DDD7CE; color: var(--text); } .seg button.sel.test { background: #B45309; color: #fff; } .seg button.sel.on { background: var(--secondary); color: #fff; }
     .seg button:disabled { cursor: default; opacity: .6; }
     .feat-area td { background: #FAF8F4; font-weight: 600; font-size: 0.78rem; letter-spacing: .05em; text-transform: uppercase; color: var(--text-light); }
     .feat-desc { font-size: 0.78rem; color: var(--text-light); margin-top: 2px; max-width: 46ch; }
@@ -408,7 +409,7 @@
         || (featFilter === 'kill' && f.kind === 'kill') || (featFilter === 'ready' && ready(f)));
       const seg = (f, site) => {
         const st = stateOf(flags, f.key, site), stored = flags[f.key]?.[site];
-        return `<div class="seg" role="group" aria-label="${esc(f.name)} on ${site}">${['off', 'test', 'on'].map((s) => `<button type="button" class="${s}${st === s ? ' on' : ''}" data-fkey="${esc(f.key)}" data-site="${site}" data-state="${s}" aria-pressed="${st === s}">${s === 'off' ? 'Off' : s === 'test' ? 'Test' : 'On'}</button>`).join('')}</div>${stored ? '' : '<div class="hint" style="font-size:0.72rem;margin-top:3px;">default</div>'}`;
+        return `<div class="seg" role="group" aria-label="${esc(f.name)} on ${site}">${['off', 'test', 'on'].map((s) => `<button type="button" class="${s}${st === s ? ' sel' : ''}" data-fkey="${esc(f.key)}" data-site="${site}" data-state="${s}" aria-pressed="${st === s}">${s === 'off' ? 'Off' : s === 'test' ? 'Test' : 'On'}</button>`).join('')}</div>${stored ? '' : '<div class="hint" style="font-size:0.72rem;margin-top:3px;">default</div>'}`;
       };
       let lastArea = '';
       const rows = shown.map((f) => {
