@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
-import { getAuth }        from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   doc, setDoc as _setDoc, addDoc as _addDoc, updateDoc as _updateDoc, deleteDoc as _deleteDoc,
@@ -155,6 +155,18 @@ export function getTodayDeletes(){
 // and vice versa, while still costing just one extra write per 5-second
 // window regardless of how many operations happened inside it.
 const SHARED_FLUSH_MS = 5000;
+// Usage tab (30 Sep): each shared flush also says who (team short name) and
+// which site (production = douropartners.pt; else staging) the counts belong to.
+export const usageKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 60) || 'unknown';
+export const USAGE_SITE = (typeof location !== 'undefined' && ['douropartners.pt', 'www.douropartners.pt'].includes(String(location.hostname).toLowerCase())) ? 'production' : 'staging';
+let usageWho = null;
+onAuthStateChanged(auth, (u) => {
+  usageWho = null;
+  if (!u) return;
+  const local = (u.email || '').split('@')[0];
+  u.getIdTokenResult().then((r) => { usageWho = usageKey(r.claims.key || local); }).catch(() => { usageWho = usageKey(local); });
+});
+const usageWhoNow = () => usageWho || usageKey((auth.currentUser?.email || '').split('@')[0]);
 let pendingSharedReads = 0;
 let pendingSharedWrites = 0;
 let pendingSharedDeletes = 0;
@@ -166,7 +178,7 @@ export function flushSharedReads(){
   const n = pendingSharedReads;
   if (!n) return Promise.resolve();
   pendingSharedReads = 0;   // clear first, so a failed write cannot double-count on retry
-  return _setDoc(doc(db, 'dailyReadCounters', todayDateStr()), { count: increment(n) }, { merge: true })
+  return _setDoc(doc(db, 'dailyReadCounters', todayDateStr()), { count: increment(n), byUser: { [usageWhoNow()]: increment(n) }, bySite: { [USAGE_SITE]: increment(n) } }, { merge: true })
     .catch(e => { console.warn('Shared read counter write failed:', e?.message || e); });
 }
 export function addSharedReads(n){
@@ -181,8 +193,9 @@ export function flushSharedWrites(){
   if (!w && !d) return Promise.resolve();
   pendingSharedWrites = 0; pendingSharedDeletes = 0;   // clear first, same reasoning as reads
   const payload = {};
-  if (w) payload.writes = increment(w);
-  if (d) payload.deletes = increment(d);
+  const who = usageWhoNow();
+  if (w) { payload.writes = increment(w); payload.byUserW = { [who]: increment(w) }; payload.bySiteW = { [USAGE_SITE]: increment(w) }; }
+  if (d) { payload.deletes = increment(d); payload.byUserD = { [who]: increment(d) }; payload.bySiteD = { [USAGE_SITE]: increment(d) }; }
   return _setDoc(doc(db, 'dailyWriteCounters', todayDateStr()), payload, { merge: true })
     .catch(e => { console.warn('Shared write counter write failed:', e?.message || e); });
 }

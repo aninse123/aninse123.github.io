@@ -11,6 +11,7 @@ const { REGION, UNSUBSCRIBE_SECRET } = require("./config");
 const { verifyUnsubToken, normEmail, escapeHtml } = require("./util");
 const store = require("./store");
 const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
 const { db, FieldValue } = store;
 
@@ -65,6 +66,7 @@ exports.outreachUnsubscribe = onRequest({ region: REGION, secrets: [UNSUBSCRIBE_
     }
 
     await store.addSuppression(email, { reason: "unsubscribed", source: oneClick ? "one_click" : "link", companyId: thread?.companyId || null, by: "recipient" });
+    await Usage.bump({ [`email.unsubscribed.${msg.isTest ? "test" : "real"}`]: 1 });
     if (msg.threadId) await db().doc(`outreachThreads/${msg.threadId}`).update({ status: "closed", unsubscribedAt: FieldValue.serverTimestamp() });
     await store.setCompanyOutreachStatus(thread?.companyId || null, "unsubscribed", !!msg.isTest);
     if (thread?.companyId) await stopCompanyEnrolments(thread.companyId, "Unsubscribed");

@@ -27,6 +27,7 @@ const { lisbonDate } = require("../outreach/recurring");
 const { sendEmail } = require("../outreach/resend");
 const { RESEND_READ_KEY } = require("../outreach/config");
 const { buildOutreachHtml } = require("../outreach/branded");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
 // Where an invitation may point people to sign in (the page that invited them).
 const PORTAL_ORIGINS = ["https://douropartners.pt", "https://www.douropartners.pt", "https://staging--douro-partners.netlify.app"];
@@ -347,6 +348,7 @@ async function onTeamSignIn(email, uid) {
     await ref.update(upd);
     await db().collection("accessAudit").add({ by: e, action: "signIn", target: e, before: null, after: null, at: FieldValue.serverTimestamp() });
   }
+  await Usage.countPerson("activity.signIns", e);
   return { allowed: true, claims };
 }
 

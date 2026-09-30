@@ -5,7 +5,7 @@
 // duplication that caused real drift (spacing fixed on one page but not
 // another, an overlap bug, container widths desyncing from body width).
 import { signOut } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-import { collection, query, where, getCountFromServer } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+import { collection, query, where, getCountFromServer, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import {
   auth, db, addReads, getTodayReads, FREE_TIER_DAILY_READS, watchSharedReads,
   getTodayWrites, getTodayDeletes, FREE_TIER_DAILY_WRITES, FREE_TIER_DAILY_DELETES,
@@ -239,9 +239,48 @@ export function refreshWrites() {
 // Call once, after auth confirms the user is an admin (the shared counter
 // docs are admin-only, matching the rest of adminConfig/*).
 export function startSharedReadsWatch() {
-  watchSharedReads(n => { sharedReads = n; refreshReads(); });
-  watchSharedWriteCounters(({ writes, deletes }) => { sharedWrites = writes; sharedDeletes = deletes; refreshWrites(); });
+  watchSharedReads(n => { sharedReads = n; refreshReads(); renderUsageAlert(); });
+  watchSharedWriteCounters(({ writes, deletes }) => { sharedWrites = writes; sharedDeletes = deletes; refreshWrites(); renderUsageAlert(); });
   refreshOutreachBadge();
+  startUsageAlerts();
+}
+
+// Usage alerts (partners — "access.manage"): a strip under the menu when a day
+// passes 80% of a free database limit, or a sending address nears its cap
+// (usageAlerts/current, kept by the Outreach scheduler).
+let usageManager = false, usageSenders = [];
+async function startUsageAlerts() {
+  try {
+    const u = auth.currentUser; if (!u || usageManager) return;
+    const perms = (await u.getIdTokenResult()).claims.perms || [];
+    if (!perms.includes('access.manage')) return;
+    usageManager = true;
+    onSnapshot(doc(db, 'usageAlerts', 'current'), (s) => { addReads(1); usageSenders = s.data()?.senders || []; renderUsageAlert(); }, () => {});
+    renderUsageAlert();
+  } catch (e) { /* alerts are a convenience */ }
+}
+function renderUsageAlert() {
+  if (!usageManager) return;
+  const nf = (n) => Number(n || 0).toLocaleString('de-DE');
+  const msgs = [];
+  const r = sharedReads != null ? sharedReads : getTodayReads();
+  const w = sharedWrites != null ? sharedWrites : getTodayWrites();
+  const d = sharedDeletes != null ? sharedDeletes : getTodayDeletes();
+  if (r >= 0.8 * FREE_TIER_DAILY_READS) msgs.push(`reads ${nf(r)} of ${nf(FREE_TIER_DAILY_READS)} (${Math.round(r / FREE_TIER_DAILY_READS * 100)}%)`);
+  if (w >= 0.8 * FREE_TIER_DAILY_WRITES) msgs.push(`writes ${nf(w)} of ${nf(FREE_TIER_DAILY_WRITES)} (${Math.round(w / FREE_TIER_DAILY_WRITES * 100)}%)`);
+  if (d >= 0.8 * FREE_TIER_DAILY_DELETES) msgs.push(`deletes ${nf(d)} of ${nf(FREE_TIER_DAILY_DELETES)} (${Math.round(d / FREE_TIER_DAILY_DELETES * 100)}%)`);
+  usageSenders.forEach((s) => msgs.push(`${s.id} sent ${nf(s.sent)} of its ${nf(s.cap)} a day`));
+  let bar = document.getElementById('usageAlertBar');
+  if (!msgs.length) { bar?.remove(); return; }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'usageAlertBar';
+    bar.setAttribute('role', 'status');
+    bar.style.cssText = 'background:#FDF3DC;color:#7A4E00;border-bottom:1px solid #EFD9A6;font:600 0.8rem Inter,sans-serif;padding:7px 16px;text-align:center;';
+    const nav = document.getElementById('siteNav');
+    if (nav?.parentNode) nav.parentNode.insertBefore(bar, nav.nextSibling); else document.body.prepend(bar);
+  }
+  bar.innerHTML = `⚠ Usage today: ${msgs.map((m) => m.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))).join(' · ')} — <a href="/portal/team.html#usage" style="color:inherit;">Team → Usage</a>`;
 }
 
 // Unread-replies count on the Outreach tab. One count aggregation per page

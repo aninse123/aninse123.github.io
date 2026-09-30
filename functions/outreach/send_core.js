@@ -227,6 +227,7 @@ async function prepareEmail(opts) {
 }
 
 // campaign: { campaignId, enrolmentId, stepId } for scheduler sends (null for manual).
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 async function deliverEmail(p, { campaign = null } = {}) {
   const { isReply, isTest, messageRef, messageId, threadRef, thread, companyId, company, senderId, sender, to, toDomain, headers } = p;
   const owner = sender.owner || null;
@@ -282,6 +283,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
     await messageRef.update({ status: "failed", error: e.message, events: FieldValue.arrayUnion({ type: "failed", at: Timestamp.now(), detail: e.resendName || null }) });
     if (!isReply) await threadRef.update({ status: "failed" });
     if (e instanceof ResendError) await store.recordQuota(e.quota, "send");
+    await Usage.countEmail({ kind: campaign?.kind || source, isTest, failed: true });
     logger.error("outreach send: Resend refused", { messageId, source, status: e.status, name: e.resendName, message: e.message });
     if (quotaHit) fail("resource-exhausted", "daily_quota_exceeded", "Resend's daily quota is used up — the email wasn't sent. It can be sent again after 00:00 UTC.");
     fail("internal", "resend_error", `Resend refused the email: ${e.message}`);
@@ -315,6 +317,8 @@ async function deliverEmail(p, { campaign = null } = {}) {
   if (p.person) await store.logPersonSend({ refs: p.person.refs, email: p.person.email, subject: p.subject, content: p.bodyText, messageId, threadId: threadRef.id, campaignId: campaign?.campaignId || null, createdBy: p.callerEmail, isTest });
   await store.bumpDaily(p.countsAsOutreach ? "outreachSent" : "repliesSent", { senderId, owner, extra: campaign ? ["campaignSent"] : [] });
   await store.recordQuota(result.quota, "send");
+  // Usage: campaign / recurring emails go out automatically; manual ones are counted for whoever sent them.
+  await Usage.countEmail({ kind: campaign?.kind || source, isTest, senderId, by: campaign ? null : p.callerEmail });
 
   const warnings = [];
   const after = result.quota?.daily;

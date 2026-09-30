@@ -29,6 +29,7 @@ const { listPeople } = require("./lists");
 const store = require("./store");
 const { lisbonParts } = require("./schedule_util");
 const { CampaignError } = require("./campaign_util");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
 const { db, FieldValue, Timestamp } = store;
 const FREQS = ["weekly", "monthly", "quarterly"];
@@ -258,6 +259,7 @@ async function approveIssue({ issueId, subject, body }, caller) {
     tx.update(ref, upd);
     return { id: s.id, ...s.data(), ...upd };
   });
+  await Usage.countPerson("email.approved", caller);
   if (issue.dueAt.toMillis() > Date.now()) {
     const { people } = await listPeople(issue.listId);
     const perDay = issue.maxPerDay || 40;

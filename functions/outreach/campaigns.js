@@ -36,6 +36,7 @@ const { normEmail } = require("./util");
 const store = require("./store");
 const { addWait, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
   evaluateCompany, enrolmentId, latestFilterSpec, matchesFilterSpec, personEnrolmentId, evaluatePerson, tierOf,
@@ -652,6 +653,7 @@ async function approve({ messageIds, subject, body }, caller) {
     }));
     res.forEach((r) => (r === "approved" ? approved++ : skip(r)));
   }
+  if (approved) await Usage.countPerson("email.approved", caller, approved);
   return { approved, skipped };
 }
 

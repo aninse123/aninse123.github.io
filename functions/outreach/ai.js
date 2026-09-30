@@ -19,6 +19,7 @@ const { REGION } = require("./config");
 const { normEmail, utcDayKey } = require("./util");
 const { emailNameOf } = require("./render");
 const store = require("./store");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
 const { db, FieldValue } = store;
 
@@ -154,6 +155,7 @@ exports.outreachAi = onCall({ region: REGION, secrets: [ANTHROPIC_API_KEY], time
       const t = await db().doc(`outreachTemplates/${data.templateId}`).get();
       templateBody = t.exists ? ((t.data().variants || [])[0]?.body || "") : "";
     }
+    Usage.countPerson("activity.ai", caller).catch(() => {});
     return getOpener({ companyId: String(data.companyId), templateId: data.templateId || null, templateBody, settings, apiKey: ANTHROPIC_API_KEY.value(), force: !!data.force });
   }
   throw new HttpsError("invalid-argument", `Unknown action "${data.action}".`, { reason: "bad_action" });

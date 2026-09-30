@@ -25,6 +25,7 @@ const { REGION, OWNER_BY_ADMIN, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SE
 const { normEmail } = require("./util");
 const { prepareEmail, deliverEmail, fail } = require("./send_core");
 const store = require("./store");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
 const { db, FieldValue } = store;
 
@@ -92,6 +93,7 @@ async function send(request, callerEmail) {
       status: "draft", events: [], attachments: [], isAutoReply: false, isTest: p.isTest,
       createdAt: FieldValue.serverTimestamp(), createdBy: callerEmail,
     });
+    await Usage.countPerson("email.written", callerEmail);
     return { ok: true, draft: true, messageId: messageRef.id };
   }
 
@@ -127,6 +129,7 @@ async function approveDraft(request, callerEmail) {
     await sendRef.update({ writtenBy: draft.writtenBy, draftId: draftRef.id }).catch(() => {});
     // "draftSent", not "sent": the email itself is sendRef; this record only says it went out.
     await draftRef.update({ status: "draftSent", sentMessageId: sendRef.id, threadIdSent: res.threadId || null, edited: subject != null || body != null, lastError: null });
+    await Usage.countPerson("email.approved", callerEmail);
     return { ...res, sentBy: callerEmail, writtenBy: draft.writtenBy };
   } catch (e) {
     await draftRef.update({ status: "draft", lastError: e.message || String(e) }).catch(() => {});

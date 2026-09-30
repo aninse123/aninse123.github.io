@@ -15,6 +15,7 @@ const {
 const { getReceivedEmail, listReceivedAttachments } = require("./resend");
 const store = require("./store");
 const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -193,6 +194,7 @@ async function handleReceived(data) {
   await store.touchCompany(thread.companyId, { direction: "in", isAutoReply: autoReply, isTest: thread.isTest });
   // Received mail costs quota but must not eat into a sender's send cap, so no senderId here.
   await store.bumpDaily("received", { owner: thread.owner });
+  await Usage.bump({ [`email.replies.${thread.isTest ? "test" : "real"}`]: 1 });
   // Stop rule (Phase 2 §5.4): a human reply ends the company's campaign
   // sequence; out-of-office replies don't.
   if (!autoReply && thread.companyId) await stopCompanyEnrolments(thread.companyId, "Replied", "replied");

@@ -13,6 +13,7 @@ const { getEmail } = require("./resend");
 const { handleReceived } = require("./inbound");
 const store = require("./store");
 const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 // People conversations (Phase 5) have no company: stop the conversation's own enrolment.
 const stopFor = (companyId, thread, reason) => (companyId ? stopCompanyEnrolments(companyId, reason) : stopEnrolmentById(thread?.enrolmentId, reason));
 
@@ -141,6 +142,10 @@ async function handleDeliveryEvent(type, data) {
   const recipient = normEmail((msg.to || [])[0]);
   const companyId = thread?.companyId || null;
   const isTest = !!msg.isTest;
+  const set = isTest ? "test" : "real";
+  if (permanentBounce) await Usage.bump({ [`email.bounced.${set}`]: 1 });
+  else if (type === "email.complained") await Usage.bump({ [`email.complained.${set}`]: 1 });
+  else if (type === "email.suppressed") await Usage.bump({ [`email.suppressed.${set}`]: 1 });
   if (permanentBounce) {
     await store.addSuppression(recipient, { reason: "hard_bounce", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });

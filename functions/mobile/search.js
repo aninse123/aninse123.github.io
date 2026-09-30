@@ -11,6 +11,7 @@
 const P = require("../access/perms");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getFirestore } = require("firebase-admin/firestore");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
 const REGION = "us-central1";
 // Reads: Firestore charges one read per document returned, so each kind
@@ -134,6 +135,7 @@ const Feat = require("../features"); // feature switches
 exports.mobileSearch = onCall({ region: REGION }, async (request) => {
   P.requirePerm(request, "search.view");
   await Feat.requireFeature(request, "mobile");
+  Usage.countPerson("activity.mobile", request.auth?.token?.email).catch(() => {});
   try { return await search(request.data?.q); }
   catch (e) { throw new HttpsError("internal", "Search failed — try again.", { reason: "search_failed" }); }
 });

@@ -264,6 +264,9 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
 
   console.log("\n=== clear test data ===");
   store.set("searchActivities/real1", { companyId: "co1", type: "note", isTest: false });
+  // Usage tab: the sends above were counted (test mode → "test"), per sending address and for the partner who sent them.
+  const ud = store.get(`usageDaily/${require("../usage").lisbonDay()}`) || {};
+  ok("Usage: emails sent here are counted as test manual sends, by address and for André", (ud.email?.test?.manual || 0) >= 1 && (ud.email?.sentBy?.andre || 0) >= 1 && Object.keys(ud.email?.bySender || {}).length >= 1 && !ud.email?.real?.manual);
   const c = await call(fns.outreachAdmin, { action: "clearTestData" });
   ok("test threads/messages/activities removed", docs("outreachThreads").length === 0 && docs("outreachMessages").length === 0 && docs("searchActivities").length === 1 && c.res.threads > 0);
   ok("real activity kept", !!store.get("searchActivities/real1"));

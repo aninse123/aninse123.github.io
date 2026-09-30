@@ -24,6 +24,7 @@ const { normEmail, isValidEmail } = require("./util");
 const store = require("./store");
 const resend = require("./resend");
 const { buildHtml, buildOutreachHtml } = require("./branded");
+const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
 const { db, FieldValue } = store;
 const MAX_RECIPIENTS = 250;
@@ -92,6 +93,7 @@ async function peopleSend(data, caller) {
     recipients: list.map((r) => r.email), sent: emails.length, skipped, resendIds: ids,
     isTest: !!redirect, redirectedTo: redirect, docName: docName || null, by: caller, at: FieldValue.serverTimestamp(),
   });
+  await Usage.countEmail({ kind: isOutreach ? "relationship" : "notice", isTest: !!redirect, by: caller, n: emails.length });
   return { sent: emails.length, skipped, isTest: !!redirect };
 }
 

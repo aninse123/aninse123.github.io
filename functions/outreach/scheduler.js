@@ -22,6 +22,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP } = require("./config");
 const store = require("./store");
+const Usage = require("../usage"); // Team & access → Usage
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience } = require("./campaigns");
 const { runRecurring } = require("./recurring");
@@ -254,6 +255,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const [daily, senderSnap] = await Promise.all([store.getTodayDaily(), db().collection("outreachSenders").get()]);
   const senders = senderSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const sentToday = Object.fromEntries(senders.map((s) => [s.id, daily.bySender?.[store.senderKey(s.id)] || 0]));
+  await Usage.senderAlerts(senders.filter((s) => s.status !== "retired").map((s) => ({ id: s.id, sent: sentToday[s.id], cap: s.dailyCap || DEFAULT_SENDER_CAP })));
   let campaignSent = daily.campaignSent || 0;
   const budget = settings.automationBudget ?? DEFAULT_SETTINGS.automationBudget;
   const usedThisRun = new Set();
@@ -392,7 +394,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         // A draft costs no quota; the target is checked again when it's approved.
         confirmOverTarget: wantsDraft,
       });
-      const campaignRef = { campaignId: campaign.id, enrolmentId, stepId: step.id, approvedBy: approved?.approvedBy || null };
+      const campaignRef = { campaignId: campaign.id, enrolmentId, stepId: step.id, approvedBy: approved?.approvedBy || null, kind: campaign.issueId ? "recurring" : "campaign" };
       if (wantsDraft) {
         await saveDraft(p, { campaign: campaignRef });
         await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id, senderId, [`variants.${step.id}`]: p.variantKey, lastError: null });

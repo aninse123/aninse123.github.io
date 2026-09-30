@@ -98,3 +98,7 @@ exports.mobileSearch = require("./mobile/search").mobileSearch;
 
 // Feature switches (Team & access → Features) — see "Portal - Feature Switches Plan.md".
 exports.featureAdmin = require("./features/admin").featureAdmin;
+
+// Usage (Team & access → Usage): database / email / activity per day and per person.
+exports.usageAdmin = require("./usage").usageAdmin;
+exports.usageJob = require("./usage").usageJob;

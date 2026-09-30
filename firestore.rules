@@ -267,6 +267,11 @@ service cloud.firestore {
     }
     match /dailyReadCounters/{day} { allow read, write: if isStaff(); }
     match /dailyWriteCounters/{day} { allow read, write: if isStaff(); }
+    // Usage tab (partners): written only by the server (functions/usage).
+    match /usageDaily/{day} { allow read: if can('access.manage'); }
+    match /usageFirestore/{day} { allow read: if can('access.manage'); }
+    match /usageMonthly/{month} { allow read: if can('access.manage'); }
+    match /usageAlerts/{id} { allow read: if can('access.manage'); }
 
     // ── Team & access (written only by the teamAccess callable) ──
     match /team/{email} {

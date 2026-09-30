@@ -40,6 +40,24 @@
     .feat-area td { background: #FAF8F4; font-weight: 600; font-size: 0.78rem; letter-spacing: .05em; text-transform: uppercase; color: var(--text-light); }
     .feat-desc { font-size: 0.78rem; color: var(--text-light); margin-top: 2px; max-width: 46ch; } .feat-kill { color: var(--text); border-left: 2px solid #B03A3A; padding-left: 8px; margin-top: 6px; }
     .card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+    /* Usage tab */
+    .u-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .u-tile { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+    .u-tile .n { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .u-tile .l { font-size: 0.78rem; color: var(--text-light); }
+    .u-meter { height: 6px; border-radius: 999px; background: #EFEBE4; overflow: hidden; margin-top: 8px; }
+    .u-meter i { display: block; height: 100%; background: var(--secondary); }
+    .u-meter i.warn { background: #B45309; } .u-meter i.bad { background: #B03A3A; }
+    .u-sec { margin-top: 16px; }
+    .u-table td, .u-table th { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .u-table td.num, .u-table th.num { text-align: right; }
+    .u-table .muted { color: var(--text-light); }
+    .u-chip { font: inherit; font-size: 0.78rem; font-weight: 600; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--white); color: var(--text-light); cursor: pointer; }
+    .u-chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .u-chart { padding: 12px 16px 6px; }
+    .u-chart svg { width: 100%; height: 180px; display: block; }
+    .u-note { font-size: 0.8rem; color: var(--text-light); padding: 10px 16px; }
+    .u-warn { background: #FDF3DC; color: #7A4E00; border: 1px solid #EFD9A6; border-radius: var(--radius); padding: 10px 14px; font-size: 0.85rem; margin-bottom: 14px; }
     .toolbar { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: #FAFAF8; flex-wrap: wrap; }
     .toolbar h2 { font-size: 1rem; font-weight: 600; }
     .table-wrap { overflow-x: auto; }
@@ -109,11 +127,13 @@
         <button class="chip" data-view="roles">Roles</button>
         <button class="chip" data-view="features">Features</button>
         <button class="chip" data-view="audit">Activity</button>
+        <button class="chip" data-view="usage">Usage</button>
       </div>
       <section id="v-people"></section>
       <section id="v-roles" hidden></section>
       <section id="v-features" hidden></section>
       <section id="v-audit" hidden></section>
+      <section id="v-usage" hidden></section>
     </main>
   </div>
   <div id="modalRoot"></div>
@@ -125,7 +145,7 @@
     import { FEATURES, stateOf, currentFlags, onFeaturesChange, SITE } from './features.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-    import { collection, onSnapshot, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+    import { collection, onSnapshot, query, orderBy, limit, getDocs, getDoc, doc, where, documentId } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
 
     const $ = (id) => document.getElementById(id);
@@ -158,13 +178,15 @@
       $('loadingScreen').style.display = 'none';
       $('app').style.display = 'block';
       watch();
+      if (location.hash === '#usage') document.querySelector('[data-view="usage"]')?.click();
     });
 
     document.querySelector('.chips').addEventListener('click', (e) => {
       const b = e.target.closest('[data-view]'); if (!b) return;
       document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b));
-      ['people', 'roles', 'features', 'audit'].forEach(v => { $('v-' + v).hidden = v !== b.dataset.view; });
+      ['people', 'roles', 'features', 'audit', 'usage'].forEach(v => { $('v-' + v).hidden = v !== b.dataset.view; });
       if (b.dataset.view === 'audit') renderAudit();
+      if (b.dataset.view === 'usage') renderUsage();
       if (b.dataset.view === 'features') renderFeatures();
     });
     $('seedBtn').addEventListener('click', async () => {
@@ -491,6 +513,158 @@
         try { await featureCall({ action: 'setTesters', key, testers: [...new Set([...picked, ...extra])] }); close(); toast('Testers saved.'); }
         catch (e) { $('tErr').textContent = errText(e); $('tErr').hidden = false; $('tSave').disabled = false; }
       });
+    }
+
+    // ── Usage (partners; Admin-only after the Partner / Admin split) ──
+    // Database: exact totals from Google (usageFirestore, both sites + the
+    // server) with browser estimates as fallback (dailyRead/WriteCounters, by
+    // person and site). Emails and activity: usageDaily (counted where they
+    // happen). Database days follow Google's quota day (midnight Pacific =
+    // 08:00 Lisbon); email / activity days are Lisbon days.
+    const usageCall = httpsCallable(getFunctions(auth.app, 'us-central1'), 'usageAdmin', { timeout: 120000 });
+    const LIMITS = { reads: 50000, writes: 20000, deletes: 20000 };
+    let usageDays = 30, usageMetric = 'reads', usagePersonMetric = 'reads', usageBusy = false, usageData = null;
+    const dayIn = (tz) => (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    const pacificDay = dayIn('America/Los_Angeles'), lisbonDay = dayIn('Europe/Lisbon');
+    const addDaysStr = (day, n) => { const t = new Date(`${day}T12:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+    const nf = (n) => (n == null ? '—' : Number(n).toLocaleString('de-DE'));
+    const who = (k) => { const p = people.find((x) => x.key === k); return p ? String(p.name || k).split(' ')[0] : k === 'automatic' ? 'Automatic' : k; };
+    const sumMap = (a, b) => { const o = { ...(a || {}) }; for (const [k, v] of Object.entries(b || {})) o[k] = (o[k] || 0) + (Number(v) || 0); return o; };
+    const pct = (n, lim) => Math.round((Number(n) || 0) / lim * 100);
+    const meter = (n, lim) => { const p = Math.min(100, pct(n, lim)); return `<div class="u-meter"><i class="${p >= 100 ? 'bad' : p >= 80 ? 'warn' : ''}" style="width:${p}%"></i></div>`; };
+
+    async function loadUsage() {
+      const pFrom = addDaysStr(pacificDay(), -(usageDays - 1)), lFrom = addDaysStr(lisbonDay(), -(usageDays - 1));
+      const byId = async (coll, from) => { const s = await getDocs(query(collection(db, coll), where(documentId(), '>=', from))); addReads(s.size || 1); return Object.fromEntries(s.docs.map((d) => [d.id, d.data()])); };
+      const [exact, reads, writes, daily, senders, settings, resend] = await Promise.all([
+        byId('usageFirestore', pFrom), byId('dailyReadCounters', pFrom), byId('dailyWriteCounters', pFrom), byId('usageDaily', lFrom),
+        getDocs(collection(db, 'outreachSenders')).then((s) => { addReads(s.size || 1); return s.docs.map((d) => ({ id: d.id, ...d.data() })); }).catch(() => []),
+        getDoc(doc(db, 'outreachSettings', 'global')).then((s) => { addReads(1); return s.data() || {}; }).catch(() => ({})),
+        getDoc(doc(db, 'outreachUsage', new Date().toISOString().slice(0, 10))).then((s) => { addReads(1); return s.data() || {}; }).catch(() => ({})),
+      ]);
+      const pDays = [], lDays = [];
+      for (let i = usageDays - 1; i >= 0; i--) { pDays.push(addDaysStr(pacificDay(), -i)); lDays.push(addDaysStr(lisbonDay(), -i)); }
+      usageData = { exact, reads, writes, daily, senders, settings, resend, pDays, lDays };
+    }
+
+    async function refreshUsageServer(force) {
+      let last = 0; try { last = Number(sessionStorage.getItem('usageRefreshedAt') || 0); } catch (e) {}
+      if (!force && Date.now() - last < 10 * 60000) return;
+      try { sessionStorage.setItem('usageRefreshedAt', String(Date.now())); } catch (e) {}
+      try { await usageCall({ action: 'refresh' }); } catch (e) { toast('Couldn\'t update the exact figures: ' + errText(e)); }
+    }
+
+    async function renderUsage(force = false) {
+      if (usageBusy) return;
+      usageBusy = true;
+      if (!usageData) $('v-usage').innerHTML = '<div class="card"><div class="empty">Loading usage…</div></div>';
+      try { await refreshUsageServer(force); await loadUsage(); drawUsage(); }
+      catch (e) { $('v-usage').innerHTML = `<div class="err">Couldn't load usage: ${esc(errText(e))}</div>`; }
+      finally { usageBusy = false; }
+    }
+
+    function drawUsage() {
+      const U = usageData; if (!U) return;
+      const est = (d) => ({ reads: U.reads[d]?.count || 0, writes: U.writes[d]?.writes || 0, deletes: U.writes[d]?.deletes || 0 });
+      const ex = (d) => (U.exact[d] && !U.exact[d].error && U.exact[d].reads != null ? U.exact[d] : null);
+      const best = (d, m) => (ex(d) ? ex(d)[m] : est(d)[m]);
+      const today = U.pDays[U.pDays.length - 1], lToday = U.lDays[U.lDays.length - 1];
+      const noPerm = Object.values(U.exact).some((x) => x.error === 'no_permission');
+      const exactErr = !noPerm && Object.values(U.exact).find((x) => x.error)?.error;
+
+      // Tiles: today
+      const t = U.daily[lToday] || {}, em = t.email || {}, snap = t.snapshot || {};
+      const realToday = Object.values(em.real || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+      const tile = (label, n, lim, sub) => `<div class="u-tile"><div class="l">${label}</div><div class="n">${nf(n)}</div><div class="l">${sub}</div>${lim ? meter(n, lim) : ''}</div>`;
+      const src = ex(today) ? 'exact (Google)' : 'estimate (browsers)';
+      const tiles = tile('Reads today', best(today, 'reads'), LIMITS.reads, `of ${nf(LIMITS.reads)} free · ${src}`)
+        + tile('Writes today', best(today, 'writes'), LIMITS.writes, `of ${nf(LIMITS.writes)} free · ${src}`)
+        + tile('Deletes today', best(today, 'deletes'), LIMITS.deletes, `of ${nf(LIMITS.deletes)} free · ${src}`)
+        + tile('Emails sent today (real)', realToday, null, `${nf(snap.draftsWaiting)} waiting for approval · ${nf(snap.held)} held`)
+        + tile('Resend (whole account)', U.resend.resendDailyUsed ?? null, U.settings.dailyTarget || null, `today${U.settings.dailyTarget ? ` of ${nf(U.settings.dailyTarget)}` : ''} · ${nf(U.resend.resendMonthlyUsed)} this month`);
+
+      // Chart
+      const vals = U.pDays.map((d) => ({ d, v: best(d, usageMetric) || 0, exact: !!ex(d) }));
+      const lim = LIMITS[usageMetric], max = Math.max(lim, ...vals.map((x) => x.v)) * 1.08;
+      const W = 720, H = 180, pad = 26, bw = (W - pad) / vals.length;
+      const y = (v) => H - 18 - (v / max) * (H - 30);
+      const bars = vals.map((x, i) => `<rect x="${pad + i * bw + 1}" y="${y(x.v)}" width="${Math.max(1, bw - 2)}" height="${H - 18 - y(x.v)}" fill="${x.v >= lim ? '#B03A3A' : x.v >= 0.8 * lim ? '#B45309' : 'var(--secondary)'}" opacity="${x.exact ? 1 : 0.5}"><title>${x.d}: ${nf(x.v)} ${usageMetric} (${x.exact ? 'exact' : 'estimate'})</title></rect>`).join('');
+      const labels = vals.map((x, i) => (i % Math.ceil(vals.length / 8) === 0 || i === vals.length - 1) ? `<text x="${pad + i * bw + bw / 2}" y="${H - 4}" font-size="10" text-anchor="middle" fill="var(--text-light)">${x.d.slice(5)}</text>` : '').join('');
+      const chart = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${usageMetric} per day">
+        <line x1="${pad}" x2="${W}" y1="${y(lim)}" y2="${y(lim)}" stroke="#B03A3A" stroke-dasharray="4 4"/><text x="${W - 4}" y="${y(lim) - 4}" font-size="10" text-anchor="end" fill="#B03A3A">free limit ${nf(lim)}</text>
+        ${bars}${labels}</svg>`;
+
+      // Database table
+      const dbRows = U.pDays.slice().reverse().map((d) => {
+        const e = ex(d), s = est(d), r = U.reads[d] || {}, w = U.writes[d] || {};
+        const bg = e ? Math.max(0, e.reads - s.reads) : null;
+        return `<tr><td>${d}${d === today ? ' <span class="muted">(so far)</span>' : ''}</td>
+          <td class="num">${e ? nf(e.reads) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.reads)}</td><td class="num muted">${nf(r.bySite?.production || 0)} / ${nf(r.bySite?.staging || 0)}</td><td class="num muted">${bg == null ? '—' : nf(bg)}</td>
+          <td class="num">${e ? nf(e.writes) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.writes)}</td><td class="num muted">${nf(w.bySiteW?.production || 0)} / ${nf(w.bySiteW?.staging || 0)}</td>
+          <td class="num">${e ? nf(e.deletes) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.deletes)}</td></tr>`;
+      }).join('');
+
+      // Per person (database estimates)
+      const pm = usagePersonMetric, field = pm === 'reads' ? 'byUser' : pm === 'writes' ? 'byUserW' : 'byUserD';
+      const src2 = pm === 'reads' ? U.reads : U.writes;
+      const pKeys = [...new Set(U.pDays.flatMap((d) => Object.keys(src2[d]?.[field] || {})))].sort();
+      const personRows = U.pDays.slice().reverse().filter((d) => Object.keys(src2[d]?.[field] || {}).length).map((d) => `<tr><td>${d}</td>${pKeys.map((k) => `<td class="num">${nf(src2[d][field][k] || 0)}</td>`).join('')}</tr>`).join('');
+
+      // Emails
+      const EK = [['campaign', 'Campaign'], ['recurring', 'Recurring'], ['manual', 'Written in Outreach'], ['relationship', 'Investor CRM / Network'], ['notice', 'Admin notices']];
+      const setSum = (m) => Object.values(m || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+      const emailRows = U.lDays.slice().reverse().map((d) => {
+        const e = U.daily[d]?.email || {};
+        return `<tr><td>${d}</td>${EK.map(([k]) => `<td class="num">${nf(e.real?.[k] || 0)}</td>`).join('')}<td class="num muted">${nf(setSum(e.test))}</td><td class="num">${nf(setSum(e.failed))}</td><td class="num">${nf(e.bounced?.real || 0)}</td><td class="num">${nf(e.complained?.real || 0)}</td><td class="num">${nf(e.unsubscribed?.real || 0)}</td><td class="num">${nf(e.replies?.real || 0)}</td></tr>`;
+      }).join('');
+      let bySender = {}, sentBy = {}, written = {}, approved = {}, act = { signIns: {}, exports: {}, exportRows: {}, ai: {}, mobile: {} };
+      for (const d of U.lDays) {
+        const x = U.daily[d] || {}, e = x.email || {};
+        for (const [k, v] of Object.entries(e.bySender || {})) bySender[k] = sumMap(bySender[k], v);
+        sentBy = sumMap(sentBy, e.sentBy); written = sumMap(written, e.written); approved = sumMap(approved, e.approved);
+        for (const a of Object.keys(act)) act[a] = sumMap(act[a], x.activity?.[a]);
+      }
+      const capOf = (key) => { const s = U.senders.find((z) => z.id.toLowerCase().replace(/[^a-z0-9_-]/g, '_') === key); return s ? { id: s.id, cap: s.dailyCap || 25 } : { id: key, cap: null }; };
+      const todaySender = U.daily[lToday]?.email?.bySender || {};
+      const senderRows = Object.keys(bySender).sort().map((k) => { const c = capOf(k); const t0 = todaySender[k]?.real || 0; return `<tr><td>${esc(c.id)}</td><td class="num">${nf(t0)}${c.cap ? ` <span class="muted">/ ${nf(c.cap)}</span>` : ''}</td><td class="num">${nf(bySender[k].real || 0)}</td><td class="num muted">${nf(bySender[k].test || 0)}</td></tr>`; }).join('');
+      const people3 = [...new Set([...Object.keys(written), ...Object.keys(approved), ...Object.keys(sentBy)])].sort();
+      const emailPeopleRows = people3.map((k) => `<tr><td>${esc(who(k))}</td><td class="num">${nf(written[k] || 0)}</td><td class="num">${nf(approved[k] || 0)}</td><td class="num">${nf(sentBy[k] || 0)}</td></tr>`).join('');
+      const actPeople = [...new Set(Object.values(act).flatMap((m) => Object.keys(m)))].sort();
+      const actRows = actPeople.map((k) => `<tr><td>${esc(who(k))}</td><td class="num">${nf(act.signIns[k] || 0)}</td><td class="num">${nf(act.exports[k] || 0)} <span class="muted">(${nf(act.exportRows[k] || 0)} rows)</span></td><td class="num">${nf(act.ai[k] || 0)}</td><td class="num">${nf(act.mobile[k] || 0)}</td></tr>`).join('');
+      const oldest = snap.oldestDraftAt ? Math.round((Date.now() - tsMs(snap.oldestDraftAt)) / 3600000) : null;
+
+      const chip = (grp, k, l, cur) => `<button class="u-chip${cur === k ? ' on' : ''}" data-u${grp}="${k}">${l}</button>`;
+      const empty = (cols, txt) => `<tr><td colspan="${cols}" class="empty">${txt}</td></tr>`;
+      $('v-usage').innerHTML = `
+        ${noPerm ? `<div class="u-warn"><b>Exact figures need one permission.</b> Until then these are browser estimates (they miss the server's own work). In Google Cloud console → IAM & Admin → IAM → <b>Grant access</b>: principal <code>20074053140-compute@developer.gserviceaccount.com</code>, role <b>Monitoring Viewer</b>. Then click Refresh here.</div>` : ''}
+        ${exactErr ? `<div class="u-warn">Exact figures couldn't be read from Google: ${esc(exactErr)}. Showing estimates.</div>` : ''}
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+          ${chip('days', 7, 'Last 7 days', usageDays)}${chip('days', 30, 'Last 30 days', usageDays)}${chip('days', 90, 'Last 90 days', usageDays)}
+          <button class="btn btn--ghost btn--sm" id="usageRefresh" style="margin-left:auto;">↻ Refresh</button>
+        </div>
+        <div class="u-grid">${tiles}</div>
+        <div class="card"><div class="toolbar"><h2>Database per day</h2><div style="display:flex;gap:6px;">${chip('metric', 'reads', 'Reads', usageMetric)}${chip('metric', 'writes', 'Writes', usageMetric)}${chip('metric', 'deletes', 'Deletes', usageMetric)}</div></div>
+          <div class="u-chart">${chart}</div>
+          <p class="u-note">Solid bars = exact (Google, both sites and the server together); faded = browser estimate. Days are Google's quota days (from 08:00 Lisbon).</p>
+          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th><th class="num">Reads exact</th><th class="num">est.</th><th class="num">prod / staging</th><th class="num">server</th><th class="num">Writes exact</th><th class="num">est.</th><th class="num">prod / staging</th><th class="num">Deletes exact</th><th class="num">est.</th></tr></thead><tbody>${dbRows}</tbody></table></div>
+          <p class="u-note">"server" = exact minus what browsers counted: the scheduler, sending and imports run by the server (they serve both sites).</p></div>
+        <div class="card u-sec"><div class="toolbar"><h2>Per person per day</h2><div style="display:flex;gap:6px;">${chip('pmetric', 'reads', 'Reads', usagePersonMetric)}${chip('pmetric', 'writes', 'Writes', usagePersonMetric)}${chip('pmetric', 'deletes', 'Deletes', usagePersonMetric)}</div><span class="hint">browser estimates, both sites</span></div>
+          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th>${pKeys.map((k) => `<th class="num">${esc(who(k))}</th>`).join('')}</tr></thead><tbody>${personRows || empty(1 + pKeys.length, 'Nothing counted per person yet — counting started with this version.')}</tbody></table></div></div>
+        <div class="card u-sec"><div class="toolbar"><h2>Emails per day</h2><span class="hint">real emails by kind; test ones apart · waiting for approval: ${nf(snap.draftsWaiting)}${oldest != null ? ` (oldest ${oldest} h)` : ''} · held now: ${nf(snap.held)}</span></div>
+          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th>${EK.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th class="num">Test</th><th class="num">Failed</th><th class="num">Bounced</th><th class="num">Spam</th><th class="num">Unsubscribed</th><th class="num">Replies</th></tr></thead><tbody>${emailRows}</tbody></table></div></div>
+        <div class="cols-u" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;">
+          <div class="card u-sec"><div class="toolbar"><h2>Sending addresses</h2><span class="hint">period totals</span></div>
+            <div class="table-wrap"><table class="u-table"><thead><tr><th>Address</th><th class="num">Today / cap</th><th class="num">Real</th><th class="num">Test</th></tr></thead><tbody>${senderRows || empty(4, 'No emails sent in this period.')}</tbody></table></div></div>
+          <div class="card u-sec"><div class="toolbar"><h2>Emails per person</h2><span class="hint">period totals</span></div>
+            <div class="table-wrap"><table class="u-table"><thead><tr><th>Person</th><th class="num">Written (for approval)</th><th class="num">Approved</th><th class="num">Sent</th></tr></thead><tbody>${emailPeopleRows || empty(4, 'Nothing yet.')}</tbody></table></div></div>
+        </div>
+        <div class="card u-sec"><div class="toolbar"><h2>Activity per person</h2><span class="hint">period totals</span></div>
+          <div class="table-wrap"><table class="u-table"><thead><tr><th>Person</th><th class="num">Sign-ins</th><th class="num">CSV exports</th><th class="num">AI openers</th><th class="num">Phone searches</th></tr></thead><tbody>${actRows || empty(5, 'Nothing counted yet — counting started with this version.')}</tbody></table></div></div>
+        <p class="u-note">Kept for 90 days, then rolled into monthly totals. Updated when you open this tab (at most every 10 minutes) and every morning.</p>`;
+      $('v-usage').querySelectorAll('[data-udays]').forEach((b) => b.addEventListener('click', () => { usageDays = Number(b.dataset.udays); usageData = null; renderUsage(); }));
+      $('v-usage').querySelectorAll('[data-umetric]').forEach((b) => b.addEventListener('click', () => { usageMetric = b.dataset.umetric; drawUsage(); }));
+      $('v-usage').querySelectorAll('[data-upmetric]').forEach((b) => b.addEventListener('click', () => { usagePersonMetric = b.dataset.upmetric; drawUsage(); }));
+      $('usageRefresh').addEventListener('click', () => renderUsage(true));
     }
 
     async function renderAudit() {
