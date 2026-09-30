@@ -224,7 +224,7 @@
   </div>
 
   <script type="module">
-    import { auth, db, ADMIN_EMAILS } from './firebase-config.js';
+    import { auth, db } from './firebase-config.js';
     import { getAccess, homeFor } from './access.js';
     import {
       sendSignInLinkToEmail,
@@ -319,7 +319,7 @@
     // so the real investor emails are never exposed publicly.
     async function isRegistered(email) {
       const norm = email.trim().toLowerCase();
-      if (ADMIN_EMAILS.includes(norm)) return true;
+      if (norm === 'andre.rocha@douropartners.pt') return true; // the Admin; partners are in the team list like other staff
       const hash = await sha256Hex(norm);
       // Team members (Team & access): their own scrambled list, kept by the server.
       const teamSnap = await getDoc(doc(db, 'config', 'teamEmailHashes')).catch(() => null);

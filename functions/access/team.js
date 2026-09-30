@@ -53,13 +53,15 @@ function tsOrNull(v, edge = "start") {
   return Timestamp.fromDate(d);
 }
 
-// Admin and Partner are fixed levels (computed, never stored or edited).
-const FIXED = ["admin", "partner"];
+// Admin is the one fixed level (computed, never stored or edited). Partner
+// is an ordinary stored role; if it isn't stored yet, its default applies.
+const FIXED = ["admin"];
 const isFixed = (roleId) => FIXED.includes(roleId);
 async function readRole(roleId) {
   if (isFixed(roleId)) return { id: roleId, ...P.DEFAULT_ROLES[roleId] };
   const s = await db().doc(`roles/${roleId}`).get();
-  return s.exists ? { id: s.id, ...s.data() } : null;
+  if (s.exists) return { id: s.id, ...s.data() };
+  return roleId === "partner" ? { id: "partner", ...P.DEFAULT_ROLES.partner } : null;
 }
 
 async function audit(by, action, target, before, after) {
@@ -74,7 +76,7 @@ async function audit(by, action, target, before, after) {
 async function syncLoginHashes() {
   const snap = await db().collection("team").get();
   const now = new Date();
-  const hashes = snap.docs.filter((d) => P.isActive(d.data(), now) || P.PARTNER_EMAILS.includes(d.id)).map((d) => sha256(d.id));
+  const hashes = snap.docs.filter((d) => P.isActive(d.data(), now) || P.ADMIN_EMAILS.includes(d.id)).map((d) => sha256(d.id));
   await db().doc("config/teamEmailHashes").set({ hashes, updatedAt: FieldValue.serverTimestamp() });
   const dir = await db().collection("teamDirectory").get();
   const keys = new Set();
@@ -84,10 +86,10 @@ async function syncLoginHashes() {
     if (!m.key) return;
     keys.add(m.key);
     batch.set(db().doc(`teamDirectory/${m.key}`), {
-      key: m.key, name: m.name || m.key, partner: isFixed(m.roleId),
+      key: m.key, name: m.name || m.key, partner: m.roleId === "admin" || m.roleId === "partner",
       contactPhone: m.contactPhone || null,
       contactEmail: m.contactEmail || (/@douropartners\.pt$/.test(d.id) ? d.id : null),
-      active: P.PARTNER_EMAILS.includes(d.id) || P.isActive(m, now), updatedAt: FieldValue.serverTimestamp(),
+      active: P.ADMIN_EMAILS.includes(d.id) || P.isActive(m, now), updatedAt: FieldValue.serverTimestamp(),
     });
   });
   dir.docs.forEach((d) => { if (!keys.has(d.id)) batch.delete(d.ref); });
@@ -103,7 +105,7 @@ async function refreshClaims(email) {
   const claims = P.claimsFor(email, m, role);
   const auth = getAuth();
   await auth.setCustomUserClaims(m.uid, claims);
-  if (!P.isActive(m) && !P.PARTNER_EMAILS.includes(email)) {
+  if (!P.isActive(m) && !P.ADMIN_EMAILS.includes(email)) {
     await auth.revokeRefreshTokens(m.uid).catch(() => {});
     await auth.updateUser(m.uid, { disabled: true }).catch(() => {});
   } else {
@@ -146,7 +148,7 @@ async function assertKeyFree(key, email) {
 async function seed(by) {
   let created = 0;
   for (const [id, r] of Object.entries(P.DEFAULT_ROLES)) {
-    if (isFixed(id)) continue; // computed, not stored
+    if (isFixed(id)) continue; // computed, not stored (Partner is stored like any role)
     const ref = db().doc(`roles/${id}`);
     if (!(await ref.get()).exists) { await ref.set({ name: r.name, description: r.description, perms: r.perms, createdAt: FieldValue.serverTimestamp(), createdBy: by }); created++; }
   }
@@ -203,7 +205,7 @@ async function sendInvite(email, by, origin, lang) {
   if (!snap.exists) fail("not-found", "not_found", "Person not found.");
   const m = snap.data();
   if (!P.isActive(m)) fail("failed-precondition", "not_active", "This person's access isn't active.");
-  if (!isFixed(m.roleId) && !P.PARTNER_EMAILS.includes(email) && !m.ndaSigned) fail("failed-precondition", "nda_missing", "Tick \"NDA signed\" first — the invitation can only be sent once the NDA is recorded.");
+  if (!isFixed(m.roleId) && !P.ADMIN_EMAILS.includes(email) && !m.ndaSigned) fail("failed-precondition", "nda_missing", "Tick \"NDA signed\" first — the invitation can only be sent once the NDA is recorded.");
   const role = m.roleId ? await readRole(m.roleId) : null;
   const base = PORTAL_ORIGINS.includes(origin) ? origin : "https://douropartners.pt";
   const url = `${base}/portal/login.html`;
@@ -230,7 +232,7 @@ async function invite({ member, sendEmail: withEmail, origin }, by) {
   const cur = await ref.get();
   if (cur.exists && cur.data().status !== "ended") fail("already-exists", "exists", "This person is already on the team.");
   const fields = cleanMember(member);
-  if (isFixed(fields.roleId)) fail("permission-denied", "partner_locked", "Admin and Partner are fixed — choose another role.");
+  if (isFixed(fields.roleId)) fail("permission-denied", "partner_locked", "The Admin level is fixed — choose another role.");
   if (!(await readRole(fields.roleId))) fail("invalid-argument", "bad_role", "Choose a role.");
   await assertKeyFree(fields.key, email);
   const doc = { email, ...fields, status: "invited", invitedBy: by, invitedAt: FieldValue.serverTimestamp(), uid: cur.exists ? cur.data().uid || null : null, lastSignInAt: cur.exists ? cur.data().lastSignInAt || null : null };
@@ -252,8 +254,8 @@ async function update({ email: raw, member }, by) {
   if (!cur.exists) fail("not-found", "not_found", "Person not found.");
   const before = cur.data();
   const fields = cleanMember(member || {}, before);
-  if (isFixed(before.roleId) && fields.roleId !== before.roleId) fail("permission-denied", "partner_locked", "A partner's role can't be changed.");
-  if (!isFixed(before.roleId) && isFixed(fields.roleId)) fail("permission-denied", "partner_locked", "Admin and Partner are fixed.");
+  if (isFixed(before.roleId) && fields.roleId !== before.roleId) fail("permission-denied", "partner_locked", "The Admin's role can't be changed.");
+  if (!isFixed(before.roleId) && isFixed(fields.roleId)) fail("permission-denied", "partner_locked", "The Admin level is fixed.");
   if (!isFixed(fields.roleId) && !(await readRole(fields.roleId))) fail("invalid-argument", "bad_role", "Choose a role.");
   if (fields.key !== before.key) await assertKeyFree(fields.key, email);
   await ref.update({ ...fields, updatedAt: FieldValue.serverTimestamp(), updatedBy: by });
@@ -268,7 +270,7 @@ async function setStatus(email, status, by, action) {
   const ref = db().doc(`team/${email}`);
   const cur = await ref.get();
   if (!cur.exists) fail("not-found", "not_found", "Person not found.");
-  if (P.PARTNER_EMAILS.includes(email) || isFixed(cur.data().roleId)) fail("permission-denied", "partner_locked", "A partner's access can't be suspended or ended.");
+  if (P.ADMIN_EMAILS.includes(email) || isFixed(cur.data().roleId)) fail("permission-denied", "partner_locked", "The Admin's access can't be suspended or ended.");
   await ref.update({ status, updatedAt: FieldValue.serverTimestamp(), updatedBy: by, ...(status === "ended" ? { endedAt: FieldValue.serverTimestamp() } : {}) });
   await syncLoginHashes();
   await refreshClaims(email);
@@ -277,14 +279,14 @@ async function setStatus(email, status, by, action) {
 }
 
 async function saveRole({ roleId, role }, by) {
-  if (isFixed(roleId)) fail("permission-denied", "partner_locked", "The Admin and Partner roles can't be changed.");
+  if (isFixed(roleId)) fail("permission-denied", "partner_locked", "The Admin role can't be changed.");
   const name = String(role?.name || "").trim().slice(0, 40);
   if (!name) fail("invalid-argument", "name_required", "Give the role a name.");
   const perms = P.cleanList(role?.perms).filter((p) => !P.ADMIN_ONLY.includes(p)); // Admin-only stays with the Admin
   const data = { name, description: String(role?.description || "").slice(0, 300), perms, updatedAt: FieldValue.serverTimestamp(), updatedBy: by };
   const ref = roleId ? db().doc(`roles/${roleId}`) : db().collection("roles").doc();
   const before = roleId ? (await ref.get()).data() || null : null;
-  if (roleId && !before) fail("not-found", "not_found", "Role not found.");
+  if (roleId && !before && roleId !== "partner") fail("not-found", "not_found", "Role not found."); // Partner: its first Save stores it
   await ref.set(before ? { ...before, ...data } : { ...data, createdAt: FieldValue.serverTimestamp(), createdBy: by });
   // Everyone with this role gets the new permissions now.
   const members = await db().collection("team").where("roleId", "==", ref.id).get();
@@ -304,6 +306,23 @@ async function refreshAll(by) {
     const s = await ref.get();
     if (s.exists && s.data().roleId !== "admin") await ref.update({ roleId: "admin", updatedAt: FieldValue.serverTimestamp(), updatedBy: by });
   }
+  // Partner is an ordinary role now: store it (once), and make the founders
+  // who aren't Admin partners with their NDA recorded (staff like anyone else).
+  const partnerRef = db().doc("roles/partner");
+  if (!(await partnerRef.get()).exists) {
+    const d = P.DEFAULT_ROLES.partner;
+    await partnerRef.set({ name: d.name, description: d.description, perms: d.perms, createdAt: FieldValue.serverTimestamp(), createdBy: by });
+  }
+  for (const email of P.PARTNER_EMAILS.filter((x) => !P.ADMIN_EMAILS.includes(x))) {
+    const ref = db().doc(`team/${email}`);
+    const s = await ref.get();
+    if (!s.exists) continue;
+    const upd = {};
+    if (!s.data().roleId || s.data().roleId === "partner") { if (s.data().roleId !== "partner") upd.roleId = "partner"; }
+    if (!s.data().ndaSigned) upd.ndaSigned = true;
+    if (!s.data().uid) { try { upd.uid = (await getAuth().getUserByEmail(email)).uid; } catch (e) { /* never signed in */ } }
+    if (Object.keys(upd).length) await ref.update({ ...upd, updatedAt: FieldValue.serverTimestamp(), updatedBy: by });
+  }
   for (const r of (await db().collection("roles").get()).docs) {
     const perms = P.cleanList(r.data().perms);
     const kept = perms.filter((p) => !P.ADMIN_ONLY.includes(p));
@@ -316,7 +335,7 @@ async function refreshAll(by) {
 }
 
 async function deleteRole({ roleId }, by) {
-  if (!roleId || isFixed(roleId)) fail("permission-denied", "partner_locked", "The Admin and Partner roles can't be deleted.");
+  if (!roleId || isFixed(roleId)) fail("permission-denied", "partner_locked", "The Admin role can't be deleted.");
   const members = await db().collection("team").where("roleId", "==", roleId).get();
   if (members.docs.some((d) => d.data().status !== "ended")) fail("failed-precondition", "role_in_use", "Someone still has this role — change their role first.");
   await db().doc(`roles/${roleId}`).delete();
@@ -348,7 +367,7 @@ async function runTeamExpiry(now = new Date()) {
   let ended = 0;
   for (const d of snap.docs) {
     const m = d.data();
-    if (P.PARTNER_EMAILS.includes(d.id) || isFixed(m.roleId)) continue;
+    if (P.ADMIN_EMAILS.includes(d.id) || isFixed(m.roleId)) continue;
     if (m.endsAt && m.endsAt.toMillis() <= now.getTime()) { await setStatus(d.id, "ended", "schedule", "expired"); ended++; }
   }
   return ended;
@@ -364,10 +383,10 @@ async function onTeamSignIn(email, uid) {
   const e = norm(email);
   const ref = db().doc(`team/${e}`);
   const snap = await ref.get();
-  if (!snap.exists && !P.PARTNER_EMAILS.includes(e)) return null;
+  if (!snap.exists && !P.ADMIN_EMAILS.includes(e)) return null;
   const m = snap.exists ? snap.data() : null;
-  if (m && !P.isActive(m) && !P.PARTNER_EMAILS.includes(e)) return { allowed: false };
-  if (m && !m.ndaSigned && !isFixed(m.roleId) && !P.PARTNER_EMAILS.includes(e)) return { allowed: false, reason: "nda" };
+  if (m && !P.isActive(m) && !P.ADMIN_EMAILS.includes(e)) return { allowed: false };
+  if (m && !m.ndaSigned && !isFixed(m.roleId) && !P.ADMIN_EMAILS.includes(e)) return { allowed: false, reason: "nda" };
   const role = m?.roleId ? await readRole(m.roleId) : null;
   const claims = P.claimsFor(e, m, role);
   if (m) {

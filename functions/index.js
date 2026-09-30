@@ -28,7 +28,9 @@ const crypto = require("crypto");
 initializeApp();
 const db = getFirestore();
 
-const ADMIN_EMAILS = ["andre.rocha@douropartners.pt", "antonio.carvalho@douropartners.pt"];
+// Always allowed to sign in: the Admin. Partners are staff since 30 Sep —
+// they sign in through their team record (active, NDA recorded) like anyone.
+const ADMIN_EMAILS = require("./access/perms").ADMIN_EMAILS;
 
 function sha256Hex(str) {
   return crypto.createHash("sha256").update(str).digest("hex");

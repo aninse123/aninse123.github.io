@@ -10,7 +10,7 @@
 // the person lacks x, including elements rendered later (lists, dialogs).
 //
 // Keep PERMS in sync with functions/access/perms.js (tests/portal parity test).
-import { auth, db, ADMIN_EMAILS, addDoc } from './firebase-config.js';
+import { auth, db, addDoc } from './firebase-config.js';
 import { doc, onSnapshot, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import { startFeatures, isOn, onFeaturesChange, PAGE_FEATURE } from './features.js';
 
@@ -66,8 +66,9 @@ export const PERMS = [
 ];
 export const ALL = PERMS.map(p => p[0]);
 const PARTNER_KEYS = { 'andre.rocha@douropartners.pt': 'andre', 'antonio.carvalho@douropartners.pt': 'antonio' };
-// Admin / Partner split (30 Sep) — same as functions/access/perms.js: the
-// Admin (André) has everything; partners everything but these.
+// Admin / Partner (30 Sep) — same as functions/access/perms.js: the Admin
+// (André) has everything; nobody else can hold these. Partner is an ordinary
+// role whose default is everything but these (PARTNER_PERMS).
 export const ADMIN_ONLY = ['access.manage', 'features.manage', 'usage.view', 'features.test', 'out.admin', 'search.import'];
 export const PARTNER_PERMS = ALL.filter(p => !ADMIN_ONLY.includes(p));
 const ADMIN_EMAIL = 'andre.rocha@douropartners.pt';
@@ -116,9 +117,14 @@ export async function getAccess(user, { force = false } = {}) {
     if (pv && Array.isArray(pv.perms)) return { ...make(email, 'preview', pv.perms.filter(p => ALL.includes(p)), PARTNER_KEYS[email]), preview: String(pv.name || 'role') };
     return make(email, 'admin', ALL, PARTNER_KEYS[email]);
   }
-  if (ADMIN_EMAILS.includes(email)) return make(email, 'partner', PARTNER_PERMS, PARTNER_KEYS[email]);
+  // Everyone else — partners included (Partner is an ordinary role) — goes by
+  // the permissions on their sign-in token. A token from before team access
+  // (or before "Refresh everyone's access") has none: fetch a fresh one once.
   let claims = {};
   try { claims = (await user.getIdTokenResult(force)).claims || {}; } catch (e) { claims = {}; }
+  if (!force && !Array.isArray(claims.perms)) {
+    try { claims = (await user.getIdTokenResult(true)).claims || {}; } catch (e) { /* keep what we have */ }
+  }
   return make(email, claims.role || null, Array.isArray(claims.perms) ? claims.perms : [], claims.key || null);
 }
 
@@ -164,7 +170,7 @@ export function applyPerms(a) {
 // Reload when the person's own team record changes (role, permissions) and
 // sign out at once when their access is suspended or ended.
 export function watchAccess(user, a) {
-  if (!user || a.partner || a.preview) return;
+  if (!user || a.admin || a.preview) return; // partners are staff: watched like anyone else
   let first = true;
   onSnapshot(doc(db, 'team', a.email), async (snap) => {
     if (first) { first = false; return; }

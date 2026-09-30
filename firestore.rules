@@ -2,33 +2,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // The two founders (by email, as before).
-    function isPartner() {
-      return request.auth != null &&
-             request.auth.token.email in [
-               'andre.rocha@douropartners.pt',
-               'antonio.carvalho@douropartners.pt'
-             ];
-    }
-    // Admin / Partner split (30 Sep): the Admin (André) keeps full access to
-    // everything. Partners keep full access except the Admin-only records,
-    // which they can't change directly (the server functions still can).
+    // The Admin (André, by email) has full access to everything. Everyone
+    // else — partners included — goes by the permissions of their role:
+    // Partner is an ordinary, editable role since 30 Sep (no email catch-all),
+    // so what the Admin ticks on it is what the database allows.
     function isOwner() {
       return request.auth != null && request.auth.token.email == 'andre.rocha@douropartners.pt';
     }
-    function adminOnly(coll, docId) {
-      return coll in ['team', 'roles', 'accessAudit', 'usageDaily', 'usageFirestore', 'usageMonthly', 'usageAlerts',
-                      'outreachSettings', 'outreachSenders', 'outreachCompliance']
-        || (coll == 'config' && docId in ['features', 'teamEmailHashes']);
-    }
-    match /{coll}/{docId} {
-      allow read, create, update: if isOwner() || (isPartner() && !adminOnly(coll, docId));
-      // Removing someone from the suppression list (they could be emailed again) is Admin-only.
-      allow delete: if isOwner() || (isPartner() && !adminOnly(coll, docId) && coll != 'outreachSuppression');
-    }
-    // Sub-collections ({sub} makes sure this never matches a top-level record: {rest=**} alone can match nothing).
-    match /{coll}/{docId}/{sub}/{rest=**} {
-      allow read, write: if isOwner() || (isPartner() && !adminOnly(coll, docId));
+    match /{document=**} {
+      allow read, write: if isOwner();
     }
 
     // Investors can read documents where their email is listed

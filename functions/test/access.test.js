@@ -30,21 +30,21 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   ok("no role or extra permission can give an Admin-only permission", P.effectivePerms({ roleId: "x", extraPerms: ["access.manage", "out.admin"] }, { perms: ["search.view", "usage.view", "search.import"] }).join() === "search.view");
   ok("role + extra − removed", JSON.stringify(P.effectivePerms({ roleId: "x", extraPerms: ["net.edit", "bogus"], removedPerms: ["search.edit"] }, { perms: ["search.view", "search.edit"] })) === JSON.stringify(["search.view", "net.edit"]));
   ok("dates: before start / after end → not active; suspended → not active", !P.isActive({ status: "active", startsAt: new Date(Date.now() + 86400000) }) && !P.isActive({ status: "active", endsAt: new Date(Date.now() - 1000) }) && !P.isActive({ status: "suspended" }) && P.isActive({ status: "invited" }));
-  ok("by email, even without a team record: André = Admin (everything), António = Partner (all but Admin-only)", P.claimsFor("andre.rocha@douropartners.pt", null, null).role === "admin" && P.claimsFor("andre.rocha@douropartners.pt", null, null).perms.length === P.ALL.length && P.claimsFor("antonio.carvalho@douropartners.pt", null, null).role === "partner" && P.claimsFor("antonio.carvalho@douropartners.pt", null, null).perms.length === P.PARTNER_PERMS.length);
+  ok("by email only the Admin: André = Admin (everything) even without a record; António gets nothing by email — his permissions come from his record and the Partner role", P.claimsFor("andre.rocha@douropartners.pt", null, null).role === "admin" && P.claimsFor("andre.rocha@douropartners.pt", null, null).perms.length === P.ALL.length && P.claimsFor("antonio.carvalho@douropartners.pt", null, null).perms.length === 0 && P.claimsFor("antonio.carvalho@douropartners.pt", { roleId: "partner", status: "active" }, { perms: P.DEFAULT_ROLES.partner.perms }).perms.length === P.PARTNER_PERMS.length && P.effectivePerms({ roleId: "partner" }, null).length === P.PARTNER_PERMS.length);
   const ANT = { auth: { token: { email: "antonio.carvalho@douropartners.pt", perms: P.ALL } } }; // an old token that still lists everything
   ok("server checks: a partner is refused Admin-only permissions whatever their token says; everything else passes", !P.hasPerm(ANT, "access.manage") && !P.hasPerm(ANT, "features.manage") && !P.hasPerm(ANT, "usage.view") && !P.hasPerm(ANT, "out.admin") && !P.hasPerm(ANT, "search.import") && P.hasPerm(ANT, "out.templates") && P.hasPerm(ANT, "search.delete") && P.hasPerm(ANT, "portal.admin") && P.hasPerm(PARTNER, "access.manage"));
 
-  // ── Only partners manage access ──
+  // ── Only the Admin manages access ──
   ok("an intern can't use Team & access", (await team({ action: "seed" }, as("maria@douropartners.pt", ["search.view"]))).err?.details?.reason === "no_permission");
   const sd = await team({ action: "seed" });
-  ok("seed: default roles (not Partner) + both partners' records", sd.created === 5 && store.get("roles/intern").perms.includes("search.view") && !store.get("roles/partner") && store.get("team/andre.rocha@douropartners.pt").key === "andre");
+  ok("seed: default roles (Partner is stored like any role) + both founders' records (André Admin, António Partner with NDA)", sd.created === 6 && store.get("roles/intern").perms.includes("search.view") && JSON.stringify(store.get("roles/partner").perms) === JSON.stringify(P.PARTNER_PERMS) && store.get("team/andre.rocha@douropartners.pt").roleId === "admin" && store.get("team/antonio.carvalho@douropartners.pt").roleId === "partner" && store.get("team/antonio.carvalho@douropartners.pt").ndaSigned === true);
   ok("seed again: nothing new", (await team({ action: "seed" })).created === 0);
 
   // ── Invite ──
   ok("invite needs a valid email / name / key / role", (await team({ action: "invite", member: { email: "x", name: "X", key: "x1", roleId: "intern" } })).err?.details?.reason === "bad_email"
     && (await team({ action: "invite", member: { email: "m@d.pt", name: "M", key: "M!", roleId: "intern" } })).err?.details?.reason === "bad_key"
     && (await team({ action: "invite", member: { email: "m@d.pt", name: "M", key: "maria", roleId: "nope" } })).err?.details?.reason === "bad_role");
-  ok("nobody can be invited as Partner", (await team({ action: "invite", member: { email: "m@d.pt", name: "M", key: "maria", roleId: "partner" } })).err?.details?.reason === "partner_locked");
+  ok("nobody can be invited as Admin; someone can be invited as Partner (staff)", (await team({ action: "invite", member: { email: "m@d.pt", name: "M", key: "maria", roleId: "admin" } })).err?.details?.reason === "partner_locked" && !(await team({ action: "invite", member: { email: "p2@d.pt", name: "Pedro", key: "pedro", roleId: "partner", ndaSigned: true } })).err && store.get("team/p2@d.pt").roleId === "partner");
   ok("short name must be unique", (await team({ action: "invite", member: { email: "m@d.pt", name: "M", key: "andre", roleId: "intern" } })).err?.details?.reason === "key_taken");
   const end = new Date(Date.now() + 90 * 86400000).toISOString();
   const inv = await team({ action: "invite", member: { email: "Maria@DouroPartners.pt", name: "Maria Silva", key: "maria", roleId: "intern", endsAt: end, ndaSigned: true } });
@@ -77,19 +77,26 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   await team({ action: "update", email: "rita@douropartners.pt", member: { ndaSigned: true } });
   ok("G2: NDA ticked → signs in", (await signIn("rita@douropartners.pt")).res?.customClaims?.key === "rita");
   store.set("team/antonio.carvalho@douropartners.pt", { ...store.get("team/antonio.carvalho@douropartners.pt"), ndaSigned: false });
-  ok("G2: partners are exempt", (await signIn("antonio.carvalho@douropartners.pt", "uid-antonio")).res?.customClaims?.role === "partner");
+  ok("G2: partners need the NDA like any staff; only the Admin is exempt", (await signIn("antonio.carvalho@douropartners.pt", "uid-antonio")).err?.code === "permission-denied" && (store.set("team/andre.rocha@douropartners.pt", { ...store.get("team/andre.rocha@douropartners.pt"), ndaSigned: false }), (await signIn("andre.rocha@douropartners.pt", "uid-andre")).res?.customClaims?.role === "admin"));
+  store.set("team/antonio.carvalho@douropartners.pt", { ...store.get("team/antonio.carvalho@douropartners.pt"), ndaSigned: true });
+  store.set("team/andre.rocha@douropartners.pt", { ...store.get("team/andre.rocha@douropartners.pt"), ndaSigned: true });
 
   // ── Changes reach her account at once ──
   authCalls.length = 0;
   await team({ action: "update", email: "maria@douropartners.pt", member: { extraPerms: ["net.edit"], removedPerms: ["out.tasks"] } });
   const cl = authCalls.find((c) => c.op === "claims" && c.uid === "uid-maria")?.claims;
   ok("extra / removed permissions: claims refreshed on her account", cl && cl.perms.includes("net.edit") && !cl.perms.includes("out.tasks"));
-  ok("a partner's role can't be changed", (await team({ action: "update", email: "antonio.carvalho@douropartners.pt", member: { roleId: "viewer" } })).err?.details?.reason === "partner_locked");
+  ok("the Admin's role can't be changed; a partner's can (staff)", (await team({ action: "update", email: "andre.rocha@douropartners.pt", member: { roleId: "viewer" } })).err?.details?.reason === "partner_locked" && !(await team({ action: "update", email: "p2@d.pt", member: { roleId: "viewer" } })).err && store.get("team/p2@d.pt").roleId === "viewer");
   authCalls.length = 0;
   const sr = await team({ action: "saveRole", roleId: "intern", role: { name: "Intern", perms: ["search.view", "out.view", "access.manage"] } });
   const cl2 = authCalls.find((c) => c.op === "claims" && c.uid === "uid-maria")?.claims;
   ok("editing a role updates everyone with it (Maria and Rita); managing access can't be given to a role", sr.updated === 2 && cl2 && !cl2.perms.includes("search.edit") && !store.get("roles/intern").perms.includes("access.manage"));
-  ok("the Partner role can't be edited", (await team({ action: "saveRole", roleId: "partner", role: { name: "x", perms: [] } })).err?.details?.reason === "partner_locked");
+  authCalls.length = 0;
+  const spr = await team({ action: "saveRole", roleId: "partner", role: { name: "Partner", perms: P.PARTNER_PERMS.filter((x) => x !== "search.delete").concat(["access.manage"]) } });
+  const antClaims = authCalls.find((c) => c.op === "claims" && c.uid === "uid-antonio")?.claims;
+  ok("the Admin edits the Partner role: saved (never Admin-only), and António's account follows at once", !spr.err && !store.get("roles/partner").perms.includes("search.delete") && !store.get("roles/partner").perms.includes("access.manage") && antClaims && !antClaims.perms.includes("search.delete"));
+  await team({ action: "saveRole", roleId: "partner", role: { name: "Partner", perms: P.PARTNER_PERMS } });
+  ok("the Admin role can't be edited", (await team({ action: "saveRole", roleId: "admin", role: { name: "x", perms: [] } })).err?.details?.reason === "partner_locked");
   ok("a role in use can't be deleted", (await team({ action: "deleteRole", roleId: "intern" })).err?.details?.reason === "role_in_use");
 
   // ── Suspend / reactivate / end ──
@@ -99,7 +106,7 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   ok("suspended: sign-in refused, off the login list", (await signIn("maria@douropartners.pt", "uid-maria")).err?.code === "permission-denied" && !store.get("config/teamEmailHashes").hashes.includes(sha("maria@douropartners.pt")));
   await team({ action: "reactivate", email: "maria@douropartners.pt" });
   ok("reactivate: signs in again", (await signIn("maria@douropartners.pt", "uid-maria")).res?.customClaims?.role === "intern");
-  ok("partners can't be suspended", (await team({ action: "suspend", email: "antonio.carvalho@douropartners.pt" })).err?.details?.reason === "partner_locked");
+  ok("the Admin can't be suspended; a partner can (staff), and comes back on reactivate", (await team({ action: "suspend", email: "andre.rocha@douropartners.pt" })).err?.details?.reason === "partner_locked" && !(await team({ action: "suspend", email: "antonio.carvalho@douropartners.pt" })).err && store.get("team/antonio.carvalho@douropartners.pt").status === "suspended" && !(await team({ action: "reactivate", email: "antonio.carvalho@douropartners.pt" })).err && store.get("team/antonio.carvalho@douropartners.pt").status === "active");
 
   // A former team member who is also an investor signs in as an investor only
   await team({ action: "invite", member: { email: "investor@fundo.pt", name: "Inv", key: "inv", roleId: "viewer" } });
@@ -160,7 +167,7 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   // A failing team lookup never locks partners or investors out
   const origDoc = F.fakeDb.doc;
   F.fakeDb.doc = (path) => (String(path).startsWith("team/") ? { get: async () => { throw new Error("firestore down"); } } : origDoc(path));
-  ok("team lookup error: partner still signs in (by email)", !(await signIn("antonio.carvalho@douropartners.pt")).err);
+  ok("team lookup error: the Admin still signs in (by email); a partner, like other staff, waits for the lookup", !(await signIn("andre.rocha@douropartners.pt")).err && (await signIn("antonio.carvalho@douropartners.pt")).err?.code === "permission-denied");
   ok("team lookup error: investor still signs in", !(await signIn("investor@fundo.pt")).err);
   F.fakeDb.doc = origDoc;
 

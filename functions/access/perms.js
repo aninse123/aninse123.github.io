@@ -7,10 +7,12 @@
 // the sign-in token ({ role, perms, key }), so Firestore rules check
 // request.auth.token.perms without extra reads.
 //
-// Admin / Partner split (30 Sep): the Admin (André, by email) has everything;
-// Partners (the two founders, by email) have everything except the
-// Admin-only permissions. Nobody else — no role, no extra permission — can
-// hold an Admin-only permission. Both levels are fixed (not editable).
+// Admin / Partner (30 Sep): the Admin (André, by email) has everything and is
+// fixed. Partner is an ordinary, editable role (starts with everything except
+// the Admin-only permissions); partners are staff like anyone else. Nobody
+// but the Admin — no role, no extra permission — can hold an Admin-only
+// permission. PARTNER_EMAILS keeps only its business meaning (the founders:
+// approvers list, default signer…), never permissions.
 //
 // Keep in sync with portal/access.js (tests/portal/access_parity test).
 
@@ -72,7 +74,7 @@ const withoutAdminOnly = (list) => list.filter((p) => !ADMIN_ONLY.includes(p));
 // Default roles (editable in Team & access, except Admin and Partner).
 const DEFAULT_ROLES = {
   admin: { name: "Admin", locked: true, perms: ALL, description: "André — everything, always." },
-  partner: { name: "Partner", locked: true, perms: PARTNER_PERMS, description: "Founders — everything except the Admin-only permissions." },
+  partner: { name: "Partner", perms: PARTNER_PERMS, description: "Partners — everything except the Admin-only permissions (editable by the Admin)." },
   analyst: {
     name: "Analyst",
     perms: ["search.view", "search.edit", "search.editall", "search.activity", "search.deal", "search.stats", "search.export", "out.view", "out.draft", "out.tasks", "out.campaigns", "net.view", "net.edit", "icrm.view"],
@@ -92,14 +94,14 @@ const DEFAULT_ROLES = {
 
 const cleanList = (v) => [...new Set((Array.isArray(v) ? v : []).map(String).filter((p) => IS_PERM.has(p)))];
 
-// role perms + extra − removed, never Admin-only. Admin = everything,
-// Partner = everything but Admin-only (computed, so new permissions apply
-// automatically).
+// role perms + extra − removed, never Admin-only. Admin = everything
+// (computed, so new permissions apply automatically). A missing Partner role
+// falls back to its default.
 function effectivePerms(member, role) {
   if (!member) return [];
   if (member.roleId === "admin") return ALL.slice();
-  if (member.roleId === "partner") return PARTNER_PERMS.slice();
-  const set = new Set(cleanList(role?.perms));
+  const base = role ? role.perms : member.roleId === "partner" ? DEFAULT_ROLES.partner.perms : [];
+  const set = new Set(cleanList(base));
   cleanList(member.extraPerms).forEach((p) => set.add(p));
   cleanList(member.removedPerms).forEach((p) => set.delete(p));
   return withoutAdminOnly(ALL.filter((p) => set.has(p)));
@@ -115,12 +117,11 @@ function isActive(member, now = new Date()) {
   return true;
 }
 
-// Custom claims for a sign-in token. By email: the Admin gets everything,
-// a Partner everything but Admin-only.
+// Custom claims for a sign-in token. The Admin (by email) gets everything;
+// everyone else — partners included — what their team record and role give.
 function claimsFor(email, member, role) {
   const e = String(email || "").trim().toLowerCase();
   if (ADMIN_EMAILS.includes(e)) return { role: "admin", perms: ALL.slice(), key: member?.key || PARTNER_KEYS[e] };
-  if (PARTNER_EMAILS.includes(e)) return { role: "partner", perms: PARTNER_PERMS.slice(), key: member?.key || PARTNER_KEYS[e] };
   if (!isActive(member)) return { role: null, perms: [], key: null };
   return { role: member.roleId || null, perms: effectivePerms(member, role), key: member.key || null };
 }
@@ -133,7 +134,6 @@ function hasPerm(request, perm) {
   const email = callerOf(request);
   if (ADMIN_EMAILS.includes(email)) return true;
   if (ADMIN_ONLY.includes(perm)) return false; // whatever an old token says
-  if (PARTNER_EMAILS.includes(email)) return true;
   const perms = request.auth?.token?.perms;
   return Array.isArray(perms) && perms.includes(perm);
 }

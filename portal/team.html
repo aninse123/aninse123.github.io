@@ -166,6 +166,9 @@
     // Admin / Partner split: Admin = everything (André); Partner = all but Admin-only.
     const ADMIN_EMAIL = 'andre.rocha@douropartners.pt';
     const isAdminRec = (p) => p.roleId === 'admin' || p.id === ADMIN_EMAIL;
+    // Partner is an ordinary role (30 Sep): until it's stored (Refresh everyone's
+    // access, or its first Save), its default stands in.
+    const allRoles = () => (roles.some(r => r.id === 'partner') ? roles : [{ id: 'partner', name: 'Partner', description: '', perms: PARTNER_PERMS, unsaved: true }, ...roles]);
     const GROUPS = [...new Set(PERMS.map(p => p[1]))];
     const TAB_OF = Object.fromEntries(Object.entries(TAB_PERM).map(([k, v]) => [v, k]));
     const TAB_LABEL = { investor: 'Investor view', admin: 'Admin', crm: 'Investor CRM', search: 'Search CRM', outreach: 'Outreach', network: 'Network', budget: 'Budget', log: 'Activity Log', team: 'Team' };
@@ -221,8 +224,8 @@
     }
 
     const roleName = (id) => (id === 'admin' ? 'Admin' : id === 'partner' ? 'Partner' : roles.find(r => r.id === id)?.name || id || '—');
-    const rolePerms = (id) => (id === 'admin' ? ALL : id === 'partner' ? PARTNER_PERMS : (roles.find(r => r.id === id)?.perms || []).filter(x => !ADMIN_ONLY.includes(x)));
-    const effective = (p) => { if (isAdminRec(p)) return ALL; if (p.roleId === 'partner') return PARTNER_PERMS; const s = new Set(rolePerms(p.roleId)); ADMIN_ONLY.forEach(x => s.delete(x)); (p.extraPerms || []).forEach(x => s.add(x)); (p.removedPerms || []).forEach(x => s.delete(x)); return ALL.filter(x => s.has(x)); };
+    const rolePerms = (id) => (id === 'admin' ? ALL : (allRoles().find(r => r.id === id)?.perms || []).filter(x => !ADMIN_ONLY.includes(x)));
+    const effective = (p) => { if (isAdminRec(p)) return ALL; const s = new Set(rolePerms(p.roleId)); ADMIN_ONLY.forEach(x => s.delete(x)); (p.extraPerms || []).forEach(x => s.add(x)); (p.removedPerms || []).forEach(x => s.delete(x)); return ALL.filter(x => s.has(x)); };
     const tabsOf = (perms) => Object.entries(TAB_PERM).filter(([, v]) => perms.includes(v)).map(([k]) => TAB_LABEL[k]);
     function statusBadge(p) {
       const ended = tsMs(p.endsAt) && tsMs(p.endsAt) <= Date.now();
@@ -238,18 +241,17 @@
       const row = (p) => {
         const eff = effective(p);
         const custom = (p.extraPerms || []).length || (p.removedPerms || []).length;
-        const admin = isAdminRec(p);
-        const partner = admin || p.roleId === 'partner';
+        const admin = isAdminRec(p); // the one fixed level; partners are staff like anyone else
         const live = ['invited', 'active'].includes(p.status);
-        const ndaWait = !partner && live && !p.ndaSigned; // G2: can't sign in until the NDA is ticked
+        const ndaWait = !admin && live && !p.ndaSigned; // G2: can't sign in until the NDA is ticked
         return `<tr>
           <td><b>${esc(p.name || p.id)}</b> <span class="hint">· ${esc(p.key || '')}</span><div class="hint">${esc(p.id)}</div>${p.contactPhone || p.contactEmail ? `<div class="hint" title="Printed on letters and call scripts they sign">On letters: ${esc([p.contactPhone, p.contactEmail].filter(Boolean).join(' · '))}</div>` : ''}</td>
-          <td>${esc(admin ? 'Admin' : roleName(p.roleId))}${custom ? ' <span class="badge badge--amber" title="Extra or removed permissions">custom</span>' : ''}<div class="hint">${admin ? 'Admin — always full access' : partner ? 'Partner — everything except Admin-only' : esc(tabsOf(eff).join(' · ') || 'no tabs')}</div></td>
+          <td>${esc(admin ? 'Admin' : roleName(p.roleId))}${custom ? ' <span class="badge badge--amber" title="Extra or removed permissions">custom</span>' : ''}<div class="hint">${admin ? 'Admin — always full access' : esc(tabsOf(eff).join(' · ') || 'no tabs')}</div></td>
           <td>${statusBadge(p)}${ndaWait ? ' <span class="badge badge--amber" title="They can\'t sign in until the NDA is recorded — Edit → tick NDA signed">waiting for NDA</span>' : ''}</td>
-          <td style="white-space:nowrap;">${partner ? '—' : esc(day(p.endsAt))}</td>
+          <td style="white-space:nowrap;">${admin ? '—' : esc(day(p.endsAt))}</td>
           <td style="white-space:nowrap;">${tsMs(p.lastSignInAt) ? esc(dtFmt.format(new Date(tsMs(p.lastSignInAt)))) : '<span class="hint">never</span>'}</td>
           <td class="c">${p.ndaSigned ? '✓' : '<span class="hint">—</span>'}</td>
-          <td><div class="actions">${partner ? `<button class="btn btn--ghost btn--sm" data-contact="${esc(p.id)}">Contact details</button>` : `
+          <td><div class="actions">${admin ? `<button class="btn btn--ghost btn--sm" data-contact="${esc(p.id)}">Contact details</button>` : `
             <button class="btn btn--ghost btn--sm" data-edit="${esc(p.id)}">Edit</button>
             ${live ? `<button class="btn btn--ghost btn--sm" data-mail="${esc(p.id)}"${ndaWait ? ' disabled' : ''} title="${ndaWait ? 'Tick NDA signed first (Edit)' : p.invitationSentAt ? 'Last sent ' + esc(day(p.invitationSentAt)) : 'Not sent yet'}">${p.invitationSentAt ? 'Resend invitation' : 'Send invitation'}</button>` : ''}
             ${p.status === 'suspended' ? `<button class="btn btn--ghost btn--sm" data-act="reactivate" data-email="${esc(p.id)}">Reactivate</button>` : p.status !== 'ended' ? `<button class="btn btn--ghost btn--sm" data-act="suspend" data-email="${esc(p.id)}">Suspend</button>` : ''}
@@ -318,7 +320,7 @@
       const editing = !!p;
       const base = p || from || {};
       const endDefault = isoFmt.format(new Date(Date.now() + 90 * 86400000));
-      const roleOpts = roles.map(r => `<option value="${esc(r.id)}"${(base.roleId || 'intern') === r.id ? ' selected' : ''}>${esc(r.name)}</option>`).join('');
+      const roleOpts = allRoles().map(r => `<option value="${esc(r.id)}"${(base.roleId || 'intern') === r.id ? ' selected' : ''}>${esc(r.name)}</option>`).join('');
       $('modalRoot').innerHTML = `<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
         <h3 id="mTitle">${editing ? `Edit ${esc(p.name)}` : 'Invite someone'}</h3>
         <div class="err" id="mErr" hidden></div>
@@ -399,15 +401,15 @@
 
     // Roles: permission matrix. Admin and Partner are fixed; others editable, saved per role.
     function renderRoles() {
-      const cols = [{ id: 'admin', name: 'Admin', perms: ALL, locked: true }, { id: 'partner', name: 'Partner', perms: PARTNER_PERMS, locked: true, preview: true }, ...roles];
-      const count = (id) => people.filter(p => (id === 'admin' ? isAdminRec(p) : id === 'partner' ? p.roleId === 'partner' && !isAdminRec(p) : p.roleId === id) && p.status !== 'ended').length;
+      const cols = [{ id: 'admin', name: 'Admin', perms: ALL, locked: true }, ...allRoles()];
+      const count = (id) => people.filter(p => (id === 'admin' ? isAdminRec(p) : p.roleId === id && !isAdminRec(p)) && p.status !== 'ended').length;
       $('v-roles').innerHTML = `<div class="card">
           <div class="toolbar"><h2>Roles</h2><span class="hint">A role is a template; a person can have extra or removed permissions on top.</span><button class="btn btn--primary btn--sm" id="newRoleBtn" style="margin-left:auto;">New role</button></div>
           <div class="table-wrap"><table class="matrix"><thead><tr><th>Permission</th>${cols.map(r => `<th class="c">${esc(r.name)}<div class="hint" style="text-transform:none;letter-spacing:0;font-weight:500;">${count(r.id)} ${count(r.id) === 1 ? 'person' : 'people'}</div></th>`).join('')}</tr></thead>
           <tbody>${GROUPS.map(g => `<tr class="grp"><td colspan="${cols.length + 1}">${esc(g)}</td></tr>${PERMS.filter(x => x[1] === g).map(([code, , label]) => `<tr><td>${esc(label)}<div class="hint">${esc(code)}</div></td>${cols.map(r => `<td class="c"><input type="checkbox" aria-label="${esc(r.name)}: ${esc(label)}" data-role="${esc(r.id)}" data-code="${esc(code)}"${(r.perms || []).includes(code) ? ' checked' : ''}${r.locked || ADMIN_ONLY.includes(code) ? ' disabled' : ''}></td>`).join('')}</tr>`).join('')}`).join('')}
-            <tr><td></td>${cols.map(r => `<td class="c">${r.locked ? (r.preview ? `<div class="actions" style="justify-content:center;"><span class="hint">fixed</span><button class="btn btn--ghost btn--sm" data-preview="partner" title="See the portal as a partner (António), in this tab">Preview</button></div>` : '<span class="hint">fixed</span>') : `<div class="actions" style="justify-content:center;"><button class="btn btn--ghost btn--sm" data-preview="${esc(r.id)}" title="See the portal as this role, in this tab">Preview</button><button class="btn btn--ghost btn--sm" data-saverole="${esc(r.id)}">Save</button>${count(r.id) ? '' : `<button class="btn btn--danger btn--sm" data-delrole="${esc(r.id)}">Delete</button>`}</div>`}</td>`).join('')}</tr>
+            <tr><td></td>${cols.map(r => `<td class="c">${r.locked ? '<span class="hint">fixed</span>' : `<div class="actions" style="justify-content:center;"><button class="btn btn--ghost btn--sm" data-preview="${esc(r.id)}" title="See the portal as this role, in this tab">Preview</button><button class="btn btn--ghost btn--sm" data-saverole="${esc(r.id)}">Save</button>${count(r.id) ? '' : `<button class="btn btn--danger btn--sm" data-delrole="${esc(r.id)}">Delete</button>`}</div>`}</td>`).join('')}</tr>
           </tbody></table></div></div>
-        <p class="hint" style="margin-top:10px;">Permissions marked (Admin) stay with the Admin — they can't be given to a partner, a role or a person. Saving a role updates everyone who has it at once.</p>`;
+        <p class="hint" style="margin-top:10px;">Admin is the one fixed level. Partner is a role like the others — tick what partners may do and Save. Permissions marked (Admin) stay with the Admin; they can't be given to any role or person. Saving a role updates everyone who has it at once.</p>`;
       $('newRoleBtn').addEventListener('click', async () => {
         const name = prompt('Name of the new role (e.g. "Fundraising analyst"):', ''); if (!name) return;
         const copy = prompt(`Start from which role's permissions? (${roles.map(r => r.name).join(', ')} — or leave empty)`, 'Intern');
@@ -415,13 +417,13 @@
         try { await call({ action: 'saveRole', role: { name, perms: src?.perms || [] } }); toast(`Role "${name}" created — tick its permissions and Save.`); } catch (e) { toast(errText(e)); }
       });
       $('v-roles').querySelectorAll('[data-preview]').forEach(b => b.addEventListener('click', () => {
-        const r = b.dataset.preview === 'partner' ? { name: 'Partner', perms: PARTNER_PERMS } : roles.find(x => x.id === b.dataset.preview);
-        startPreview(r.name, (r.perms || []).filter(x => b.dataset.preview === 'partner' || !ADMIN_ONLY.includes(x)));
+        const r = allRoles().find(x => x.id === b.dataset.preview);
+        startPreview(r.name, (r.perms || []).filter(x => !ADMIN_ONLY.includes(x)));
         const home = homeFor({ can: (p) => (r.perms || []).includes(p) });
         window.location.href = home || '/portal/investor.html';
       }));
       $('v-roles').querySelectorAll('[data-saverole]').forEach(b => b.addEventListener('click', async () => {
-        const id = b.dataset.saverole, r = roles.find(x => x.id === id);
+        const id = b.dataset.saverole, r = allRoles().find(x => x.id === id);
         const perms = [...$('v-roles').querySelectorAll(`[data-role="${id}"]:checked`)].map(c => c.dataset.code);
         if (!confirm(`Save the "${r.name}" role? ${count(id)} ${count(id) === 1 ? 'person gets' : 'people get'} the new permissions now.`)) return;
         b.disabled = true;
