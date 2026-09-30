@@ -99,6 +99,7 @@ async function monitoringTotals(start, end, { fetchImpl = globalThis.fetch, toke
   }
   const secs = Math.max(60, Math.round((end - start) / 1000));
   const out = {};
+  let series = 0;
   for (const [name, metric] of Object.entries(METRICS)) {
     const qs = new URLSearchParams({
       filter: `metric.type="firestore.googleapis.com/document/${metric}"`,
@@ -108,8 +109,12 @@ async function monitoringTotals(start, end, { fetchImpl = globalThis.fetch, toke
     const res = await fetchImpl(`https://monitoring.googleapis.com/v3/projects/${PROJECT}/timeSeries?${qs}`, { headers: { Authorization: `Bearer ${bearer}` } });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) { const e = new Error(body?.error?.message || `Monitoring ${res.status}`); e.status = res.status; throw e; }
+    series += (body.timeSeries || []).length;
     out[name] = (body.timeSeries || []).reduce((sum, ts) => sum + (ts.points || []).reduce((s, p) => s + Number(p.value?.int64Value ?? p.value?.doubleValue ?? 0), 0), 0);
   }
+  // No series at all = Google has nothing for that time (e.g. past its ~6-week
+  // retention) — not the same as a day with zero reads.
+  if (!series) out.noData = true;
   return out;
 }
 async function storeExact(day, now, opts) {
@@ -119,7 +124,8 @@ async function storeExact(day, now, opts) {
   const ref = db().doc(`usageFirestore/${day}`);
   try {
     const t = await monitoringTotals(start, end, opts);
-    await ref.set({ ...t, complete: endFull <= now, fetchedAt: FieldValue.serverTimestamp(), error: null }, { merge: true });
+    if (t.noData) { await ref.set({ noData: true, complete: endFull <= now, fetchedAt: FieldValue.serverTimestamp(), error: null }, { merge: true }); return t; }
+    await ref.set({ ...t, noData: false, complete: endFull <= now, fetchedAt: FieldValue.serverTimestamp(), error: null }, { merge: true });
     return t;
   } catch (e) {
     const error = e.status === 403 ? "no_permission" : (e.message || "failed").slice(0, 200);
@@ -162,6 +168,8 @@ async function snapshot(now) {
 }
 
 // ── Refresh: exact figures (today so far + the last 7 days) and the snapshot ──
+// backfill: as far back as Google keeps Firestore metrics (~6 weeks).
+const BACKFILL_DAYS = 42;
 async function refreshUsage({ now = new Date(), days = 7, monitoring = {} } = {}) {
   const today = pacificDay(now);
   const exact = {};
@@ -169,7 +177,7 @@ async function refreshUsage({ now = new Date(), days = 7, monitoring = {} } = {}
     const d = addDays(today, -i);
     if (i > 0) {
       const cur = (await db().doc(`usageFirestore/${d}`).get()).data();
-      if (cur?.complete && !cur.error) continue; // a finished day doesn't change
+      if (cur?.complete && !cur.error) continue; // a finished day (or one Google has no data for) doesn't change
     }
     exact[d] = await storeExact(d, now, monitoring);
     if (exact[d].error === "no_permission") break; // no point asking again
@@ -229,10 +237,10 @@ async function senderAlerts(list) {
 }
 
 // ── Callable + daily job ──
-const usageAdmin = onCall({ region: REGION, timeoutSeconds: 120 }, async (request) => {
+const usageAdmin = onCall({ region: REGION, timeoutSeconds: 300 }, async (request) => {
   if (!P.hasPerm(request, "access.manage")) throw new HttpsError("permission-denied", "Only partners can see usage.", { reason: "no_permission" });
   const action = request.data?.action;
-  if (action === "refresh") return refreshUsage();
+  if (action === "refresh") return refreshUsage({ days: request.data?.backfill ? BACKFILL_DAYS : 7 });
   throw new HttpsError("invalid-argument", "Unknown action.", { reason: "bad_action" });
 });
 // 09:30 Lisbon: after Pacific midnight, so yesterday's database figures are final.
@@ -242,4 +250,4 @@ const usageJob = onSchedule({ region: REGION, schedule: "30 9 * * *", timeZone: 
   logger.info("usage job", { exact: Object.keys(r.exact).length, rolledUp: k.moved });
 });
 
-module.exports = { usageAdmin, usageJob, bump, countEmail, countPerson, personKey, refreshUsage, rollup, senderAlerts, monitoringTotals, zonedMidnight, lisbonDay, pacificDay, addDays, nest, safeKey, _keyCache: keyCache };
+module.exports = { BACKFILL_DAYS, usageAdmin, usageJob, bump, countEmail, countPerson, personKey, refreshUsage, rollup, senderAlerts, monitoringTotals, zonedMidnight, lisbonDay, pacificDay, addDays, nest, safeKey, _keyCache: keyCache };

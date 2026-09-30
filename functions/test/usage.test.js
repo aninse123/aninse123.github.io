@@ -59,6 +59,18 @@ const day = () => store.get(`usageDaily/${U.lisbonDay()}`) || {};
   const r2 = await U.refreshUsage({ now: new Date(), days: 3, monitoring: { fetchImpl: denied, token: "t" } });
   ok("no permission yet: recorded as no_permission (the page falls back to estimates) and not retried for older days", r2.exact[pToday]?.error === "no_permission" && Object.keys(r2.exact).length === 1);
 
+  // Backfill: as far back as Google keeps figures; days it has nothing for are marked, not stored as zero
+  const oldCut = U.addDays(pToday, -20);
+  const partial = async (url) => { const d = decodeURIComponent(String(url)).match(/interval\.startTime=(\d{4}-\d{2}-\d{2})/)?.[1]; return { ok: true, status: 200, json: async () => (d && d < oldCut ? {} : { timeSeries: [{ points: [{ value: { int64Value: "10" } }] }] }) }; };
+  calls = [];
+  const bf = await U.refreshUsage({ now: new Date(), days: U.BACKFILL_DAYS, monitoring: { fetchImpl: async (u) => { calls.push(u); return partial(u); }, token: "t" } });
+  const old = store.get(`usageFirestore/${U.addDays(pToday, -30)}`), recent = store.get(`usageFirestore/${U.addDays(pToday, -10)}`);
+  ok("backfill covers about 6 weeks (42 days)", U.BACKFILL_DAYS === 42 && Object.keys(bf.exact).length >= 40);
+  ok("a day Google has no data for is marked noData (no zeros); a day it has is stored", old.noData === true && old.reads == null && recent.reads === 10 && recent.noData === false);
+  calls = [];
+  await U.refreshUsage({ now: new Date(), days: U.BACKFILL_DAYS, monitoring: { fetchImpl: async (u) => { calls.push(u); return partial(u); }, token: "t" } });
+  ok("backfill again: finished days (and no-data days) aren't asked again — only today", calls.length === 3);
+
   // Snapshot: drafts waiting, held, exports per person
   store.set("outreachMessages/d1", { status: "draft", createdAt: Timestamp.fromMillis(Date.now() - 5 * 3600000) });
   store.set("outreachMessages/d2", { status: "draft", createdAt: Timestamp.fromMillis(Date.now() - 3600000) });

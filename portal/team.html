@@ -526,7 +526,8 @@
     //     "right now" snapshot, sending addresses, Resend's own count.
     //   Activity — usageDaily.activity per person (sign-ins, exports, AI, phone).
     // Email / activity days are Lisbon days. Each view loads only what it shows.
-    const usageCall = httpsCallable(getFunctions(auth.app, 'us-central1'), 'usageAdmin', { timeout: 120000 });
+    const usageCall = httpsCallable(getFunctions(auth.app, 'us-central1'), 'usageAdmin', { timeout: 300000 });
+    const BACKFILL_DAYS = 42; // Google keeps Firestore metrics ~6 weeks
     const LIMITS = { reads: 50000, writes: 20000, deletes: 20000 };
     const USAGE_VIEWS = [['db', 'Database'], ['email', 'Emails'], ['activity', 'Activity']];
     let usageDays = 30, usageView = 'db', usageMetric = 'reads', usagePersonMetric = 'reads', usageBusy = false;
@@ -568,6 +569,11 @@
       return c;
     }
 
+    function needsBackfill(D) {
+      try { if (sessionStorage.getItem('usageBackfilled')) return false; } catch (e) {}
+      const oldest = addDaysStr(pacificDay(), -(BACKFILL_DAYS - 1));
+      return periodDays(pacificDay).some((d) => d >= oldest && !D.exact[d] && D.reads[d]);
+    }
     async function refreshUsageServer(force) {
       let last = 0; try { last = Number(sessionStorage.getItem('usageRefreshedAt') || 0); } catch (e) {}
       if (!force && Date.now() - last < 10 * 60000) return;
@@ -581,7 +587,16 @@
       if (!$('v-usage').innerHTML) $('v-usage').innerHTML = '<div class="card"><div class="empty">Loading usage…</div></div>';
       try {
         await refreshUsageServer(force);
-        const data = await loadUsageView(usageView);
+        let data = await loadUsageView(usageView);
+        // Older days in the period without Google's exact figures (and not known
+        // to have none): fetch them once — as far back as Google keeps them.
+        if (usageView === 'db' && needsBackfill(data.db)) {
+          try { sessionStorage.setItem('usageBackfilled', '1'); } catch (e) {}
+          $('v-usage').innerHTML = '<div class="card"><div class="empty">Fetching exact figures from Google for older days (one time, up to a minute)…</div></div>';
+          try { await usageCall({ action: 'refresh', backfill: true }); } catch (e) { toast('Could not fetch older exact figures: ' + errText(e)); }
+          usageCache = {};
+          data = await loadUsageView(usageView);
+        }
         drawUsage(data);
       } catch (e) { $('v-usage').innerHTML = `<div class="err">Couldn't load usage: ${esc(errText(e))}</div>`; }
       finally { usageBusy = false; }
@@ -607,16 +622,17 @@
     function drawUsageDb(D) {
       const pDays = periodDays(pacificDay), today = pDays[pDays.length - 1];
       const est = (d) => ({ reads: D.reads[d]?.count || 0, writes: D.writes[d]?.writes || 0, deletes: D.writes[d]?.deletes || 0 });
-      const ex = (d) => (D.exact[d] && !D.exact[d].error && D.exact[d].reads != null ? D.exact[d] : null);
+      const ex = (d) => (D.exact[d] && !D.exact[d].error && !D.exact[d].noData && D.exact[d].reads != null ? D.exact[d] : null);
       const best = (d, m) => (ex(d) ? ex(d)[m] : est(d)[m]);
       const noPerm = Object.values(D.exact).some((x) => x.error === 'no_permission');
       const exactErr = !noPerm && Object.values(D.exact).find((x) => x.error)?.error;
       const src = ex(today) ? 'exact (Google)' : 'estimate (browsers)';
-      const over = pDays.filter((d) => best(d, 'reads') > LIMITS.reads).length;
+      const overDays = pDays.filter((d) => best(d, 'reads') > LIMITS.reads);
+      const overExact = overDays.filter((d) => ex(d)).length, overEst = overDays.length - overExact;
       const tiles = uTile('Reads today', best(today, 'reads'), LIMITS.reads, `of ${nf(LIMITS.reads)} free · ${src}`)
         + uTile('Writes today', best(today, 'writes'), LIMITS.writes, `of ${nf(LIMITS.writes)} free · ${src}`)
         + uTile('Deletes today', best(today, 'deletes'), LIMITS.deletes, `of ${nf(LIMITS.deletes)} free · ${src}`)
-        + uTile('Days over the free reads', over, null, `in the last ${usageDays} days`);
+        + uTile('Days over the free reads', overDays.length, null, `last ${usageDays} days · ${overExact} exact${overEst ? ` · ${overEst} from estimates` : ''}`);
       const vals = pDays.map((d) => ({ d, v: best(d, usageMetric) || 0, exact: !!ex(d) }));
       const lim = LIMITS[usageMetric], max = Math.max(lim, ...vals.map((x) => x.v)) * 1.08;
       const W = 720, H = 180, pad = 26, bw = (W - pad) / vals.length;
