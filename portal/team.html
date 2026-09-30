@@ -38,7 +38,7 @@
     .seg button.sel.off { background: #DDD7CE; color: var(--text); } .seg button.sel.test { background: #B45309; color: #fff; } .seg button.sel.on { background: var(--secondary); color: #fff; }
     .seg button:disabled { cursor: default; opacity: .6; }
     .feat-area td { background: #FAF8F4; font-weight: 600; font-size: 0.78rem; letter-spacing: .05em; text-transform: uppercase; color: var(--text-light); }
-    .feat-desc { font-size: 0.78rem; color: var(--text-light); margin-top: 2px; max-width: 46ch; }
+    .feat-desc { font-size: 0.78rem; color: var(--text-light); margin-top: 2px; max-width: 46ch; } .feat-kill { color: var(--text); border-left: 2px solid #B03A3A; padding-left: 8px; margin-top: 6px; }
     .card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
     .toolbar { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: #FAFAF8; flex-wrap: wrap; }
     .toolbar h2 { font-size: 1rem; font-weight: 600; }
@@ -400,6 +400,20 @@
     const featureCall = httpsCallable(getFunctions(auth.app, 'us-central1'), 'featureAdmin');
     const READY_DAYS = 30;
     let featFilter = 'all';
+    // Round 4 (E1): what a kill switch does while Off, and on the way back.
+    const KILL_HELP = {
+      'kill.outreach.sending': 'While Off: due campaign emails are held ("Held: automatic sending is switched off"); campaigns stay active; tasks are still created; emails sent by hand still go. Back On: nothing to reactivate — held emails go at the next run (every 10 min, in the sending window), spread by the daily limits.',
+      'kill.outreach.scheduler': 'While Off: nothing automatic happens — no emails, drafts, tasks, campaign starts, new audience matches or recurring issues; campaigns stay active; emails sent by hand still go. Back On: carries on where it stopped; what fell due meanwhile runs at the next run (late, not skipped).',
+      'kill.recurring.drafting': 'While Off: no new issues are written; issues already written stay. Back On: the next issue is written at the following run (its date is kept).',
+      'kill.ai': 'While Off: drafts are written without the AI first line; no AI cost. Back On: AI lines return for new drafts.',
+    };
+    // Testers: partners (and anyone with the permission) always; plus people named on the switch.
+    const permTester = (p) => effective(p).includes('features.test');
+    const testerLabel = (list) => {
+      if (!list.length) return 'Testers';
+      const names = list.map((e) => { const p = people.find((x) => x.id === e); return p ? String(p.name || e).split(' ')[0] : e.split('@')[0]; });
+      return 'Testers: ' + (names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', '));
+    };
     onFeaturesChange(() => { if (!$('v-features').hidden) renderFeatures(); });
     function renderFeatures() {
       if (document.activeElement?.closest?.('#v-features') && document.activeElement.tagName === 'INPUT') return;
@@ -418,16 +432,16 @@
         lastArea = f.area;
         return head + `<tr>
           <td><b>${esc(f.name)}</b> <span class="badge ${f.kind === 'kill' ? 'badge--red' : 'badge--blue'}">${f.kind === 'kill' ? 'Kill switch' : 'Release'}</span>${ready(f) ? ' <span class="badge badge--green" title="On in production for 30+ days — the switch can be removed from the code">Ready to remove</span>' : ''}
-            <div class="feat-desc">${esc(f.description)}</div>${x.note ? `<div class="feat-desc">📝 ${esc(x.note)}</div>` : ''}</td>
+            <div class="feat-desc">${esc(f.description)}</div>${KILL_HELP[f.key] ? `<div class="feat-desc feat-kill">${esc(KILL_HELP[f.key])}</div>` : ''}${x.note ? `<div class="feat-desc">📝 ${esc(x.note)}</div>` : ''}</td>
           <td>${seg(f, 'staging')}</td>
           <td>${seg(f, 'production')}</td>
-          <td style="white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-testers="${esc(f.key)}" title="${esc((x.testers || []).join(', ') || 'No extra testers')}">${(x.testers || []).length ? `${x.testers.length} tester${x.testers.length === 1 ? '' : 's'}` : 'Testers'}</button> <button class="btn btn--ghost btn--sm" data-note="${esc(f.key)}">Note</button></td>
+          <td style="white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-testers="${esc(f.key)}" title="${esc((x.testers || []).join(', ') || 'Only people with the tester permission (partners)')}">${esc(testerLabel(x.testers || []))}</button> <button class="btn btn--ghost btn--sm" data-note="${esc(f.key)}">Note</button></td>
           <td class="hint" style="white-space:nowrap;font-size:0.78rem;">${x.updatedBy ? `${esc(String(x.updatedBy).split('@')[0])}<br>${tsMs(x.updatedAt) ? esc(dtFmt.format(new Date(tsMs(x.updatedAt)))) : ''}` : '—'}</td></tr>`;
       }).join('');
       const chip = (k, l) => `<button class="chip${featFilter === k ? ' on' : ''}" data-ffilter="${k}">${l}</button>`;
       $('v-features').innerHTML = `<div class="card">
           <div class="toolbar"><h2>Features</h2><div class="chips" style="margin:0;">${chip('all', 'All')}${chip('test', 'In test now')}${chip('kill', 'Kill switches')}${chip('ready', 'Ready to remove')}</div></div>
-          <p class="hint" style="padding:0 16px 10px;">Off = nobody (the server refuses it) · Test = only testers (permission "Test features before release", or named here), with a TEST badge · On = everyone with the normal permission. Staging and production are set separately; you're on <b>${esc(SITE)}</b>. Kill switches follow the production setting — background jobs serve both sites. To see what someone without the tester permission sees, use Preview on the Roles tab.</p>
+          <p class="hint" style="padding:0 16px 10px;">Off = nobody (the server refuses it) · Test = only testers (permission "Test features before release", or named here), with a TEST badge · On = everyone with the normal permission. Staging and production are set separately; you're on <b>${esc(SITE)}</b>. Kill switches follow the production setting — background jobs serve both sites; they don't pause campaigns, and turning one back On needs nothing else. To see what someone without the tester permission sees, use Preview on the Roles tab.</p>
           <div class="table-wrap"><table><thead><tr><th>Feature</th><th>Staging</th><th>Production</th><th></th><th>Last change</th></tr></thead>
           <tbody>${rows || '<tr><td colspan="5" class="empty">Nothing here.</td></tr>'}</tbody></table></div></div>`;
       $('v-features').querySelectorAll('[data-ffilter]').forEach((b) => b.addEventListener('click', () => { featFilter = b.dataset.ffilter; renderFeatures(); }));
@@ -440,18 +454,43 @@
         try { await featureCall({ action: 'set', key: f.key, site, state }); toast(`${f.name}: ${state === 'on' ? 'On' : state === 'test' ? 'Test' : 'Off'} on ${site}.`); }
         catch (e) { toast(errText(e)); renderFeatures(); }
       }));
-      $('v-features').querySelectorAll('[data-testers]').forEach((b) => b.addEventListener('click', async () => {
-        const key = b.dataset.testers, cur = (currentFlags()[key]?.testers || []).join(', ');
-        const v = prompt('Extra testers for this switch (emails, comma-separated). People with the "Test features before release" permission are always testers.', cur);
-        if (v === null) return;
-        try { await featureCall({ action: 'setTesters', key, testers: v.split(/[,;\s]+/).filter(Boolean) }); toast('Testers saved.'); } catch (e) { toast(errText(e)); }
-      }));
+      $('v-features').querySelectorAll('[data-testers]').forEach((b) => b.addEventListener('click', () => openTesters(b.dataset.testers)));
       $('v-features').querySelectorAll('[data-note]').forEach((b) => b.addEventListener('click', async () => {
         const key = b.dataset.note;
         const v = prompt('Note (e.g. why it is in Test, who is testing):', currentFlags()[key]?.note || '');
         if (v === null) return;
         try { await featureCall({ action: 'setNote', key, note: v }); toast('Note saved.'); } catch (e) { toast(errText(e)); }
       }));
+    }
+
+    // Round 4 (B3): pick testers from the team; partners are always testers.
+    function openTesters(key) {
+      const f = FEATURES.find((x) => x.key === key);
+      const cur = new Set(currentFlags()[key]?.testers || []);
+      const team = people.filter((p) => p.status !== 'ended').sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
+      const teamEmails = new Set(team.map((p) => p.id));
+      const others = [...cur].filter((e) => !teamEmails.has(e));
+      $('modalRoot').innerHTML = `<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="tTitle" style="max-width:520px;">
+        <h3 id="tTitle">Testers — ${esc(f.name)}</h3>
+        <p class="hint" style="margin:-4px 0 12px;">Testers see this feature while it's in <b>Test</b>, with a TEST label. People with the "Test features before release" permission are always testers.</p>
+        <div class="err" id="tErr" hidden></div>
+        <div class="perm-list" id="tList">${team.map((p) => {
+          const always = permTester(p);
+          return `<label><input type="checkbox" data-tester="${esc(p.id)}"${always || cur.has(p.id) ? ' checked' : ''}${always ? ' disabled' : ''}> <span>${esc(p.name || p.id)} <span class="hint">· ${esc(roleName(p.roleId))}${always ? ' · always (has the permission)' : ''}</span></span></label>`;
+        }).join('') || '<p class="hint">Nobody on the team yet.</p>'}</div>
+        <div class="field"><label for="tOthers">Someone outside the team (emails, comma-separated)</label><input type="text" id="tOthers" value="${esc(others.join(', '))}" placeholder="name@example.com"></div>
+        <div class="modal-actions"><button class="btn btn--ghost" id="tCancel">Cancel</button><button class="btn btn--primary" id="tSave">Save</button></div>
+      </div></div>`;
+      const close = () => { $('modalRoot').innerHTML = ''; };
+      $('tCancel').addEventListener('click', close);
+      $('modalRoot').querySelector('.modal-bg').addEventListener('click', (e) => { if (e.target.classList.contains('modal-bg')) close(); });
+      $('tSave').addEventListener('click', async () => {
+        const picked = [...$('tList').querySelectorAll('[data-tester]:checked:not(:disabled)')].map((c) => c.dataset.tester);
+        const extra = $('tOthers').value.split(/[,;\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+        $('tSave').disabled = true; $('tErr').hidden = true;
+        try { await featureCall({ action: 'setTesters', key, testers: [...new Set([...picked, ...extra])] }); close(); toast('Testers saved.'); }
+        catch (e) { $('tErr').textContent = errText(e); $('tErr').hidden = false; $('tSave').disabled = false; }
+      });
     }
 
     async function renderAudit() {
