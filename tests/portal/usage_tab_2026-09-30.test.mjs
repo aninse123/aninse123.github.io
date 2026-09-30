@@ -28,4 +28,5 @@ ok('Alerts: 80% of each free limit, and senders near their cap', /r >= 0\.8 \* F
 
 ok('rules: usage records are Admin-only (only the Admin\'s catch-all reaches them; no other rule grants them)', ['usageDaily', 'usageFirestore', 'usageMonthly', 'usageAlerts'].every((c) => !new RegExp(`match /${c}/`).test(rules)) && /match \/\{document=\*\*\} \{\s*allow read, write: if isOwner\(\);/.test(rules));
 
+ok('Account menu: only the email and Sign out; no quota ring on the avatar (usage lives in Team → Usage)', !/navReads|navWrites|navDeletes|navCost|conic-gradient/.test(nav) && /<span class="nav__email" id="navEmail"><\/span>\s*<button class="nav__signout"/.test(nav) && /export function refreshReads\(\) \{ renderUsageAlert\(\); \}/.test(nav));
 console.log(fail ? `\n${fail} FAILED` : '\nall usage tab tests passed'); process.exit(fail ? 1 : 0);

@@ -35,7 +35,8 @@ html:not([data-access]) .nav__link[data-perm] { visibility: hidden; }
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s;
 }
-/* background is set inline by refreshReads() (conic-gradient quota fill) —
+/* Plain background: the quota ring was removed on 30 Sep (usage lives in
+   Team → Usage). Formerly: background set inline by refreshReads() —
    hover/expanded feedback uses border/shadow instead, so it doesn't get
    silently overridden by the inline style (which always wins over CSS). */
 .nav__avatar:hover { border-color: rgba(255,255,255,0.6); }
