@@ -171,7 +171,7 @@
     const allRoles = () => (roles.some(r => r.id === 'partner') ? roles : [{ id: 'partner', name: 'Partner', description: '', perms: PARTNER_PERMS, unsaved: true }, ...roles]);
     const GROUPS = [...new Set(PERMS.map(p => p[1]))];
     const TAB_OF = Object.fromEntries(Object.entries(TAB_PERM).map(([k, v]) => [v, k]));
-    const TAB_LABEL = { investor: 'Investor view', admin: 'Admin', crm: 'Investor CRM', search: 'Search CRM', outreach: 'Outreach', network: 'Network', budget: 'Budget', log: 'Activity Log', team: 'Team' };
+    const TAB_LABEL = { investor: 'Investor view', admin: 'Investor portal', crm: 'Investor CRM', search: 'Search CRM', outreach: 'Outreach', network: 'Network', budget: 'Budget', log: 'Activity Log', team: 'Team' };
     let people = [], roles = [], me = '';
 
     initNav('team');
