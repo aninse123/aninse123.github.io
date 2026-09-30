@@ -181,6 +181,13 @@
       // #usage, #usage-db, #usage-email, #usage-activity (the alert strip links to the right view)
       const uh = location.hash.match(/^#usage(?:-(db|email|activity))?$/);
       if (uh) { if (uh[1]) usageView = uh[1]; document.querySelector('[data-view="usage"]')?.click(); }
+      // Same page, new #usage-… link (e.g. the alert strip): switch without a reload.
+      window.addEventListener('hashchange', () => {
+        const m = location.hash.match(/^#usage(?:-(db|email|activity))?$/);
+        if (!m) return;
+        if (m[1]) usageView = m[1];
+        if ($('v-usage').hidden) document.querySelector('[data-view="usage"]')?.click(); else renderUsage();
+      });
     });
 
     document.querySelector('.chips').addEventListener('click', (e) => {
