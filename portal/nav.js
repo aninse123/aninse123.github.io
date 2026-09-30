@@ -269,6 +269,7 @@ function renderUsageAlert() {
   if (r >= 0.8 * FREE_TIER_DAILY_READS) msgs.push(`reads ${nf(r)} of ${nf(FREE_TIER_DAILY_READS)} (${Math.round(r / FREE_TIER_DAILY_READS * 100)}%)`);
   if (w >= 0.8 * FREE_TIER_DAILY_WRITES) msgs.push(`writes ${nf(w)} of ${nf(FREE_TIER_DAILY_WRITES)} (${Math.round(w / FREE_TIER_DAILY_WRITES * 100)}%)`);
   if (d >= 0.8 * FREE_TIER_DAILY_DELETES) msgs.push(`deletes ${nf(d)} of ${nf(FREE_TIER_DAILY_DELETES)} (${Math.round(d / FREE_TIER_DAILY_DELETES * 100)}%)`);
+  const dbAlert = msgs.length > 0;
   usageSenders.forEach((s) => msgs.push(`${s.id} sent ${nf(s.sent)} of its ${nf(s.cap)} a day`));
   let bar = document.getElementById('usageAlertBar');
   if (!msgs.length) { bar?.remove(); return; }
@@ -280,7 +281,7 @@ function renderUsageAlert() {
     const nav = document.getElementById('siteNav');
     if (nav?.parentNode) nav.parentNode.insertBefore(bar, nav.nextSibling); else document.body.prepend(bar);
   }
-  bar.innerHTML = `⚠ Usage today: ${msgs.map((m) => m.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))).join(' · ')} — <a href="/portal/team.html#usage" style="color:inherit;">Team → Usage</a>`;
+  bar.innerHTML = `⚠ Usage today: ${msgs.map((m) => m.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))).join(' · ')} — <a href="/portal/team.html#usage-${dbAlert ? 'db' : 'email'}" style="color:inherit;">Team → Usage</a>`;
 }
 
 // Unread-replies count on the Outreach tab. One count aggregation per page

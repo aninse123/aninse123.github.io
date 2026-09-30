@@ -178,7 +178,9 @@
       $('loadingScreen').style.display = 'none';
       $('app').style.display = 'block';
       watch();
-      if (location.hash === '#usage') document.querySelector('[data-view="usage"]')?.click();
+      // #usage, #usage-db, #usage-email, #usage-activity (the alert strip links to the right view)
+      const uh = location.hash.match(/^#usage(?:-(db|email|activity))?$/);
+      if (uh) { if (uh[1]) usageView = uh[1]; document.querySelector('[data-view="usage"]')?.click(); }
     });
 
     document.querySelector('.chips').addEventListener('click', (e) => {
@@ -516,14 +518,19 @@
     }
 
     // ── Usage (partners; Admin-only after the Partner / Admin split) ──
-    // Database: exact totals from Google (usageFirestore, both sites + the
-    // server) with browser estimates as fallback (dailyRead/WriteCounters, by
-    // person and site). Emails and activity: usageDaily (counted where they
-    // happen). Database days follow Google's quota day (midnight Pacific =
-    // 08:00 Lisbon); email / activity days are Lisbon days.
+    // Three views, one period (7 / 30 / 90 days):
+    //   Database — exact totals from Google (usageFirestore: both sites + the
+    //     server) with browser estimates as fallback (dailyRead/WriteCounters,
+    //     by person and site). Days = Google's quota day (midnight Pacific).
+    //   Emails   — usageDaily.email (counted where emails are sent) + the
+    //     "right now" snapshot, sending addresses, Resend's own count.
+    //   Activity — usageDaily.activity per person (sign-ins, exports, AI, phone).
+    // Email / activity days are Lisbon days. Each view loads only what it shows.
     const usageCall = httpsCallable(getFunctions(auth.app, 'us-central1'), 'usageAdmin', { timeout: 120000 });
     const LIMITS = { reads: 50000, writes: 20000, deletes: 20000 };
-    let usageDays = 30, usageMetric = 'reads', usagePersonMetric = 'reads', usageBusy = false, usageData = null;
+    const USAGE_VIEWS = [['db', 'Database'], ['email', 'Emails'], ['activity', 'Activity']];
+    let usageDays = 30, usageView = 'db', usageMetric = 'reads', usagePersonMetric = 'reads', usageBusy = false;
+    let usageCache = {}; // `${days}` → { db, daily, extra }
     const dayIn = (tz) => (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
     const pacificDay = dayIn('America/Los_Angeles'), lisbonDay = dayIn('Europe/Lisbon');
     const addDaysStr = (day, n) => { const t = new Date(`${day}T12:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
@@ -532,59 +539,85 @@
     const sumMap = (a, b) => { const o = { ...(a || {}) }; for (const [k, v] of Object.entries(b || {})) o[k] = (o[k] || 0) + (Number(v) || 0); return o; };
     const pct = (n, lim) => Math.round((Number(n) || 0) / lim * 100);
     const meter = (n, lim) => { const p = Math.min(100, pct(n, lim)); return `<div class="u-meter"><i class="${p >= 100 ? 'bad' : p >= 80 ? 'warn' : ''}" style="width:${p}%"></i></div>`; };
+    const uTile = (label, n, lim, sub) => `<div class="u-tile"><div class="l">${label}</div><div class="n">${nf(n)}</div><div class="l">${sub}</div>${lim ? meter(n, lim) : ''}</div>`;
+    const uChip = (grp, k, l, cur) => `<button class="u-chip${cur === k ? ' on' : ''}" data-u${grp}="${k}">${l}</button>`;
+    const uEmpty = (cols, txt) => `<tr><td colspan="${cols}" class="empty">${txt}</td></tr>`;
+    const periodDays = (fn) => { const out = []; for (let i = usageDays - 1; i >= 0; i--) out.push(addDaysStr(fn(), -i)); return out; };
 
-    async function loadUsage() {
+    async function byIdFrom(coll, from) {
+      const s = await getDocs(query(collection(db, coll), where(documentId(), '>=', from)));
+      addReads(s.size || 1);
+      return Object.fromEntries(s.docs.map((d) => [d.id, d.data()]));
+    }
+    async function loadUsageView(view) {
+      const c = usageCache[usageDays] = usageCache[usageDays] || {};
       const pFrom = addDaysStr(pacificDay(), -(usageDays - 1)), lFrom = addDaysStr(lisbonDay(), -(usageDays - 1));
-      const byId = async (coll, from) => { const s = await getDocs(query(collection(db, coll), where(documentId(), '>=', from))); addReads(s.size || 1); return Object.fromEntries(s.docs.map((d) => [d.id, d.data()])); };
-      const [exact, reads, writes, daily, senders, settings, resend] = await Promise.all([
-        byId('usageFirestore', pFrom), byId('dailyReadCounters', pFrom), byId('dailyWriteCounters', pFrom), byId('usageDaily', lFrom),
-        getDocs(collection(db, 'outreachSenders')).then((s) => { addReads(s.size || 1); return s.docs.map((d) => ({ id: d.id, ...d.data() })); }).catch(() => []),
-        getDoc(doc(db, 'outreachSettings', 'global')).then((s) => { addReads(1); return s.data() || {}; }).catch(() => ({})),
-        getDoc(doc(db, 'outreachUsage', new Date().toISOString().slice(0, 10))).then((s) => { addReads(1); return s.data() || {}; }).catch(() => ({})),
-      ]);
-      const pDays = [], lDays = [];
-      for (let i = usageDays - 1; i >= 0; i--) { pDays.push(addDaysStr(pacificDay(), -i)); lDays.push(addDaysStr(lisbonDay(), -i)); }
-      usageData = { exact, reads, writes, daily, senders, settings, resend, pDays, lDays };
+      if (view === 'db' && !c.db) {
+        const [exact, reads, writes] = await Promise.all([byIdFrom('usageFirestore', pFrom), byIdFrom('dailyReadCounters', pFrom), byIdFrom('dailyWriteCounters', pFrom)]);
+        c.db = { exact, reads, writes };
+      }
+      if ((view === 'email' || view === 'activity') && !c.daily) c.daily = await byIdFrom('usageDaily', lFrom);
+      if (view === 'email' && !c.extra) {
+        const [senders, settings, resend] = await Promise.all([
+          getDocs(collection(db, 'outreachSenders')).then((s) => { addReads(s.size || 1); return s.docs.map((d) => ({ id: d.id, ...d.data() })); }).catch(() => []),
+          getDoc(doc(db, 'outreachSettings', 'global')).then((s) => { addReads(1); return s.data() || {}; }).catch(() => ({})),
+          getDoc(doc(db, 'outreachUsage', new Date().toISOString().slice(0, 10))).then((s) => { addReads(1); return s.data() || {}; }).catch(() => ({})),
+        ]);
+        c.extra = { senders, settings, resend };
+      }
+      return c;
     }
 
     async function refreshUsageServer(force) {
       let last = 0; try { last = Number(sessionStorage.getItem('usageRefreshedAt') || 0); } catch (e) {}
       if (!force && Date.now() - last < 10 * 60000) return;
       try { sessionStorage.setItem('usageRefreshedAt', String(Date.now())); } catch (e) {}
-      try { await usageCall({ action: 'refresh' }); } catch (e) { toast('Couldn\'t update the exact figures: ' + errText(e)); }
+      try { await usageCall({ action: 'refresh' }); usageCache = {}; } catch (e) { toast('Couldn\'t update the exact figures: ' + errText(e)); }
     }
 
     async function renderUsage(force = false) {
       if (usageBusy) return;
       usageBusy = true;
-      if (!usageData) $('v-usage').innerHTML = '<div class="card"><div class="empty">Loading usage…</div></div>';
-      try { await refreshUsageServer(force); await loadUsage(); drawUsage(); }
-      catch (e) { $('v-usage').innerHTML = `<div class="err">Couldn't load usage: ${esc(errText(e))}</div>`; }
+      if (!$('v-usage').innerHTML) $('v-usage').innerHTML = '<div class="card"><div class="empty">Loading usage…</div></div>';
+      try {
+        await refreshUsageServer(force);
+        const data = await loadUsageView(usageView);
+        drawUsage(data);
+      } catch (e) { $('v-usage').innerHTML = `<div class="err">Couldn't load usage: ${esc(errText(e))}</div>`; }
       finally { usageBusy = false; }
     }
 
-    function drawUsage() {
-      const U = usageData; if (!U) return;
-      const est = (d) => ({ reads: U.reads[d]?.count || 0, writes: U.writes[d]?.writes || 0, deletes: U.writes[d]?.deletes || 0 });
-      const ex = (d) => (U.exact[d] && !U.exact[d].error && U.exact[d].reads != null ? U.exact[d] : null);
+    function drawUsage(c) {
+      const head = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+          <div role="tablist" aria-label="Usage views" style="display:flex;gap:6px;">${USAGE_VIEWS.map(([k, l]) => uChip('view', k, l, usageView)).join('')}</div>
+          <span style="width:1px;height:20px;background:var(--border);margin:0 4px;"></span>
+          ${uChip('days', 7, '7 days', usageDays)}${uChip('days', 30, '30 days', usageDays)}${uChip('days', 90, '90 days', usageDays)}
+          <button class="btn btn--ghost btn--sm" id="usageRefresh" style="margin-left:auto;">↻ Refresh</button>
+        </div>`;
+      const body = usageView === 'db' ? drawUsageDb(c.db) : usageView === 'email' ? drawUsageEmail(c.daily, c.extra) : drawUsageActivity(c.daily);
+      $('v-usage').innerHTML = head + body + '<p class="u-note">Kept for 90 days, then rolled into monthly totals. Updated when you open this tab (at most every 10 minutes, or with Refresh) and every morning.</p>';
+      $('v-usage').querySelectorAll('[data-uview]').forEach((b) => b.addEventListener('click', () => { usageView = b.dataset.uview; try { history.replaceState(null, '', '#usage-' + usageView); } catch (e) {} renderUsage(); }));
+      $('v-usage').querySelectorAll('[data-udays]').forEach((b) => b.addEventListener('click', () => { usageDays = Number(b.dataset.udays); renderUsage(); }));
+      $('v-usage').querySelectorAll('[data-umetric]').forEach((b) => b.addEventListener('click', () => { usageMetric = b.dataset.umetric; drawUsage(c); }));
+      $('v-usage').querySelectorAll('[data-upmetric]').forEach((b) => b.addEventListener('click', () => { usagePersonMetric = b.dataset.upmetric; drawUsage(c); }));
+      $('usageRefresh').addEventListener('click', () => renderUsage(true));
+    }
+
+    // ── Database (Firebase) ──
+    function drawUsageDb(D) {
+      const pDays = periodDays(pacificDay), today = pDays[pDays.length - 1];
+      const est = (d) => ({ reads: D.reads[d]?.count || 0, writes: D.writes[d]?.writes || 0, deletes: D.writes[d]?.deletes || 0 });
+      const ex = (d) => (D.exact[d] && !D.exact[d].error && D.exact[d].reads != null ? D.exact[d] : null);
       const best = (d, m) => (ex(d) ? ex(d)[m] : est(d)[m]);
-      const today = U.pDays[U.pDays.length - 1], lToday = U.lDays[U.lDays.length - 1];
-      const noPerm = Object.values(U.exact).some((x) => x.error === 'no_permission');
-      const exactErr = !noPerm && Object.values(U.exact).find((x) => x.error)?.error;
-
-      // Tiles: today
-      const t = U.daily[lToday] || {}, em = t.email || {}, snap = t.snapshot || {};
-      const realToday = Object.values(em.real || {}).reduce((s, v) => s + (Number(v) || 0), 0);
-      const tile = (label, n, lim, sub) => `<div class="u-tile"><div class="l">${label}</div><div class="n">${nf(n)}</div><div class="l">${sub}</div>${lim ? meter(n, lim) : ''}</div>`;
+      const noPerm = Object.values(D.exact).some((x) => x.error === 'no_permission');
+      const exactErr = !noPerm && Object.values(D.exact).find((x) => x.error)?.error;
       const src = ex(today) ? 'exact (Google)' : 'estimate (browsers)';
-      const tiles = tile('Reads today', best(today, 'reads'), LIMITS.reads, `of ${nf(LIMITS.reads)} free · ${src}`)
-        + tile('Writes today', best(today, 'writes'), LIMITS.writes, `of ${nf(LIMITS.writes)} free · ${src}`)
-        + tile('Deletes today', best(today, 'deletes'), LIMITS.deletes, `of ${nf(LIMITS.deletes)} free · ${src}`)
-        + tile('Emails sent today (real)', realToday, null, `${nf(snap.draftsWaiting)} waiting for approval · ${nf(snap.held)} held`)
-        + tile('Resend (whole account)', U.resend.resendDailyUsed ?? null, U.settings.dailyTarget || null, `today${U.settings.dailyTarget ? ` of ${nf(U.settings.dailyTarget)}` : ''} · ${nf(U.resend.resendMonthlyUsed)} this month`);
-
-      // Chart
-      const vals = U.pDays.map((d) => ({ d, v: best(d, usageMetric) || 0, exact: !!ex(d) }));
+      const over = pDays.filter((d) => best(d, 'reads') > LIMITS.reads).length;
+      const tiles = uTile('Reads today', best(today, 'reads'), LIMITS.reads, `of ${nf(LIMITS.reads)} free · ${src}`)
+        + uTile('Writes today', best(today, 'writes'), LIMITS.writes, `of ${nf(LIMITS.writes)} free · ${src}`)
+        + uTile('Deletes today', best(today, 'deletes'), LIMITS.deletes, `of ${nf(LIMITS.deletes)} free · ${src}`)
+        + uTile('Days over the free reads', over, null, `in the last ${usageDays} days`);
+      const vals = pDays.map((d) => ({ d, v: best(d, usageMetric) || 0, exact: !!ex(d) }));
       const lim = LIMITS[usageMetric], max = Math.max(lim, ...vals.map((x) => x.v)) * 1.08;
       const W = 720, H = 180, pad = 26, bw = (W - pad) / vals.length;
       const y = (v) => H - 18 - (v / max) * (H - 30);
@@ -593,78 +626,90 @@
       const chart = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${usageMetric} per day">
         <line x1="${pad}" x2="${W}" y1="${y(lim)}" y2="${y(lim)}" stroke="#B03A3A" stroke-dasharray="4 4"/><text x="${W - 4}" y="${y(lim) - 4}" font-size="10" text-anchor="end" fill="#B03A3A">free limit ${nf(lim)}</text>
         ${bars}${labels}</svg>`;
-
-      // Database table
-      const dbRows = U.pDays.slice().reverse().map((d) => {
-        const e = ex(d), s = est(d), r = U.reads[d] || {}, w = U.writes[d] || {};
+      const rows = pDays.slice().reverse().map((d) => {
+        const e = ex(d), s = est(d), r = D.reads[d] || {}, w = D.writes[d] || {};
         const bg = e ? Math.max(0, e.reads - s.reads) : null;
         return `<tr><td>${d}${d === today ? ' <span class="muted">(so far)</span>' : ''}</td>
           <td class="num">${e ? nf(e.reads) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.reads)}</td><td class="num muted">${nf(r.bySite?.production || 0)} / ${nf(r.bySite?.staging || 0)}</td><td class="num muted">${bg == null ? '—' : nf(bg)}</td>
           <td class="num">${e ? nf(e.writes) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.writes)}</td><td class="num muted">${nf(w.bySiteW?.production || 0)} / ${nf(w.bySiteW?.staging || 0)}</td>
           <td class="num">${e ? nf(e.deletes) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.deletes)}</td></tr>`;
       }).join('');
-
-      // Per person (database estimates)
       const pm = usagePersonMetric, field = pm === 'reads' ? 'byUser' : pm === 'writes' ? 'byUserW' : 'byUserD';
-      const src2 = pm === 'reads' ? U.reads : U.writes;
-      const pKeys = [...new Set(U.pDays.flatMap((d) => Object.keys(src2[d]?.[field] || {})))].sort();
-      const personRows = U.pDays.slice().reverse().filter((d) => Object.keys(src2[d]?.[field] || {}).length).map((d) => `<tr><td>${d}</td>${pKeys.map((k) => `<td class="num">${nf(src2[d][field][k] || 0)}</td>`).join('')}</tr>`).join('');
-
-      // Emails
-      const EK = [['campaign', 'Campaign'], ['recurring', 'Recurring'], ['manual', 'Written in Outreach'], ['relationship', 'Investor CRM / Network'], ['notice', 'Admin notices']];
-      const setSum = (m) => Object.values(m || {}).reduce((s, v) => s + (Number(v) || 0), 0);
-      const emailRows = U.lDays.slice().reverse().map((d) => {
-        const e = U.daily[d]?.email || {};
-        return `<tr><td>${d}</td>${EK.map(([k]) => `<td class="num">${nf(e.real?.[k] || 0)}</td>`).join('')}<td class="num muted">${nf(setSum(e.test))}</td><td class="num">${nf(setSum(e.failed))}</td><td class="num">${nf(e.bounced?.real || 0)}</td><td class="num">${nf(e.complained?.real || 0)}</td><td class="num">${nf(e.unsubscribed?.real || 0)}</td><td class="num">${nf(e.replies?.real || 0)}</td></tr>`;
-      }).join('');
-      let bySender = {}, sentBy = {}, written = {}, approved = {}, act = { signIns: {}, exports: {}, exportRows: {}, ai: {}, mobile: {} };
-      for (const d of U.lDays) {
-        const x = U.daily[d] || {}, e = x.email || {};
-        for (const [k, v] of Object.entries(e.bySender || {})) bySender[k] = sumMap(bySender[k], v);
-        sentBy = sumMap(sentBy, e.sentBy); written = sumMap(written, e.written); approved = sumMap(approved, e.approved);
-        for (const a of Object.keys(act)) act[a] = sumMap(act[a], x.activity?.[a]);
-      }
-      const capOf = (key) => { const s = U.senders.find((z) => z.id.toLowerCase().replace(/[^a-z0-9_-]/g, '_') === key); return s ? { id: s.id, cap: s.dailyCap || 25 } : { id: key, cap: null }; };
-      const todaySender = U.daily[lToday]?.email?.bySender || {};
-      const senderRows = Object.keys(bySender).sort().map((k) => { const c = capOf(k); const t0 = todaySender[k]?.real || 0; return `<tr><td>${esc(c.id)}</td><td class="num">${nf(t0)}${c.cap ? ` <span class="muted">/ ${nf(c.cap)}</span>` : ''}</td><td class="num">${nf(bySender[k].real || 0)}</td><td class="num muted">${nf(bySender[k].test || 0)}</td></tr>`; }).join('');
-      const people3 = [...new Set([...Object.keys(written), ...Object.keys(approved), ...Object.keys(sentBy)])].sort();
-      const emailPeopleRows = people3.map((k) => `<tr><td>${esc(who(k))}</td><td class="num">${nf(written[k] || 0)}</td><td class="num">${nf(approved[k] || 0)}</td><td class="num">${nf(sentBy[k] || 0)}</td></tr>`).join('');
-      const actPeople = [...new Set(Object.values(act).flatMap((m) => Object.keys(m)))].sort();
-      const actRows = actPeople.map((k) => `<tr><td>${esc(who(k))}</td><td class="num">${nf(act.signIns[k] || 0)}</td><td class="num">${nf(act.exports[k] || 0)} <span class="muted">(${nf(act.exportRows[k] || 0)} rows)</span></td><td class="num">${nf(act.ai[k] || 0)}</td><td class="num">${nf(act.mobile[k] || 0)}</td></tr>`).join('');
-      const oldest = snap.oldestDraftAt ? Math.round((Date.now() - tsMs(snap.oldestDraftAt)) / 3600000) : null;
-
-      const chip = (grp, k, l, cur) => `<button class="u-chip${cur === k ? ' on' : ''}" data-u${grp}="${k}">${l}</button>`;
-      const empty = (cols, txt) => `<tr><td colspan="${cols}" class="empty">${txt}</td></tr>`;
-      $('v-usage').innerHTML = `
+      const src2 = pm === 'reads' ? D.reads : D.writes;
+      const pKeys = [...new Set(pDays.flatMap((d) => Object.keys(src2[d]?.[field] || {})))].sort();
+      const personRows = pDays.slice().reverse().filter((d) => Object.keys(src2[d]?.[field] || {}).length).map((d) => `<tr><td>${d}</td>${pKeys.map((k) => `<td class="num">${nf(src2[d][field][k] || 0)}</td>`).join('')}</tr>`).join('');
+      return `
         ${noPerm ? `<div class="u-warn"><b>Exact figures need one permission.</b> Until then these are browser estimates (they miss the server's own work). In Google Cloud console → IAM & Admin → IAM → <b>Grant access</b>: principal <code>20074053140-compute@developer.gserviceaccount.com</code>, role <b>Monitoring Viewer</b>. Then click Refresh here.</div>` : ''}
         ${exactErr ? `<div class="u-warn">Exact figures couldn't be read from Google: ${esc(exactErr)}. Showing estimates.</div>` : ''}
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-          ${chip('days', 7, 'Last 7 days', usageDays)}${chip('days', 30, 'Last 30 days', usageDays)}${chip('days', 90, 'Last 90 days', usageDays)}
-          <button class="btn btn--ghost btn--sm" id="usageRefresh" style="margin-left:auto;">↻ Refresh</button>
-        </div>
         <div class="u-grid">${tiles}</div>
-        <div class="card"><div class="toolbar"><h2>Database per day</h2><div style="display:flex;gap:6px;">${chip('metric', 'reads', 'Reads', usageMetric)}${chip('metric', 'writes', 'Writes', usageMetric)}${chip('metric', 'deletes', 'Deletes', usageMetric)}</div></div>
+        <div class="card"><div class="toolbar"><h2>Database per day</h2><div style="display:flex;gap:6px;">${uChip('metric', 'reads', 'Reads', usageMetric)}${uChip('metric', 'writes', 'Writes', usageMetric)}${uChip('metric', 'deletes', 'Deletes', usageMetric)}</div></div>
           <div class="u-chart">${chart}</div>
-          <p class="u-note">Solid bars = exact (Google, both sites and the server together); faded = browser estimate. Days are Google's quota days (from 08:00 Lisbon).</p>
-          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th><th class="num">Reads exact</th><th class="num">est.</th><th class="num">prod / staging</th><th class="num">server</th><th class="num">Writes exact</th><th class="num">est.</th><th class="num">prod / staging</th><th class="num">Deletes exact</th><th class="num">est.</th></tr></thead><tbody>${dbRows}</tbody></table></div>
+          <p class="u-note">Solid bars = exact (Google, both sites and the server together); faded = browser estimate. Days are Google's quota days (from 08:00 Lisbon). Past the free limit costs a few cents per extra 100,000 reads — not a stop.</p>
+          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th><th class="num">Reads exact</th><th class="num">est.</th><th class="num">prod / staging</th><th class="num">server</th><th class="num">Writes exact</th><th class="num">est.</th><th class="num">prod / staging</th><th class="num">Deletes exact</th><th class="num">est.</th></tr></thead><tbody>${rows}</tbody></table></div>
           <p class="u-note">"server" = exact minus what browsers counted: the scheduler, sending and imports run by the server (they serve both sites).</p></div>
-        <div class="card u-sec"><div class="toolbar"><h2>Per person per day</h2><div style="display:flex;gap:6px;">${chip('pmetric', 'reads', 'Reads', usagePersonMetric)}${chip('pmetric', 'writes', 'Writes', usagePersonMetric)}${chip('pmetric', 'deletes', 'Deletes', usagePersonMetric)}</div><span class="hint">browser estimates, both sites</span></div>
-          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th>${pKeys.map((k) => `<th class="num">${esc(who(k))}</th>`).join('')}</tr></thead><tbody>${personRows || empty(1 + pKeys.length, 'Nothing counted per person yet — counting started with this version.')}</tbody></table></div></div>
-        <div class="card u-sec"><div class="toolbar"><h2>Emails per day</h2><span class="hint">real emails by kind; test ones apart · waiting for approval: ${nf(snap.draftsWaiting)}${oldest != null ? ` (oldest ${oldest} h)` : ''} · held now: ${nf(snap.held)}</span></div>
-          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th>${EK.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th class="num">Test</th><th class="num">Failed</th><th class="num">Bounced</th><th class="num">Spam</th><th class="num">Unsubscribed</th><th class="num">Replies</th></tr></thead><tbody>${emailRows}</tbody></table></div></div>
-        <div class="cols-u" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;">
+        <div class="card u-sec"><div class="toolbar"><h2>Per person per day</h2><div style="display:flex;gap:6px;">${uChip('pmetric', 'reads', 'Reads', usagePersonMetric)}${uChip('pmetric', 'writes', 'Writes', usagePersonMetric)}${uChip('pmetric', 'deletes', 'Deletes', usagePersonMetric)}</div><span class="hint">browser estimates, both sites</span></div>
+          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th>${pKeys.map((k) => `<th class="num">${esc(who(k))}</th>`).join('')}</tr></thead><tbody>${personRows || uEmpty(1 + pKeys.length, 'Nothing counted per person yet — counting started on 30 Sep.')}</tbody></table></div></div>`;
+    }
+
+    // ── Emails (Outreach / Resend) ──
+    function drawUsageEmail(daily, X) {
+      const lDays = periodDays(lisbonDay), lToday = lDays[lDays.length - 1];
+      const t = daily[lToday] || {}, snap = t.snapshot || {};
+      const setSum = (m) => Object.values(m || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+      const oldest = snap.oldestDraftAt ? Math.round((Date.now() - tsMs(snap.oldestDraftAt)) / 3600000) : null;
+      const tiles = uTile('Real emails today', setSum(t.email?.real), null, `${nf(setSum(t.email?.test))} test · ${nf(setSum(t.email?.failed))} failed`)
+        + uTile('Waiting for approval', snap.draftsWaiting ?? null, null, oldest != null ? `oldest ${oldest} h` : 'none waiting')
+        + uTile('Held now', snap.held ?? null, null, 'by a kill switch or the sending window')
+        + uTile('Resend today (whole account)', X.resend.resendDailyUsed ?? null, X.settings.dailyTarget || null, `${X.settings.dailyTarget ? `of ${nf(X.settings.dailyTarget)} · ` : ''}${nf(X.resend.resendMonthlyUsed)} this month`);
+      const EK = [['campaign', 'Campaign'], ['recurring', 'Recurring'], ['manual', 'Written in Outreach'], ['relationship', 'Investor CRM / Network'], ['notice', 'Admin notices']];
+      const rows = lDays.slice().reverse().map((d) => {
+        const e = daily[d]?.email || {};
+        return `<tr><td>${d}</td>${EK.map(([k]) => `<td class="num">${nf(e.real?.[k] || 0)}</td>`).join('')}<td class="num muted">${nf(setSum(e.test))}</td><td class="num">${nf(setSum(e.failed))}</td><td class="num">${nf(e.bounced?.real || 0)}</td><td class="num">${nf(e.complained?.real || 0)}</td><td class="num">${nf(e.unsubscribed?.real || 0)}</td><td class="num">${nf(e.replies?.real || 0)}</td></tr>`;
+      }).join('');
+      let bySender = {}, sentBy = {}, written = {}, approved = {};
+      for (const d of lDays) {
+        const e = daily[d]?.email || {};
+        for (const [k, v] of Object.entries(e.bySender || {})) bySender[k] = sumMap(bySender[k], v);
+        sentBy = sumMap(sentBy, e.sentBy); written = sumMap(written, e.written); approved = sumMap(approved, e.approved);
+      }
+      const capOf = (key) => { const s = X.senders.find((z) => z.id.toLowerCase().replace(/[^a-z0-9_-]/g, '_') === key); return s ? { id: s.id, cap: s.dailyCap || 25 } : { id: key, cap: null }; };
+      const todaySender = t.email?.bySender || {};
+      const senderRows = Object.keys(bySender).sort().map((k) => { const cp = capOf(k); const t0 = todaySender[k]?.real || 0; return `<tr><td>${esc(cp.id)}</td><td class="num">${nf(t0)}${cp.cap ? ` <span class="muted">/ ${nf(cp.cap)}</span>` : ''}</td><td class="num">${nf(bySender[k].real || 0)}</td><td class="num muted">${nf(bySender[k].test || 0)}</td></tr>`; }).join('');
+      const ppl = [...new Set([...Object.keys(written), ...Object.keys(approved), ...Object.keys(sentBy)])].sort();
+      const pplRows = ppl.map((k) => `<tr><td>${esc(who(k))}</td><td class="num">${nf(written[k] || 0)}</td><td class="num">${nf(approved[k] || 0)}</td><td class="num">${nf(sentBy[k] || 0)}</td></tr>`).join('');
+      return `
+        <div class="u-grid">${tiles}</div>
+        <div class="card"><div class="toolbar"><h2>Emails per day</h2><span class="hint">real emails by kind; test ones apart (Lisbon days)</span></div>
+          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th>${EK.map(([, l]) => `<th class="num">${l}</th>`).join('')}<th class="num">Test</th><th class="num">Failed</th><th class="num">Bounced</th><th class="num">Spam</th><th class="num">Unsubscribed</th><th class="num">Replies</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;">
           <div class="card u-sec"><div class="toolbar"><h2>Sending addresses</h2><span class="hint">period totals</span></div>
-            <div class="table-wrap"><table class="u-table"><thead><tr><th>Address</th><th class="num">Today / cap</th><th class="num">Real</th><th class="num">Test</th></tr></thead><tbody>${senderRows || empty(4, 'No emails sent in this period.')}</tbody></table></div></div>
+            <div class="table-wrap"><table class="u-table"><thead><tr><th>Address</th><th class="num">Today / cap</th><th class="num">Real</th><th class="num">Test</th></tr></thead><tbody>${senderRows || uEmpty(4, 'No emails sent in this period.')}</tbody></table></div></div>
           <div class="card u-sec"><div class="toolbar"><h2>Emails per person</h2><span class="hint">period totals</span></div>
-            <div class="table-wrap"><table class="u-table"><thead><tr><th>Person</th><th class="num">Written (for approval)</th><th class="num">Approved</th><th class="num">Sent</th></tr></thead><tbody>${emailPeopleRows || empty(4, 'Nothing yet.')}</tbody></table></div></div>
-        </div>
-        <div class="card u-sec"><div class="toolbar"><h2>Activity per person</h2><span class="hint">period totals</span></div>
-          <div class="table-wrap"><table class="u-table"><thead><tr><th>Person</th><th class="num">Sign-ins</th><th class="num">CSV exports</th><th class="num">AI openers</th><th class="num">Phone searches</th></tr></thead><tbody>${actRows || empty(5, 'Nothing counted yet — counting started with this version.')}</tbody></table></div></div>
-        <p class="u-note">Kept for 90 days, then rolled into monthly totals. Updated when you open this tab (at most every 10 minutes) and every morning.</p>`;
-      $('v-usage').querySelectorAll('[data-udays]').forEach((b) => b.addEventListener('click', () => { usageDays = Number(b.dataset.udays); usageData = null; renderUsage(); }));
-      $('v-usage').querySelectorAll('[data-umetric]').forEach((b) => b.addEventListener('click', () => { usageMetric = b.dataset.umetric; drawUsage(); }));
-      $('v-usage').querySelectorAll('[data-upmetric]').forEach((b) => b.addEventListener('click', () => { usagePersonMetric = b.dataset.upmetric; drawUsage(); }));
-      $('usageRefresh').addEventListener('click', () => renderUsage(true));
+            <div class="table-wrap"><table class="u-table"><thead><tr><th>Person</th><th class="num">Written (for approval)</th><th class="num">Approved</th><th class="num">Sent</th></tr></thead><tbody>${pplRows || uEmpty(4, 'Nothing yet — counting started on 30 Sep.')}</tbody></table></div></div>
+        </div>`;
+    }
+
+    // ── Activity (people) ──
+    function drawUsageActivity(daily) {
+      const lDays = periodDays(lisbonDay), lToday = lDays[lDays.length - 1];
+      const A = ['signIns', 'exports', 'exportRows', 'ai', 'mobile'];
+      let act = Object.fromEntries(A.map((a) => [a, {}]));
+      for (const d of lDays) for (const a of A) act[a] = sumMap(act[a], daily[d]?.activity?.[a]);
+      const todayA = daily[lToday]?.activity || {};
+      const tot = (m) => Object.values(m || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+      const tiles = uTile('Sign-ins today', tot(todayA.signIns), null, `${nf(Object.keys(todayA.signIns || {}).length)} people`)
+        + uTile('CSV exports today', tot(todayA.exports), null, `${nf(tot(todayA.exportRows))} rows`)
+        + uTile('AI openers today', tot(todayA.ai), null, 'first lines written by AI')
+        + uTile('Phone searches today', tot(todayA.mobile), null, 'Douro mobile');
+      const ppl = [...new Set(Object.values(act).flatMap((m) => Object.keys(m)))].sort();
+      const rows = ppl.map((k) => `<tr><td>${esc(who(k))}</td><td class="num">${nf(act.signIns[k] || 0)}</td><td class="num">${nf(act.exports[k] || 0)} <span class="muted">(${nf(act.exportRows[k] || 0)} rows)</span></td><td class="num">${nf(act.ai[k] || 0)}</td><td class="num">${nf(act.mobile[k] || 0)}</td></tr>`).join('');
+      const dayRows = lDays.slice().reverse().filter((d) => daily[d]?.activity).map((d) => { const a = daily[d].activity; return `<tr><td>${d}</td><td class="num">${nf(tot(a.signIns))}</td><td class="num">${nf(tot(a.exports))}</td><td class="num">${nf(tot(a.ai))}</td><td class="num">${nf(tot(a.mobile))}</td><td class="muted">${esc(Object.keys(a.signIns || {}).map(who).join(', '))}</td></tr>`; }).join('');
+      return `
+        <div class="u-grid">${tiles}</div>
+        <div class="card"><div class="toolbar"><h2>Activity per person</h2><span class="hint">period totals</span></div>
+          <div class="table-wrap"><table class="u-table"><thead><tr><th>Person</th><th class="num">Sign-ins</th><th class="num">CSV exports</th><th class="num">AI openers</th><th class="num">Phone searches</th></tr></thead><tbody>${rows || uEmpty(5, 'Nothing counted yet — counting started on 30 Sep.')}</tbody></table></div></div>
+        <div class="card u-sec"><div class="toolbar"><h2>Activity per day</h2><span class="hint">Lisbon days</span></div>
+          <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th><th class="num">Sign-ins</th><th class="num">Exports</th><th class="num">AI openers</th><th class="num">Phone searches</th><th>Who signed in</th></tr></thead><tbody>${dayRows || uEmpty(6, 'Nothing yet.')}</tbody></table></div></div>`;
     }
 
     async function renderAudit() {
