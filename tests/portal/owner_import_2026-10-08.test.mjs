@@ -79,11 +79,11 @@ ctx.companies = [
 ];
 const guoRows = [
   ['', 'Company name Latin alphabet', 'BvD ID number', 'VAT/Tax number', 'GUO - Name', 'GUO - BvD ID number', 'GUO - Type',
-   'GUO - Country ISO code', 'GUO - Ticker symbol', 'GUO - Number of employees', 'GUO - Operating revenue (Turnover)\nm USD', 'GUO - Total assets\nm USD'],
-  ['1.', 'ALFA, LDA', 'PT500000001', '500000001', 'BIG GROUP SE', 'FR111111111', 'Corporate', 'FR', 'BGS', '160000', '54617.0', '71482'],
-  ['2.', 'BETA, S.A.', 'PT500000002', '500000002', 'MR JOAO EXEMPLO', 'WWCJP0001', 'One or more named individuals or families', 'PT', '-', '-', '-', '-'],
-  ['3.', 'GAMA, LDA', 'PT500000003', '500000003', '', '', '', '', '', 'n.a.', 'n.a.', 'n.a.'],
-  ['4.', 'NOT IN CRM, LDA', 'PT500000099', '500000099', 'X HOLDING', 'PT500000098', 'Corporate', 'PT', '-', '12', '3.5', '2'],
+   'GUO - Country ISO code', 'GUO - Ticker symbol', 'GUO - Number of employees', 'GUO - Operating revenue (Turnover)\nm USD', 'GUO - Total assets\nm USD', 'GUO - Information date'],
+  ['1.', 'ALFA, LDA', 'PT500000001', '500000001', 'BIG GROUP SE', 'FR111111111', 'Corporate', 'FR', 'BGS', '160000', '54617.0', '71482', '08/2026'],
+  ['2.', 'BETA, S.A.', 'PT500000002', '500000002', 'MR JOAO EXEMPLO', 'WWCJP0001', 'One or more named individuals or families', 'PT', '-', '-', '-', '-', 'n.a.'],
+  ['3.', 'GAMA, LDA', 'PT500000003', '500000003', '', '', '', '', '', 'n.a.', 'n.a.', 'n.a.', ''],
+  ['4.', 'NOT IN CRM, LDA', 'PT500000099', '500000099', 'X HOLDING', 'PT500000098', 'Corporate', 'PT', '-', '12', '3.5', '2', '07/2026'],
 ];
 const s1 = parsePeopleRows(guoRows);
 const mA = s1.ownershipMeta.get('A'), mB = s1.ownershipMeta.get('B');
@@ -91,6 +91,7 @@ ok('mode is "ownership" (was: "No shareholder or director column" error)', s1.mo
 ok('no people rows are produced', s1.links === 0);
 ok('revenue unit read from the header as million USD', s1.revUnit?.cur === 'Usd' && s1.revUnit?.div === 1);
 ok('corporate owner: country, ticker, employees, revenue', mA && mA.guoCountry === 'FR' && mA.guoTicker === 'BGS' && mA.guoEmployees === 160000 && mA.guoRevenueMUsd === 54617);
+ok('owner total assets, info date and own BvD ID (foreign owners too)', mA.guoAssetsMUsd === 71482 && mA.guoInfoDate === '08/2026' && mA.guoBvdId === 'FR111111111' && !mA.guoNif);
 ok('person owner: type kept, no size figures', mB && /families/.test(mB.guoType) && mB.guoEmployees === null && mB.guoRevenueMUsd === null && mB.guoTicker === null);
 ok('company with no owner gets no ownershipMeta', !s1.ownershipMeta.has('C'));
 ok('company not in the CRM is reported, not created', s1.ownersUnmatched.length === 1 && s1.ownersUnmatched[0].nif === '500000099');
