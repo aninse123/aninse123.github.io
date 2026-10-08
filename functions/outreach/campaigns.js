@@ -31,7 +31,7 @@
 const P = require("../access/perms"); // team access: who may call what
 const Feat = require("../features"); // feature switches (Team & access → Features)
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { REGION } = require("./config");
+const { REGION, TEST_RECIPIENTS } = require("./config");
 const { normEmail } = require("./util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const store = require("./store");
@@ -667,10 +667,13 @@ const TRANSITIONS = {
   active: ["draft", "paused"],
   paused: ["active"],
   finished: ["active", "paused"],
-  archived: ["finished"],
+  // I5 (8 Oct): a draft is archived instead of deleted; "restore" brings an
+  // archived campaign back to what it was (draft or finished).
+  archived: ["finished", "draft"],
 };
 
-async function setStatus({ campaignId, status }, caller) {
+async function setStatus({ campaignId, status, testRecipient }, caller) {
+  if (status === "restore") return restore(campaignId, caller);
   if (!TRANSITIONS[status]) fail("invalid-argument", "bad_status", `Unknown status "${status}".`);
   const campaign = await getCampaign(campaignId);
   if (campaign.status === status) return { status };
@@ -684,6 +687,24 @@ async function setStatus({ campaignId, status }, caller) {
     if (problems.length) throw new HttpsError("failed-precondition", `Before starting: ${problems.join(" ")}`, { reason: "not_ready", problems });
     if (!campaign.startedAt) upd.startedAt = FieldValue.serverTimestamp();
     upd.startRequest = null; upd.startReturn = null;
+    // I21: in test mode this campaign's emails go to the person who started
+    // it — only if their test address is on the approved list; otherwise to
+    // the general test address (Settings → General).
+    if (testRecipient !== undefined) {
+      const settings = await store.getSettings();
+      const approved = (settings.testRecipients || TEST_RECIPIENTS).map(normEmail);
+      const want = normEmail(testRecipient);
+      upd.testRecipient = want && approved.includes(want) ? want : null;
+    }
+  }
+  if (status === "archived") {
+    upd.archivedFrom = campaign.status;
+    upd.archivedAt = FieldValue.serverTimestamp();
+    if (campaign.status === "draft") {
+      await ref.update(upd);
+      const released = await endAll(await liveEnrolmentRefs("campaignId", campaignId), "removed", "Campaign archived");
+      return { status, released };
+    }
   }
   let ended = 0;
   if (status === "finished") {
@@ -694,6 +715,37 @@ async function setStatus({ campaignId, status }, caller) {
   }
   await ref.update(upd);
   return { status };
+}
+
+// I5: bring an archived campaign back as it was (a draft stays a draft —
+// its companies were released when it was archived — a finished one stays finished).
+async function restore(campaignId, caller) {
+  const campaign = await getCampaign(campaignId);
+  if (campaign.status !== "archived") fail("failed-precondition", "not_archived", "Only archived campaigns can be restored.");
+  const status = campaign.archivedFrom === "draft" ? "draft" : "finished";
+  await db().doc(`outreachCampaigns/${campaignId}`).update({ status, archivedFrom: FieldValue.delete(), archivedAt: FieldValue.delete(), updatedAt: FieldValue.serverTimestamp(), updatedBy: caller });
+  return { status };
+}
+
+// I22 (8 Oct): "Run now" — test mode only. Every waiting step of this
+// campaign is brought forward to now and the scheduler runs for this campaign
+// alone, ignoring the sending window (approval steps still wait for approval).
+async function runNow({ campaignId }, caller) {
+  const settings = await store.getSettings();
+  if (!settings.testMode) fail("failed-precondition", "test_only", "Run now only works in test mode.");
+  const campaign = await getCampaign(campaignId);
+  if (campaign.status !== "active") fail("failed-precondition", "not_active", "Start the campaign first.");
+  const now = new Date();
+  const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).where("status", "==", "active").limit(200).get();
+  let moved = 0;
+  for (const group of chunks(snap.docs, 400)) {
+    const batch = db().batch();
+    group.forEach((d) => { const n = d.data().nextActionAt; if (!n || n.toMillis() > now.getTime()) { batch.update(d.ref, { nextActionAt: Timestamp.fromDate(now) }); moved++; } });
+    await batch.commit();
+  }
+  const { runScheduler } = require("./scheduler");
+  const r = await runScheduler({ now: new Date(now.getTime() + 1000), onlyCampaignId: campaignId, ignoreWindow: true, gap: () => 1500 });
+  return { ok: true, moved, sent: r.sent || 0, drafts: r.drafts || 0, tasks: r.tasks || 0, started: r.started || 0, completed: r.completed || 0, by: caller };
 }
 
 // ── "To approve" queue ──────────────────────────────────────────────────────
@@ -950,7 +1002,7 @@ async function setDoNotContact({ companyId, on, reason }, caller) {
 const CAMPAIGN_ACTION_PERM = {
   save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns", recipientsPreview: "out.campaigns",
   enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
-  requestStart: "out.campaigns", returnStart: "out.approve",
+  requestStart: "out.campaigns", returnStart: "out.approve", runNow: "out.approve",
   approve: "out.approve", skipDraft: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
 };
 function campaignActionPerm(data) {
@@ -967,7 +1019,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   // Feature switches: Outreach, then company or people campaigns by audience.
   // "Do not contact" (Search CRM) is a safety control and never switched.
   if (data.action !== "setDoNotContact") {
-    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview"].includes(data.action) ? "outreach.campaigns" : null;
+    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
       let aud = data.campaign?.audienceType;
       if (!aud && data.campaignId) { const c = await db().doc(`outreachCampaigns/${data.campaignId}`).get(); aud = c.exists ? c.data().audienceType : null; }
@@ -1000,6 +1052,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "delete": return await remove(data, caller);
       case "preview": return await preview(data, caller);
       case "recipientsPreview": return await recipientsPreview(data, caller);
+      case "runNow": return await runNow(data, caller);
       case "enrol": return await enrol(data, caller);
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);

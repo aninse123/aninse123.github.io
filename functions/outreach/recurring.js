@@ -143,6 +143,7 @@ async function save({ recurringId, recurring }, caller) {
 async function setStatus({ recurringId, status }, caller) {
   if (!["active", "paused"].includes(status)) fail("invalid-argument", "bad_status", `Unknown status "${status}".`);
   const r = await readRecurring(recurringId);
+  if (r.status === "archived") fail("failed-precondition", "archived", "Restore it first.");
   const upd = { status, updatedAt: FieldValue.serverTimestamp(), updatedBy: caller };
   // Resuming never back-fills missed dates: the next one from now.
   if (status === "active") upd.nextIssueAt = Timestamp.fromDate(nextOccurrence(r.schedule, new Date()));
@@ -161,7 +162,7 @@ async function cancelDrafts(recurringId, reason, statuses = ["draft"]) {
 // finished — nobody else gets it). Emails already sent and their history stay.
 async function remove({ recurringId }, caller) {
   await readRecurring(recurringId);
-  const cancelled = await cancelDrafts(recurringId, "Recurring email deleted", ["draft", "approved"]);
+  const cancelled = await cancelDrafts(recurringId, "Recurring email archived", ["draft", "approved"]);
   const live = await db().collection("outreachIssues").where("recurringId", "==", recurringId).where("status", "in", ["approving", "launching", "sending"]).get();
   const { _internal: C } = require("./campaigns");
   let stopped = 0;
@@ -171,11 +172,18 @@ async function remove({ recurringId }, caller) {
       const c = await db().doc(`outreachCampaigns/${i.campaignId}`).get();
       if (c.exists && ["draft", "active", "paused"].includes(c.data().status)) await C.setStatus({ campaignId: i.campaignId, status: "finished" }, caller || "system");
     }
-    await d.ref.update({ status: "stopped", stoppedAt: FieldValue.serverTimestamp(), stoppedBy: caller || null, stopReason: "Recurring email deleted" });
+    await d.ref.update({ status: "stopped", stoppedAt: FieldValue.serverTimestamp(), stoppedBy: caller || null, stopReason: "Recurring email archived" });
     stopped++;
   }
-  await db().doc(`outreachRecurring/${recurringId}`).delete();
+  // I5 (8 Oct): archived, not deleted — "Restore" brings it back paused.
+  await db().doc(`outreachRecurring/${recurringId}`).update({ status: "archived", nextIssueAt: null, archivedAt: FieldValue.serverTimestamp(), archivedBy: caller || null });
   return { ok: true, cancelled, stopped };
+}
+async function restore({ recurringId }, caller) {
+  const r = await readRecurring(recurringId);
+  if (r.status !== "archived") fail("failed-precondition", "not_archived", "Only archived recurring emails can be restored.");
+  await db().doc(`outreachRecurring/${recurringId}`).update({ status: "paused", archivedAt: FieldValue.delete(), archivedBy: FieldValue.delete(), updatedAt: FieldValue.serverTimestamp(), updatedBy: caller || null });
+  return { ok: true, status: "paused" };
 }
 
 // Writes an issue draft from the base template. Older waiting drafts of the
@@ -383,7 +391,8 @@ exports.outreachRecurring = onCall({ region: REGION, timeoutSeconds: 300, secret
     switch (data.action) {
       case "save": return await save(data, caller);
       case "setStatus": return await setStatus(data, caller);
-      case "delete": return await remove(data, caller);
+      case "delete": return await remove(data, caller);   // archives (I5)
+      case "restore": return await restore(data, caller);
       case "issueNow": return await issueNow(data, caller);
       case "approveIssue": return await approveIssue(data, caller);
       case "skipIssue": return await skipIssue(data, caller);

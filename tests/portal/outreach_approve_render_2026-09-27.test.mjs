@@ -31,7 +31,8 @@ const ctx = {
 vm.createContext(ctx);
 vm.runInContext([
   line('    const OWNER_BY_EMAIL ='), line('    const personName ='), line('    const OWNER_LABEL ='), line('    const DAY_NAMES ='), line('    function esc(s)'), line('    function tsMs(t)'), line('const dayFmt ='), line('const timeFmt ='), line('const dtFmt ='), lift('when'), line('const num ='), line('    function localPart(e)'), lift('windowText'),
-  "let approveFilter = 'all'; const draftEdits = new Map(); let returnedMine = [];",
+  "let approveFilter = 'all'; const draftEdits = new Map(); let returnedMine = []; const coCache = new Map(); let taskView = 'approve'; async function loadCompaniesFor() {}",
+  lift('approvalContext'), "let approveCtxLoading = false;",
   lift('renderApprove'),
   'globalThis.run = () => { renderApprove(); return $("approveView").innerHTML; };',
 ].join('\n'), ctx);

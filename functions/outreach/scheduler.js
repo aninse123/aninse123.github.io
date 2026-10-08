@@ -192,7 +192,8 @@ async function pauseCampaign(campaign, reason) {
   logger.warn("outreachScheduler: campaign paused", { campaignId: campaign.id, reason });
 }
 
-async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.random } = {}) {
+// onlyCampaignId / ignoreWindow: "Run now" in test mode (campaigns.js runNow).
+async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.random, onlyCampaignId = null, ignoreWindow = false } = {}) {
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
@@ -202,7 +203,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const settings = await store.getSettings();
   // Recurring emails (5b): write the issue drafts whose date has come.
   try { const rr = await runRecurring(now); report.issues = rr.created; if (rr.launched) report.issuesLaunched = rr.launched; } catch (e) { logger.error("outreachScheduler: recurring failed", { message: e.message }); }
-  const campSnap0 = await db().collection("outreachCampaigns").where("status", "==", "active").get();
+  const campSnapAll = await db().collection("outreachCampaigns").where("status", "==", "active").get();
+  const campSnap0 = onlyCampaignId ? { docs: campSnapAll.docs.filter((d) => d.id === onlyCampaignId), empty: !campSnapAll.docs.some((d) => d.id === onlyCampaignId) } : campSnapAll;
   const campSnap = schedState === "test" ? { docs: campSnap0.docs.filter((d) => d.data().isTest), empty: !campSnap0.docs.some((d) => d.data().isTest) } : campSnap0;
   report.campaigns = campSnap.docs.length;
   if (campSnap.empty) return report;
@@ -226,7 +228,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const open = new Map();
   for (const d of campSnap.docs) {
     const c = { id: d.id, ...d.data() };
-    if (isWindowOpen(now, c.sendWindow || globalWindow)) open.set(c.id, c);
+    if (ignoreWindow || isWindowOpen(now, c.sendWindow || globalWindow)) open.set(c.id, c);
   }
   report.open = open.size;
   if (!open.size) return report;
@@ -390,7 +392,9 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         // Approved drafts go out as approved (edited subject/body included);
         // every check still runs again now.
         ...(approved ? { subject: approved.isReply ? null : approved.subject, body: approved.draftBody } : {}),
-        countsAsOutreach: true, redirectTo,
+        // I21: a campaign started by someone with an approved test address
+        // sends its test emails there; otherwise the general test address.
+        countsAsOutreach: true, redirectTo: redirectTo ? (campaign.testRecipient || redirectTo) : null,
         // A draft costs no quota; the target is checked again when it's approved.
         confirmOverTarget: wantsDraft,
       });

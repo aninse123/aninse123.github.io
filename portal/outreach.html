@@ -274,6 +274,8 @@
     .task__box a { color: var(--primary); }
     .task__text { white-space: pre-wrap; overflow-wrap: anywhere; font-family: Arial, Helvetica, sans-serif; }
     .outcomes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .outcomes .btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .info { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--border); font-size: 0.66rem; font-weight: 600; color: var(--text-light); cursor: help; vertical-align: 1px; }
     .ch { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 100px; font-size: 0.7rem; font-weight: 700; background: #EEF3F8; color: var(--primary-dark); }
     .day-head { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-light); margin: 18px 0 8px; }
     @media (max-width: 760px) { .task__grid { grid-template-columns: 1fr; } }
@@ -500,6 +502,7 @@
             <div class="actions" id="campActions"></div>
           </div>
           <div class="banner banner--warn" id="campBanner" hidden style="margin-bottom:12px;"></div>
+          <div class="banner banner--warn" id="campUnsaved" hidden style="margin-bottom:12px;align-items:center;gap:10px;"></div>
           <div class="chips subnav" id="campNav" role="tablist" aria-label="Campaign sections">
             <button class="chip on" data-csec="overview">Overview</button>
             <button class="chip" data-csec="audience">Companies</button>
@@ -597,7 +600,7 @@
             <label class="checkline"><input type="checkbox" id="gPersonal"> <span>Block personal email domains (gmail, sapo, hotmail…) for the company address — the legal rule for natural persons (emails to a chosen person may use any address)</span></label>
             <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gTrack"> <span>Track opens and clicks <span class="hint">(switches Resend's tracking on for mail.douropartners-team.pt right away — adds a tracking pixel and rewrites links, which can hurt deliverability; needed for "if they clicked a link" rules)</span></span></label>
             <div class="field" style="margin-top:14px;">
-              <label>Sending window (Lisbon time)</label>
+              <label>Sending window<span class="info" title="Days and hours (Lisbon) when emails may go out. Never on national holidays." aria-label="Days and hours (Lisbon) when emails may go out. Never on national holidays.">i</span> (Lisbon time)</label>
               <div style="display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;" id="gDays">
                 <label class="checkline"><input type="checkbox" value="1"> <span>Mon</span></label>
                 <label class="checkline"><input type="checkbox" value="2"> <span>Tue</span></label>
@@ -2499,7 +2502,7 @@
 
     function openCampaign(id, sec = 'overview') {
       if ($('panel-campaigns').hidden) showTab('campaigns');
-      curCampId = id; seqDraft = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = '';
+      curCampId = id; seqDraft = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = ''; refreshUnsaved();
       $('campList').hidden = true; $('campPage').hidden = false; $('listsView').hidden = true; $('recurView').hidden = true;
       $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.cview === 'campaigns'));
       curEnrols = []; curThreads = [];
@@ -2513,6 +2516,18 @@
       curCampId = null; seqDirty = false; csetDirty = false;
       $('campPage').hidden = true; $('campList').hidden = false;
       loadCampCounts();
+    }
+    // I9: which sections have unsaved changes, with Save all / Discard all.
+    function refreshUnsaved() {
+      const nav = $('campNav'); if (!nav) return;
+      nav.querySelector('[data-csec="sequence"]').textContent = 'Sequence' + (seqDirty ? ' •' : '');
+      nav.querySelector('[data-csec="csettings"]').textContent = 'Settings' + (csetDirty ? ' •' : '');
+      const parts = [seqDirty && 'Sequence', csetDirty && 'Settings'].filter(Boolean);
+      const box = $('campUnsaved');
+      box.hidden = !parts.length;
+      box.innerHTML = parts.length ? `<span><b>Unsaved changes</b> in ${parts.join(' and ')}.</span><button class="btn btn--primary btn--sm" id="saveAllBtn" data-perm="out.campaigns" style="margin-left:auto;">Save all</button><button class="btn btn--ghost btn--sm" id="discardAllBtn">Discard all</button>` : '';
+      $('saveAllBtn')?.addEventListener('click', () => { if (seqDirty) $('seqSave')?.click(); if (csetDirty) $('csSave')?.click(); });
+      $('discardAllBtn')?.addEventListener('click', () => { if (!confirm('Discard the unsaved changes?')) return; seqDirty = csetDirty = false; seqDraft = null; if (campSec === 'sequence') renderSequence(); if (campSec === 'csettings') renderCampSettings(); refreshUnsaved(); });
     }
     function showCampSec(name) {
       campSec = name;
@@ -2578,10 +2593,13 @@
       if (c.status === 'paused' && canApprove && c.startRequest) acts.push(['returnstart', 'Return with a note', 'ghost']);
       if (c.status === 'active') acts.push(['pause', 'Pause', 'ghost'], ['finish', 'Finish', 'ghost']);
       if (c.status === 'paused') acts.push(['resume', 'Resume', 'primary'], ['finish', 'Finish', 'ghost']);
+      if (c.status === 'active' && canApprove && (!settings || settings.testMode !== false)) acts.unshift(['runnow', '▶ Run now (test)', 'primary']);
       if (c.status === 'finished') acts.push(['archive', 'Archive', 'ghost']);
+      if (c.status === 'archived') acts.push(['restore', 'Restore', 'ghost']);
       acts.push(['duplicate', 'Duplicate', 'ghost']);
-      if (c.status === 'draft') acts.push(['delete', 'Delete', 'danger']);
-      $('campActions').innerHTML = acts.map(([a, l, k]) => `<button class="btn btn--${k} btn--sm" data-cact="${a}" data-perm="${['start', 'resume', 'finish', 'returnstart'].includes(a) ? 'out.approve' : 'out.campaigns'}">${l}</button>`).join('');
+      // I5: nothing is deleted — a draft is archived (its companies are released).
+      if (c.status === 'draft') acts.push(['archive', 'Archive', 'ghost']);
+      $('campActions').innerHTML = acts.map(([a, l, k]) => `<button class="btn btn--${k} btn--sm" data-cact="${a}" data-perm="${['start', 'resume', 'finish', 'returnstart', 'runnow'].includes(a) ? 'out.approve' : 'out.campaigns'}">${l}</button>`).join('');
       $('campActions').querySelectorAll('[data-cact]').forEach(b => b.addEventListener('click', () => campAction(b.dataset.cact, b)));
 
       const test = !settings || settings.testMode !== false;
@@ -2591,7 +2609,7 @@
       if (['draft', 'paused'].includes(c.status) && c.startRequest) banners.push(`<b>Waiting to be ${c.status === 'paused' ? 'resumed' : 'started'}:</b> ${esc(personName(c.startRequest.by))} asked ${esc(when(c.startRequest.at))}${c.startRequest.note ? ` — “${esc(c.startRequest.note)}”` : ''}.${canApprove ? '' : ' Changing it withdraws the request.'}`);
       if (['draft', 'paused'].includes(c.status) && !c.startRequest && c.startReturn) banners.push(`<b>Returned by ${esc(personName(c.startReturn.by))}</b> ${esc(when(c.startReturn.at))} — ${c.startReturn.note ? `“${esc(c.startReturn.note)}”` : 'no note'}. Make the changes, then ${c.status === 'paused' ? 'Ask to resume' : 'Ask to start'} again.`);
       if (['active', 'paused'].includes(c.status) && !canApprove) banners.push('This campaign has started — only a partner can change it or add to it.');
-      if (test) banners.push(`<b>Test mode:</b> every email of this campaign goes to ${esc(settings?.campaignTestRecipient || 'andrenorocha@gmail.com')} instead of the company (Settings → General).`);
+      if (test) banners.push(`<b>Test mode:</b> every email of this campaign goes to ${esc(c.testRecipient || settings?.campaignTestRecipient || 'andrenorocha@gmail.com')} instead of the company (Settings → General).`);
       $('campBanner').innerHTML = banners.map(b => `<span>${b}</span>`).join('<br>');
       $('campBanner').hidden = !banners.length;
     }
@@ -2599,7 +2617,15 @@
     async function campAction(a, btn) {
       const c = curCamp(); if (!c) return;
       if ((seqDirty || csetDirty) && ['start', 'resume'].includes(a)) { toast('Save or discard your changes first.'); return; }
-      const setStatus = (status, msg) => campCall({ action: 'setStatus', campaignId: c.id, status }, msg);
+      // Q3: after a status change, show it at once (the listener confirms it).
+      // I21: starting / resuming in test mode sends this campaign's test emails
+      // to whoever clicked (if their address is approved; the server checks).
+      const testMode = !settings || settings.testMode !== false;
+      const setStatus = async (status, msg) => {
+        const r = await campCall({ action: 'setStatus', campaignId: c.id, status, ...(status === 'active' && testMode ? { testRecipient: defaultTestAddress() } : {}) }, msg);
+        if (r) { const cc = curCamp(); if (cc) cc.status = r.status || status; renderCampHeader(); if (campSec === 'overview') renderOverview(); loadCampaignData(); }
+        return r;
+      };
       btn.disabled = true;
       try {
         if (a === 'start') {
@@ -2629,7 +2655,16 @@ Optional note for them:`, '');
           await setStatus('finished', (r) => `Campaign finished — ${num(r.ended || 0)} companies released.`);
           loadCampaignData();
         }
-        if (a === 'archive') await setStatus('archived', 'Campaign archived.');
+        if (a === 'archive') {
+          if (c.status === 'draft' && !confirm(`Archive the draft "${c.name}"? Its companies are released; you can restore it later (Show archived).`)) return;
+          await setStatus('archived', c.status === 'draft' ? 'Draft archived — its companies are released.' : 'Campaign archived.');
+        }
+        if (a === 'restore') await setStatus('restore', (r) => r.status === 'draft' ? 'Restored as a draft.' : 'Restored.');
+        if (a === 'runnow') {
+          if (!confirm(`Run "${c.name}" now?\n\nTest mode only: every waiting step of this campaign runs at once, ignoring the waits and the sending window. Approval steps still wait for approval.`)) return;
+          const r = await campCall({ action: 'runNow', campaignId: c.id }, (x) => `Ran now — ${num(x.sent)} sent, ${num(x.drafts)} waiting for approval, ${num(x.tasks)} task${x.tasks === 1 ? '' : 's'}${x.started ? `, ${num(x.started)} started` : ''}.`);
+          if (r) loadCampaignData();
+        }
         if (a === 'duplicate') {
           const r = await campCall({ action: 'duplicate', campaignId: c.id }, 'Copy created (draft, no companies).');
           if (r) openCampaign(r.campaignId, 'sequence');
@@ -2762,10 +2797,10 @@ Optional note for them:`, '');
             ${canAdd ? `<button class="btn btn--primary btn--sm" id="audAdd" style="margin-left:auto;">${c.audienceType === 'people' ? 'Add people' : 'Add companies'}</button>` : ''}
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th>${c.audienceType === 'people' ? 'Person' : 'Company'}</th>${c.audienceType === 'people' ? '' : '<th title="Who email 1 goes to: fixed once it\'s sent, else a preview from Settings → Check who it reaches">Goes to</th>'}<th>Status</th><th>Step</th><th>Next</th><th>From</th><th>Note</th><th></th></tr></thead>
+            <thead><tr><th>${c.audienceType === 'people' ? 'Person' : 'Company'}</th>${c.audienceType === 'people' ? '' : '<th title="Who email 1 goes to: fixed once it\'s sent, else a preview from Settings → Check who it reaches">Goes to</th>'}<th>Status</th><th>Step</th><th>Waiting for</th><th>From</th><th>Note</th><th></th></tr></thead>
             <tbody>${shown.length ? shown.map(e => {
               const live = LIVE_ENROL.includes(e.status);
-              const next = live && e.nextActionAt && e.status === 'active' ? dtFmt.format(new Date(tsMs(e.nextActionAt))) : '';
+              const next = live ? waitingFor(e, c) : '';
               const note = e.lastError || e.stopReason || '';
               const btns = !live ? '' : [
                 e.status === 'paused' ? `<button class="btn btn--ghost btn--sm" data-eop="resume" data-perm="out.campaigns" data-eid="${esc(e.id)}">Resume</button>` : `<button class="btn btn--ghost btn--sm" data-eop="pause" data-perm="out.campaigns" data-eid="${esc(e.id)}">Pause</button>`,
@@ -2777,7 +2812,7 @@ Optional note for them:`, '');
                 ${c.audienceType === 'people' ? '' : `<td style="font-size:0.78rem;">${goesTo(e, c)}</td>`}
                 <td>${pill(ENROL_PILL, e.status)}</td>
                 <td style="font-size:0.8rem;">${stepLabel(e, c)}</td>
-                <td style="white-space:nowrap;font-size:0.8rem;">${esc(next)}</td>
+                <td style="font-size:0.78rem;">${next}</td>
                 <td style="font-size:0.8rem;">${esc(localPart(e.senderId) || '—')}</td>
                 <td class="clip" style="font-size:0.78rem;" title="${esc(note)}">${esc(note)}</td>
                 <td style="white-space:nowrap;text-align:right;">${btns}</td></tr>`;
@@ -2800,6 +2835,26 @@ Optional note for them:`, '');
         const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? 'Company removed from the campaign.' : op === 'pause' ? 'Company paused.' : 'Company resumed.');
         if (r) loadCampaignData(); else b.disabled = false;
       }));
+    }
+
+    // I22: what a company is waiting for, in plain words.
+    function lisbonNow() {
+      const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Lisbon', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).map(x => [x.type, x.value]));
+      return { day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(p.weekday), hhmm: `${p.hour}:${p.minute}` };
+    }
+    function waitingFor(e, c) {
+      const steps = c.steps || [], st = steps[e.currentStep];
+      const win = c.sendWindow || settings?.sendWindow || { days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
+      const n = lisbonNow(), open = (win.days || []).includes(n.day) && n.hhmm >= win.from && n.hhmm < win.to;
+      if (e.status === 'pending') return c.status === 'active' ? `its turn to start (${num(c.pacing?.newPerDay || 20)} new a day)` : 'the campaign to start';
+      if (e.status === 'paused') return 'you to resume it';
+      if (c.status === 'paused') return 'the campaign to resume';
+      if (e.status === 'awaiting_approval') return `approval of ${esc(st?.name || 'the email')} (To approve)`;
+      if (e.status === 'awaiting_task') return `the ${esc((CHANNEL_LABELS[st?.channel] || 'task').toLowerCase())} task: ${esc(st?.name || '')}`;
+      if (!st) return 'a reply (all steps done)';
+      const at = tsMs(e.nextActionAt);
+      if (at > Date.now()) return `${esc(st.name)} on ${esc(dtFmt.format(new Date(at)))}`;
+      return open ? `${esc(st.name)} — next run (every 10 min)` : `${esc(st.name)} — sending window (${esc(windowText(win))})`;
     }
 
     // I2: who email 1 goes to — fixed once sent (e.recipient), else the preview.
@@ -2949,7 +3004,7 @@ Optional note for them:`, '');
         $('modalBody').innerHTML = body();
         $('modalSave').textContent = confirmLabel;
         if (!src) return;
-        $('modalBody').querySelectorAll('[data-pm]').forEach(b => b.addEventListener('click', async () => { mode = b.dataset.pm; if (mode === 'list' && !lists.length) { const ls = await getDocs(collection(db, 'outreachLists')); addReads(ls.size || 1); lists = ls.docs.map(d => ({ id: d.id, ...d.data() })); } render(); }));
+        $('modalBody').querySelectorAll('[data-pm]').forEach(b => b.addEventListener('click', async () => { mode = b.dataset.pm; if (mode === 'list' && !lists.length) { const ls = await getDocs(collection(db, 'outreachLists')); addReads(ls.size || 1); lists = ls.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => !l.archived); } render(); }));
         $('modalBody').querySelectorAll('[data-crmst]').forEach(c => c.addEventListener('change', () => { c.checked ? filters.crmStages.add(c.dataset.crmst) : filters.crmStages.delete(c.dataset.crmst); render(); }));
         $('modalBody').querySelectorAll('[data-ncat]').forEach(c => c.addEventListener('change', () => { c.checked ? filters.netCats.add(c.dataset.ncat) : filters.netCats.delete(c.dataset.ncat); render(); }));
         $('modalBody').querySelectorAll('[data-nph]').forEach(c => c.addEventListener('change', () => { c.checked ? filters.netPhases.add(c.dataset.nph) : filters.netPhases.delete(c.dataset.nph); render(); }));
@@ -3045,29 +3100,36 @@ Optional note for them:`, '');
     }
 
     // Lists of people (Campaigns → Lists of people).
+    let listsShowArchived = false;
     async function renderLists() {
       $('listsView').innerHTML = '<div class="card"><div class="empty">Loading…</div></div>';
       const ls = await getDocs(collection(db, 'outreachLists'));
       addReads(ls.size || 1); refreshReads();
-      const lists = ls.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      const all = ls.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      // I5: archived lists are kept, hidden unless "Show archived".
+      const lists = all.filter(l => listsShowArchived || !l.archived);
+      const nArch = all.filter(l => l.archived).length;
       $('listsView').innerHTML = `<div class="card" style="padding:0;">
-          <div class="toolbar"><h2 class="camp-h2">Lists of people</h2><button class="btn btn--primary btn--sm" id="listNew" data-perm="out.campaigns" style="margin-left:auto;">New list</button></div>
+          <div class="toolbar"><h2 class="camp-h2">Lists of people</h2>${nArch ? `<label class="checkline"><input type="checkbox" id="listsArch"${listsShowArchived ? ' checked' : ''}> <span>Show archived (${num(nArch)})</span></label>` : ''}<button class="btn btn--primary btn--sm" id="listNew" data-perm="out.campaigns" style="margin-left:auto;">New list</button></div>
           <div class="table-wrap"><table><thead><tr><th>Name</th><th class="num">People</th><th>Built from</th><th>Created</th><th></th></tr></thead>
-          <tbody>${lists.length ? lists.map(l => `<tr><td><b>${esc(l.name)}</b>${l.dynamic ? ' <span class="pill pill--info">kept up to date</span>' : ''}</td><td class="num">${num(l.count || 0)}</td><td style="font-size:0.8rem;">${esc(l.source || '')}</td><td style="white-space:nowrap;">${esc(when(l.createdAt))}</td>
-            <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-lview="${esc(l.id)}">View</button> <button class="btn btn--danger btn--sm" data-ldel="${esc(l.id)}" data-perm="out.campaigns">Delete</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No lists yet. A list is a named group of people (e.g. "Journalists PT") built from the Investor CRM, portal investors, Network, brokers or an upload — use it in campaigns to people and recurring emails.</td></tr>'}</tbody></table></div>
+          <tbody>${lists.length ? lists.map(l => `<tr><td><b>${esc(l.name)}</b>${l.dynamic ? ' <span class="pill pill--info">kept up to date</span>' : ''}${l.archived ? ' <span class="pill">archived</span>' : ''}</td><td class="num">${num(l.count || 0)}</td><td style="font-size:0.8rem;">${esc(l.source || '')}</td><td style="white-space:nowrap;">${esc(when(l.createdAt))}</td>
+            <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-lview="${esc(l.id)}">View</button> ${l.archived ? `<button class="btn btn--ghost btn--sm" data-lrestore="${esc(l.id)}" data-perm="out.campaigns">Restore</button>` : `<button class="btn btn--ghost btn--sm" data-ldel="${esc(l.id)}" data-perm="out.campaigns">Archive</button>`}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No lists yet. A list is a named group of people (e.g. "Journalists PT") built from the Investor CRM, portal investors, Network, brokers or an upload — use it in campaigns to people and recurring emails.</td></tr>'}</tbody></table></div>
         </div>
         <p class="hint" style="margin-top:10px;">Uploaded addresses are checked against the Investor CRM, portal investors, Network and brokers; people not found are created as Network contacts first, so everyone on a list has a record.</p>`;
       $('listNew').addEventListener('click', () => openPeoplePicker({ title: 'New list of people', confirmLabel: 'Save list', allowSaveList: false, onDone: async (people, info) => {
         const name = prompt('Name of the list:', ''); if (!name) return false;
         await saveList(name.trim(), people, info.label, info.dynamic); renderLists(); return true;
       } }));
+      $('listsArch')?.addEventListener('change', (e) => { listsShowArchived = e.target.checked; renderLists(); });
       $('listsView').querySelectorAll('[data-ldel]').forEach(b => b.addEventListener('click', async () => {
         const l = lists.find(x => x.id === b.dataset.ldel);
-        if (!confirm(`Delete the list "${l.name}"? People stay in the Investor CRM / Network; campaigns that used it keep their people.`)) return;
-        const ms = await getDocs(collection(db, 'outreachLists', l.id, 'members'));
-        await Promise.all(ms.docs.map(d => deleteDoc(d.ref)));
-        await deleteDoc(doc(db, 'outreachLists', l.id));
-        toast('List deleted.'); renderLists();
+        if (!confirm(`Archive the list "${l.name}"? It's hidden from pickers but kept — "Show archived" brings it back. Campaigns that used it keep their people.`)) return;
+        await updateDoc(doc(db, 'outreachLists', l.id), { archived: true, archivedAt: serverTimestamp(), archivedBy: me });
+        toast('List archived.'); renderLists();
+      }));
+      $('listsView').querySelectorAll('[data-lrestore]').forEach(b => b.addEventListener('click', async () => {
+        await updateDoc(doc(db, 'outreachLists', b.dataset.lrestore), { archived: false, archivedAt: null, archivedBy: null });
+        toast('List restored.'); renderLists();
       }));
       $('listsView').querySelectorAll('[data-lview]').forEach(b => b.addEventListener('click', async () => {
         const l = lists.find(x => x.id === b.dataset.lview);
@@ -3097,15 +3159,19 @@ Optional note for them:`, '');
       const pace = Math.max(1, Math.min(c.pacing?.maxPerDay || Infinity, globalLimit, addrCap || Infinity));
       const win = c.sendWindow || settings?.sendWindow || { days: [1, 2, 3, 4, 5] };
       const addSendingDays = (n) => { const d = new Date(); let k = 0; while (k < n) { d.setDate(d.getDate() + 1); if ((win.days || []).includes(d.getDay())) k++; } return d; };
+      // I3: on which day of a company's sequence each step comes (sending days after its first step).
+      const dayOf = []; let acc = 0;
+      steps.forEach((st, i) => { if (i > 0) acc += Number(st.wait?.days) || 0; dayOf.push(i === 0 ? 'day 1' : `day ${num(acc + 1)}${st.wait?.unit === 'calendar' ? '*' : ''}`); });
       const rows = steps.map((st, i) => {
         const left = live.filter(e => e.status === 'pending' || e.currentStep <= i).length;
-        if ((st.channel || 'email') !== 'email') return `<tr><td>${i + 1}. ${esc(st.name)}</td><td class="num">${num(left)}</td><td colspan="2" style="font-size:0.8rem;">task — as fast as you do them</td></tr>`;
+        if ((st.channel || 'email') !== 'email') return `<tr><td>${i + 1}. ${esc(st.name)}</td><td class="num">${dayOf[i]}</td><td class="num">${num(left)}</td><td colspan="2" style="font-size:0.8rem;">task — as fast as you do them</td></tr>`;
         const stepPace = i === 0 && c.audienceType !== 'people' ? Math.min(pace, c.pacing?.newPerDay || 20) : pace;
         const days = left ? Math.ceil(left / stepPace) : 0;
-        return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">starts ${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'working'} day(s) after each previous step</div>` : ''}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td><td style="white-space:nowrap;font-size:0.8rem;">${days ? '≈ ' + dayFmt.format(addSendingDays(days)) : 'done'}</td></tr>`;
+        return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">starts ${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'working'} day(s) after each previous step</div>` : ''}</td><td class="num">${dayOf[i]}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td><td style="white-space:nowrap;font-size:0.8rem;">${days ? '≈ ' + dayFmt.format(addSendingDays(days)) : 'done'}</td></tr>`;
       }).join('');
       return `<p class="note">Effective pace: <b>${num(pace)}</b> emails a day — the lowest of this campaign's limit (${c.pacing?.maxPerDay ? num(c.pacing.maxPerDay) : 'none'}), the automations limit (${num(globalLimit)}, shared by all campaigns) and the addresses' daily caps (${num(addrCap)}).</p>
-        <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th class="num">Still to go</th><th class="num">Sending days</th><th>Done by</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th class="num" title="When this step comes in each company's sequence, counted from its first step">Day</th><th class="num">Still to go</th><th class="num" title="Sending days this step needs for everyone still to go, at the pace above">Sending days</th><th>Done by</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <p class="note" style="margin-top:8px;">Each company goes through the whole sequence in about <b>${num(acc + 1)}</b> ${steps.some(s => s.wait?.unit === 'calendar') ? 'days (* calendar days)' : 'working days'}, from its first step.</p>
         <p class="hint" style="margin-top:6px;">Estimates — other campaigns share the daily limit, and approval steps wait for you. Recomputed each time the campaign is opened.</p>`;
     }
 
@@ -3405,12 +3471,15 @@ Optional note for them:`, '');
       }));
     }
 
+    let recurShowArchived = false;
     function renderRecurring() {
       const st = { active: 'good', paused: 'warn' };
+      const nArch = recurring.filter(r => r.status === 'archived').length;
+      const shownRec = recurring.filter(r => recurShowArchived || r.status !== 'archived');
       $('recurView').innerHTML = `<div class="card" style="padding:0;">
-          <div class="toolbar"><h2 class="camp-h2">Recurring emails</h2><button class="btn btn--primary btn--sm" id="recNew" data-perm="out.approve" style="margin-left:auto;">New recurring email</button></div>
+          <div class="toolbar"><h2 class="camp-h2">Recurring emails</h2>${nArch ? `<label class="checkline"><input type="checkbox" id="recArch"${recurShowArchived ? ' checked' : ''}> <span>Show archived (${num(nArch)})</span></label>` : ''}<button class="btn btn--primary btn--sm" id="recNew" data-perm="out.approve" style="margin-left:auto;">New recurring email</button></div>
           <div class="table-wrap"><table><thead><tr><th>Name</th><th>When</th><th>To</th><th>From</th><th>Next issue</th><th class="num">Issues</th><th>Status</th><th></th></tr></thead>
-          <tbody>${recurring.length ? recurring.map(r => `<tr>
+          <tbody>${shownRec.length ? shownRec.map(r => `<tr>
             <td><b>${esc(r.name)}</b>${r.description ? `<div class="hint">${esc(r.description)}</div>` : ''}</td>
             <td style="font-size:0.82rem;">${esc(scheduleText(r.schedule))}</td>
             <td style="font-size:0.82rem;">${esc(r.listName || '')}<div class="hint">max ${num(r.maxPerDay)}/day</div></td>
@@ -3418,12 +3487,12 @@ Optional note for them:`, '');
             <td style="white-space:nowrap;">${r.status === 'active' ? esc(when(r.nextIssueAt)) : '—'}</td>
             <td class="num"><button class="camp-link" data-rhist="${esc(r.id)}">${num(r.issueCount || 0)}</button></td>
             <td><span class="pill${st[r.status] ? ' pill--' + st[r.status] : ''}">${esc(r.status)}</span></td>
-            <td style="text-align:right;white-space:nowrap;">
+            <td style="text-align:right;white-space:nowrap;">${r.status === 'archived' ? `<button class="btn btn--ghost btn--sm" data-rrestore="${esc(r.id)}" data-perm="out.approve">Restore</button></td></tr>` : `
               <button class="btn btn--ghost btn--sm" data-rnow="${esc(r.id)}" data-perm="out.approve" title="Write an issue draft now, off-schedule">Issue now</button>
               <button class="btn btn--ghost btn--sm" data-redit="${esc(r.id)}" data-perm="out.approve">Edit</button>
               <button class="btn btn--ghost btn--sm" data-rstat="${esc(r.id)}" data-perm="out.approve">${r.status === 'active' ? 'Pause' : 'Resume'}</button>
               <button class="btn btn--ghost btn--sm" data-ropt="${esc(r.id)}" title="People who unsubscribed from this recurring email">Unsubscribed</button>
-              <button class="btn btn--danger btn--sm" data-rdel="${esc(r.id)}" data-perm="out.approve">Delete</button></td></tr>`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. A day before each date an issue is drafted from the template into Tasks → To approve; you edit it (and can send yourself a test), approve, and it goes out on the date to the list, at the pace you set.</td></tr>'}</tbody></table></div>
+              <button class="btn btn--ghost btn--sm" data-rdel="${esc(r.id)}" data-perm="out.approve">Archive</button></td></tr>`}`).join('') : '<tr><td colspan="8" class="empty">No recurring emails yet — e.g. a monthly update to investors. A day before each date an issue is drafted from the template into Tasks → To approve; you edit it (and can send yourself a test), approve, and it goes out on the date to the list, at the pace you set.</td></tr>'}</tbody></table></div>
         </div>
         <p class="hint" style="margin-top:10px;">The unsubscribe link in a recurring email removes the person from that recurring email only. A spam complaint blocks the address everywhere.</p>`;
       $('recNew').addEventListener('click', () => openRecurringModal(null));
@@ -3440,8 +3509,12 @@ Optional note for them:`, '');
       }));
       $('recurView').querySelectorAll('[data-rdel]').forEach(b => b.addEventListener('click', async () => {
         const r = byId(b.dataset.rdel);
-        if (!confirm(`Delete "${r.name}"?\n\nEverything not yet out stops: a waiting or approved issue is cancelled, and an issue part-way through sending stops (nobody else gets it). Emails already sent, and their history, stay.`)) return;
-        try { const x = (await callRecurring({ action: 'delete', recurringId: r.id })).data; toast(`Recurring email deleted${x.stopped ? ` — ${x.stopped} issue stopped mid-send` : ''}.`); } catch (e) { toast(errText(e)); }
+        if (!confirm(`Archive "${r.name}"?\n\nEverything not yet out stops: a waiting or approved issue is cancelled, and an issue part-way through sending stops (nobody else gets it). Emails already sent, and their history, stay. "Show archived" → Restore brings it back, paused.`)) return;
+        try { const x = (await callRecurring({ action: 'delete', recurringId: r.id })).data; toast(`Recurring email archived${x.stopped ? ` — ${x.stopped} issue stopped mid-send` : ''}.`); } catch (e) { toast(errText(e)); }
+      }));
+      $('recArch')?.addEventListener('change', (e) => { recurShowArchived = e.target.checked; renderRecurring(); });
+      $('recurView').querySelectorAll('[data-rrestore]').forEach(b => b.addEventListener('click', async () => {
+        try { await callRecurring({ action: 'restore', recurringId: b.dataset.rrestore }); toast('Restored — paused; Resume when ready.'); } catch (e) { toast(errText(e)); }
       }));
       // F4: who unsubscribed from this recurring email; a partner can put
       // someone back when they asked (reason recorded).
@@ -3500,7 +3573,8 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
     async function openRecurringModal(r) {
       const ls = await getDocs(collection(db, 'outreachLists'));
       addReads(ls.size || 1); refreshReads();
-      const lists = ls.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      // I5: archived lists aren't offered (the one this email already uses stays).
+      const lists = ls.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => !l.archived || l.id === r?.listId).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       if (!lists.length) { toast('Create a list of people first (Campaigns → Lists of people).'); return; }
       const sc = r?.schedule || { freq: 'monthly', day: 1, weekday: 1, startMonth: 1, time: '09:30' };
       const active = senders.filter(x => x.status === 'active');
@@ -3553,8 +3627,25 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       }, () => {});
     }
 
+    // I7: the company behind a draft — owner, tier, last touch, other campaigns.
+    function approvalContext(d) {
+      const c = d.companyId ? coCache.get(d.companyId) : null;
+      if (!c) return '';
+      const bits = [];
+      if (c.owner) bits.push(`owner ${esc(OWNER_LABEL[c.owner] || c.owner)}`);
+      const tier = String(c.priority || c.targetTierManual || '').toUpperCase();
+      if (['A', 'B', 'C'].includes(tier)) bits.push(`tier ${tier}`);
+      bits.push(c.lastTouchAt ? `last touch ${esc(dayFmt.format(new Date(tsMs(c.lastTouchAt))))}` : 'never touched');
+      if (c.activeCampaignId && c.activeCampaignId !== d.campaignId) bits.push(`also in "${esc(c.activeCampaignName || 'another campaign')}"`);
+      if (c.stage) bits.push(`stage ${esc(c.stage)}`);
+      return `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
+    }
+    let approveCtxLoading = false;
     function renderApprove() {
       if (document.activeElement?.closest?.('#approveView .draft')) return; // don't wipe what's being typed
+      // I7: load the companies behind the shown drafts once, then render again.
+      const needCo = drafts.slice(0, 50).map(d => d.companyId).filter(id => id && !coCache.has(id));
+      if (needCo.length && !approveCtxLoading) { approveCtxLoading = true; loadCompaniesFor(needCo).catch(() => {}).finally(() => { approveCtxLoading = false; if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove(); }); }
       const byCamp = {};
       drafts.forEach(d => { const k = d.source === 'manual' ? '__manual' : d.campaignId; byCamp[k] = (byCamp[k] || 0) + 1; });
       if (approveFilter !== 'all' && !byCamp[approveFilter]) approveFilter = 'all';
@@ -3589,6 +3680,7 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
               <span class="draft__co"><a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" style="color:var(--text);">${esc(d.companyName || 'Company')}</a></span>
               <span class="hint">drafted ${esc(when(d.createdAt))}</span>
             </div>
+            ${approvalContext(d)}
             <div class="draft__meta">
               ${d.source === 'manual'
                 ? `<span><span class="pill pill--info">written by ${esc(writerName(d.writtenBy))}</span>${d.isReply ? ' · reply' : ''}${d.lastError ? ` · <span style="color:var(--danger);">last attempt failed: ${esc(d.lastError)}</span>` : ''}</span>`
@@ -3907,8 +3999,10 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           ${t.channel === 'linkedin' ? '<div class="field" style="margin-bottom:8px;"><label>Profile URL (optional)</label><input type="text" data-tprofile placeholder="https://www.linkedin.com/in/…"></div>' : ''}
           ${outs.some(o => o[2] === 'reopen') ? '<div class="field" style="margin-bottom:8px;max-width:260px;"><label>Next attempt (for call back / reschedule)</label><input type="date" data-treopen></div>' : ''}
           ${outs.some(o => o[2] === 'reply') ? `<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this ${c._person ? 'person' : 'company'}</span></label>` : ''}
-          <div class="outcomes">${outs.map(([k, l, f]) => `<button class="btn btn--${f === 'reply' ? 'primary' : 'ghost'} btn--sm" data-tout="${k}" data-perm="out.tasks">${esc(l)}</button>`).join('')}
-            <button class="btn btn--ghost btn--sm" data-tout="skipped" data-perm="out.tasks" style="margin-left:auto;" title="Move on without doing this step">Skip step</button></div>
+          <div class="outcomes">${outs.map(([k, l]) => `<button class="btn btn--ghost btn--sm" data-tout="${k}" data-perm="out.tasks" aria-pressed="${taskPick.get(t.id) === k}">${esc(l)}</button>`).join('')}
+            <button class="btn btn--ghost btn--sm" data-tout="skipped" data-perm="out.tasks" aria-pressed="${taskPick.get(t.id) === 'skipped'}" style="margin-left:auto;" title="Move on without doing this step">Skip step</button></div>
+          <div class="actions" style="margin-top:8px;align-items:center;"><span class="hint" data-tpicked>${taskPick.has(t.id) ? `Selected: <b>${esc(pickedLabel(t, taskPick.get(t.id)))}</b> — nothing is saved until you press Save.` : 'Choose what happened, then Save.'}</span>
+            <button class="btn btn--primary btn--sm" data-tsave data-perm="out.tasks" style="margin-left:auto;"${taskPick.has(t.id) ? '' : ' disabled'}>Save</button></div>
         </div>`;
       };
       $('todoView').innerHTML = `
@@ -3939,8 +4033,16 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         el.querySelector('[data-tsigner]')?.addEventListener('change', async (e) => {
           await campCall({ action: 'updateTask', taskId: t.id, signer: e.target.value || null }, `Signed by ${OWNER_LABEL[e.target.value] || e.target.value}.`);
         });
-        el.querySelectorAll('[data-tout]').forEach(b => b.addEventListener('click', async () => {
-          const outcome = b.dataset.tout;
+        // Q1: an outcome button only selects; Save records it.
+        el.querySelectorAll('[data-tout]').forEach(b => b.addEventListener('click', () => {
+          const k = b.dataset.tout;
+          if (taskPick.get(t.id) === k) taskPick.delete(t.id); else taskPick.set(t.id, k);
+          el.querySelectorAll('[data-tout]').forEach(x => x.setAttribute('aria-pressed', String(taskPick.get(t.id) === x.dataset.tout)));
+          el.querySelector('[data-tpicked]').innerHTML = taskPick.has(t.id) ? `Selected: <b>${esc(pickedLabel(t, taskPick.get(t.id)))}</b> — nothing is saved until you press Save.` : 'Choose what happened, then Save.';
+          el.querySelector('[data-tsave]').disabled = !taskPick.has(t.id);
+        }));
+        el.querySelector('[data-tsave]')?.addEventListener('click', async () => {
+          const outcome = taskPick.get(t.id); if (!outcome) return;
           const def = (TASK_OUTCOMES[t.channel] || []).find(o => o[0] === outcome);
           const payload = { action: 'completeTask', taskId: t.id, outcome, notes: el.querySelector('[data-tnotes]').value };
           if (def?.[2] === 'reopen') {
@@ -3954,10 +4056,15 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           el.querySelectorAll('button').forEach(x => { x.disabled = true; });
           document.activeElement?.blur();
           const r = await campCall(payload, (x) => x.status === 'open' ? `Saved — next attempt on ${dayFmt.format(new Date(x.dueAt))}.` : x.sequence === 'stopped' ? `Saved — the sequence stopped for this ${t.companyId ? 'company' : 'person'}.` : outcome === 'skipped' ? 'Step skipped.' : 'Saved.');
-          if (!r) el.querySelectorAll('button').forEach(x => { x.disabled = false; });
-        }));
+          if (r) taskPick.delete(t.id);
+          else el.querySelectorAll('button').forEach(x => { x.disabled = false; });
+        });
       });
     }
+
+    // Q1: the outcome chosen on each task card, kept until saved (survives re-renders).
+    const taskPick = new Map();
+    const pickedLabel = (t, k) => k === 'skipped' ? 'Skip step' : ((TASK_OUTCOMES[t.channel] || []).find(o => o[0] === k)?.[1] || k);
 
     // ── Letters to print (C1: plain A4, address block for a left window envelope, typed signature) ──
     let letterSel = new Set();
@@ -4078,25 +4185,25 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               <button class="btn btn--danger btn--sm" data-del ${isLocked ? 'disabled' : ''}>Delete</button></div>` : ''}
           </div>
           <div class="step__grid">
-            <div class="field"><label>When</label>
+            <div class="field"><label>When<span class="info" title="Wait after the previous step, in working days (Mon–Fri, no holidays) or calendar days, before this step comes due." aria-label="Wait after the previous step, in working days (Mon–Fri, no holidays) or calendar days, before this step comes due.">i</span></label>
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
                 <input type="text" inputmode="numeric" data-f="waitDays" value="${esc(s.wait?.days ?? (i === 0 ? 0 : 3))}" style="width:64px;"${dis}>
                 <select data-f="waitUnit" style="width:auto;"${dis}><option value="working"${s.wait?.unit !== 'calendar' ? ' selected' : ''}>working days</option><option value="calendar"${s.wait?.unit === 'calendar' ? ' selected' : ''}>calendar days</option></select>
                 <span class="hint">${i === 0 ? 'after the company starts' : 'after the previous step'}</span>
               </div></div>
             ${kind ? `<div class="field"><label>${ch === 'email' ? 'Template' : ch === 'letter' ? 'Letter template' : ch === 'call' ? 'Call script (optional)' : 'Message to send (optional)'}</label><select data-f="templateId"${dis}>${tplOptions(s.templateId, kind, !['email', 'letter'].includes(ch))}</select></div>` : ''}
-            ${ch === 'email' ? `<div class="field"><label>Before sending</label><select data-f="approval"${dis}>
+            ${ch === 'email' ? `<div class="field"><label>Before sending<span class="info" title="Inherit = the campaign's rule. Approval = waits in To approve. Automatic = goes out on its own." aria-label="Inherit = the campaign's rule. Approval = waits in To approve. Automatic = goes out on its own.">i</span></label><select data-f="approval"${dis}>
               <option value="inherit"${(s.approval || 'inherit') === 'inherit' ? ' selected' : ''}>Follow the campaign (${campApproval})</option>
               <option value="approval"${s.approval === 'approval' ? ' selected' : ''}>Needs approval</option>
               <option value="auto"${s.approval === 'auto' ? ' selected' : ''}>Send automatically</option></select></div>`
               : `<div class="field"><label>Who does it</label><div class="hint" style="padding-top:8px;">${c.assignee && c.assignee !== 'owner' ? esc(OWNER_LABEL[c.assignee]) : "The company's owner"} (campaign Settings)</div></div>`}
           </div>
           ${ch !== 'email' ? `<div class="field" style="margin-bottom:6px;"><label>Instructions for the task</label><textarea data-f="instructions" rows="2" maxlength="2000" placeholder="${ch === 'call' ? 'e.g. Ask for the managing partner; mention the email from last week' : ch === 'linkedin' ? 'e.g. Connect with the owner, no note' : 'What should be done'}"${dis}>${esc(s.instructions || '')}</textarea></div>` : ''}
-          ${abOk && tplVars.length > 1 ? `<div class="field" style="margin-bottom:6px;"><label>A/B variants</label>
+          ${abOk && tplVars.length > 1 ? `<div class="field" style="margin-bottom:6px;"><label>A/B variants<span class="info" title="Send different versions of the template; the weights decide how often each one is used. Results per variant show in Overview." aria-label="Send different versions of the template; the weights decide how often each one is used. Results per variant show in Overview.">i</span></label>
             <div class="wvars">${tplVars.map(k => { const v = (s.variants || []).find(x => x.key === k); return `<label class="wvar"><input type="checkbox" data-vk="${k}" ${all || chosenKeys.has(k) ? 'checked' : ''}${dis}> ${k} <input type="text" inputmode="numeric" data-vw="${k}" value="${esc(v ? v.weight : 1)}" aria-label="Weight ${k}"${dis}></label>`; }).join('')}</div>
             <span class="hint">Each company gets one variant, picked at random by weight. Results per variant appear in the Overview.</span></div>` : ''}
           ${ch === 'email' && i > 0 ? `<label class="checkline"><input type="checkbox" data-f="newSubject" ${s.newSubject ? 'checked' : ''}${dis}> <span>Start a new conversation with the template's subject (default: reply in the same conversation, "Re: …", quoting the previous email)</span></label>` : ''}
-          ${ch !== 'other' && ruleOutcomes(ch).length ? `<div class="field" style="margin-bottom:6px;"><label>Rules (optional)</label>
+          ${ch !== 'other' && ruleOutcomes(ch).length ? `<div class="field" style="margin-bottom:6px;"><label>Rules (optional)<span class="info" title="What happens after an outcome, e.g. &quot;No answer → go to step 4&quot; or &quot;Not interested → end&quot;. Replies, bounces and unsubscribes always stop the sequence." aria-label="What happens after an outcome, e.g. &quot;No answer → go to step 4&quot; or &quot;Not interested → end&quot;. Replies, bounces and unsubscribes always stop the sequence.">i</span></label>
             ${(s.branches || []).map((b, bi) => `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px;" data-br="${bi}">
               <span class="hint">${ch === 'email' ? 'If they' : 'If the outcome is'}</span>
               <select data-bf="outcome" style="width:auto;"${dis}>${ruleOutcomes(ch).map(([k, l]) => `<option value="${k}"${b.outcome === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
@@ -4126,7 +4233,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         </div>`;
 
       const box = $('seqSteps');
-      const mark = () => { seqDirty = true; $('seqSave') && ($('seqSave').disabled = false); };
+      const mark = () => { seqDirty = true; $('seqSave') && ($('seqSave').disabled = false); refreshUnsaved(); };
       box.querySelectorAll('.step').forEach(el => {
         const i = Number(el.dataset.i), s = seqDraft[i];
         el.querySelectorAll('[data-f]').forEach(inp => inp.addEventListener(inp.type === 'checkbox' || inp.tagName === 'SELECT' ? 'change' : 'input', () => {
@@ -4176,14 +4283,15 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       });
       $('seqAdd')?.addEventListener('click', () => {
         const ch = $('seqAddCh').value;
-        seqDraft.push({ name: `${CHANNEL_LABELS[ch]} ${seqDraft.length + 1}`, channel: ch, wait: { days: seqDraft.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false, instructions: '', branches: [] });
+        seqDraft.push({ id: 'n' + Math.random().toString(36).slice(2, 9), name: `${CHANNEL_LABELS[ch]} ${seqDraft.length + 1}`, channel: ch, wait: { days: seqDraft.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false, instructions: '', branches: [] });
         mark(); renderSequence();
       });
       $('seqDiscard')?.addEventListener('click', () => { seqDraft = null; seqDirty = false; renderSequence(); });
+      refreshUnsaved();
       $('seqSave')?.addEventListener('click', async () => {
         const b = $('seqSave'); b.disabled = true;
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: { steps: seqDraft.map(s => ({ ...s, channel: s.channel || 'email' })) } }, 'Sequence saved.');
-        if (r) { seqDirty = false; seqDraft = null; } else b.disabled = false;
+        if (r) { seqDirty = false; seqDraft = null; refreshUnsaved(); } else b.disabled = false;
       });
     }
 
@@ -4201,12 +4309,12 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <h3>Campaign</h3>
           <div class="row2">
             <div class="field"><label for="csName">Name</label><input type="text" id="csName" maxlength="100" value="${esc(c.name)}"${dis}></div>
-            <div class="field"><label for="csPrio">Priority when campaigns compete for the daily limit</label>
+            <div class="field"><label for="csPrio">Priority when campaigns compete for the daily limit<span class="info" title="When several campaigns want to send more than the daily limit allows, higher-priority campaigns go first." aria-label="When several campaigns want to send more than the daily limit allows, higher-priority campaigns go first.">i</span></label>
               <select id="csPrio"${dis}>${[[1, 'High'], [2, 'Normal'], [3, 'Low']].map(([v, l]) => `<option value="${v}"${(c.priority || 2) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
           </div>
           <div class="field"><label for="csDesc">Description</label><input type="text" id="csDesc" maxlength="500" value="${esc(c.description || '')}"${dis}></div>
           <div class="row2">
-            <div class="field"><label for="csAppr">Before emails go out (steps can override)</label>
+            <div class="field"><label for="csAppr">Before emails go out (steps can override)<span class="info" title="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule." aria-label="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule.">i</span></label>
               <select id="csAppr"${dis}><option value="approval"${c.approvalDefault !== 'auto' ? ' selected' : ''}>Each email waits for approval</option><option value="auto"${c.approvalDefault === 'auto' ? ' selected' : ''}>Emails go out automatically</option></select></div>
             <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csRecip">Emails go to</label>
               <select id="csRecip"${dis}>
@@ -4222,23 +4330,23 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               <span class="hint">Their name, phone and email fill {{sender.name}}, {{sender.phone}}, {{sender.email}}. Each letter or task can be changed.</span></div>
           </div>
           <div class="row2">
-            <div class="field"><label for="csMaxDay">Max emails per day (this campaign)</label><input type="text" inputmode="numeric" id="csMaxDay" value="${esc(c.pacing?.maxPerDay ?? '')}" placeholder="no own limit"${dis}>
+            <div class="field"><label for="csMaxDay">Max emails per day (this campaign)<span class="info" title="A cap for this campaign only. The automations limit (Settings → General) and each address's daily cap still apply." aria-label="A cap for this campaign only. The automations limit (Settings → General) and each address's daily cap still apply.">i</span></label><input type="text" inputmode="numeric" id="csMaxDay" value="${esc(c.pacing?.maxPerDay ?? '')}" placeholder="no own limit"${dis}>
               <span class="hint">Empty = only the global limits. The portal spreads the sends over the days needed — see "How long each step will take" in the Overview.</span></div>
             ${c.audienceType === 'people' && c.kind !== 'issue' ? `<div class="field"><label for="csPeopleRecent">Skip people the portal emailed in the last … days</label><input type="text" inputmode="numeric" id="csPeopleRecent" value="${esc(c.exclusions?.peopleContactedWithinDays || 0)}"${dis}>
               <span class="hint">0 = off (default). Counts campaign, Compose and Investor CRM / Network emails sent through the portal. Recurring emails always go to the whole list.</span></div>` : ''}
-            <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csPace">New companies per day</label><input type="text" inputmode="numeric" id="csPace" value="${esc(c.pacing?.newPerDay || 20)}"${dis}>
+            <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csPace">New companies per day<span class="info" title="How many companies start the sequence each sending day. Follow-ups of companies already started come on top." aria-label="How many companies start the sequence each sending day. Follow-ups of companies already started come on top.">i</span></label><input type="text" inputmode="numeric" id="csPace" value="${esc(c.pacing?.newPerDay || 20)}"${dis}>
               <span class="hint">Emails per day ≈ this × emails per company. The automations limit (${num(settings?.automationBudget ?? 80)}/day) is shared by all campaigns.</span></div>
           </div>
         </div>
         <div class="card">
           <h3>Sending</h3>
-          <div class="field"><label>From which addresses</label>
+          <div class="field"><label>From which addresses<span class="info" title="Owner's addresses: each company is written from its owner's outreach addresses, in rotation. Fixed: only the addresses you tick." aria-label="Owner's addresses: each company is written from its owner's outreach addresses, in rotation. Fixed: only the addresses you tick.">i</span></label>
             <label class="checkline"><input type="radio" name="csSendMode" value="owner_rotation" ${sp.mode !== 'fixed' ? 'checked' : ''}${dis}> <span>The company owner's active addresses, least used first (any active address when the company has no owner)</span></label>
             <label class="checkline"><input type="radio" name="csSendMode" value="fixed" ${sp.mode === 'fixed' ? 'checked' : ''}${dis}> <span>Only these addresses:</span></label>
             <div class="stage-grid" id="csSenders" style="margin:6px 0 0 24px;">${senders.map(s => `<label class="checkline"><input type="checkbox" value="${esc(s.id)}" ${(sp.senderIds || []).includes(s.id) ? 'checked' : ''}${dis}> <span>${esc(s.kind === 'relationship' ? s.id : localPart(s.id))} <span class="hint">(${s.kind === 'relationship' ? 'your real address — replies go to Gmail' : `${esc(OWNER_LABEL[s.owner] || s.owner || '')}, ${esc(s.status)}`})</span></span></label>`).join('')}</div>
             ${c.audienceType === 'people' ? '<span class="hint"><b>Campaigns to people need specific addresses</b> — e.g. andre.rocha@douropartners.pt for investors and press (replies to your Gmail), or an outreach address (replies in the portal Inbox).</span>' : ''}
             <span class="hint">Follow-ups always go from the address that sent the first email.</span></div>
-          <div class="field"><label>Sending window</label>
+          <div class="field"><label>Sending window<span class="info" title="Days and hours (Lisbon) when emails may go out. Never on national holidays." aria-label="Days and hours (Lisbon) when emails may go out. Never on national holidays.">i</span></label>
             <label class="checkline"><input type="checkbox" id="csOwnWin" ${win ? 'checked' : ''}${dis}> <span>Use a different window from the global one (${esc(windowText(gw))})</span></label>
             <div id="csWin" style="display:${win ? 'flex' : 'none'};flex-wrap:wrap;gap:6px 14px;align-items:center;margin-top:6px;">
               ${DAY_NAMES.map(([d, n]) => `<label class="checkline"><input type="checkbox" value="${d}" ${((win || gw).days || []).includes(d) ? 'checked' : ''}${dis}> <span>${n}</span></label>`).join('')}
@@ -4248,16 +4356,16 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         <div class="card"${c.audienceType === 'people' ? ' hidden' : ''}>
           <h3>Who can be added</h3>
           <div class="row2">
-            <div class="field"><label for="csRecent">Skip companies contacted in the last … days</label><input type="text" inputmode="numeric" id="csRecent" value="${esc(ex.contactedWithinDays)}"${dis}>
+            <div class="field"><label for="csRecent">Skip companies contacted in the last … days<span class="info" title="Leaves out companies with an outreach email, call, letter or visit in this many days. 0 = no check." aria-label="Leaves out companies with an outreach email, call, letter or visit in this many days. 0 = no check.">i</span></label><input type="text" inputmode="numeric" id="csRecent" value="${esc(ex.contactedWithinDays)}"${dis}>
               <span class="hint">Outreach touches count: emails, calls, LinkedIn, WhatsApp, letters, visits (sent from the portal or logged in the Search CRM). Notes and meetings don't. 0 = off.</span></div>
             <div class="field"><label for="csOwner">Only companies owned by</label>
               <select id="csOwner"${dis}><option value="">Anyone</option>${ownerOpts(ex.ownerFilter)}</select></div>
           </div>
-          <div class="field"><label>Search CRM stages allowed</label>
+          <div class="field"><label>Search CRM stages allowed<span class="info" title="Only companies in these Search CRM stages can be added." aria-label="Only companies in these Search CRM stages can be added.">i</span></label>
             <div class="stage-grid" id="csStages">${STAGE_LABELS.map(([k, l]) => `<label class="checkline"><input type="checkbox" value="${k}" ${ex.allowedStages.includes(k) ? 'checked' : ''}${dis}> <span>${esc(l)}</span></label>`).join('')}</div></div>
           <label class="checkline"><input type="checkbox" id="csReqEmail" ${ex.requireEmail !== false ? 'checked' : ''}${dis}> <span>Skip companies without an email address</span></label>
           <label class="checkline" data-feature="search.tier"><input type="checkbox" id="csInclNC" ${ex.includeNotContactable ? 'checked' : ''}${dis}> <span>Include companies marked <b>not contactable</b> in the Search CRM (left out by default; "Do not contact" is never included)</span></label>
-          <div class="field" style="margin-top:14px;"><label for="csAudMode">Audience</label>
+          <div class="field" style="margin-top:14px;"><label for="csAudMode">Audience<span class="info" title="Static: only the companies you add. Dynamic: every day from 07:00, companies that start matching the campaign's latest Search CRM filter are added." aria-label="Static: only the companies you add. Dynamic: every day from 07:00, companies that start matching the campaign's latest Search CRM filter are added.">i</span></label>
             <select id="csAudMode" style="max-width:520px;"${dis}>
               <option value="static"${c.audience?.mode !== 'dynamic' ? ' selected' : ''}>Static — only the companies you add</option>
               <option value="dynamic"${c.audience?.mode === 'dynamic' ? ' selected' : ''}>Dynamic — also add companies that start matching the Search CRM filter</option>
@@ -4268,7 +4376,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         <div class="banner banner--bad" id="csErr" hidden style="margin-top:12px;"></div>
         ${editable ? `<div class="actions" style="margin-top:14px;"><button class="btn btn--primary" id="csSave" data-perm="out.campaigns">Save settings</button>${csetDirty ? '<button class="btn btn--ghost" id="csDiscard" data-perm="out.campaigns">Discard changes</button>' : ''}</div>` : ''}`;
       const root = $('cs-csettings');
-      root.querySelectorAll('input, select').forEach(i => i.addEventListener(i.type === 'checkbox' || i.type === 'radio' || i.tagName === 'SELECT' ? 'change' : 'input', () => { csetDirty = true; }));
+      root.querySelectorAll('input, select').forEach(i => i.addEventListener(i.type === 'checkbox' || i.type === 'radio' || i.tagName === 'SELECT' ? 'change' : 'input', () => { csetDirty = true; refreshUnsaved(); }));
+      refreshUnsaved();
       $('csOwnWin')?.addEventListener('change', (e) => { $('csWin').style.display = e.target.checked ? 'flex' : 'none'; });
       $('csDiscard')?.addEventListener('click', () => { csetDirty = false; renderCampSettings(); });
       // I2: who each "Emails go to" option reaches, for the companies in the campaign.
@@ -4312,6 +4421,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         } }, 'Settings saved.');
         b.disabled = false;
         if (r) { csetDirty = false; renderCampSettings(); }
+        refreshUnsaved();
       });
     }
   </script>

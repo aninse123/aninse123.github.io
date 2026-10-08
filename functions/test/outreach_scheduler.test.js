@@ -302,6 +302,35 @@ const TUE = "2026-09-29T10:30:00+01:00";
   ok("real mode: company suppressed after enrolling → stopped", rReal.stopped === 1 && get(`outreachEnrolments/${cReal}_c2`).status === "stopped" && get("searchCompanies/c2").activeCampaignId === undefined);
   ok("real mode: activity is a real outreach email", docs("searchActivities").some((a) => a.type === "email" && a.campaignId === cReal));
 
+  // ── Round 2 fixes, batch 3 (8 Oct) ──
+  seedBase();
+  store.set("outreachSettings/global", { testMode: true, campaignTestRecipient: "andrenorocha@gmail.com", testRecipients: ["andrenorocha@gmail.com", "amobnc92@gmail.com"] });
+  // I21: test emails go to the starter when their address is approved.
+  const b3T = (await camp({ action: "save", campaign: { name: "Teste António", approvalDefault: "auto", steps: [{ templateId: "t1" }, { templateId: "t2", wait: { days: 3 } }] } })).campaignId;
+  await camp({ action: "enrol", campaignId: b3T, companyIds: ["c1"] });
+  await camp({ action: "setStatus", campaignId: b3T, status: "active", testRecipient: "amobnc92@gmail.com" });
+  ok("I21: an approved starter's test address is kept on the campaign", get(`outreachCampaigns/${b3T}`).testRecipient === "amobnc92@gmail.com");
+  calls.length = 0;
+  await run(TUE);
+  ok("I21: that campaign's test emails go there", sends().length === 1 && sends()[0].body.to[0] === "amobnc92@gmail.com");
+  const b3U = (await camp({ action: "save", campaign: { name: "Outro", approvalDefault: "auto", steps: [{ templateId: "t1" }] } })).campaignId;
+  await camp({ action: "enrol", campaignId: b3U, companyIds: ["c2"] });
+  await camp({ action: "setStatus", campaignId: b3U, status: "active", testRecipient: "someone@empresa9.pt" });
+  ok("I21: an address that isn't approved falls back to the general test address", get(`outreachCampaigns/${b3U}`).testRecipient === null);
+  // I22: Run now (test mode) — the 3-day wait is skipped, the window ignored.
+  calls.length = 0;
+  const b3rn = await camp({ action: "runNow", campaignId: b3T });
+  ok("I22: Run now sends the next step at once, to the campaign's test address", b3rn.ok === true && sends().length === 1 && sends()[0].body.to[0] === "amobnc92@gmail.com" && sends()[0].body.subject.startsWith("Re:"));
+  store.set("outreachSettings/global", { testMode: false, complianceBlockId: "cb1" });
+  ok("I22: Run now is refused outside test mode", (await camp({ action: "runNow", campaignId: b3T })).err?.details?.reason === "test_only");
+  // I5: a draft is archived (not deleted) and can be restored.
+  const b3D = (await camp({ action: "save", campaign: { name: "Rascunho", steps: [{ templateId: "t1" }] } })).campaignId;
+  await camp({ action: "enrol", campaignId: b3D, companyIds: ["c5"] });
+  const b3ar = await camp({ action: "setStatus", campaignId: b3D, status: "archived" });
+  ok("I5: a draft is archived, not deleted; its companies are released", get(`outreachCampaigns/${b3D}`)?.status === "archived" && get(`outreachCampaigns/${b3D}`).archivedFrom === "draft" && b3ar.released === 1 && !["pending", "active"].includes(get(`outreachEnrolments/${b3D}_c5`).status));
+  const b3rr = await camp({ action: "setStatus", campaignId: b3D, status: "restore" });
+  ok("I5: restore brings it back as a draft", b3rr.status === "draft" && get(`outreachCampaigns/${b3D}`).status === "draft" && !get(`outreachCampaigns/${b3D}`).archivedFrom);
+
   console.log(fail ? `\n${fail} FAILED` : "\nall scheduler tests passed");
   process.exit(fail ? 1 : 0);
 })();

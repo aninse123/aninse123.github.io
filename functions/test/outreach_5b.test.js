@@ -113,9 +113,15 @@ function makeRes() { const r = {}; return { r, res: { status(c) { r.code = c; re
   const n5 = await rec({ action: "issueNow", recurringId: rid });
   const sendsAtDelete = sends.length;
   const del = await rec({ action: "delete", recurringId: rid });
-  ok("delete: gone, waiting draft cancelled", !get(`outreachRecurring/${rid}`) && get(`outreachIssues/${n5.issueId}`).status === "cancelled" && del.cancelled >= 1);
+  ok("archive (was delete, I5): kept as archived, waiting draft cancelled", get(`outreachRecurring/${rid}`)?.status === "archived" && get(`outreachIssues/${n5.issueId}`).status === "cancelled" && del.cancelled >= 1);
+  ok("archived: can't be resumed directly", (await rec({ action: "setStatus", recurringId: rid, status: "active" })).err?.details?.reason === "archived");
+  const before2 = docs("outreachIssues").length;
+  await run("2026-12-01T10:00:00Z");
+  ok("archived: no issue written", docs("outreachIssues").length === before2);
   const liveLeft = docs("outreachEnrolments").filter((e) => e.campaignId === ap.campaignId && ["pending", "active", "awaiting_approval", "awaiting_task", "paused"].includes(e.status)).length;
   ok("delete also stops the issue part-way through sending: campaign finished, nobody left waiting, sent emails kept", del.stopped >= 1 && get(`outreachIssues/${n2.issueId}`).status === "stopped" && get(`outreachCampaigns/${ap.campaignId}`).status === "finished" && liveLeft === 0 && sends.length === sendsAtDelete);
+  const rs = await rec({ action: "restore", recurringId: rid });
+  ok("restore brings it back paused (I5)", rs.status === "paused" && get(`outreachRecurring/${rid}`).status === "paused" && !get(`outreachRecurring/${rid}`).archivedAt);
   ok("empty list → approve refused, issue stays a draft", await (async () => {
     store.set("outreachLists/L2", { name: "Vazia", count: 0 });
     const r2 = (await rec({ action: "save", recurring: { name: "Vazia", listId: "L2", templateId: "upd", senderId: "andre.rocha@douropartners.pt" } })).recurringId;

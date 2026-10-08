@@ -64,11 +64,11 @@ set('senders', [{ id: 'andre.rocha@douropartners.pt', status: 'active', kind: 'r
 set('curEnrols', Array.from({ length: 150 }, (_, i) => ({ status: i < 100 ? 'pending' : 'active', currentStep: i < 140 ? 0 : 1 })));
 const people = { audienceType: 'people', pacing: { maxPerDay: 40 }, senderPolicy: { mode: 'fixed', senderIds: ['andre.rocha@douropartners.pt'] }, steps: [{ name: 'Update', channel: 'email' }, { name: 'Follow-up', channel: 'email', wait: { days: 3 } }] };
 const h = projectionHtml(people);
-ok('people: pace 40 (own limit < 80 < 200); 140 still at step 1 (10 past it) → 4 sending days', /Effective pace: <b>40<\/b>/.test(h) && /1\. Update<\/td><td class="num">140<\/td><td class="num">4<\/td>/.test(h));
-ok('step 2: all 150 still to go → 4 days, wait shown', /starts 3 working day\(s\)[^<]*<\/div><\/td><td class="num">150<\/td><td class="num">4<\/td>/.test(h));
+ok('people: pace 40 (own limit < 80 < 200); 140 still at step 1 (10 past it) → 4 sending days', /Effective pace: <b>40<\/b>/.test(h) && /1\. Update<\/td><td class="num">day 1<\/td><td class="num">140<\/td><td class="num">4<\/td>/.test(h));
+ok('step 2: all 150 still to go → 4 days, wait shown; day 4 of the sequence (I3)', /starts 3 working day\(s\)[^<]*<\/div><\/td><td class="num">day 4<\/td><td class="num">150<\/td><td class="num">4<\/td>/.test(h) && /whole sequence in about <b>4<\/b> working days/.test(h));
 const comp = { audienceType: 'companies', pacing: { newPerDay: 20 }, senderPolicy: { mode: 'owner_rotation' }, steps: [{ name: 'Email 1', channel: 'email' }, { name: 'Call', channel: 'call' }] };
 const hc = projectionHtml(comp);
-ok('companies: rotation ignores relationship senders (cap 25) and step 1 uses new-per-day (20): 140/20 = 7 days', /Effective pace: <b>25<\/b>/.test(hc) && /addresses' daily caps \(25\)/.test(hc) && /1\. Email 1<\/td><td class="num">140<\/td><td class="num">7<\/td>/.test(hc));
+ok('companies: rotation ignores relationship senders (cap 25) and step 1 uses new-per-day (20): 140/20 = 7 days', /Effective pace: <b>25<\/b>/.test(hc) && /addresses' daily caps \(25\)/.test(hc) && /1\. Email 1<\/td><td class="num">day 1<\/td><td class="num">140<\/td><td class="num">7<\/td>/.test(hc));
 ok('task steps: no day estimate', /task — as fast as you do them/.test(hc));
 ok('no steps yet → prompt', /Write the sequence first/.test(projectionHtml({ steps: [] })));
 
