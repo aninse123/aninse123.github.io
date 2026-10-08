@@ -27,7 +27,8 @@ const { prepareEmail, deliverEmail, fail } = require("./send_core");
 const store = require("./store");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
-const { db, FieldValue } = store;
+const { db, FieldValue, Timestamp } = store;
+const { sendEmail } = require("./resend");
 
 // The fields of a send request that a draft keeps, to send it later exactly as written.
 function draftRequest(input, isReply) {
@@ -41,6 +42,7 @@ function draftRequest(input, isReply) {
     variantKey: input.variantKey || null,
     subject: isReply ? null : input.subject ?? null,
     body: input.body ?? null,
+    signatureName: typeof input.signatureName === "string" ? input.signatureName.slice(0, 60) : null,
   };
 }
 
@@ -76,7 +78,7 @@ async function send(request, callerEmail) {
     companyId: req.companyId, senderId: req.senderId, to: req.to,
     recipient: req.recipient,
     templateId: req.templateId, variantKey: req.variantKey,
-    subject: req.subject, body: req.body,
+    subject: req.subject, body: req.body, signatureName: req.signatureName,
     confirmOverTarget: !!input.confirmOverTarget,
   });
 
@@ -122,7 +124,7 @@ async function approveDraft(request, callerEmail) {
     const p = await prepareEmail({
       callerEmail, settings, messageRef: sendRef,
       threadId: req.threadId, companyId: req.companyId, senderId: req.senderId, to: req.to, recipient: req.recipient,
-      templateId: req.templateId, variantKey: req.variantKey, subject: req.subject, body: req.body,
+      templateId: req.templateId, variantKey: req.variantKey, subject: req.subject, body: req.body, signatureName: req.signatureName || null,
       confirmOverTarget: true,
     });
     const res = await deliverEmail(p);
@@ -148,6 +150,43 @@ async function returnDraft(request, callerEmail) {
   return { ok: true };
 }
 
+// I15 (8 Oct): forward a conversation to a team member (or yourself) — the
+// whole conversation as plain text with a note on top. Internal only: the
+// address must be a team member's (Team directory) or the caller's own; in
+// test mode an approved test address too. Sent from the conversation's own
+// outreach address; the conversation records who forwarded it to whom.
+const NOT_SENT = ["draft", "approved", "approving", "cancelled", "returned", "draftSent"];
+async function forwardThread(request, callerEmail) {
+  const { threadId, to, note } = request.data || {};
+  const want = normEmail(to);
+  if (!threadId || typeof threadId !== "string") fail("invalid-argument", "thread_required", "Choose a conversation.");
+  const ref = db().doc(`outreachThreads/${threadId}`);
+  const snap = await ref.get();
+  if (!snap.exists) fail("not-found", "thread_not_found", "Conversation not found.");
+  const th = snap.data();
+  const settings = await store.getSettings();
+  const team = (await db().collection("teamDirectory").get()).docs.flatMap((d) => [d.data().contactEmail, d.data().email]).map(normEmail).filter(Boolean);
+  const allowed = new Set([callerEmail, ...team, ...(settings.testMode ? (settings.testRecipients || []).map(normEmail) : [])]);
+  if (!want || !allowed.has(want)) fail("invalid-argument", "not_team", "Forward only to a team member's address (or your own).");
+  const msgs = (await db().collection("outreachMessages").where("threadId", "==", threadId).get()).docs.map((d) => d.data())
+    .filter((m) => !NOT_SENT.includes(m.status)).sort((a, b) => ms(a.createdAt) - ms(b.createdAt));
+  const fmt = (t) => (ms(t) ? new Date(ms(t)).toLocaleString("pt-PT", { timeZone: "Europe/Lisbon" }) : "");
+  const parts = msgs.map((m) => `— ${fmt(m.createdAt)} · ${m.direction === "in" ? `From ${m.from || ""}` : `To ${(m.to || []).join(", ")}`}\nSubject: ${m.subject || ""}\n\n${String(m.text || m.snippet || "").trim()}`);
+  const text = `${String(note || "").trim() ? String(note).trim().slice(0, 2000) + "\n\n" : ""}Forwarded from the Douro Outreach inbox by ${callerEmail}.\nCompany: ${th.companyName || "—"} · Contact: ${th.contactEmail || "—"}\n\n${parts.join("\n\n") || "(no messages)"}\n`;
+  const sender = (await db().doc(`outreachSenders/${th.senderId || "_"}`).get()).data();
+  if (!sender) fail("failed-precondition", "sender_missing", "The conversation's sending address is no longer set up.");
+  await sendEmail(RESEND_SEND_KEY.value(), { from: `${sender.displayName || "Douro Partners"} <${th.senderId}>`, to: [want], subject: `Fwd: ${th.subject || ""}`.slice(0, 300), text }, `fwd_${threadId}_${Date.now()}`);
+  await ref.update({ forwards: FieldValue.arrayUnion({ to: want, by: callerEmail, at: Timestamp.now() }) });
+  return { ok: true, to: want, messages: msgs.length };
+}
+function ms(t) {
+  if (!t) return 0;
+  if (typeof t.toMillis === "function") return t.toMillis();
+  if (typeof t._seconds === "number") return t._seconds * 1000;
+  if (typeof t.seconds === "number") return t.seconds * 1000;
+  const n = Date.parse(t); return isNaN(n) ? 0 : n;
+}
+
 const Feat = require("../features"); // feature switches (Team & access → Features)
 exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET] }, async (request) => {
   await Feat.requireFeature(request, "outreach");
@@ -156,6 +195,10 @@ exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, RESEN
   if (action === "approveDraft" || action === "returnDraft") {
     if (!P.hasPerm(request, "out.approve")) fail("permission-denied", "not_admin", "You don't have permission to approve emails.");
     return action === "approveDraft" ? approveDraft(request, callerEmail) : returnDraft(request, callerEmail);
+  }
+  if (action === "forward") {
+    if (!P.hasPerm(request, "out.send") && !P.hasPerm(request, "out.draft")) fail("permission-denied", "not_admin", "You don't have permission to forward emails.");
+    return forwardThread(request, callerEmail);
   }
   return send(request, callerEmail);
 });

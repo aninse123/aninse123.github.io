@@ -153,7 +153,7 @@ async function handleDeliveryEvent(type, data) {
     await stopFor(companyId, thread, "Email bounced");
   } else if (type === "email.complained") {
     await store.addSuppression(recipient, { reason: "complaint", source: "webhook", companyId });
-    if (threadRef) await threadRef.update({ status: "closed" });
+    if (threadRef) await threadRef.update({ status: "closed", closedReason: "complaint" });
     await store.setCompanyOutreachStatus(companyId, "unsubscribed", isTest);
     await stopFor(companyId, thread, "Marked as spam");
   } else if (type === "email.suppressed") {

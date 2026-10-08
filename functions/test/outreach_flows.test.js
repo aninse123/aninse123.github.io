@@ -266,6 +266,17 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   r = await call(fns.outreachSend, { senderId: S, to: "delivered+b10@resend.dev", subject: "Olá {{company.name}}", body: "Sobre a {{company.shortName}} em {{company.city}}." });
   ok("test mode: company fields show placeholders instead of refusing", r.res?.ok === true && JSON.stringify(lastSend().body).includes("Olá [Empresa]") && JSON.stringify(lastSend().body).includes("[Cidade]"));
 
+  console.log("\n=== batch 5: signatures, forward ===");
+  store.set(`outreachSenders/${S}`, { ...store.get(`outreachSenders/${S}`), signatures: [{ name: "Curta", text: "Assinatura curta XYZ" }] });
+  r = await call(fns.outreachSend, { senderId: S, to: "delivered+sig@resend.dev", subject: "Assinatura", body: "Corpo.", signatureName: "Curta" });
+  ok("I14: the chosen signature replaces the address's default", r.res?.ok === true && lastSend().body.text.includes("Corpo.\n\nAssinatura curta XYZ") && !lastSend().body.text.includes("Douro Partners\n\n--"));
+  const sigThread = r.res.threadId;
+  store.set("teamDirectory/antonio", { key: "antonio", contactEmail: "antonio.carvalho@douropartners.pt" });
+  r = await call(fns.outreachSend, { action: "forward", threadId: sigThread, to: "someone@gmail.com", note: "x" });
+  ok("I15: forward refused to an address outside the team", r.err?.details?.reason === "not_team");
+  r = await call(fns.outreachSend, { action: "forward", threadId: sigThread, to: "antonio.carvalho@douropartners.pt", note: "Vê isto" });
+  ok("I15: forward sends the conversation with the note to a team member, and records it", r.res?.ok === true && lastSend().body.to[0] === "antonio.carvalho@douropartners.pt" && lastSend().body.subject === "Fwd: Assinatura" && lastSend().body.text.startsWith("Vê isto") && lastSend().body.text.includes("Corpo.") && (store.get(`outreachThreads/${sigThread}`).forwards || []).some((f) => f.to === "antonio.carvalho@douropartners.pt"));
+
   console.log("\n=== clear test data ===");
   store.set("searchActivities/real1", { companyId: "co1", type: "note", isTest: false });
   // Usage tab: the sends above were counted (test mode → "test"), per sending address and for the partner who sent them.

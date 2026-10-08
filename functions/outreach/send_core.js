@@ -203,7 +203,9 @@ async function prepareEmail(opts) {
       quote = buildQuote({ date: last.createdAt?.toDate?.() || new Date(), fromName: who.name, fromEmail: who.email, text: prevText });
     }
   }
-  const { text, html } = buildPlainEmail({ bodyText: body.text, signature: sender.signature, footerText: footer, unsubscribeUrl, quote });
+  // I14 (8 Oct): one of the address's other signatures, chosen in Compose.
+  const chosenSig = opts.signatureName ? (sender.signatures || []).find((s) => s && s.name === opts.signatureName) : null;
+  const { text, html } = buildPlainEmail({ bodyText: body.text, signature: chosenSig ? chosenSig.text : sender.signature, footerText: footer, unsubscribeUrl, quote });
 
   // ── Headers: threading on replies, one-click unsubscribe ──
   // No custom Message-ID: Resend silently replaces it with its own (V1,

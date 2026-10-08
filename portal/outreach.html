@@ -51,7 +51,8 @@
     .usage__row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.8rem; }
     .usage__label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); }
     .usage__num { font-variant-numeric: tabular-nums; font-weight: 600; }
-    .usage__bar { height: 8px; background: #EEEAE2; border-radius: 4px; overflow: hidden; margin: 6px 0 4px; display: flex; }
+    .usage__bar { height: 16px; background: #EEEAE2; border-radius: 4px; overflow: hidden; margin: 6px 0 4px; display: flex; }
+    .usage__seg { display: grid; place-items: center; font-size: 0.62rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
     .usage__bar--thin { height: 4px; }
     .usage__seg { height: 100%; transition: width 0.3s; }
     /* Series colours: reference categorical slots 1-4, validated (dataviz
@@ -349,6 +350,7 @@
         <div class="inbox">
           <div class="card inbox__list">
             <div class="inbox__filters">
+              <input type="search" id="inboxSearch" placeholder="Search company, address, subject or text…" aria-label="Search conversations" style="width:100%;margin-bottom:8px;">
               <div class="chips" id="ownerChips"></div>
               <div class="chips" id="stateChips"></div>
             </div>
@@ -425,6 +427,7 @@
               <div class="field">
                 <label for="cFrom">From</label>
                 <select id="cFrom"></select>
+                <select id="cSig" aria-label="Signature" style="margin-top:6px;" hidden></select>
               </div>
             </div>
 
@@ -700,6 +703,7 @@
               <input type="search" id="supSearch" placeholder="Filter…" style="max-width:220px;">
               <input type="text" id="supAdd" placeholder="email@empresa.pt or @empresa.pt" style="max-width:260px;">
               <select id="supReason" aria-label="Reason"><option value="do_not_contact">Do not contact</option><option value="manual">Manual</option><option value="unsubscribed">Asked to be removed</option></select>
+              <input type="text" id="supNote" placeholder="Note (optional), e.g. asked by phone" maxlength="300" style="max-width:240px;">
               <button class="btn btn--ghost btn--sm" id="supAddBtn">Add</button>
               <button class="btn btn--ghost btn--sm" id="supExport" style="margin-left:auto;">Export CSV</button>
             </div>
@@ -932,7 +936,8 @@
       const other = Math.max(0, total - out - rep - rin);
       const scale = Math.max(target, total) || 1;
       const w = (n) => (n / scale * 100) + '%';
-      $('segOut').style.width = w(out); $('segRep').style.width = w(rep); $('segIn').style.width = w(rin); $('segOth').style.width = w(other);
+      // I18: a segment that has anything is at least wide enough to see, with its number on it.
+      [['segOut', out], ['segRep', rep], ['segIn', rin], ['segOth', other]].forEach(([id, n]) => { const s = $(id); s.style.width = w(n); s.style.minWidth = n ? '18px' : '0'; s.textContent = n ? num(n) : ''; });
       $('usageBar').classList.toggle('over', total >= target);
       $('usageToday').textContent = `${approx ? '≈ ' : ''}${num(total)} / ${num(target)}`;
       $('usageToday').style.color = total >= target ? 'var(--danger)' : '';
@@ -964,11 +969,14 @@
       const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['unmatched', 'Unmatched']];
       $('stateChips').innerHTML = states.map(([k, l]) => `<button class="chip${k === stateFilter ? ' on' : ''}" data-state="${k}">${esc(l)}</button>`).join('');
       $('ownerChips').addEventListener('click', (e) => { const b = e.target.closest('[data-owner]'); if (!b) return; ownerFilter = b.dataset.owner; $('ownerChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
+      let inboxSearchT; $('inboxSearch').addEventListener('input', () => { clearTimeout(inboxSearchT); inboxSearchT = setTimeout(renderThreads, 150); });
       $('stateChips').addEventListener('click', (e) => { const b = e.target.closest('[data-state]'); if (!b) return; stateFilter = b.dataset.state; $('stateChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
     }
 
     function filteredThreads() {
+      const q = norm($('inboxSearch')?.value || '').trim();
       return threads.filter(t => {
+        if (q && ![t.companyName, t.contactEmail, t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
         if (ownerFilter === 'mine' && t.owner && t.owner !== myOwner) return false;
         if (ownerFilter !== 'mine' && ownerFilter !== 'all' && t.owner !== ownerFilter) return false;
         if (stateFilter === 'unread' && !t.unread) return false;
@@ -989,7 +997,7 @@
         return `<button class="thread${t.unread ? ' unread' : ''}${t.id === selectedId ? ' sel' : ''}" data-id="${esc(t.id)}">
           <div class="thread__top"><span class="thread__who">${esc(who)}</span><span class="thread__time">${esc(when(t.lastMessageAt))}</span></div>
           <div class="thread__subj">${esc(t.subject || '(no subject)')}</div>
-          <div class="thread__meta">${pill(THREAD_PILL, t.status)}${t.responseCategory ? `<span class="pill">${esc(catLabel(t.responseCategory))}</span>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}<span class="thread__alias">${esc(t.contactEmail || '')}${t.senderId ? ' · ' + esc(localPart(t.senderId)) : ''}</span></div>
+          <div class="thread__meta">${threadPill(t)}${t.responseCategory ? `<span class="pill">${esc(catLabel(t.responseCategory))}</span>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}<span class="thread__alias">${esc(t.contactEmail || '')}${t.senderId ? ' · ' + esc(localPart(t.senderId)) : ''}</span></div>
         </button>`;
       }).join('');
       $('threadList').querySelectorAll('.thread').forEach(b => b.addEventListener('click', () => openThread(b.dataset.id)));
@@ -1023,11 +1031,33 @@
         <div class="view__title">${esc(t.subject || '(no subject)')}</div>
         <div class="view__sub">${company}<span>${esc(t.contactEmail || '')}</span>
           <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
-          ${pill(THREAD_PILL, t.status)}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}</div>
+          ${threadPill(t)}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
+        <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button></div>
         <div class="classify"><span class="classify__label">Classify</span>${CATEGORIES.map(([k, l]) =>
           `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}" data-perm="out.write">${esc(l)}</button>`).join('')}</div>`;
       $('viewHead').querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => classify(t, b.dataset.cat)));
       $('assignBtn')?.addEventListener('click', () => assignCompany(t));
+      $('fwdBtn')?.addEventListener('click', () => openForward(t));
+    }
+    // I17: closed — and why (spam complaint / unsubscribed).
+    function threadPill(t) {
+      if (t.status !== 'closed') return pill(THREAD_PILL, t.status);
+      const why = t.closedReason === 'complaint' ? 'spam complaint' : (t.closedReason === 'unsubscribed' || t.unsubscribedAt) ? 'unsubscribed' : '';
+      return `<span class="pill${why === 'spam complaint' ? ' pill--bad' : ''}">Closed${why ? ': ' + why : ''}</span>`;
+    }
+    // I15: forward the conversation to a team member (internal only).
+    function openForward(t) {
+      const team = (window.teamDir || []).filter(m => m.active !== false && m.contactEmail);
+      const opts = [...new Map([[String(me || '').toLowerCase(), 'Me'], ...team.map(m => [String(m.contactEmail).toLowerCase(), m.label])]).entries()];
+      openModal('Forward this conversation', `
+        <div class="field"><label for="fwdTo">To</label><select id="fwdTo">${opts.map(([e, l]) => `<option value="${esc(e)}">${esc(l)} — ${esc(e)}</option>`).join('')}</select></div>
+        <div class="field"><label for="fwdNote">Note on top (optional)</label><textarea id="fwdNote" rows="3" placeholder="e.g. Can you call them this week?"></textarea></div>
+        <p class="hint">The whole conversation goes as plain text, from ${esc(t.senderId || 'its address')}. Only team addresses — to copy someone outside, reply instead.</p>`,
+        async () => {
+          const r = (await callSend({ action: 'forward', threadId: t.id, to: $('fwdTo').value, note: $('fwdNote').value })).data;
+          toast(`Forwarded to ${r.to} (${num(r.messages)} message${r.messages === 1 ? '' : 's'}).`);
+          return true;
+        }, 'Forward');
     }
 
     function renderMessages() {
@@ -1396,7 +1426,8 @@
         renderPreview();
       });
       ['cSubject', 'cBody', 'cTo'].forEach(id => $(id).addEventListener('input', renderPreview));
-      $('cFrom').addEventListener('change', renderPreview);
+      $('cFrom').addEventListener('change', () => { renderSigOptions(); renderPreview(); });
+      $('cSig').addEventListener('change', renderPreview);
       $('cTpl').addEventListener('change', applyTemplate);
       $('sendBtn').addEventListener('click', sendNew);
       $('clearBtn').addEventListener('click', () => { pickCompany(null); $('coSearch').value = ''; $('cSubject').value = ''; $('cBody').value = ''; $('composeErr').hidden = true; renderPreview(); });
@@ -1494,6 +1525,16 @@
       const keep = usable.find(s => s.id === cur);
       const pick = keep || usable.find(s => s.owner === preferOwner) || usable[0];
       if (pick) el.value = pick.id;
+      renderSigOptions();
+    }
+    // I14: the address's default signature, or one of its other signatures.
+    function renderSigOptions() {
+      const s = senders.find(x => x.id === $('cFrom')?.value), sel = $('cSig'); if (!sel) return;
+      const extra = (s?.signatures || []).filter(x => x && x.name);
+      const cur = sel.value;
+      sel.innerHTML = `<option value="">Signature: default</option>${extra.map(x => `<option value="${esc(x.name)}">Signature: ${esc(x.name)}</option>`).join('')}`;
+      sel.value = extra.some(x => x.name === cur) ? cur : '';
+      sel.hidden = !extra.length;
     }
 
     // Mirrors functions/outreach/render.js for the preview only — the server
@@ -1595,7 +1636,7 @@
       return {
         company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '' },
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
-        sender: { firstName: String(s.displayName || '').split(' ')[0], name: s.displayName || '', email: s.id || '', phone: (window.teamDir || []).find(m => m.key === s.owner)?.contactPhone || '', signature: s.signature || '' },
+        sender: { firstName: String(s.displayName || '').split(' ')[0], name: s.displayName || '', email: s.id || '', phone: (window.teamDir || []).find(m => m.key === s.owner)?.contactPhone || '', signature: ((s.signatures || []).find(x => x && x.name === $('cSig')?.value)?.text) ?? (s.signature || '') },
         unsubscribeUrl: 'https://douropartners.pt/u/…',
       };
     }
@@ -1651,6 +1692,7 @@
       const payload = {
         companyId: picked?.id || null, senderId: $('cFrom').value, to: $('cTo').value.trim(),
         subject: $('cSubject').value, body: $('cBody').value, requestId: requestId(),
+        ...($('cSig')?.value ? { signatureName: $('cSig').value } : {}),
       };
       const rcp = picked ? chosenRecipient() : null;
       if (rcp) payload.recipient = { email: rcp.email };
@@ -2157,7 +2199,9 @@
           <label class="checkline"><input type="checkbox" id="sCk2"> <span>ImprovMX forwards <b>${esc(localPart(s.id))}@</b> to <b>${esc(localPart(s.id))}@…resend.app</b> as a second destination</span></label>
         </div>
         <div class="field" style="margin-top:14px;"><label for="sSig">Signature</label><textarea id="sSig" rows="4">${esc(s.signature || '')}</textarea>
-          <span class="hint">Plain text, added under every email from this address.</span></div>
+          <span class="hint">Plain text, added under every email from this address. <button type="button" class="rlink" id="sSigStd" style="background:none;border:0;color:var(--primary);cursor:pointer;padding:0;">Use the standard one</button> (name, Douro Partners, phone, site).</span></div>
+        <div class="field"><label>Other signatures <span class="hint">(chosen per email in Compose)</span></label><div id="sSigs"></div>
+          <button type="button" class="btn btn--ghost btn--sm" id="sSigAdd">+ Add a signature</button></div>
         <div class="field"><label for="sNotes">Notes</label><textarea id="sNotes" rows="2">${esc(s.notes || '')}</textarea></div>`,
         async () => {
           const status = $('sStatus').value, cap = parseInt($('sCap').value, 10);
@@ -2166,11 +2210,21 @@
           if (status === 'active' && s.status !== 'active' && !($('sCk1').checked && $('sCk2').checked)) { modalError('Confirm both activation steps.'); return false; }
           await updateDoc(doc(db, 'outreachSenders', s.id), {
             displayName: $('sName').value.trim(), dailyCap: cap, status, signature: $('sSig').value.trim(), notes: $('sNotes').value.trim(),
+            signatures: [...$('sSigs').querySelectorAll('[data-sigrow]')].map(r => ({ name: r.querySelector('[data-signame]').value.trim().slice(0, 60), text: r.querySelector('[data-sigtext]').value.trim().slice(0, 1000) })).filter(x => x.name && x.text),
             updatedAt: serverTimestamp(), updatedBy: me,
           });
           toast(`${s.id} saved.`);
           return true;
         });
+      // I14: other signatures (name + text), and the standard signature.
+      const sigRow = (x = { name: '', text: '' }) => `<div data-sigrow style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;"><div style="display:flex;gap:6px;margin-bottom:6px;"><input type="text" data-signame placeholder="Name, e.g. Short" value="${esc(x.name)}" maxlength="60"><button type="button" class="btn btn--ghost btn--sm" data-sigdel>Remove</button></div><textarea data-sigtext rows="3" placeholder="Signature text">${esc(x.text)}</textarea></div>`;
+      $('sSigs').innerHTML = (s.signatures || []).map(sigRow).join('');
+      $('sSigAdd').addEventListener('click', () => { $('sSigs').insertAdjacentHTML('beforeend', sigRow()); });
+      $('sSigs').addEventListener('click', (e) => { if (e.target.closest('[data-sigdel]')) e.target.closest('[data-sigrow]').remove(); });
+      $('sSigStd').addEventListener('click', () => {
+        const m = (window.teamDir || []).find(x => x.key === s.owner);
+        $('sSig').value = [$('sName').value.trim() || s.displayName, 'Douro Partners', m?.contactPhone || '', 'www.douropartners.pt'].filter(Boolean).join('\n');
+      });
       const syncCheck = () => { $('sCheck').hidden = !($('sStatus').value === 'active' && s.status !== 'active'); };
       $('sStatus').addEventListener('change', syncCheck); syncCheck();
     }
@@ -2301,14 +2355,16 @@
         renderSuppression();
       } catch (e) { $('supBody').innerHTML = `<tr><td colspan="5" class="empty">Couldn't load: ${esc(e.message)}</td></tr>`; }
     }
-    const REASON_LABEL = { unsubscribed: 'Asked to be removed', hard_bounce: 'Hard bounce', complaint: 'Spam complaint', provider_suppressed: 'Blocked by Resend', manual: 'Manual', do_not_contact: 'Do not contact' };
+    const REASON_LABEL = { unsubscribed: 'Asked to be removed', hard_bounce: 'Email bounced (address doesn\'t exist)', complaint: 'Marked our email as spam', provider_suppressed: 'Blocked by the email provider (Resend)', manual: 'Added by hand', do_not_contact: 'Do not contact' };
+    // I19: where an entry came from, in plain words.
+    const SUP_SOURCE = { webhook: 'Email provider report', link: 'Unsubscribe link in an email', one_click: 'One-click unsubscribe (Gmail / Outlook)', manual: 'Added in Settings', inbox: 'Marked in the inbox', removal_request: 'Removal request in a reply', do_not_contact: 'Search CRM: do not contact' };
     function renderSuppression() {
       if (!suppression) return;
       const q = $('supSearch').value.trim().toLowerCase();
       const rows = suppression.filter(s => !q || s.id.toLowerCase().includes(q));
       $('supBody').innerHTML = rows.length ? rows.map(s => `<tr>
           <td>${esc(s.id)}${s.scope === 'domain' ? ' <span class="pill">whole domain</span>' : ''}</td>
-          <td>${esc(REASON_LABEL[s.reason] || s.reason || '—')}</td><td>${esc(s.source || '—')}</td>
+          <td>${esc(REASON_LABEL[s.reason] || s.reason || '—')}${s.note ? `<div class="hint">“${esc(s.note)}”</div>` : ''}</td><td style="font-size:0.8rem;">${esc(SUP_SOURCE[s.source] || s.source || '—')}${s.by && s.by !== 'recipient' ? `<div class="hint">by ${esc(localPart(s.by))}</div>` : ''}</td>
           <td style="white-space:nowrap;">${s.at ? esc(dtFmt.format(new Date(tsMs(s.at)))) : ''}</td>
           <td style="text-align:right;"><button class="btn btn--ghost btn--sm" data-unsup="${esc(s.id)}" data-perm="out.admin" title="Only the Admin removes someone from the list (they could be emailed again)">Remove</button></td></tr>`).join('')
         : `<tr><td colspan="5" class="empty">${suppression.length ? 'Nothing matches.' : 'The list is empty.'}</td></tr>`;
@@ -2328,7 +2384,7 @@
       const id = isDomain ? '@' + domain : raw;
       await setDoc(doc(db, 'outreachSuppression', id), {
         email: isDomain ? null : raw, domain, scope: isDomain ? 'domain' : 'address',
-        reason: $('supReason').value, source: 'manual', companyId: null, by: me, at: serverTimestamp(),
+        reason: $('supReason').value, source: 'manual', companyId: null, by: me, at: serverTimestamp(), note: ($('supNote').value || '').trim() || null,
       }, { merge: true });
       $('supAdd').value = '';
       toast(`${id} added — it won't be emailed again.`);
@@ -2742,7 +2798,7 @@ Optional note for them:`, '');
               <thead><tr><th>Step</th><th>Template</th><th class="num">Sent / done</th><th class="num">Replied after it</th><th>Variants</th></tr></thead>
               <tbody>${stepRows || '<tr><td colspan="5" class="empty">No steps yet — write the sequence.</td></tr>'}</tbody>
             </table></div>
-            ${Object.keys(bySrc).length > 1 ? `<div style="padding:14px 16px 4px;"><h3>By audience source</h3></div><div class="table-wrap"><table>
+            ${Object.keys(bySrc).length > 1 ? `<div style="padding:14px 16px 4px;"><h3>By audience source</h3><p class="hint" style="margin:2px 0 0;">Where the companies came from — a Search CRM filter, a CSV, added by hand — to compare which audiences reply best. Shown only when a campaign has more than one.</p></div><div class="table-wrap"><table>
               <thead><tr><th>Source</th><th class="num">Companies</th><th class="num">Contacted</th><th class="num">Replied</th><th class="num">Reply rate</th></tr></thead><tbody>${srcRows}</tbody></table></div>` : ''}
             ${chanRows ? `<div style="padding:14px 16px 4px;"><h3>Manual steps by channel</h3></div><div class="table-wrap"><table>
               <thead><tr><th>Channel</th><th class="num">Done</th><th class="num">Open</th><th>Outcomes</th></tr></thead><tbody>${chanRows}</tbody></table></div>` : ''}

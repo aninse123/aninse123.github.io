@@ -37,7 +37,7 @@ async function seed(callerEmail) {
     await ref.set({
       email, displayName: s.displayName, owner: s.owner, domain: SENDER_DOMAIN,
       status: s.status, dailyCap: DEFAULT_SENDER_CAP, inboundAlias: s.local,
-      signature: `${s.displayName}\nDouro Partners`, notes: "",
+      signature: `${s.displayName}\nDouro Partners\nwww.douropartners.pt`, notes: "",
       updatedAt: FieldValue.serverTimestamp(), updatedBy: callerEmail,
     });
     created.push(`outreachSenders/${email}`);
