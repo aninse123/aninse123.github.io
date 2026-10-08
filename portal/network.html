@@ -519,7 +519,8 @@
   <div class="modal">
     <div class="modal-title">Send Email</div>
     <div class="form-row">
-      <div class="form-group"><label>To</label><input type="text" class="field" id="semTo" readonly></div>
+      <div class="form-group"><label>To</label><input type="text" class="field" id="semTo" readonly>
+        <div id="semPick" style="display:none;margin-top:6px;font-size:0.82rem;"></div></div>
       <div class="form-group"><label>From</label><select class="field" id="semFrom">
         <option value="andre">André Rocha</option>
         <option value="antonio">António Carvalho</option>
@@ -1272,7 +1273,12 @@ function openSendEmailAll() {
   const f = getFirm(); if (!f) return;
   sendEmailMode = 'firm-all';
   const members = networkContacts.filter(c => c.firmId === f.id && c.email);
-  document.getElementById('semTo').value = members.map(c => `${c.name} <${c.email}>`).join(', ');
+  // I23: tick who receives it (all ticked to start); To follows the ticks.
+  const pick = document.getElementById('semPick');
+  pick.innerHTML = members.map(c => `<label style="display:flex;gap:6px;align-items:center;margin:2px 0;"><input type="checkbox" data-sempick="${esc(c.id)}" checked> <span>${esc(c.name)} &lt;${esc(c.email)}&gt;${c.role ? ` · <span style="color:var(--text-light);">${esc(c.role)}</span>` : ''}</span></label>`).join('');
+  pick.style.display = members.length > 1 ? 'block' : 'none';
+  const syncTo = () => { document.getElementById('semTo').value = firmPicked(members).map(c => `${c.name} <${c.email}>`).join(', '); };
+  pick.onchange = syncTo; syncTo();
   document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
   document.getElementById('semSubject').value = '';
   document.getElementById('semMessage').value = '';
@@ -1280,15 +1286,23 @@ function openSendEmailAll() {
   showEl('sendEmailModal', true);
 }
 
+// The members ticked in the send dialog (all, when there's only one).
+function firmPicked(members) {
+  const boxes = [...document.querySelectorAll('#semPick [data-sempick]')];
+  if (!boxes.length) return members;
+  const on = new Set(boxes.filter(b => b.checked).map(b => b.dataset.sempick));
+  return members.filter(c => on.has(c.id));
+}
+
 async function sendFirmEmailAll() {
   const f = getFirm(); if (!f) return;
-  const members = networkContacts.filter(c => c.firmId === f.id && c.email);
+  const members = firmPicked(networkContacts.filter(c => c.firmId === f.id && c.email));
   const subject = document.getElementById('semSubject').value.trim();
   const msg = document.getElementById('semMessage').value.trim();
   const from = document.getElementById('semFrom').value;
   const el = document.getElementById('semErr');
   el.style.display = 'none';
-  if (!members.length) { el.textContent = 'No contacts at this firm have an email.'; el.style.display = 'block'; return; }
+  if (!members.length) { el.textContent = 'Tick at least one person with an email.'; el.style.display = 'block'; return; }
   if (!subject || !msg) { el.textContent = 'Subject and message are required.'; el.style.display = 'block'; return; }
   const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
   try {
@@ -1428,6 +1442,7 @@ async function confirmDelete() {
 function openSendEmail() {
   sendEmailMode = 'contact';
   const c = getContact();
+  document.getElementById('semPick').innerHTML = ''; document.getElementById('semPick').style.display = 'none';
   document.getElementById('semTo').value = c ? `${c.name} <${c.email}>` : '';
   document.getElementById('semFrom').value = (currentUser||'').startsWith('antonio') ? 'antonio' : 'andre';
   document.getElementById('semSubject').value = '';

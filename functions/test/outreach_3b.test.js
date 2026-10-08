@@ -107,6 +107,33 @@ function seed({ real = true } = {}) {
   // normalizeCampaign default
   ok("default policy is the company address", U.normalizeCampaign({ name: "x" }).recipientPolicy === "company");
 
+  // ── Round 2 fixes, batch 2 (8 Oct) ──
+  seed();
+  // B5: a holding is stored as "entity" by the People import.
+  store.set("searchPeople/h1", { name: "HOLDING SILVA SGPS", email: "holding@silva.pt" });
+  store.set("searchPersonLinks/lh", { companyId: "co1", personId: "h1", personName: "HOLDING SILVA SGPS", personEntityType: "entity", shTotalPct: 100, mgmtRoles: ["Gerente"], mgmtCurrent: true });
+  const withHolding = await companyRecipients("co1", get("searchCompanies/co1"));
+  ok("B5: a holding (entity) is never a recipient, even as 100% owner and gerente", !withHolding.some((r) => r.email === "holding@silva.pt") && pickByPolicy(withHolding, "best_person").name === "João Silva");
+  // I2: who each "Emails go to" option reaches.
+  const cb2 = (await camp({ action: "save", campaign: { name: "Quem recebe", recipientPolicy: "best_person", steps: [{ templateId: "t1" }] } })).campaignId;
+  await camp({ action: "enrol", campaignId: cb2, companyIds: ["co1", "co2", "co3"] });
+  const rp = await camp({ action: "recipientsPreview", campaignId: cb2 });
+  ok("I2: counts per option (company address / contact / person / nobody)",
+    rp.checked === 3 && rp.counts.company.company === 2 && rp.counts.company.none === 1
+    && rp.counts.best_person.person === 1 && rp.counts.best_person.contact === 1 && rp.counts.best_person.company === 1
+    && rp.counts.primary_contact.contact === 2 && rp.counts.primary_contact.company === 1);
+  ok("I2: each company's pick kept on its enrolment for the Companies list", get(`outreachEnrolments/${cb2}_co1`).recipientPreview?.best_person?.email === "joao.silva@gmail.com" && get(`outreachEnrolments/${cb2}_co3`).recipientPreview?.company === null);
+  // I2+: contacted before.
+  store.set("outreachThreads/old1", { companyId: "co2", contactEmail: "lopes.geral@gmail.com", lastMessageAt: new Date("2026-06-01T10:00:00Z"), campaignId: "OLDCAMP", isTest: false });
+  store.set("outreachCampaigns/OLDCAMP", { name: "Primavera 2026", status: "finished" });
+  store.set("searchCompanies/co3", { ...get("searchCompanies/co3"), lastOutreachAt: new Date("2026-07-01T10:00:00Z") });
+  const cb3 = (await camp({ action: "save", campaign: { name: "Outra", recipientPolicy: "best_person", steps: [{ templateId: "t1" }] } })).campaignId;
+  const pv3 = await camp({ action: "preview", campaignId: cb3, companyIds: ["co2", "co3"] });
+  const s2 = pv3.contacted?.sample?.find((x) => x.companyId === "co2");
+  ok("I2+: companies contacted before are listed — by email (who, when, which campaign) or by another touch",
+    pv3.contacted?.count === 2 && s2?.email === "lopes.geral@gmail.com" && s2?.campaignName === "Primavera 2026" && s2?.emailed === true
+    && pv3.contacted.sample.find((x) => x.companyId === "co3")?.emailed === false && JSON.stringify(pv3.contacted.ids.sort()) === JSON.stringify(["co2", "co3"]));
+
   console.log(fail ? `\n${fail} FAILED` : "\nall 3b tests passed");
   process.exit(fail ? 1 : 0);
 })();

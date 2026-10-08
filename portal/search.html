@@ -9790,7 +9790,11 @@ async function openAddToCampaign(opts){
             <dt>Can be added</dt><dd><b>${fmt(preview.eligible)}</b> of ${fmt(preview.requested)}</dd>
             <dt>Excluded</dt><dd>${fmt(excTotal)}${exc.length ? ' — ' + exc.map(([k, x]) => `${fmt(x)} ${esc(CAMP_EXCL_LABELS[k] || k)}`).join(', ') : ''}</dd>
             ${preview.conflictCount ? `<dt>In another campaign</dt><dd>${fmt(preview.conflictCount)} — ${preview.conflictCampaigns.map(x => `${fmt(x.count)} in "${esc(x.campaignName || 'another campaign')}"`).join(', ')}</dd>` : ''}
+            ${preview.contacted?.count ? `<dt>Contacted before</dt><dd><b>${fmt(preview.contacted.count)}</b></dd>` : ''}
           </dl>
+          ${preview.contacted?.count ? `<div style="font-size:0.8rem;background:#FEF3C7;color:#92400E;border-radius:6px;padding:8px 10px;margin:8px 0;"><b>${fmt(preview.contacted.count)} of these companies were contacted before.</b>
+            <details style="margin-top:4px;"><summary style="cursor:pointer;">See who, when and where</summary><ul style="margin:6px 0 0;padding-left:18px;max-height:160px;overflow-y:auto;">${preview.contacted.sample.map(x => `<li>${esc(x.companyName || x.companyId)} — ${x.emailed ? `emailed ${esc(x.email || '')}` : 'call, letter or visit'}${x.at ? ` on ${new Date(x.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}${x.campaignName ? ` · "${esc(x.campaignName)}"` : ''}${x.isTest ? ' (test)' : ''}</li>`).join('')}</ul></details>
+            <label class="camp-radio" style="margin-top:6px;"><input type="checkbox" id="addCampLeaveOut"> <span>Leave them out</span></label></div>` : ''}
           ${preview.conflictCount ? `<label class="camp-radio"><input type="radio" name="addCampConflict" value="skip" checked> <span>Leave those where they are (recommended)</span></label>
             <label class="camp-radio"><input type="radio" name="addCampConflict" value="move"> <span>Move them here — their other campaign stops for them</span></label>` : ''}
           ${preview.excludedSample.length ? `<details style="margin-top:8px;"><summary style="font-size:0.8rem;color:var(--text-light);cursor:pointer;">See excluded companies</summary><div style="font-size:0.78rem;color:var(--text-light);max-height:140px;overflow-y:auto;margin-top:6px;">${preview.excludedSample.map(x => `${esc(x.companyName || x.companyId)} — ${esc(CAMP_EXCL_LABELS[x.reason] || x.reason)}`).join('<br>')}</div></details>` : ''}
@@ -9802,7 +9806,10 @@ async function openAddToCampaign(opts){
       const onConflict = document.querySelector('input[name="addCampConflict"]:checked')?.value || 'skip';
       if (onConflict === 'skip' && !preview.eligible) throw new Error('No company can be added — choose "Move them here", or Cancel.');
       next.innerHTML = '<span class="spin-sm"></span>Adding…';
-      const r = (await callOutreachCampaign({ action: 'enrol', campaignId, companyIds: ids, source, onConflict })).data;
+      const leaveOut = document.getElementById('addCampLeaveOut')?.checked ? new Set(preview.contacted?.ids || []) : null;
+      const toAdd = leaveOut ? ids.filter(id => !leaveOut.has(id)) : ids;
+      if (!toAdd.length) throw new Error('Every company was left out.');
+      const r = (await callOutreachCampaign({ action: 'enrol', campaignId, companyIds: toAdd, source, onConflict })).data;
       const camp = campList.find(c => c.id === campaignId);
       body.innerHTML = `<p style="font-size:0.9rem;"><b>${fmt(r.enrolled)}</b> compan${r.enrolled === 1 ? 'y' : 'ies'} added to "${esc(camp?.name || '')}"${r.moved ? ` (${fmt(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${fmt(r.skippedTotal)} skipped` : ''}.</p>
         <p style="font-size:0.82rem;color:var(--text-light);margin-top:8px;">${camp?.status === 'draft' ? 'The campaign is still a draft — start it in Outreach → Campaigns.' : 'The scheduler starts them at the campaign\'s daily pace, inside the sending window.'} <a href="/portal/outreach.html" style="color:var(--primary);">Open Outreach</a></p>`;

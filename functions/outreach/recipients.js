@@ -9,6 +9,9 @@ const store = require("./store");
 
 const { db } = store;
 
+// A link to a company (holding, SGPS…) rather than a person.
+const CORPORATE_HOLDER = ["entity", "company"];
+
 // Roles that make a person the natural addressee (PT and EN, Orbis wording).
 const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|general manager|owner|propriet[áa]rio|founder|fundador)/i;
 const MANAGER_RE = /(director|diretor|manager|board|conselho|administra)/i;
@@ -54,7 +57,9 @@ async function companyRecipients(companyId, company) {
   (company?.contacts || []).forEach((ct) => add({ kind: "contact", email: ct.email, name: ct.name || "", role: ct.role || "", isPrimary: !!ct.isPrimary, rank: ct.isPrimary ? 50 : 30 }));
   if (companyId) {
     const links = await db().collection("searchPersonLinks").where("companyId", "==", companyId).limit(60).get();
-    const ranked = links.docs.map((d) => ({ id: d.id, ...d.data() })).filter((l) => l.personId && l.personEntityType !== "company")
+    // B5 (8 Oct): a company holder is stored as "entity" (People import); the
+    // old check looked for "company" and let holdings through.
+    const ranked = links.docs.map((d) => ({ id: d.id, ...d.data() })).filter((l) => l.personId && !CORPORATE_HOLDER.includes(l.personEntityType))
       .map((l) => ({ l, rank: rankPerson(l) })).sort((a, b) => b.rank - a.rank).slice(0, 30);
     if (ranked.length) {
       const snaps = await db().getAll(...ranked.map((x) => db().doc(`searchPeople/${x.l.personId}`)));
@@ -84,4 +89,4 @@ function pickByPolicy(recipients, policy) {
   return company;
 }
 
-module.exports = { companyRecipients, pickByPolicy, rankPerson, personEmails, personValues };
+module.exports = { companyRecipients, pickByPolicy, rankPerson, personEmails, personValues, CORPORATE_HOLDER };

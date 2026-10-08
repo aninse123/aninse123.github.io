@@ -1551,7 +1551,8 @@
         try {
           const ls = await getDocs(query(collection(db, 'searchPersonLinks'), where('companyId', '==', id), limit(60)));
           addReads(ls.size || 1);
-          const links = ls.docs.map(d => d.data()).filter(l => l.personId && l.personEntityType !== 'company')
+          // B5: a holding is stored as "entity" — never a person to write to.
+          const links = ls.docs.map(d => d.data()).filter(l => l.personId && !['entity', 'company'].includes(l.personEntityType))
             .map(l => ({ l, rank: rankLink(l) })).sort((a, b) => b.rank - a.rank).slice(0, 30);
           const people = new Map();
           for (let i = 0; i < links.length; i += 30) {
@@ -2761,7 +2762,7 @@ Optional note for them:`, '');
             ${canAdd ? `<button class="btn btn--primary btn--sm" id="audAdd" style="margin-left:auto;">${c.audienceType === 'people' ? 'Add people' : 'Add companies'}</button>` : ''}
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th>${c.audienceType === 'people' ? 'Person' : 'Company'}</th><th>Status</th><th>Step</th><th>Next</th><th>From</th><th>Note</th><th></th></tr></thead>
+            <thead><tr><th>${c.audienceType === 'people' ? 'Person' : 'Company'}</th>${c.audienceType === 'people' ? '' : '<th title="Who email 1 goes to: fixed once it\'s sent, else a preview from Settings → Check who it reaches">Goes to</th>'}<th>Status</th><th>Step</th><th>Next</th><th>From</th><th>Note</th><th></th></tr></thead>
             <tbody>${shown.length ? shown.map(e => {
               const live = LIVE_ENROL.includes(e.status);
               const next = live && e.nextActionAt && e.status === 'active' ? dtFmt.format(new Date(tsMs(e.nextActionAt))) : '';
@@ -2773,13 +2774,14 @@ Optional note for them:`, '');
               ].join(' ');
               return `<tr>
                 <td>${e.personEmail ? `<b>${esc(e.personName || e.personEmail)}</b>${e.org ? ` <span class="hint">· ${esc(e.org)}</span>` : ''}<div class="hint">${esc(e.personEmail)}${(e.refs || []).length ? ' · ' + e.refs.map(r => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[r.source] || r.source)).join(', ') : ''}</div>` : `<a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div>`}</td>
+                ${c.audienceType === 'people' ? '' : `<td style="font-size:0.78rem;">${goesTo(e, c)}</td>`}
                 <td>${pill(ENROL_PILL, e.status)}</td>
                 <td style="font-size:0.8rem;">${stepLabel(e, c)}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(next)}</td>
                 <td style="font-size:0.8rem;">${esc(localPart(e.senderId) || '—')}</td>
                 <td class="clip" style="font-size:0.78rem;" title="${esc(note)}">${esc(note)}</td>
                 <td style="white-space:nowrap;text-align:right;">${btns}</td></tr>`;
-            }).join('') : `<tr><td colspan="7" class="empty">${curEnrols.length ? 'No companies match.' : 'No companies yet.' + (canAdd ? ' Use "Add companies".' : '')}</td></tr>`}</tbody>
+            }).join('') : `<tr><td colspan="${c.audienceType === 'people' ? 7 : 8}" class="empty">${curEnrols.length ? 'No companies match.' : 'No companies yet.' + (canAdd ? ' Use "Add companies".' : '')}</td></tr>`}</tbody>
           </table></div>
           ${rows.length > shown.length ? `<p class="hint" style="padding:10px 14px;">Showing the first ${num(shown.length)} of ${num(rows.length)} — use the filter or search to narrow down.</p>` : ''}
         </div>`;
@@ -2798,6 +2800,16 @@ Optional note for them:`, '');
         const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? 'Company removed from the campaign.' : op === 'pause' ? 'Company paused.' : 'Company resumed.');
         if (r) loadCampaignData(); else b.disabled = false;
       }));
+    }
+
+    // I2: who email 1 goes to — fixed once sent (e.recipient), else the preview.
+    function goesTo(e, c) {
+      const KIND = { company: 'company address', contact: 'contact', person: 'person' };
+      if (e.recipient?.email) return `${esc(e.recipient.name || e.recipient.email)} <span class="hint">· ${esc(KIND[e.recipient.kind] || '')}</span>`;
+      const p = e.recipientPreview?.[c.recipientPolicy || 'company'];
+      if (e.recipientPreview && !p) return '<span style="color:var(--danger)">nobody (no address)</span>';
+      if (!p) return '<span class="hint">—</span>';
+      return `<span style="opacity:0.75;" title="Preview — fixed when email 1 is sent">${esc(p.name || p.email)}</span> <span class="hint">· ${esc(KIND[p.kind] || '')}${p.personal ? ' · personal' : ''}</span>`;
     }
 
     // Move one company to another campaign (2c): the target's rules apply.
@@ -3210,7 +3222,9 @@ Optional note for them:`, '');
             <dt>Can be added</dt><dd><b>${num(p.eligible)}</b></dd>
             <dt>Excluded</dt><dd>${num(excTotal)}${exc.length ? ' — ' + exc.map(([k, n]) => `${num(n)} ${esc(EXCL_LABELS[k] || k)}`).join(', ') : ''}</dd>
             ${p.conflictCount ? `<dt>In another campaign</dt><dd>${num(p.conflictCount)} — ${p.conflictCampaigns.map(x => `${num(x.count)} in "${esc(x.campaignName || 'another campaign')}"`).join(', ')}</dd>` : ''}
+            ${p.contacted?.count ? `<dt>Contacted before</dt><dd><b>${num(p.contacted.count)}</b></dd>` : ''}
           </dl>
+          ${contactedHtml(p.contacted, 'acLeaveOut')}
           ${p.conflictCount ? `<div class="field"><label>Companies already in another campaign</label>
             <label class="checkline"><input type="radio" name="acConflict" value="skip" checked> <span>Leave them where they are (recommended)</span></label>
             <label class="checkline"><input type="radio" name="acConflict" value="move"> <span>Move them here — their other campaign stops for them</span></label></div>` : ''}
@@ -3270,12 +3284,25 @@ Optional note for them:`, '');
         const onConflict = document.querySelector('input[name="acConflict"]:checked')?.value || 'skip';
         if (onConflict === 'skip' && !preview.eligible) throw new Error('No company can be added — choose "Move them here" or go back.');
         const source = mode === 'csv' ? { type: 'csv', fileName: $('acFile')?.files?.[0]?.name || null, label: `CSV — ${num(csv.matched.length)} matched` } : { type: 'manual', label: 'Picked by name' };
-        const r = (await callCampaign({ action: 'enrol', campaignId: c.id, companyIds: preview.ids, source, onConflict })).data;
+        const leaveOut = $('acLeaveOut')?.checked ? new Set(preview.contacted?.ids || []) : null;
+        const ids = leaveOut ? preview.ids.filter(id => !leaveOut.has(id)) : preview.ids;
+        if (!ids.length) throw new Error('Every company was left out.');
+        const r = (await callCampaign({ action: 'enrol', campaignId: c.id, companyIds: ids, source, onConflict })).data;
         toast(`${num(r.enrolled)} companies added${r.moved ? ` (${num(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${num(r.skippedTotal)} skipped` : ''}.`);
         loadCampaignData();
         return true;
       }, 'Check companies');
       render();
+    }
+
+    // I2+ (António): companies already contacted, with who / when / which
+    // campaign, and a tick box to leave them out.
+    function contactedHtml(ct, boxId) {
+      if (!ct?.count) return '';
+      const rows = ct.sample.map(x => `<li>${esc(x.companyName || x.companyId)} — ${x.emailed ? `emailed ${esc(x.email || '')}` : 'call, letter or visit'}${x.at ? ` on ${esc(dayFmt.format(new Date(x.at)))}` : ''}${x.campaignName ? ` · "${esc(x.campaignName)}"` : ''}${x.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</li>`).join('');
+      return `<div class="banner" style="display:block;margin:0 0 10px;"><b>${num(ct.count)} of these companies were contacted before.</b>
+        <details style="margin-top:4px;"><summary style="cursor:pointer;">See who, when and where</summary><ul style="margin:6px 0 0;padding-left:18px;max-height:160px;overflow-y:auto;">${rows}</ul>${ct.count > ct.sample.length ? `<p class="hint">Showing the latest ${num(ct.sample.length)}.</p>` : ''}</details>
+        <label class="checkline" style="margin-top:6px;"><input type="checkbox" id="${boxId}"> <span>Leave them out</span></label></div>`;
     }
 
     // ── To approve (D4) ──
@@ -4186,7 +4213,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
                 <option value="company"${(c.recipientPolicy || 'company') === 'company' ? ' selected' : ''}>The company address (geral@ / info@)</option>
                 <option value="primary_contact"${c.recipientPolicy === 'primary_contact' ? ' selected' : ''}>The primary contact (else the company address)</option>
                 <option value="best_person"${c.recipientPolicy === 'best_person' ? ' selected' : ''}>The best person — owner / gerente from People (else the company address)</option>
-              </select><span class="hint">Chosen at the first email and kept for the follow-ups. People on personal addresses (gmail, sapo…) are allowed and flagged.</span></div>
+              </select><span class="hint">Chosen at the first email and kept for the follow-ups. People on personal addresses (gmail, sapo…) are allowed and flagged.</span>
+              ${c.audienceType !== 'people' ? `<div style="margin-top:6px;"><button type="button" class="btn btn--ghost btn--sm" id="csRecipCheck"${curEnrols.length ? '' : ' disabled title="Add companies first"'}>Check who it reaches</button> <span class="hint" id="csRecipOut">${curEnrols.length ? '' : 'Add companies first.'}</span></div>` : ''}</div>
             <div class="field"><label for="csAssignee">Tasks (calls, LinkedIn, letters…) go to</label>
               <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option>${ownerOpts(c.assignee)}</select></div>
             <div class="field"><label for="csSigner">Letters and call scripts signed by</label>
@@ -4243,6 +4271,19 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       root.querySelectorAll('input, select').forEach(i => i.addEventListener(i.type === 'checkbox' || i.type === 'radio' || i.tagName === 'SELECT' ? 'change' : 'input', () => { csetDirty = true; }));
       $('csOwnWin')?.addEventListener('change', (e) => { $('csWin').style.display = e.target.checked ? 'flex' : 'none'; });
       $('csDiscard')?.addEventListener('click', () => { csetDirty = false; renderCampSettings(); });
+      // I2: who each "Emails go to" option reaches, for the companies in the campaign.
+      $('csRecipCheck')?.addEventListener('click', async (ev) => {
+        const b = ev.target, out = $('csRecipOut');
+        b.disabled = true; out.innerHTML = '<span class="spin-sm"></span> Checking each company\'s contacts and People…';
+        try {
+          const r = (await callCampaign({ action: 'recipientsPreview', campaignId: c.id })).data;
+          const line = (k) => { const x = r.counts[k]; return [x.person && `${num(x.person)} to a person`, x.contact && `${num(x.contact)} to a contact`, x.company && `${num(x.company)} to the company address`, x.none && `<b>${num(x.none)} to nobody</b> (no address)`].filter(Boolean).join(', ') || '—'; };
+          out.innerHTML = `<b>Company address:</b> ${line('company')}<br><b>Primary contact:</b> ${line('primary_contact')}<br><b>Best person:</b> ${line('best_person')}`
+            + `<br>${num(r.checked)} of ${num(r.total)} companies checked${r.total > r.checked ? ' (the first 300)' : ''}${r.decided ? ` · ${num(r.decided)} already received email 1, so theirs is fixed` : ''}. See "Goes to" in Companies.`;
+          loadCampaignData();
+        } catch (e) { out.textContent = errText(e); }
+        finally { b.disabled = false; }
+      });
       $('csSave')?.addEventListener('click', async () => {
         const err = $('csErr'); err.hidden = true;
         const pace = parseInt($('csPace').value, 10), recent = parseInt($('csRecent').value, 10);

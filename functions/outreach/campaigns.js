@@ -33,6 +33,7 @@ const Feat = require("../features"); // feature switches (Team & access → Feat
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { REGION } = require("./config");
 const { normEmail } = require("./util");
+const { companyRecipients, pickByPolicy } = require("./recipients");
 const store = require("./store");
 const { addWait, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
@@ -287,7 +288,13 @@ async function preview({ campaignId, companyIds }) {
   }
   const conflictCount = Object.values(conflictCampaigns).reduce((a, x) => a + x.count, 0);
   const newPerDay = campaign.pacing?.newPerDay || DEFAULT_CAMPAIGN.pacing.newPerDay;
+  // I2+ (António, 8 Oct): companies that could be added but were already
+  // contacted — an email conversation, or a call / letter / visit logged by a
+  // campaign. Shown as a warning; the person adding them decides.
+  const addable = ids.filter((id) => { const { company, alreadyEnrolled } = data.get(id); const r = evaluateCompany(company, { ...ctx, alreadyEnrolled }); return r.ok || r.reason === "in_other_campaign"; });
+  const contacted = await contactedBefore(addable, data, campaignId);
   return {
+    contacted,
     requested: ids.length,
     eligible,
     excluded,
@@ -299,6 +306,86 @@ async function preview({ campaignId, companyIds }) {
     daysToStart: Math.ceil(eligible / newPerDay),
     daysToStartIfMoved: Math.ceil((eligible + conflictCount) / newPerDay),
   };
+}
+
+// Which of these companies were contacted before, and how (I2+). Email
+// conversations come from outreachThreads (30 companies per query); other
+// touches from the company's lastOutreachAt / outreachAttempts (no extra read).
+const CONTACTED_SAMPLE = 100;
+async function contactedBefore(ids, data, campaignId) {
+  const last = new Map();   // companyId → { at, email, campaignId, isTest }
+  for (const group of chunks(ids, 30)) {
+    const snap = await db().collection("outreachThreads").where("companyId", "in", group)
+      .select("companyId", "contactEmail", "lastMessageAt", "createdAt", "campaignId", "isTest").get();
+    snap.docs.forEach((d) => {
+      const t = d.data(), at = tsMs(t.lastMessageAt || t.createdAt);
+      const cur = last.get(t.companyId);
+      if (!cur || at > cur.at) last.set(t.companyId, { at, email: t.contactEmail || "", campaignId: t.campaignId || null, isTest: !!t.isTest });
+    });
+  }
+  const out = [];
+  for (const id of ids) {
+    const company = data.get(id)?.company || {};
+    const thread = last.get(id);
+    const touchAt = company.lastOutreachAt ? tsMs(company.lastOutreachAt) : (Number(company.outreachAttempts) > 0 ? tsMs(company.lastTouchAt) : 0);
+    if (!thread && !touchAt) continue;
+    out.push({ companyId: id, companyName: company.name || "", at: Math.max(thread?.at || 0, touchAt || 0) || null,
+      email: thread?.email || "", campaignId: thread?.campaignId || null, isTest: !!thread?.isTest, emailed: !!thread });
+  }
+  out.sort((a, b) => (b.at || 0) - (a.at || 0));
+  const campIds = [...new Set(out.slice(0, CONTACTED_SAMPLE).map((x) => x.campaignId).filter((x) => x && x !== campaignId))];
+  const names = new Map();
+  if (campIds.length) (await db().getAll(...campIds.map((x) => db().doc(`outreachCampaigns/${x}`)))).forEach((s) => { if (s.exists) names.set(s.id, s.data().name || ""); });
+  return {
+    count: out.length,
+    ids: out.map((x) => x.companyId),
+    sample: out.slice(0, CONTACTED_SAMPLE).map((x) => ({ ...x, campaignName: x.campaignId ? (names.get(x.campaignId) || (x.campaignId === campaignId ? "this campaign" : "")) : "" })),
+  };
+}
+function tsMs(t) {
+  if (!t) return 0;
+  if (typeof t.toMillis === "function") return t.toMillis();
+  if (typeof t._seconds === "number") return t._seconds * 1000;
+  if (typeof t.seconds === "number") return t.seconds * 1000;
+  const n = Date.parse(t); return isNaN(n) ? 0 : n;
+}
+
+// I2 (8 Oct): who each "Emails go to" option would reach, for the companies
+// already in the campaign (up to RECIP_PREVIEW_MAX). Each company's pick per
+// option is kept on its enrolment (recipientPreview) so the Companies list can
+// show "Goes to" without reading again. Reads: the company + its People.
+const RECIP_PREVIEW_MAX = 300;
+const POLICIES = ["company", "primary_contact", "best_person"];
+async function recipientsPreview({ campaignId }) {
+  const campaign = await getCampaign(campaignId);
+  assertCompanies(campaign);
+  const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).where("status", "in", LIVE_ENROLMENT).limit(2000).get();
+  const live = snap.docs.filter((d) => d.data().companyId);
+  const todo = live.slice(0, RECIP_PREVIEW_MAX);
+  const counts = Object.fromEntries(POLICIES.map((p) => [p, { company: 0, contact: 0, person: 0, none: 0 }]));
+  let personal = 0;
+  const updates = [];
+  for (const group of chunks(todo, 10)) {
+    const cos = await db().getAll(...group.map((d) => db().doc(`searchCompanies/${d.data().companyId}`)));
+    await Promise.all(group.map(async (d, i) => {
+      const co = cos[i].exists ? cos[i].data() : null;
+      const rs = co ? await companyRecipients(d.data().companyId, co) : [];
+      const preview = {};
+      for (const p of POLICIES) {
+        const pick = pickByPolicy(rs, p);
+        counts[p][pick ? pick.kind : "none"]++;
+        preview[p] = pick ? { email: pick.email, kind: pick.kind, name: pick.name || "", personal: !!pick.personal } : null;
+      }
+      if (preview[campaign.recipientPolicy || "company"]?.personal) personal++;
+      updates.push({ ref: d.ref, preview });
+    }));
+  }
+  for (const group of chunks(updates, 400)) {
+    const batch = db().batch();
+    group.forEach((u) => batch.update(u.ref, { recipientPreview: { ...u.preview, at: FieldValue.serverTimestamp() } }));
+    await batch.commit();
+  }
+  return { counts, checked: todo.length, total: live.length, decided: live.filter((d) => d.data().recipient).length, personal, policy: campaign.recipientPolicy || "company" };
 }
 
 async function enrolOne(companyId, campaign, ctx, source, onConflict, caller) {
@@ -861,7 +948,7 @@ async function setDoNotContact({ companyId, on, reason }, caller) {
 // Team access: the permission each action needs. Starting a campaign sends
 // emails, so it needs "approve" like approving drafts.
 const CAMPAIGN_ACTION_PERM = {
-  save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns",
+  save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns", recipientsPreview: "out.campaigns",
   enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
   requestStart: "out.campaigns", returnStart: "out.approve",
   approve: "out.approve", skipDraft: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
@@ -880,7 +967,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   // Feature switches: Outreach, then company or people campaigns by audience.
   // "Do not contact" (Search CRM) is a safety control and never switched.
   if (data.action !== "setDoNotContact") {
-    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview"].includes(data.action) ? "outreach.campaigns" : null;
+    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
       let aud = data.campaign?.audienceType;
       if (!aud && data.campaignId) { const c = await db().doc(`outreachCampaigns/${data.campaignId}`).get(); aud = c.exists ? c.data().audienceType : null; }
@@ -912,6 +999,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "duplicate": return await duplicate(data, caller);
       case "delete": return await remove(data, caller);
       case "preview": return await preview(data, caller);
+      case "recipientsPreview": return await recipientsPreview(data, caller);
       case "enrol": return await enrol(data, caller);
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);
