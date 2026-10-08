@@ -2892,7 +2892,8 @@ Optional note for them:`, '');
     async function loadPeopleSources() {
       if (peopleSrc) return peopleSrc;
       const [crm, inv, grp, nc, nf, br] = await Promise.all(['crmInvestors', 'investors', 'accessGroups', 'networkContacts', 'networkFirms', 'searchBrokers'].map(n => getDocs(collection(db, n))));
-      addReads(crm.size + inv.size + grp.size + nc.size + nf.size + br.size); refreshReads();
+      addReads(crm.size + inv.size + grp.size + nc.size + nf.size + br.size + 1); refreshReads();
+      try { const cs = await getDoc(doc(db, 'networkConfig', 'categories')); const list = cs.exists() ? cs.data().list || [] : []; if (list.length) NETWORK_CATS = list.map(c => [c.key, c.label]); } catch (e) { /* keep the fixed list */ }
       const firms = Object.fromEntries(nf.docs.map(d => [d.id, d.data().name || '']));
       const out = { crm: [], portal: [], network: [], brokers: [], groups: grp.docs.map(d => ({ id: d.id, ...d.data() })), firms };
       crm.docs.forEach(d => { const i = d.data(); (i.contacts || []).forEach(ct => { if (ct.email) out.crm.push({ email: String(ct.email).trim().toLowerCase(), name: ct.name || '', org: i.name || '', role: ct.role || '', stage: i.stage || '', type: i.type || '', owner: i.owner || '', refs: [{ source: 'crm', id: d.id }] }); }); });
@@ -2936,7 +2937,8 @@ Optional note for them:`, '');
       return [];
     }
     const validEmail = (e) => /^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/i.test(e || '');
-    const NETWORK_CATS = [['journalist', 'Journalist'], ['banker_broker', 'Banker/Broker'], ['investor_outside_process', 'Investor (outside process)'], ['lawyer', 'Lawyer'], ['accountant', 'Accountant'], ['advisor', 'Advisor'], ['operator', 'Operator'], ['current_searcher', 'Current Searcher'], ['former_searcher', 'Former Searcher'], ['service_provider', 'Service Provider'], ['other', 'Other']];
+    // B6 (8 Oct): replaced by Network's own list (networkConfig/categories) when the people sources load.
+    let NETWORK_CATS = [['journalist', 'Journalist'], ['banker_broker', 'Banker/Broker'], ['investor_outside_process', 'Investor (outside process)'], ['lawyer', 'Lawyer'], ['accountant', 'Accountant'], ['advisor', 'Advisor'], ['operator', 'Operator'], ['current_searcher', 'Current Searcher'], ['former_searcher', 'Former Searcher'], ['service_provider', 'Service Provider'], ['other', 'Other']];
     // P2: people not found anywhere are created as Network contacts first.
     async function createNetworkContacts(rows, category) {
       const created = [];
@@ -2956,7 +2958,7 @@ Optional note for them:`, '');
     // The people picker, shared by "Add people" (campaign) and "New list".
     // onDone(people[], sourceInfo) is called with the chosen, validated people.
     function openPeoplePicker({ title, confirmLabel, onDone, allowSaveList = true }) {
-      let mode = 'crm', src = null, validated = null, busy = false;
+      let mode = 'crm', src = null, validated = null, busy = false, pasteText = '';
       const filters = { crmStages: new Set(), portalGroup: '', netCats: new Set(), netPhases: new Set(), netOwner: '', listId: '' };
       let lists = [];
       const filterSpec = () => ({ mode, stages: [...filters.crmStages], groupId: filters.portalGroup || null, categories: [...filters.netCats], phases: [...filters.netPhases], owner: filters.netOwner || null });
@@ -2980,9 +2982,9 @@ Optional note for them:`, '');
           inner = lists.length ? `<div class="field"><label for="ppList">Saved list</label><select id="ppList"><option value="">— Choose —</option>${lists.map(l => `<option value="${esc(l.id)}"${filters.listId === l.id ? ' selected' : ''}>${esc(l.name)} (${num(l.count || 0)})</option>`).join('')}</select></div>` : '<p class="note">No saved lists yet — create one under Campaigns → Lists of people, or save one from here.</p>';
         } else if (mode === 'paste') {
           inner = `<div class="field"><label for="ppFile">CSV file</label><input type="file" id="ppFile" accept=".csv,.txt,text/csv"></div>
-            <div class="field"><label for="ppText">…or paste rows</label><textarea id="ppText" rows="6" spellcheck="false" placeholder="email;name;organisation&#10;ana@jornal.pt;Ana Silva;Jornal de Negócios"></textarea>
-              <span class="hint">Columns: email, name, organisation (optionally category, role). Each address is checked against the Investor CRM, portal investors, Network and brokers; people not found are created as Network contacts before they join.</span></div>
-            <button type="button" class="btn btn--ghost btn--sm" id="ppCheck">Check addresses</button>
+            <div class="field"><label for="ppText">…or paste rows</label><textarea id="ppText" rows="6" spellcheck="false" placeholder="email;name;organisation&#10;ana@jornal.pt;Ana Silva;Jornal de Negócios">${esc(pasteText)}</textarea>
+              <span class="hint">One person per row: <b>email; name; organisation</b>, optionally <b>category; role</b> — separated by <b>;</b> (or a comma / tab), with or without a header row. Category = one of: ${NETWORK_CATS.map(c => `<code>${esc(c[0])}</code>`).join(', ')}. Each address is checked against the Investor CRM, portal investors, Network and brokers; people not found are created as Network contacts before they join.</span></div>
+            <div class="actions"><button type="button" class="btn btn--ghost btn--sm" id="ppCheck">Check addresses</button><button type="button" class="btn btn--ghost btn--sm" id="ppTemplate">⬇ Template (CSV)</button></div>
             <div id="ppResult" style="margin-top:10px;">${validated ? validatedHtml() : ''}</div>`;
         } else if (mode === 'brokers') inner = `<p class="note">${num(src.brokers.length)} broker contacts with an email (Search CRM → Brokers).</p>`;
         const chosenList = lists.find(l => l.id === filters.listId);
@@ -2992,13 +2994,19 @@ Optional note for them:`, '');
           <p class="note" style="margin-top:6px;"><b>${num(count)}</b> ${count === 1 ? 'person' : 'people'} selected${mode === 'paste' && validated?.newOnes.length ? ` (${num(validated.newOnes.length)} to be created in Network)` : ''}.</p>
           ${allowSaveList ? `<label class="checkline" style="margin-top:6px;"><input type="checkbox" id="ppSave"> <span>Also save them as a list:</span> <input type="text" id="ppSaveName" placeholder="e.g. Journalists PT" style="width:auto;min-width:200px;padding:4px 8px;"></label>` : ''}
           ${FILTER_MODES.includes(mode) ? `<label class="checkline" style="margin-top:4px;"><input type="checkbox" id="ppDyn"> <span>Keep the list up to date — re-apply these filters each time it's used (e.g. new journalists in the Network join the next issue)</span></label>` : ''}
-          ${mode === 'list' && chosenList?.dynamic ? '<p class="hint">Kept up to date: filters re-applied now.</p>' : ''}`;
+          ${mode === 'list' && chosenList?.dynamic ? '<p class="hint">Kept up to date: filters re-applied now.</p>' : ''}
+          ${FILTER_MODES.includes(mode) && count ? whoHtml(mergePeople(selected())) : ''}`;
       };
+      // I11: "see who" before saving — the people the current choice adds.
+      const whoHtml = (people) => `<details style="margin-top:6px;"><summary class="hint" style="cursor:pointer;">See who (${num(people.length)})</summary><div class="hint" style="margin-top:6px;max-height:180px;overflow-y:auto;">${people.slice(0, 300).map(p => `${esc(p.name || '—')}${p.org ? ' · ' + esc(p.org) : ''} — ${esc(p.email)}`).join('<br>')}${people.length > 300 ? `<br>… and ${num(people.length - 300)} more` : ''}</div></details>`;
+      // I12: the check result, split — existing (and where), new, duplicates, invalid.
+      const listOf = (items, line) => items.length ? `<details style="display:inline;"><summary class="hint" style="cursor:pointer;display:inline;">see</summary><div class="hint" style="margin-top:4px;max-height:140px;overflow-y:auto;">${items.slice(0, 300).map(line).join('<br>')}</div></details>` : '';
       const validatedHtml = () => `<dl class="summary">
           <dt>Rows</dt><dd>${num(validated.rows)}</dd>
-          <dt>Already exist</dt><dd>${num(validated.found.length)}${validated.found.length ? ' — ' + esc(validated.foundWhere) : ''}</dd>
-          <dt>New</dt><dd>${num(validated.newOnes.length)}${validated.newOnes.length ? ` — created as Network contacts, category <select id="ppNewCat" style="width:auto;padding:2px 6px;">${NETWORK_CATS.map(([k, l]) => `<option value="${k}"${validated.cat === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>` : ''}</dd>
-          <dt>Skipped</dt><dd>${num(validated.bad.length)}${validated.bad.length ? ' — ' + esc(validated.bad.slice(0, 6).join('; ')) : ''}</dd>
+          <dt>Already exist</dt><dd>${num(validated.found.length)}${validated.found.length ? ' — ' + esc(validated.foundWhere) + ' ' + listOf(validated.foundRows, x => `${esc(x.email)} — ${esc(x.where)}`) : ''}</dd>
+          <dt>New</dt><dd>${num(validated.newOnes.length)}${validated.newOnes.length ? ` — created as Network contacts, category <select id="ppNewCat" style="width:auto;padding:2px 6px;">${NETWORK_CATS.map(([k, l]) => `<option value="${k}"${validated.cat === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select> ` + listOf(validated.newOnes, x => `${esc(x.email)}${x.name ? ' — ' + esc(x.name) : ''}`) : ''}</dd>
+          <dt>Duplicates</dt><dd>${num(validated.dups.length)}${validated.dups.length ? ' — the same address twice; kept once ' + listOf(validated.dups, esc) : ''}</dd>
+          <dt>Invalid</dt><dd>${num(validated.invalid.length)}${validated.invalid.length ? ' — skipped ' + listOf(validated.invalid, esc) : ''}</dd>
         </dl>`;
       const render = () => {
         $('modalBody').innerHTML = body();
@@ -3012,19 +3020,29 @@ Optional note for them:`, '');
         $('ppOwner')?.addEventListener('change', (e) => { filters.netOwner = e.target.value; render(); });
         $('ppList')?.addEventListener('change', (e) => { filters.listId = e.target.value; render(); });
         $('ppNewCat')?.addEventListener('change', (e) => { validated.cat = e.target.value; });
-        $('ppFile')?.addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) $('ppText').value = await f.text(); });
+        $('ppText')?.addEventListener('input', (e) => { pasteText = e.target.value; });
+        $('ppFile')?.addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) { pasteText = await f.text(); $('ppText').value = pasteText; } });
+        $('ppTemplate')?.addEventListener('click', () => {
+          const csv = 'email;name;organisation;category;role\r\nana.silva@exemplo.pt;Ana Silva;Jornal Exemplo;journalist;Editora\r\n';
+          const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })), download: 'douro-list-template.csv' });
+          a.click(); URL.revokeObjectURL(a.href);
+        });
         $('ppCheck')?.addEventListener('click', () => {
-          const rows = parsePeopleRows($('ppText').value);
-          const found = [], newOnes = [], bad = [], seen = new Set(), where = {};
+          pasteText = $('ppText').value;
+          const rows = parsePeopleRows(pasteText);
+          const found = [], foundRows = [], newOnes = [], dups = [], invalid = [], seen = new Set(), where = {};
           rows.forEach(r => {
-            if (!validEmail(r.email)) { bad.push(`${r.email || '(empty)'} — not an email`); return; }
-            if (seen.has(r.email)) { bad.push(`${r.email} — duplicate`); return; }
+            if (!validEmail(r.email)) { invalid.push(r.email || '(empty row)'); return; }
+            if (seen.has(r.email)) { dups.push(r.email); return; }
             seen.add(r.email);
             const hits = whereIs(r.email, src);
-            if (hits.length) { hits.forEach(h => { where[h.label] = (where[h.label] || 0) + 1; }); found.push(mergePeople(hits.map(h => ({ ...h.person, name: h.person.name || r.name, org: h.person.org || r.org })))[0]); }
-            else newOnes.push(r);
+            if (hits.length) {
+              hits.forEach(h => { where[h.label] = (where[h.label] || 0) + 1; });
+              found.push(mergePeople(hits.map(h => ({ ...h.person, name: h.person.name || r.name, org: h.person.org || r.org })))[0]);
+              foundRows.push({ email: r.email, where: hits.map(h => `${h.label}${h.person.org ? ' (' + h.person.org + ')' : ''}`).join(', ') });
+            } else newOnes.push(r);
           });
-          validated = { rows: rows.length, found, newOnes, bad, cat: 'other', foundWhere: Object.entries(where).map(([k, n]) => `${n} in ${k}`).join(', ') };
+          validated = { rows: rows.length, found, foundRows, newOnes, dups, invalid, cat: 'other', foundWhere: Object.entries(where).map(([k, n]) => `${n} in ${k}`).join(', ') };
           render();
         });
       };
@@ -3085,7 +3103,9 @@ Optional note for them:`, '');
         onDone: async (people, info) => {
           const pv = (await callCampaign({ action: 'previewPeople', campaignId: c.id, people })).data;
           const exc = Object.entries(pv.excluded).map(([k, n]) => `${num(n)} ${esc({ no_email: 'invalid address', already_in_campaign: 'already in this campaign', suppressed: 'on the suppression list', unsubscribed: 'unsubscribed from this campaign', contacted_recently: 'emailed recently' }[k] || k)}`).join(', ');
-          setTimeout(() => openModal(`Add people to "${c.name}"`, `<dl class="summary"><dt>Selected</dt><dd>${num(pv.requested)}</dd><dt>Can be added</dt><dd><b>${num(pv.eligible)}</b></dd><dt>Excluded</dt><dd>${exc || '0'}</dd></dl>
+          const PERSON_EXCL = { no_email: 'invalid address', already_in_campaign: 'already in this campaign', suppressed: 'on the suppression list', unsubscribed: 'unsubscribed from this campaign', contacted_recently: 'emailed recently' };
+          const why = (pv.excludedSample || []).length ? `<details style="margin-bottom:10px;"><summary class="hint" style="cursor:pointer;">See who and why</summary><div class="hint" style="margin-top:6px;max-height:160px;overflow-y:auto;">${pv.excludedSample.map(x => `${esc(x.name || x.email)}${x.name ? ' — ' + esc(x.email) : ''}: <b>${esc(PERSON_EXCL[x.reason] || x.reason)}</b>`).join('<br>')}</div></details>` : '';
+          setTimeout(() => openModal(`Add people to "${c.name}"`, `<dl class="summary"><dt>Selected</dt><dd>${num(pv.requested)}</dd><dt>Can be added</dt><dd><b>${num(pv.eligible)}</b></dd><dt>Excluded</dt><dd>${exc || '0'}</dd></dl>${why}
             <p class="note">${pv.eligible ? `At ${num(pv.perDay)} a day, everyone gets the first email within about <b>${num(Math.max(1, pv.daysToStart))}</b> sending day${Math.max(1, pv.daysToStart) === 1 ? '' : 's'}${c.status === 'draft' ? ' once the campaign is started' : ''}.` : 'Nobody can be added from this selection.'}</p>`,
             async () => {
               if (!pv.eligible) return true;
@@ -3131,18 +3151,54 @@ Optional note for them:`, '');
         await updateDoc(doc(db, 'outreachLists', b.dataset.lrestore), { archived: false, archivedAt: null, archivedBy: null });
         toast('List restored.'); renderLists();
       }));
-      $('listsView').querySelectorAll('[data-lview]').forEach(b => b.addEventListener('click', async () => {
-        const l = lists.find(x => x.id === b.dataset.lview);
-        let rows;
-        if (l.dynamic) rows = mergePeople(peopleFor(l.dynamic, await loadPeopleSources()));
-        else {
-          const ms = await getDocs(collection(db, 'outreachLists', l.id, 'members'));
-          addReads(ms.size || 1); refreshReads();
-          rows = ms.docs.map(d => d.data());
-        }
-        rows = rows.sort((a, b2) => (a.name || a.email).localeCompare(b2.name || b2.email));
-        openModal(`${l.name} (${num(rows.length)})`, `<div class="table-wrap" style="max-height:60vh;overflow:auto;"><table><thead><tr><th>Name</th><th>Organisation</th><th>Email</th><th>Records</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.org)}</td><td>${esc(r.email)}</td><td style="font-size:0.78rem;">${esc((r.refs || []).map(x => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[x.source] || x.source)).join(', '))}</td></tr>`).join('')}</tbody></table></div>`, async () => true, 'Close');
-      }));
+      $('listsView').querySelectorAll('[data-lview]').forEach(b => b.addEventListener('click', () => openListEditor(lists.find(x => x.id === b.dataset.lview))));
+    }
+
+    // I11 (8 Oct): see and edit a saved list — add people, remove someone,
+    // rename. A list kept up to date from filters can only be renamed.
+    const memberId = (email) => String(email).replace(/[^a-z0-9]/gi, '_').slice(0, 140);
+    async function openListEditor(l) {
+      let rows;
+      if (l.dynamic) rows = mergePeople(peopleFor(l.dynamic, await loadPeopleSources()));
+      else {
+        const ms = await getDocs(collection(db, 'outreachLists', l.id, 'members'));
+        addReads(ms.size || 1); refreshReads();
+        rows = ms.docs.map(d => ({ _id: d.id, ...d.data() }));
+      }
+      rows.sort((a, b2) => (a.name || a.email).localeCompare(b2.name || b2.email));
+      const canEdit = !l.archived && (!window.pageAccess || window.pageAccess.can('out.campaigns'));
+      const SRC = { crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' };
+      const body = () => `<div class="actions" style="margin-bottom:10px;align-items:center;">
+          ${canEdit ? `<button type="button" class="btn btn--ghost btn--sm" id="leRename">Rename</button>` : ''}
+          ${canEdit && !l.dynamic ? `<button type="button" class="btn btn--ghost btn--sm" id="leAdd">Add people</button>` : ''}
+          ${l.dynamic ? '<span class="hint">Kept up to date from its filters — people come and go with the filters, not by hand.</span>' : ''}</div>
+        <div class="table-wrap" style="max-height:55vh;overflow:auto;"><table><thead><tr><th>Name</th><th>Organisation</th><th>Email</th><th>Records</th><th></th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.name)}</td><td>${esc(r.org)}</td><td>${esc(r.email)}</td><td style="font-size:0.78rem;">${esc((r.refs || []).map(x => SRC[x.source] || x.source).join(', '))}</td><td style="text-align:right;">${canEdit && !l.dynamic ? `<button type="button" class="btn btn--ghost btn--sm" data-lerm="${esc(r.email)}" title="Remove from the list (the person's record stays)">Remove</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nobody in this list.</td></tr>'}</tbody></table></div>`;
+      const wire = () => {
+        $('leRename')?.addEventListener('click', async () => {
+          const name = (prompt('New name of the list:', l.name) || '').trim(); if (!name || name === l.name) return;
+          await updateDoc(doc(db, 'outreachLists', l.id), { name, updatedAt: serverTimestamp() });
+          l.name = name; $('modalTitle').textContent = `${l.name} (${num(rows.length)})`; toast('List renamed.'); renderLists();
+        });
+        $('modalBody').querySelectorAll('[data-lerm]').forEach(x => x.addEventListener('click', async () => {
+          if (!x.classList.contains('arm')) { x.classList.add('arm'); x.textContent = 'Remove?'; setTimeout(() => { if (x.isConnected) { x.classList.remove('arm'); x.textContent = 'Remove'; } }, 3000); return; }
+          const email = x.dataset.lerm;
+          await deleteDoc(doc(db, 'outreachLists', l.id, 'members', rows.find(r => r.email === email)?._id || memberId(email)));
+          rows = rows.filter(r => r.email !== email);
+          await updateDoc(doc(db, 'outreachLists', l.id), { count: rows.length, updatedAt: serverTimestamp() });
+          $('modalTitle').textContent = `${l.name} (${num(rows.length)})`; $('modalBody').innerHTML = body(); wire(); renderLists();
+        }));
+        $('leAdd')?.addEventListener('click', () => openPeoplePicker({ title: `Add people to the list "${l.name}"`, confirmLabel: 'Add to the list', allowSaveList: false, onDone: async (people) => {
+          const have = new Set(rows.map(r => r.email));
+          const add = people.filter(p => p.email && !have.has(p.email));
+          for (let i = 0; i < add.length; i += 400) await Promise.all(add.slice(i, i + 400).map(p => setDoc(doc(db, 'outreachLists', l.id, 'members', memberId(p.email)), { email: p.email, name: p.name || '', org: p.org || '', refs: p.refs || [], addedAt: serverTimestamp() })));
+          await updateDoc(doc(db, 'outreachLists', l.id), { count: rows.length + add.length, updatedAt: serverTimestamp() });
+          toast(`${num(add.length)} added${people.length > add.length ? ` · ${num(people.length - add.length)} already in the list` : ''}.`);
+          renderLists(); setTimeout(() => openListEditor({ ...l }), 50);
+          return true;
+        } }));
+      };
+      openModal(`${l.name} (${num(rows.length)})`, body(), async () => true, 'Close');
+      wire();
     }
 
     // P4 projection: days each step needs at the effective daily pace.
