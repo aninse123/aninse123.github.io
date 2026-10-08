@@ -22,6 +22,7 @@ const FEATURES = [
   // ── Other areas ──
   { key: "investorview", area: "Investor portal", kind: "release", name: "Investor view", description: "\"View the portal as\" a chosen investor, read only." },
   { key: "search.tier", area: "Search CRM", kind: "release", name: "Target tier & contactable", description: "Target tier (rules and per company), contactable, their filters and bulk actions, and the campaign option to include not-contactable companies." },
+  { key: "search.contactableRules", area: "Search CRM", kind: "release", name: "Contactable rules & owner data", description: "Owner size, listing and country on the company page (from the Orbis owner columns); later the contactable rules panel, its preview and the reason on each company." },
   { key: "mobile", area: "Mobile", kind: "release", name: "Douro mobile", description: "The phone app (portal/m/) and its search." },
   // ── Kill switches ──
   { key: "kill.outreach.sending", area: "Kill switches", kind: "kill", name: "Outreach: automatic sending", description: "Off: the scheduler sends no campaign emails (drafts still wait). Test: only test campaigns send." },

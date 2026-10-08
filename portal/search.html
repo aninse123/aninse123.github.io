@@ -1125,7 +1125,7 @@
       <div style="font-size:0.83rem;font-weight:600;margin-bottom:10px;" id="peopleImportSummary"></div>
       <div style="max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
         <table class="preview-table">
-          <thead><tr><th>Company</th><th>Person / Entity</th><th>Type</th><th>Role in file</th><th>Direct %</th><th>Manager</th><th>Status</th></tr></thead>
+          <thead id="peopleImportHead"><tr><th>Company</th><th>Person / Entity</th><th>Type</th><th>Role in file</th><th>Direct %</th><th>Manager</th><th>Status</th></tr></thead>
           <tbody id="peopleImportBody"></tbody>
         </table>
       </div>
@@ -4170,6 +4170,23 @@ async function recountPerson(personId){
 // Orbis's verdict when the export carried it, otherwise fall back to computing
 // the largest holding (marking every tied holder, not an arbitrary winner) and
 // label it clearly as computed.
+// Orbis's EUR → USD rate for 2025 (year-end, from the Orbis "Exchange rate
+// from original currency USD 2025" column, 8 Oct 2026). Orbis gives an owner's
+// revenue in USD only; this is only for the "≈ €" shown next to it. The
+// contactable rules will read the rate table from searchConfig instead.
+const ORBIS_EUR_USD_2025 = 1.175;
+// The owner's size, listing and country, one line, for the ownership note.
+function ownerSizeHtml(om){
+  if (!om) return '';
+  const bits = [];
+  if (om.guoCountry) bits.push(esc(om.guoCountry));
+  if (om.guoTicker && !/^delisted$/i.test(om.guoTicker)) bits.push(`listed (${esc(om.guoTicker)})`);
+  else if (om.guoTicker) bits.push('delisted');
+  if (om.guoEmployees != null) bits.push(`${om.guoEmployees.toLocaleString('de-DE')} employees`);
+  if (om.guoRevenueMUsd != null) bits.push(`US$${om.guoRevenueMUsd.toLocaleString('de-DE')}m (≈ €${Math.round(om.guoRevenueMUsd / ORBIS_EUR_USD_2025).toLocaleString('de-DE')}m)`);
+  else if (om.guoRevenueMEur != null) bits.push(`€${om.guoRevenueMEur.toLocaleString('de-DE')}m`);
+  return bits.length ? ` <span data-feature="search.contactableRules" title="The ultimate owner's own country, listing and size (Orbis)">· Owner: ${bits.join(' · ')}</span>` : '';
+}
 function resolveOwnership(company, links){
   const om = company?.ownershipMeta || null;
   const current = links.filter(l => l.shCurrent === true);
@@ -4295,7 +4312,7 @@ async function renderOwnership(c){
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <div>
           <span class="contact-name person-link" data-person="${esc(l.personId)}">${esc(l.personName || '—')}</span>
-          ${l.personEntityType === 'entity' ? ' <span class="badge badge-grey" title="Corporate entity">🏢</span>' : ''}${ownerBadge}${highestBadge}
+          ${l.personEntityType === 'entity' ? ` <span class="badge badge-grey" title="${esc(l.shTypeOrbis || 'Corporate entity')}">🏢</span>` : ''}${ownerBadge}${highestBadge}
           ${age ? ` <span class="badge badge-grey" title="${age.exact ? 'From Orbis birth date' : 'From the age Orbis gave at import, carried forward'}">🎂 ${age.age}${age.exact ? '' : '~'}</span>` : ''}
           ${shLine}${mgLine}
         </div>
@@ -4322,7 +4339,7 @@ async function renderOwnership(c){
           return gc
             ? `<span class="person-link" data-gotoco="${esc(gc.id)}"><strong>${esc(own.guoName)}</strong></span> <span class="badge badge-green">in your pipeline</span>`
             : `<strong>${esc(own.guoName)}</strong>`;
-        })()}`) : ''}
+        })()}`) : ''}${ownerSizeHtml(c.ownershipMeta)}
       </div>` : ''}
       ${cards || '<div style="font-size:0.85rem;color:var(--text-light);">No people yet — import ownership data or add manually.</div>'}
       ${links.length ? `<div class="own-legend" style="flex-wrap:wrap;gap:12px;">
@@ -4784,6 +4801,16 @@ const PEOPLE_ALIAS = {
   // the export: "One or more named individuals or families" is a family-owned
   // target, "Private equity firm" is already sponsor-owned.
   guoType:     ['guo - type'],
+  // The owner's own size, listing and country — the contactable rules 8–9.
+  // Orbis gives the owner's revenue in USD only (checked 8 Oct 2026); the unit
+  // is read from the header (m/th, USD/EUR) so a differently-set export still
+  // lands in the right field. "-" = the owner is a person (no figures).
+  guoCountry:  ['guo - country iso code'],
+  guoTicker:   ['guo - ticker symbol'],
+  guoEmployees:['guo - number of employees'],
+  guoRevenue:  ['guo - operating revenue (turnover) m usd','guo - operating revenue (turnover) th usd',
+                'guo - operating revenue (turnover) m eur','guo - operating revenue (turnover) th eur',
+                'guo - operating revenue (turnover)'],
   cshName:     ['csh - name'],
   cshUci:      ['csh - uci'],
   cshBvd:      ['csh - bvd id number'],
@@ -4842,6 +4869,9 @@ const IMPORT_FIELD_GROUPS = [
     needs:'shName', critical:['coEntityType'],
     degraded:'a company with no controlling shareholder cannot be told apart from one Orbis has no data for, so the owner falls back to the largest holding',
     fields:['coEntityType','cshName','cshBvd','cshUci','guoName','guoBvd','guoUci','guoType'] },
+  { title:'Ultimate owner size', powers:'Owner size, listing and country — used by the contactable rules',
+    anchor:'guoCountry',
+    fields:['guoType','guoCountry','guoTicker','guoEmployees','guoRevenue'] },
   { title:'Directors & managers', powers:'Roles, the org side of the network',
     anchor:'dmName',
     fields:['dmName','dmUci','dmJob','dmJobOrig','dmCurrent','dmLevel','dmBoard','dmAlsoSh','dmRoleCount','dmCountry','dmNationality'] },
@@ -4872,6 +4902,8 @@ const FIELD_LABELS = {
   shStreet:'Street', shPostcode:'Postcode', shCity:'City', shPhone:'Phone', shFax:'Fax',
   shNatId:'National ID', dmNationality:'Nationality', dmBoard:'Board / department',
   guoType:'Ultimate owner type',
+  guoCountry:'Owner country', guoTicker:'Owner ticker (listed)', guoEmployees:'Owner employees',
+  guoRevenue:'Owner revenue',
   shWeb:'Website', dmAddress:'Director address', dmEmail:'Director e-mail',
   coNoSh:'Orbis shareholder count', coNoDm:'Orbis director count',
 };
@@ -5123,6 +5155,14 @@ function ownClean(v){
   const s = String(v == null ? '' : v).trim();
   return (!s || /^(n\.?a\.?|-|–|—)$/i.test(s)) ? '' : s;
 }
+// A plain Orbis number ("161688", "54617.0", "1,234"), or null for '-', 'n.a.'
+// and anything else that isn't one.
+function ownNum(v){
+  const s = ownClean(v).replace(/,/g, '');
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return isFinite(n) ? n : null;
+}
 // Portuguese BvD IDs are 'PT' + NIF (verified 51/51 against live CRM data),
 // so either identifier collapses to the same key.
 //
@@ -5177,8 +5217,18 @@ function parsePeopleRows(rows){
   const facets = [];
   if (idx.shName !== -1) facets.push('shareholders');
   if (idx.dmName !== -1) facets.push('management');
-  if (!facets.length) throw new Error('No shareholder ("SH - Name") or director ("DM - Full name") column found. Is this an Orbis list export?');
-  const mode = facets.length === 2 ? 'both' : facets[0];
+  // Owner-only file: GUO columns and no people. Only the company's ownership
+  // metadata is written (confirmOwnershipImport) — no people, no links, no
+  // demotions, so a file without SH columns can never mark anyone "previous".
+  const ownershipOnly = !facets.length && (idx.guoName !== -1 || idx.guoBvd !== -1);
+  if (!facets.length && !ownershipOnly) throw new Error('No shareholder ("SH - Name"), director ("DM - Full name") or ultimate owner ("GUO - Name") column found. Is this an Orbis list export?');
+  const mode = ownershipOnly ? 'ownership' : facets.length === 2 ? 'both' : facets[0];
+  // The owner's revenue unit comes from its header ("… m USD"); anything we
+  // can't read is reported rather than guessed.
+  const revHead = idx.guoRevenue !== -1 ? headers[idx.guoRevenue] : '';
+  const revUnit = !revHead ? null
+    : /\bm\s*usd\b/.test(revHead) ? { cur:'Usd', div:1 } : /\bth\s*usd\b/.test(revHead) ? { cur:'Usd', div:1000 }
+    : /\bm\s*eur\b/.test(revHead) ? { cur:'Eur', div:1 } : /\bth\s*eur\b/.test(revHead) ? { cur:'Eur', div:1000 } : null;
   if (idx.companyName === -1) throw new Error('No "Company name" column found.');
 
   // Company lookup tables (the full dataset has already been loaded).
@@ -5205,6 +5255,11 @@ function parsePeopleRows(rows){
   const misaligned = new Map();      // alias key -> how many companies it was dropped for
   let aggregateRows = 0;             // "Self Owned" and friends: a % with no holder
   const treasuryByCo = new Map();    // companyId -> % the company holds in itself
+  // Every Orbis shareholder type on the company (incl. aggregate lines such as
+  // "Self ownership"), and the countries of its family shareholders — the
+  // contactable rule 7 and the foreign-family fallback read these.
+  const shTypesByCo = new Map(), famCountriesByCo = new Map();
+  const ownersUnmatched = new Map();  // owner-only file: companies not in the CRM
 
   for (let r = hi + 1; r < rows.length; r++){
     const row = rows[r];
@@ -5219,8 +5274,9 @@ function parsePeopleRows(rows){
     let matchedBy = company ? (onlyDigits(get('nif')) ? 'nif' : 'bvd') : null;
     if (!company){ const c = byName.get(normName(coName)); if (c){ company = c; matchedBy = 'name'; } }
 
-    // Company-level ownership control (shareholders files only).
-    if (facets.includes('shareholders') && company){
+    if (ownershipOnly && !company) ownersUnmatched.set(coNif || normName(coName), { name: coName, nif: coNif });
+    // Company-level ownership control (shareholders files and owner-only files).
+    if ((facets.includes('shareholders') || ownershipOnly) && company){
       const cshNames = packedLines(get('cshName')).map(ownClean).filter(Boolean);
       const cshUcis  = packedLines(get('cshUci')).map(ownClean).filter(Boolean);
       const cshBvds  = packedLines(get('cshBvd')).map(ownClean).filter(Boolean);
@@ -5238,6 +5294,12 @@ function parsePeopleRows(rows){
         guoUci: ownClean(get('guoUci')) || null,
         guoNif: nifFromAny('', get('guoBvd')) || null,
         guoType: ownClean(get('guoType')) || null,
+        guoCountry: ownClean(get('guoCountry')) || null,
+        // "-" (not listed) and blank both mean no ticker; "Delisted" is kept as
+        // written — the rules treat it as not listed.
+        guoTicker: ownClean(get('guoTicker')) || null,
+        guoEmployees: ownNum(get('guoEmployees')),
+        ...(revUnit ? { ['guoRevenueM' + revUnit.cur]: (v => v == null ? null : Math.round(v / revUnit.div * 10) / 10)(ownNum(get('guoRevenue'))) } : {}),
         cshKeys: [...new Set([
           ...cshUcis.map(u => 'u_' + u.replace(/[^A-Za-z0-9_-]/g,'')),
           ...cshBvds.map(b => nifFromAny('', b)).filter(Boolean).map(n => 'e_' + n),
@@ -5245,7 +5307,7 @@ function parsePeopleRows(rows){
         ])],
         cshNames,
       };
-      if (meta.entityType || meta.guoName || meta.cshKeys.length) ownershipMeta.set(company.id, meta);
+      if (meta.entityType || meta.guoName || meta.guoType || meta.cshKeys.length) ownershipMeta.set(company.id, meta);
     }
 
     // A file may carry BOTH facets — Orbis will happily export shareholders and
@@ -5319,6 +5381,13 @@ function parsePeopleRows(rows){
       const totL   = isShF ? zip('shTotal')  : null;
       const dateL  = isShF ? zip('shDate')   : null;
       const mgrL   = isShF ? zip('shMgr')    : null;
+      if (isShF && company && typeL){
+        const types = [...new Set(typeL.map(ownClean).filter(Boolean))].sort();
+        if (types.length) shTypesByCo.set(company.id, types);
+        const fam = [...new Set(typeL.map((t, i) => /individuals or families/i.test(t) && ctryL ? ownClean(ctryL[i]) : '')
+          .filter(c => c && c.length <= 3))].sort();
+        if (fam.length) famCountriesByCo.set(company.id, fam);
+      }
       const jobL     = isShF ? null : zip('dmJob');
       const jobOrigL = isShF ? null : zip('dmJobOrig');  // Portuguese title, e.g. "Sócio Gerente"
       const curL     = isShF ? null : zip('dmCurrent');
@@ -5381,6 +5450,9 @@ function parsePeopleRows(rows){
           // Which facet this row carries. A file with both anchors emits one row
           // per facet for the same person; the merge below ORs these together.
           isSh: isShF, isMgmt: !isShF,
+          // Orbis's own shareholder type ("Private equity firm"…), kept next to
+          // the C/I split so the cap table and the rules can tell them apart.
+          shTypeOrbis: isShF ? typeStr : '',
           companyId: company?.id || null, companyName: company?.name || coName,
           fileCompanyName: coName, companyNif: coNif, matchedBy, unmatched: !company,
           personId: pid, personName: isCorp ? rawName : personDisplayName(rawName),
@@ -5464,6 +5536,7 @@ function parsePeopleRows(rows){
     if (!prev.uci) prev.uci = o.uci;
     if (!prev.country) prev.country = o.country;
     if (!prev.holderNif) prev.holderNif = o.holderNif;
+    if (!prev.shTypeOrbis) prev.shTypeOrbis = o.shTypeOrbis;
     // 'entity' is the more specific classification, so let it win: the
     // shareholder side names the type, the director side often does not.
     if (o.entityType === 'entity') prev.entityType = 'entity';
@@ -5489,6 +5562,12 @@ function parsePeopleRows(rows){
     m.treasuryPct = Math.round(pct * 100) / 100;
     ownershipMeta.set(cid, m);
   }
+  for (const [cid, types] of shTypesByCo){
+    const m = ownershipMeta.get(cid) || { entityType:null, guoName:null, guoUci:null, guoNif:null, cshKeys:[], cshNames:[] };
+    m.shTypes = types;
+    if (famCountriesByCo.has(cid)) m.familyShCountries = famCountriesByCo.get(cid);
+    ownershipMeta.set(cid, m);
+  }
 
   const people = new Set(out.map(o => o.personId));
   const cos = new Set(out.filter(o => o.companyId).map(o => o.companyId));
@@ -5507,6 +5586,12 @@ function parsePeopleRows(rows){
     withContact: out.filter(o => o.phone || o.email || o.website || orbisAddress(o)).length,
     corpDirectors: out.filter(o => o.isMgmt && o.entityType === 'entity').length,
     withControlData: [...ownershipMeta.values()].filter(m => m.cshKeys.length || m.guoName).length,
+    // Owner-only files (mode 'ownership') and the owner-size columns.
+    ownersUnmatched: [...ownersUnmatched.values()],
+    revHead, revUnit,
+    withOwnerSize: [...ownershipMeta.values()].filter(m => m.guoEmployees != null || m.guoRevenueMUsd != null || m.guoRevenueMEur != null).length,
+    withOwnerListed: [...ownershipMeta.values()].filter(m => m.guoTicker && !/^delisted$/i.test(m.guoTicker)).length,
+    withShTypes: shTypesByCo.size,
     unknownStatus: out.filter(o => o.isMgmt && o.mgmtCurrentFromFile === null).length };
   return peopleImportStats;
 }
@@ -5553,8 +5638,44 @@ function renderFieldReport(){
   }).join('');
 }
 
+function renderOwnershipImportPreview(){
+  const s = peopleImportStats;
+  const metas = [...s.ownershipMeta.values()];
+  const bits = [
+    `<strong>${s.rowsSeen}</strong> compan${s.rowsSeen===1?'y':'ies'} in the file`,
+    `<strong>${s.ownershipMeta.size}</strong> matched with an ultimate owner`,
+    `${metas.filter(m => m.guoCountry).length} with the owner's country`,
+    `${s.withOwnerSize} with the owner's size`,
+    `${s.withOwnerListed} with a listed owner`,
+  ];
+  let warn = '';
+  if (s.ownersUnmatched.length) warn += `<div style="margin-top:6px;color:#B45309;">⚠ ${s.ownersUnmatched.length} compan${s.ownersUnmatched.length===1?'y':'ies'} not in the CRM — skipped (an owner-only file never creates companies): ${esc(s.ownersUnmatched.slice(0,4).map(u=>u.name).join(', '))}${s.ownersUnmatched.length>4?` +${s.ownersUnmatched.length-4} more`:''}</div>`;
+  if (s.revHead && !s.revUnit) warn += `<div style="margin-top:6px;color:#B45309;">⚠ Couldn't read the unit of <code>${esc(s.revHead)}</code> (expected "m USD", "th USD", "m EUR" or "th EUR") — the owner's revenue is skipped.</div>`;
+  document.getElementById('peopleImportSummary').innerHTML = `Owner-only file — only each company's ultimate-owner details are updated; no people or links. ` + bits.join(' · ') + warn;
+  showEl('peoplePrevRow', false);
+  renderPeopleDupPanel([]);
+  const fmt = (v, cur) => v == null ? '—' : `${cur === 'Usd' ? 'US$' : '€'}${v.toLocaleString('de-DE')}m`;
+  const byId = new Map(companies.map(c => [c.id, c]));
+  document.getElementById('peopleImportHead').innerHTML = '<tr><th>Company</th><th>Ultimate owner</th><th>Owner type</th><th>Country</th><th>Ticker</th><th>Employees</th><th>Revenue</th></tr>';
+  document.getElementById('peopleImportBody').innerHTML = [...s.ownershipMeta.entries()].slice(0, 200).map(([cid, m]) => `
+    <tr>
+      <td>${esc(byId.get(cid)?.name || cid)}</td>
+      <td>${esc(m.guoName || '—')}</td>
+      <td>${esc(m.guoType || '—')}</td>
+      <td>${esc(m.guoCountry || '—')}</td>
+      <td>${m.guoTicker ? esc(m.guoTicker) : '—'}</td>
+      <td>${m.guoEmployees != null ? m.guoEmployees.toLocaleString('de-DE') + ' empl.' : '—'}</td>
+      <td>${m.guoRevenueMUsd != null ? fmt(m.guoRevenueMUsd, 'Usd') : fmt(m.guoRevenueMEur, 'Eur')}</td>
+    </tr>`).join('');
+  showEl('peopleImportOpts', false);
+  showEl('peopleImportPreview', true);
+  showEl('peopleDemotionCheck', false);
+  updatePeopleImportBtn();
+}
+
 function renderPeopleImportPreview(){
   const s = peopleImportStats;
+  if (s.mode === 'ownership') return renderOwnershipImportPreview();
   const bits = [
     // A combined file has two counts worth showing separately, plus the
     // overlap — the people who are both an owner and a manager, which is the
@@ -5590,11 +5711,12 @@ function renderPeopleImportPreview(){
   const { flagged } = computePeopleCreationCandidates(peopleImportRows);
   renderPeopleDupPanel(flagged);
 
+  document.getElementById('peopleImportHead').innerHTML = '<tr><th>Company</th><th>Person / Entity</th><th>Type</th><th>Role in file</th><th>Direct %</th><th>Manager</th><th>Status</th></tr>';
   document.getElementById('peopleImportBody').innerHTML = peopleImportRows.slice(0, 200).map(r => `
     <tr${r.unmatched ? ' style="opacity:.55;"' : ''}>
       <td>${esc(r.fileCompanyName)}</td>
       <td>${esc(r.personName)}</td>
-      <td>${r.entityType === 'entity' ? '🏢 Entity' : '🧑 Person'}</td>
+      <td>${r.entityType === 'entity' ? '🏢 Entity' : '🧑 Person'}${r.shTypeOrbis ? `<br><small style="color:var(--text-light);">${esc(r.shTypeOrbis)}</small>` : ''}</td>
       <td style="white-space:nowrap;">${[r.isSh ? 'Shareholder' : '', r.isMgmt ? 'Manager' : ''].filter(Boolean).join(' + ') || '—'}</td>
       <td>${r.shDirectPct != null ? r.shDirectPct + '%' : '—'}</td>
       <td>${r.mgmtRoles.length ? esc(r.mgmtRoles.join(' · ')) : (r.alsoManager ? '✓' : '—')}</td>
@@ -5607,6 +5729,13 @@ function renderPeopleImportPreview(){
   updatePeopleImportBtn();
 }
 function updatePeopleImportBtn(){
+  if (peopleImportStats?.mode === 'ownership'){
+    const n = peopleImportStats.ownershipMeta.size;
+    const b = document.getElementById('peopleImportConfirmBtn');
+    b.disabled = n === 0;
+    b.textContent = n ? `Import owner details for ${n} compan${n===1?'y':'ies'}` : 'Nothing to import';
+    return;
+  }
   const create = document.getElementById('peopleCreateMissing').checked;
   // A flagged-and-unresolved row's company is never created, so it never
   // actually gets a write either -- excluded here too, so the button's own
@@ -6085,7 +6214,67 @@ document.getElementById('peopleImportDupResolveBtn').addEventListener('click', (
   resolvePeopleDups(indices);
 });
 
+// The keys of an ownershipMeta object that a write would actually set: empty
+// values never overwrite what an earlier import found.
+function ownershipMetaPatch(om){
+  const out = {};
+  for (const [k, v] of Object.entries(om || {})){
+    if (v == null || (Array.isArray(v) && !v.length)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+// Owner-only file (GUO columns, no people): update each matched company's
+// ownershipMeta and nothing else. Only companies where a value differs are
+// written; no people, links, demotions or counters are read or touched.
+async function confirmOwnershipImport(){
+  const btn = document.getElementById('peopleImportConfirmBtn');
+  const errEl = document.getElementById('peopleImportErr'); errEl.style.display = 'none';
+  const meta = peopleImportStats?.ownershipMeta || new Map();
+  if (!meta.size) return;
+  peopleImportInFlight = true;
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Importing…';
+  const cancelToken = ImportProgress.start([{ id:'owners', label:'Owner details' }]);
+  try {
+    const byId = new Map(companies.map(c => [c.id, c]));
+    const toWrite = [];
+    let unchanged = 0;
+    for (const [cid, om] of meta){
+      const local = byId.get(cid);
+      const patch = ownershipMetaPatch(om);
+      const payload = {};
+      for (const [k, v] of Object.entries(patch))
+        if (JSON.stringify(local?.ownershipMeta?.[k] ?? null) !== JSON.stringify(v)) payload[`ownershipMeta.${k}`] = v;
+      if (Object.keys(payload).length) toWrite.push({ cid, local, patch, payload }); else unchanged++;
+    }
+    ImportProgress.beginStage('owners', toWrite.length);
+    const written = await commitInChunks(toWrite, 450, (batch, w) => {
+      // No updatedAt, same as the People import's counter pass: owner data is
+      // background enrichment, not an edit, and must not reorder "recently updated".
+      batch.update(doc(db, 'searchCompanies', w.cid), w.payload);
+      if (w.local) w.local.ownershipMeta = { ...(w.local.ownershipMeta || {}), ...w.patch };
+      return true;
+    }, { onProgress: done => ImportProgress.tick('owners', done), cancelToken });
+    ImportProgress.finishStage('owners', `${written.toLocaleString('de-DE')} companies updated, ${unchanged.toLocaleString('de-DE')} unchanged`);
+    cacheCompanies();
+    await logPortal('owner_import', { companies: meta.size, written, unchanged, unmatched: peopleImportStats.ownersUnmatched.length });
+    if (cancelToken.cancelled){ ImportProgress.stopped(`Stopped. ${written} companies updated so far. Re-run the same file to finish — unchanged companies are skipped.`); return; }
+    showEl('peopleImportModal', false);
+    if (currentCoId){ const c = getCompany(); if (c) { renderOwnership(c); renderOverview(c); } }
+    ImportProgress.complete(`Owner details: ${written.toLocaleString('de-DE')} compan${written===1?'y':'ies'} updated, ${unchanged.toLocaleString('de-DE')} already up to date.`);
+  } catch(e){
+    console.error(e);
+    errEl.textContent = e.message; errEl.style.display = 'block';
+    ImportProgress.fail(e.message);
+  } finally {
+    peopleImportInFlight = false;
+    btn.disabled = false; updatePeopleImportBtn();
+  }
+}
+
 async function confirmPeopleImport(){
+  if (peopleImportStats?.mode === 'ownership') return confirmOwnershipImport();
   const btn = document.getElementById('peopleImportConfirmBtn');
   const errEl = document.getElementById('peopleImportErr'); errEl.style.display = 'none';
   const createMissing = document.getElementById('peopleCreateMissing').checked;
@@ -6315,6 +6504,7 @@ async function confirmPeopleImport(){
         payload.shDirectPct = r.shDirectPct; payload.shTotalPct = r.shTotalPct;
         payload.shCurrent = true; payload.shDate = r.shDate || null;
         payload.shType = r.entityType === 'entity' ? 'C' : 'I';
+        if (r.shTypeOrbis) payload.shTypeOrbis = r.shTypeOrbis;
         payload.alsoManager = r.alsoManager;
       }
       if (r.isMgmt){
@@ -6433,7 +6623,8 @@ async function confirmPeopleImport(){
 
     await commitInChunks(countersToWrite, 450, (batch, c) => {
       batch.update(doc(db,'searchCompanies', c.cid), c.payload);
-      if (c.local){ c.local.peopleCounts = c.newCounts; if (c.om) c.local.ownershipMeta = { ...(c.local.ownershipMeta || {}), ...c.om }; }
+      // Same rule as the write: a key this file left empty keeps the stored value.
+      if (c.local){ c.local.peopleCounts = c.newCounts; if (c.om) c.local.ownershipMeta = { ...(c.local.ownershipMeta || {}), ...ownershipMetaPatch(c.om) }; }
       return true;
     }, { onProgress: done => ImportProgress.tick('demoteCounters', demotions.size + done), cancelToken });
     ImportProgress.finishStage('demoteCounters', `${demoted.toLocaleString('de-DE')} relationships demoted, ${countersToWrite.length.toLocaleString('de-DE')} company counts updated`);
@@ -6558,7 +6749,7 @@ async function handlePeopleFile(file){
       rows = parseCSV(await file.text());
     }
     const s = parsePeopleRows(rows);
-    const what = s.mode === 'both' ? 'shareholders + directors' : s.mode;
+    const what = s.mode === 'both' ? 'shareholders + directors' : s.mode === 'ownership' ? 'owner details only' : s.mode;
     document.getElementById('peopleFileName').textContent = `${file.name} — ${what}, ${s.rowsSeen} compan${s.rowsSeen===1?'y':'ies'}`;
     renderFieldReport();
     renderPeopleImportPreview();
