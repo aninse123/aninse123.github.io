@@ -779,7 +779,6 @@
     let threadMessages = [];
     let usageDoc = {}, dailyDoc = {};
     let ownerFilter = 'mine', stateFilter = 'all';
-    let companies = null;          // from the Search CRM's IndexedDB cache (lazy)
     let picked = null;             // company chosen in Compose
     let dayUnsubs = [];
 
@@ -840,7 +839,6 @@
       document.querySelectorAll('.tab').forEach(t => { const on = t.dataset.tab === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
       document.querySelectorAll('.panel').forEach(p => { p.hidden = p.id !== 'panel-' + name; });
       if (name === 'sent') loadSent();
-      if (name === 'compose') ensureCompanies();
       if (name === 'metrics') loadMetrics(); // (re)renders at the now-visible width
       if (name === 'campaigns') { if (curCampId) loadCampaignData(); else loadCampCounts(); }
       if (name === 'tasks') showTaskView(taskView);
@@ -1106,11 +1104,13 @@
             <label for="replyText">Reply from ${esc(t.senderId || '—')}</label>
             ${tplOpts ? `<select id="replyTpl" aria-label="Insert a template" style="width:auto;max-width:100%;"><option value="">Insert a template…</option>${tplOpts}</select>` : ''}
           </div>
+          <div class="vars" id="replyVars">${varBarHtml()}</div>
           <textarea id="replyText" placeholder="Write your reply…"></textarea>
           <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature, the previous message quoted below it, and the legal footer. Fields like {{company.shortName}} work here too.</span></div>
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
         <button class="btn btn--primary" id="replyBtn" data-perm="out.write">${esc(SEND_LABEL(true))}</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
+      wireVarBar($('replyVars'), box, '#replyText');
       $('replyTpl')?.addEventListener('change', () => {
         const [tid, key] = $('replyTpl').value.split('::');
         const v = templates.find(x => x.id === tid)?.variants?.find(x => x.key === key);
@@ -1192,7 +1192,6 @@
     }
 
     async function assignCompany(t) {
-      await ensureCompanies();
       const q = prompt('Company name (start of it) or email address to assign this conversation to:', t.contactEmail || '');
       if (!q) return;
       const hits = await findCompanies(q, 8);
@@ -1255,9 +1254,48 @@
     $('sentRefresh').addEventListener('click', loadSent);
 
     // ── Compose ────────────────────────────────────────────────
-    // Companies come from the Search CRM's own IndexedDB cache (same origin),
-    // so opening Compose never re-reads 39k documents. Staleness is fine for
-    // picking a company; the server re-reads the chosen one when sending.
+    // B2 (8 Oct): companies are found through the name index the Search CRM
+    // and the phone app use (name, email name and "also known as", any word,
+    // partial words) — about 25 reads per search instead of loading the whole
+    // list — and the chosen company is read fresh when picked (B1).
+    // Same normalisation as search.html companySearchFields().
+    const LEGAL_FORM_RE = /\b(lda|sa|unipessoal|limitada|sgps|eireli|ltda|s a)\b/g;
+    const deburr = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    // Lower-case, no accents: used to match audiences, CSV headers and names.
+    const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    function searchKeyOf(s) {
+      const nameKey = deburr(String(s || '').replace(/[.,\-–—&/]/g, ' ')).replace(LEGAL_FORM_RE, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+      return { nameKey, tokens: [...new Set(nameKey.split(' ').filter(w => w.length > 1))] };
+    }
+    async function findCompanies(q, max = 10) {
+      const raw = String(q || '').trim();
+      if (raw.length < 2) return [];
+      const col = collection(db, 'searchCompanies');
+      const digits = raw.replace(/\s/g, '');
+      let docs;
+      if (raw.includes('@')) docs = (await getDocs(query(col, where('companyEmail', '==', raw.toLowerCase()), limit(max)))).docs;
+      else if (/^\d{9}$/.test(digits)) docs = (await getDocs(query(col, where('nif', '==', digits), limit(max)))).docs;
+      else {
+        const { nameKey, tokens } = searchKeyOf(raw);
+        if (!tokens.length) return [];
+        // The longest word is the most selective; the rest are checked here.
+        const first = tokens.slice().sort((a, b) => b.length - a.length)[0];
+        docs = (await getDocs(query(col, where('namePrefixes', 'array-contains', first), limit(25)))).docs;
+        // Companies indexed before the name index existed: a prefix of the legal name.
+        if (!docs.length) docs = (await getDocs(query(col, orderBy('nameKey'), where('nameKey', '>=', nameKey), where('nameKey', '<=', nameKey + '\uf8ff'), limit(max)))).docs;
+        addReads(docs.length || 1); refreshReads();
+        return docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(c => tokens.every(tk => (c.namePrefixes || []).includes(tk) || String(c.nameKey || '').includes(tk)))
+          .slice(0, max);
+      }
+      addReads(docs.length || 1); refreshReads();
+      return docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+
+    // The Search CRM's own cached company list (same origin, refreshed by the
+    // Search CRM). Only the "Add companies" CSV / pasted list uses it, to match
+    // by name in one go; without it that path looks up NIFs and emails instead.
+    let companies = null;
     function readCompanyCache() {
       return new Promise((resolve) => {
         let req;
@@ -1277,41 +1315,45 @@
       if (companies) return;
       const docs = await readCompanyCache();
       companies = docs && docs.length ? docs : null;
-      $('coHint').textContent = companies
-        ? `${num(companies.length)} companies from this browser's Search CRM list.`
-        : 'Searching the database by the start of the company name (e.g. DIMEXA) or an exact email — up to 10 results.';
     }
-    // Without the Search CRM's cached list, search Firestore directly: a
-    // prefix match on the (mostly upper-case, Orbis) legal name, or an exact
-    // company email. Up to 10 reads per search.
-    async function findCompanies(q, max = 10) {
-      if (companies) return searchCompanies(q, max);
-      const raw = String(q || '').trim();
-      if (raw.length < 2) return [];
-      const col = collection(db, 'searchCompanies');
-      const qy = raw.includes('@')
-        ? query(col, where('companyEmail', '==', raw.toLowerCase()), limit(max))
-        : query(col, where('name', '>=', raw.toUpperCase()), where('name', '<=', raw.toUpperCase() + '\uf8ff'), orderBy('name'), limit(max));
-      const snap = await getDocs(qy);
-      addReads(snap.size || 1); refreshReads();
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // ── Field buttons (B9 + I13) ───────────────────────────────
+    // Most used first, "more" for the rest. A button inserts at the cursor of
+    // the last box you were in (subject or message) and keeps your place.
+    const VARS_TOP = ['company.shortName', 'contact.firstName|Olá', 'sender.firstName', 'company.name', 'company.city'];
+    function varBarHtml(extra = '') {
+      const vars = VARS.filter(v => !v.startsWith('ai.'));
+      const btn = (v) => `<button type="button" class="var" data-var="${esc(v)}">{{${esc(v)}}}</button>`;
+      const top = VARS_TOP.filter(v => vars.includes(v)), rest = vars.filter(v => !VARS_TOP.includes(v));
+      return top.map(btn).join('') + (rest.length ? ` <button type="button" class="var" data-varmore aria-expanded="false">more ▾</button><span data-varrest hidden>${rest.map(btn).join('')}</span>` : '') + extra;
     }
-    const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-    function searchCompanies(q, max = 12) {
-      if (!companies) return [];
-      const n = norm(q).trim(); if (n.length < 2) return [];
-      const out = [];
-      for (const c of companies) {
-        if (norm(c.name).includes(n) || norm(c.companyEmail).includes(n) || String(c.nif || '').includes(n)) {
-          out.push(c); if (out.length >= max) break;
-        }
-      }
-      return out;
+    function insertAtCursor(el, text) {
+      const top = el.scrollTop, x = window.scrollX, y = window.scrollY;
+      const s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? s;
+      el.value = el.value.slice(0, s) + text + el.value.slice(e);
+      el.focus({ preventScroll: true });
+      el.selectionStart = el.selectionEnd = s + text.length;
+      el.scrollTop = top; window.scrollTo(x, y);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    // bar: the buttons' container; scope: where the boxes live; boxes: a
+    // selector for them. The default box is the last one (the message).
+    function wireVarBar(bar, scope, boxes) {
+      let last = null;
+      scope.addEventListener('focusin', (e) => { if (e.target.matches(boxes)) last = e.target; });
+      bar.addEventListener('mousedown', (e) => { if (e.target.closest('[data-var],[data-varmore]')) e.preventDefault(); }); // keep the cursor where it is
+      bar.addEventListener('click', (e) => {
+        const more = e.target.closest('[data-varmore]');
+        if (more) { const r = bar.querySelector('[data-varrest]'); r.hidden = !r.hidden; more.setAttribute('aria-expanded', String(!r.hidden)); more.textContent = r.hidden ? 'more ▾' : 'less ▴'; return; }
+        const b = e.target.closest('[data-var]'); if (!b) return;
+        const all = [...scope.querySelectorAll(boxes)];
+        const target = (last && last.isConnected) ? last : all[all.length - 1];
+        if (target) insertAtCursor(target, `{{${b.dataset.var}}}`);
+      });
     }
 
     function setupCompose() {
-      $('varButtons').innerHTML = VARS.filter(v => !v.startsWith('ai.')).map(v => `<button type="button" class="var" data-var="${esc(v)}">{{${esc(v)}}}</button>`).join('')
-        + ' <button type="button" class="btn btn--ghost btn--sm" id="aiSuggest" data-feature="outreach.ai" title="Phase 4: an opening sentence written for this company from its Search CRM data (off until set up in Settings)">✨ Suggest an opening</button>';
+      $('varButtons').innerHTML = varBarHtml(' <button type="button" class="btn btn--ghost btn--sm" id="aiSuggest" data-feature="outreach.ai" title="Phase 4: an opening sentence written for this company from its Search CRM data (off until set up in Settings)">✨ Suggest an opening</button>');
       $('aiSuggest').addEventListener('click', async () => {
         if (!picked) { toast('Choose a company first.'); return; }
         const b = $('aiSuggest'); b.disabled = true; b.textContent = '✨ Writing…';
@@ -1325,13 +1367,8 @@
         } catch (e) { toast(errText(e)); }
         finally { b.disabled = false; b.textContent = '✨ Suggest an opening'; }
       });
-      $('varButtons').addEventListener('click', (e) => {
-        const b = e.target.closest('[data-var]'); if (!b) return;
-        const ta = $('cBody'); const ins = `{{${b.dataset.var}}}`;
-        const s = ta.selectionStart ?? ta.value.length;
-        ta.value = ta.value.slice(0, s) + ins + ta.value.slice(ta.selectionEnd ?? s);
-        ta.focus(); ta.selectionStart = ta.selectionEnd = s + ins.length; renderPreview();
-      });
+      wireVarBar($('varButtons'), $('panel-compose'), '#cSubject, #cBody');   // inserting fires input → renderPreview
+      $('coHint').textContent = 'Type any word of the name, the email name or "also known as" (e.g. DIMEXA), a NIF or an email address.';
       let searchTimer = null, lastHits = [];
       $('coSearch').addEventListener('input', () => {
         clearTimeout(searchTimer);
@@ -1345,11 +1382,16 @@
           list.innerHTML = hits.map(c => `<button type="button" class="picker__item" data-id="${esc(c.id)}">${esc(c.name)}<small>${esc(c.companyEmail || 'no email')}${c.concelho ? ' · ' + esc(c.concelho) : ''}${c.owner ? ' · ' + esc(OWNER_LABEL[c.owner] || c.owner) : ''}</small></button>`).join('')
             || (q.trim().length >= 2 ? '<div class="picker__item" style="cursor:default;color:var(--text-light);">No company found</div>' : '');
           list.hidden = !list.innerHTML;
-        }, companies ? 80 : 350);
+        }, 350);
       });
       $('coResults').addEventListener('click', (e) => { const b = e.target.closest('[data-id]'); if (b) pickCompany(lastHits.find(c => c.id === b.dataset.id)); });
       document.addEventListener('click', (e) => { if (!e.target.closest('.picker')) $('coResults').hidden = true; });
-      $('noCompany').addEventListener('change', () => { if ($('noCompany').checked) pickCompany(null); renderPreview(); });
+      let beforeNoCompany = null;   // B8: the company to bring back when it's unticked
+      $('noCompany').addEventListener('change', () => {
+        if ($('noCompany').checked) { beforeNoCompany = picked; pickCompany(null); }
+        else if (beforeNoCompany) { const c = beforeNoCompany; beforeNoCompany = null; pickCompany(c); }
+        renderPreview();
+      });
       ['cSubject', 'cBody', 'cTo'].forEach(id => $(id).addEventListener('input', renderPreview));
       $('cFrom').addEventListener('change', renderPreview);
       $('cTpl').addEventListener('change', applyTemplate);
@@ -1367,6 +1409,13 @@
     }
 
     async function pickCompany(c) {
+      // B1: read the chosen company fresh (1 read) — the email name, contacts
+      // and people in "Write to" are what the company page shows right now.
+      if (c?.id) {
+        try { const s = await getDoc(doc(db, 'searchCompanies', c.id)); addReads(1); refreshReads(); if (s.exists()) c = { id: s.id, ...s.data() }; }
+        catch (e) { /* keep the copy we have */ }
+        peopleCache.delete(c.id);
+      }
       picked = c || null;
       $('coResults').hidden = true;
       if (c) { $('coSearch').value = c.name || ''; $('noCompany').checked = false; }
@@ -1533,9 +1582,12 @@
       const v = $('cRecip')?.value;
       return v ? recipientsFor(picked).find(r => r.email === v) || null : null;
     }
+    // B10: a test send without a company shows these instead of empty fields
+    // (same as the server, send_core.js TEST_SAMPLE_COMPANY).
+    const TEST_SAMPLE_COMPANY = { name: '[Empresa]', emailName: '[Empresa]', city: '[Cidade]', sector: '[Setor]', caeDescription: '[CAE]' };
     function ctxFor() {
       const s = senders.find(x => x.id === $('cFrom').value) || {};
-      const c = picked || {};
+      const c = picked || ((!settings || settings.testMode !== false) ? TEST_SAMPLE_COMPANY : {});
       return {
         company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '' },
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
@@ -2197,7 +2249,8 @@
         </div>
         <div class="field"><label for="tKind">Used for</label><select id="tKind">${TEMPLATE_KINDS.map(([k, l]) => `<option value="${k}"${(tpl.kind || 'email') === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
           <span class="hint">Email templates appear in Compose, replies and email steps; letters, messages and call scripts in the matching campaign steps and tasks.</span></div>
-        <p class="hint" style="margin:-4px 0 12px;">Fields: ${VARS.map(v => `<code>{{${esc(v)}}}</code>`).join(' ')} — give a fallback after <code>|</code> for fields that can be empty. Only <b>active</b> templates can be used.</p>
+        <p class="hint" style="margin:-4px 0 6px;">Click a field to insert it where you're typing (subject or message). Give a fallback after <code>|</code> for fields that can be empty, e.g. <code>{{contact.firstName|Olá}}</code>. Only <b>active</b> templates can be used.</p>
+        <div class="vars" id="tVars" style="margin-bottom:10px;">${varBarHtml()}</div>
         <div id="tVariants">${variantHtml()}</div>
         <button type="button" class="btn btn--ghost btn--sm" id="tAddVar">Add variant</button>`,
         async () => {
@@ -2222,6 +2275,7 @@
       function rerender() { $('tVariants').innerHTML = variantHtml(); bindRemove(); $('tVariants').querySelectorAll('[data-subjwrap]').forEach(w => { w.hidden = ['message', 'script'].includes(kindNow()); }); }
       function bindRemove() { $('tVariants').querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => { collect(); variants.splice(Number(b.dataset.rm), 1); rerender(); })); }
       bindRemove();
+      wireVarBar($('tVars'), $('tVariants'), 'input[data-f="subject"], textarea[data-f="body"]');
       $('tKind').addEventListener('change', () => { collect(); rerender(); $('tVariants').querySelectorAll('[data-subjwrap]').forEach(w => { w.hidden = ['message', 'script'].includes(kindNow()); }); });
       $('tVariants').querySelectorAll('[data-subjwrap]').forEach(w => { w.hidden = ['message', 'script'].includes(kindNow()); });
       $('tAddVar').addEventListener('click', () => {
@@ -2564,6 +2618,9 @@ Optional note for them:`, '');
           if (note === null) return;
           await campCall({ action: 'returnStart', campaignId: c.id, note }, 'Returned with your note.');
         }
+        // Q3: canApprove lives in the render function; without this line Pause
+        // stopped with "canApprove is not defined" before reaching the server.
+        const canApprove = window.pageAccess ? window.pageAccess.can('out.approve') : true;
         if (a === 'pause') await setStatus('paused', canApprove ? 'Campaign paused — nothing is sent until you resume.' : 'Campaign paused — nothing is sent until a partner resumes it (Ask to resume).');
         if (a === 'resume') await setStatus('active', 'Campaign resumed.');
         if (a === 'finish') {

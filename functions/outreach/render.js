@@ -135,8 +135,8 @@ function buildQuote({ date, fromName, fromEmail, text }) {
 
 // The "plain" layout: text first, and an HTML part that mirrors it exactly —
 // no images, colours or banner, which is what reads as a personal email.
-// A reply quotes the previous message below the signature; the legal footer
-// stays at the very bottom.
+// A reply quotes the previous message at the very end, below the legal
+// footer, marked the Gmail way (gmail_quote) so Gmail folds it (B7, 8 Oct).
 function buildPlainEmail({ bodyText, signature, footerText, unsubscribeUrl, quote = null }) {
   const body = String(bodyText || "").trim();
   const sig = String(signature || "").trim();
@@ -144,8 +144,8 @@ function buildPlainEmail({ bodyText, signature, footerText, unsubscribeUrl, quot
 
   const textParts = [body];
   if (sig) textParts.push(sig);
-  if (quote) textParts.push(quote.header + "\n" + quote.text.split("\n").map((l) => (l.startsWith(">") ? ">" + l : "> " + l)).join("\n"));
   if (footer) textParts.push("--\n" + footer);
+  if (quote) textParts.push(quote.header + "\n" + quote.text.split("\n").map((l) => (l.startsWith(">") ? ">" + l : "> " + l)).join("\n"));
   const text = textParts.join("\n\n") + "\n";
 
   const para = (s) => escapeHtml(s).replace(/\n/g, "<br>");
@@ -157,8 +157,8 @@ function buildPlainEmail({ bodyText, signature, footerText, unsubscribeUrl, quot
     "<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222;\">",
     body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 12px;">${para(p)}</p>`).join(""),
     sig ? `<p style="margin:16px 0 0;">${para(sig)}</p>` : "",
-    quote ? `<div style="margin:20px 0 0;"><div style="color:#555;">${escapeHtml(quote.header)}</div><blockquote style="margin:6px 0 0 0.8ex;border-left:1px solid #ccc;padding-left:1ex;color:#555;">${para(quote.text)}</blockquote></div>` : "",
     footer ? `<p style="margin:24px 0 0;font-size:11px;line-height:1.4;color:#888;">${linkify(para(footer))}</p>` : "",
+    quote ? `<div class="gmail_quote" style="margin:20px 0 0;"><div class="gmail_attr" style="color:#555;">${escapeHtml(quote.header)}</div><blockquote class="gmail_quote" style="margin:6px 0 0 0.8ex;border-left:1px solid #ccc;padding-left:1ex;color:#555;">${para(quote.text)}</blockquote></div>` : "",
     "</div></body></html>",
   ].join("");
 

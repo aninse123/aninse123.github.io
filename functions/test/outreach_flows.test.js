@@ -207,7 +207,7 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   ok("In-Reply-To = prospect's message", rep.body.headers["In-Reply-To"] === "<reply-1@mail.gmail.com>");
   ok("References carry the chain", rep.body.headers["References"].includes("<om-reqAAAAAAAAAAAA1@mail.douropartners-team.pt>") && rep.body.headers["References"].includes("<reply-1@mail.gmail.com>"));
   ok("subject gets Re:", rep.body.subject === "Re: Search funds — Metalúrgica Silva");
-  ok("reply quotes the prospect's message above the footer", rep.body.text.includes("escreveu:\n> Claro, quinta às 10h?") && rep.body.text.indexOf("escreveu:") < rep.body.text.indexOf("\n--\n"));
+  ok("reply quotes the prospect's message below the footer (B7)", rep.body.text.includes("escreveu:\n> Claro, quinta às 10h?") && rep.body.text.indexOf("escreveu:") > rep.body.text.indexOf("\n--\n"));
   ok("thread → waiting, read", store.get("outreachThreads/" + thread1Id).status === "waiting" && store.get("outreachThreads/" + thread1Id).unread === false);
   ok("counted as reply", store.get("outreachDaily/" + day).repliesSent === 1);
 
@@ -261,6 +261,10 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   r = await call(fns.outreachSend, { companyId: "co1", senderId: S, to: "delivered+v7@resend.dev", subject: "x", body: "y" });
   ok("portal activity since the reading counts toward the target (99 + 1 = 100)", r.err?.details?.reason === "over_target" && r.err.details.used === 100);
   store.set("outreachUsage/" + day, { ...u, resendDailyUsed: 10, portalTotalAtReading: dT });
+
+  console.log("\n=== test send without a company (B10) ===");
+  r = await call(fns.outreachSend, { senderId: S, to: "delivered+b10@resend.dev", subject: "Olá {{company.name}}", body: "Sobre a {{company.shortName}} em {{company.city}}." });
+  ok("test mode: company fields show placeholders instead of refusing", r.res?.ok === true && JSON.stringify(lastSend().body).includes("Olá [Empresa]") && JSON.stringify(lastSend().body).includes("[Cidade]"));
 
   console.log("\n=== clear test data ===");
   store.set("searchActivities/real1", { companyId: "co1", type: "note", isTest: false });

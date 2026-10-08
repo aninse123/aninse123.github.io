@@ -46,6 +46,7 @@ function fail(code, reason, message, extra = {}) {
 //                              address, a contact or a linked person). Checked against the
 //                              company's own list; fills {{contact.firstName}}. In test mode
 //                              the email still goes to the test address (`to` / redirectTo).
+const TEST_SAMPLE_COMPANY = { name: "[Empresa]", emailName: "[Empresa]", city: "[Cidade]", sector: "[Setor]", caeDescription: "[CAE]" };
 async function prepareEmail(opts) {
   const { callerEmail, settings, messageRef } = opts;
   const isReply = !!opts.threadId;
@@ -146,7 +147,11 @@ async function prepareEmail(opts) {
   // ── Content ──
   const unsubscribeUrl = UNSUBSCRIBE_BASE_URL + makeUnsubToken(messageId, UNSUBSCRIBE_SECRET.value());
   // A person's organisation stands in for the company in {{company.*}}.
-  const ctxCompany = company || (person ? { name: person.org, emailName: person.org } : (isReply && thread.companyName ? { name: thread.companyName } : {}));
+  // B10: a test send without a company fills company fields with visible
+  // placeholders ("[Empresa]") instead of refusing; live sends still refuse.
+  const ctxCompany = company || (person ? { name: person.org, emailName: person.org }
+    : (isReply && thread.companyName ? { name: thread.companyName }
+      : (isTest && !isReply ? TEST_SAMPLE_COMPANY : {})));
   // T4: {{sender.phone}} — the address owner's phone (Team → person).
   let senderPhone = "";
   if (sender.owner) { try { senderPhone = (await db().doc(`teamDirectory/${sender.owner}`).get()).data()?.contactPhone || ""; } catch (e) { /* field stays empty */ } }

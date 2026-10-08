@@ -47,6 +47,7 @@ function makeCtx(){
     // covered by their own dedicated tests elsewhere).
     'function computeFields(co){ return { ...co }; }', // identity: no computed-field drift to worry about here
     "function companySearchFields(name){ return { nameKey: (name||'').toUpperCase() }; }",
+    "function companyIndexFields(c){ return companySearchFields(c && c.name); }",
     "function serverTimestamp(){ return '__SERVER_TS__'; }",
     "function doc(db, col, id){ return { col, id }; }",
     'let db = {};',

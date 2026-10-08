@@ -793,6 +793,7 @@
     <div class="form-group" id="semTestWrap" style="display:none;"><label>Test recipient</label><input type="email" class="field" id="semTestTo" list="semTestList"><datalist id="semTestList"></datalist></div>
     <div class="form-group" id="semTplWrap" style="display:none;"><label>Template <span class="opt">(optional)</span></label><select class="field" id="semTpl"></select></div>
     <div class="form-group"><label>Subject</label><input type="text" class="field" id="semSubject"></div>
+    <div id="semVars" style="display:flex;flex-wrap:wrap;gap:4px;margin:-4px 0 8px;"></div>
     <div class="form-group"><label>Message</label><textarea class="field" id="semMessage" rows="8"></textarea>
       <p style="font-size:0.75rem;color:var(--text-light);margin-top:4px;">Sent through the Outreach module: plain text with your signature and the legal footer, one recipient per email. Fields like {{company.shortName}} or {{contact.firstName|Olá}} work here too. Replies arrive in the Outreach inbox.</p></div>
     <div class="modal-err" id="semErr"></div>
@@ -8460,7 +8461,7 @@ async function confirmCompaniesImport(){
         const createdIds = new Set();
         created = await commitInChunks(entries, COMPANY_IMPORT_CHUNK, (batch, { r, ref }) => {
           const base = {
-            ...r.payload, ...companySearchFields(r.payload.name),
+            ...r.payload, ...companyIndexFields(r.payload),
             stage: 'universe', sourceType: 'company_import',
             financials: {}, contacts: [], addOnTo: [], addOns: [],
             lastTouchAt: null, outreachAttempts: 0,
@@ -8525,7 +8526,7 @@ async function confirmCompaniesImport(){
       // if the row renamed the company, it also becomes unfindable by its
       // new name until the next full recompute). Free: same one write per
       // company, just a fuller payload.
-      const merged = computeFields({ ...match, ...r.payload, ...companySearchFields(r.payload.name || match.name) });
+      const merged = computeFields({ ...match, ...r.payload, ...companyIndexFields({ ...match, ...r.payload }) });
       // Same rule as everywhere else in this file that sets sector from a
       // NACE/CAE code (the creating stage above, backfillSectors(),
       // saveCompany()'s manual "＋ New Company" autofill): only fill it in
@@ -9464,7 +9465,7 @@ async function saveCompany(){
       const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
       const changed = Object.fromEntries(Object.entries(data).filter(([k, val]) => k === 'updatedAt' || !same(prev[k], val)));
       if ('priority' in changed && prev.targetTierManual) changed.targetTierManual = null; // F1: one Tier field
-      const merged = computeFields({ ...companies[idx], ...changed, ...companySearchFields(data.name) });
+      const merged = computeFields({ ...companies[idx], ...changed, ...companyIndexFields({ ...companies[idx], ...changed }) });
       await updateDoc(doc(db,'searchCompanies',editCoId), {
         ...changed,
         nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes,
@@ -9492,7 +9493,7 @@ async function saveCompany(){
       if (dup && !confirm(`This looks like it might already exist: "${dup.name}"${dup.nif ? ' (NIF ' + dup.nif + ')' : ''}. Create a new company anyway?`)) {
         return; // finally below still resets the button
       }
-      const base = { ...data, ...companySearchFields(data.name), financials:{}, contacts:[], addOnTo:[], addOns:[], lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), createdBy: currentUser };
+      const base = { ...data, ...companyIndexFields(data), financials:{}, contacts:[], addOnTo:[], addOns:[], lastTouchAt:null, outreachAttempts:0, createdAt: serverTimestamp(), createdBy: currentUser };
       const computed = computeFields({ ...base });
       const full = {
         ...base,
@@ -10740,7 +10741,7 @@ async function rebuildNameIndex(){
   try {
     const CHUNK = 450;
     await commitInChunks(companies, CHUNK, (batch, c) => {
-      const fields = companySearchFields(c.name);
+      const fields = companyIndexFields(c);
       Object.assign(c, fields);
       batch.update(doc(db,'searchCompanies',c.id), fields);
       return true;
@@ -11083,13 +11084,24 @@ function normName(s){ return deburr(String(s||'').replace(/[.,\-–—&/]/g,' ')
 // namePrefixes()/personNameTokens() below -- those are person-specific
 // (stopword list, no legal-form stripping) and already covered by tests;
 // duplicating three lines here is safer than reshaping working code.
-function companySearchFields(name){
-  const nameKey = deburr(String(name||'').replace(/[.,\-–—&/]/g,' ')).replace(LEGAL_FORM_RE,' ').replace(/\s+/g,' ').trim().toUpperCase();
-  const nameTokens = [...new Set(nameKey.split(' ').filter(w => w.length > 1))];
+function companySearchFields(name, also = []){
+  const keyOf = (s) => deburr(String(s||'').replace(/[.,\-–—&/]/g,' ')).replace(LEGAL_FORM_RE,' ').replace(/\s+/g,' ').trim().toUpperCase();
+  const nameKey = keyOf(name);
+  // Outreach B3 (8 Oct): the email name and Orbis "Also known as" are
+  // searchable too — their words join the tokens / prefixes, nameKey stays the
+  // legal name (duplicate checks and sorting use it).
+  const nameTokens = [...new Set([nameKey, ...also.map(keyOf)].join(' ').split(' ').filter(w => w.length > 1))];
   const prefixes = new Set();
   for (const t of nameTokens) for (let i = 2; i <= t.length; i++) prefixes.add(t.slice(0, i));
   return { nameKey, nameTokens, namePrefixes: [...prefixes] };
 }
+// Other names a company is known by: its email name and Orbis "Also known as"
+// (several, separated by ; | or new lines). Placeholders don't count.
+function companyAltNames(c){
+  return [c?.emailName, ...String(c?.akaName || '').split(/[;\n|]/)].map(s => String(s || '').trim()).filter(s => s && s !== '-' && !/^n\.?a\.?$/i.test(s));
+}
+// The name-search fields for a company record (name + its other names).
+function companyIndexFields(c){ return companySearchFields(c?.name, companyAltNames(c)); }
 
 // ── People helpers ───────────────────────────────────────────────────────────
 // Orbis person rows carry no stable ID in list exports and salutations are
@@ -11317,7 +11329,7 @@ async function confirmBulk(){
     await commitInChunks(newRows, CHUNK, (batch, { co }) => {
       const local = computeFields({ ...co });
       batch.set(doc(col), { ...co,
-        ...companySearchFields(co.name),
+        ...companyIndexFields(co),
         computedRevenue:local.computedRevenue, computedEBITDA:local.computedEBITDA, computedEBITDAMargin:local.computedEBITDAMargin,
         computedEBITDAWeighted:local.computedEBITDAWeighted, computedEBITDAMarginWeighted:local.computedEBITDAMarginWeighted,
         computedGrowthRecent:local.computedGrowthRecent, computedGrowthSustained:local.computedGrowthSustained, computedEBITDAStability:local.computedEBITDAStability,
@@ -11440,6 +11452,31 @@ document.getElementById('personBody').addEventListener('click', e => {
 });
 document.getElementById('semCancelBtn').addEventListener('click', () => showEl('sendEmailModal', false));
 document.getElementById('semSendBtn').addEventListener('click', sendCompanyEmail);
+// Field buttons in the company-page email (Outreach I13): same fields and
+// behaviour as Outreach Compose — most used first, "more" for the rest, insert
+// where you're typing (subject or message) and keep your place.
+(function semFieldButtons(){
+  const bar = document.getElementById('semVars'); if (!bar) return;
+  const TOP = ['company.shortName', 'contact.firstName|Olá', 'sender.firstName', 'company.name', 'company.city'];
+  const MORE = ['company.sector', 'company.cae', 'sender.name', 'sender.phone', 'sender.email'];
+  const btn = (v) => `<button type="button" class="btn btn--ghost btn--sm" data-semvar="${esc(v)}" style="padding:2px 8px;font-size:0.75rem;">{{${esc(v)}}}</button>`;
+  bar.innerHTML = TOP.map(btn).join('') + `<button type="button" class="btn btn--ghost btn--sm" data-semmore aria-expanded="false" style="padding:2px 8px;font-size:0.75rem;">more ▾</button><span data-semrest style="display:none;">${MORE.map(btn).join('')}</span>`;
+  const boxes = ['semSubject', 'semMessage'].map(id => document.getElementById(id));
+  let last = boxes[1];
+  boxes.forEach(b => b.addEventListener('focus', () => { last = b; }));
+  bar.addEventListener('mousedown', (e) => { if (e.target.closest('[data-semvar],[data-semmore]')) e.preventDefault(); });
+  bar.addEventListener('click', (e) => {
+    const more = e.target.closest('[data-semmore]');
+    if (more) { const r = bar.querySelector('[data-semrest]'); const open = r.style.display === 'none'; r.style.display = open ? 'contents' : 'none'; more.textContent = open ? 'less ▴' : 'more ▾'; more.setAttribute('aria-expanded', String(open)); return; }
+    const b = e.target.closest('[data-semvar]'); if (!b) return;
+    const el = last, top = el.scrollTop, x = window.scrollX, y = window.scrollY, ins = `{{${b.dataset.semvar}}}`;
+    const s = el.selectionStart ?? el.value.length, en = el.selectionEnd ?? s;
+    el.value = el.value.slice(0, s) + ins + el.value.slice(en);
+    el.focus({ preventScroll: true }); el.selectionStart = el.selectionEnd = s + ins.length;
+    el.scrollTop = top; window.scrollTo(x, y);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+})();
 document.getElementById('semTpl').addEventListener('change', applySemTemplate);
 document.getElementById('actCancelBtn').addEventListener('click', () => showEl('activityModal', false));
 document.getElementById('actSaveBtn').addEventListener('click', saveActivity);
