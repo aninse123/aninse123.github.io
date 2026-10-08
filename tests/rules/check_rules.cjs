@@ -89,6 +89,9 @@ const cases = [
 
   // ── The role decides: untick a permission on Partner and the database follows ──
   C('Partner without "Delete companies": can\'t delete a company', PARTNER_NO_DELETE, 'delete', 'searchCompanies/c1', 'DENY', null, { name: 'A' }),
+  // Contactable rules (8 Oct): the verdict fields are flag fields.
+  C('Flags only: apply a contactable-rules verdict', { email: 'flags@douropartners.pt', perms: ['search.view', 'search.flags'], key: 'flags' }, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', owner: 'andre', contactable: false, contactableNote: 'Rule 4', contactableSource: 'rules', contactableRules: { failed: ['r4'] } }, { name: 'A', owner: 'andre' }),
+  C('Intern: can\'t set a contactable verdict on own company (needs flags)', INTERN, 'update', 'searchCompanies/c1', 'DENY', { name: 'A', owner: 'maria', contactableSource: 'manual' }, { name: 'A', owner: 'maria' }),
   C('Old token without permissions: nothing (until he signs in again / access is refreshed)', NO_CLAIMS, 'update', 'searchCompanies/c1', 'DENY', { name: 'B', updatedBy: me }, { name: 'A' }),
 
   // ── Other staff unchanged ──

@@ -75,7 +75,7 @@ service cloud.firestore {
     function dealFields() { return ['stage', 'reasonExcluded', 'dealSource', 'brokerId', 'dealSizeBand', 'projectName', 'askingPrice', 'targetEV', 'targetMultiple',
       'introCallDate', 'teaserDate', 'ndaSentDate', 'ndaSignedDate', 'cimDate', 'nboDate', 'loiSubmittedDate', 'loiSignedDate', 'exclusivityEnd',
       'ddStartDate', 'financingDate', 'closingDate', 'loiTerms', 'dealNotes']; }
-    function flagFields() { return ['priority', 'contactable', 'contactableNote', 'targetTierManual', 'doNotContact']; }
+    function flagFields() { return ['priority', 'contactable', 'contactableNote', 'contactableSource', 'contactableRules', 'targetTierManual', 'doNotContact']; }
     function stampFields() { return ['updatedAt', 'updatedBy', 'updatedByAt']; }
     // Bookkeeping written when an activity is logged or closed (last touch, attempts).
     function activityTouch() { return onlyFields(['lastTouchAt', 'outreachAttempts', 'lastOutreachAt', 'updatedAt', 'nextContactAt', 'nextContactTime', 'nextContactTz', 'hasOverdue']); }

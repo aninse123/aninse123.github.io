@@ -986,6 +986,20 @@
     <button class="btn btn--primary btn--sm" id="saveTierRulesBtn">Save tier rules</button> <span class="hint" id="tierRulesNote"></span>
     </div>
 
+    <div data-feature="search.contactableRules">
+    <div class="modal-section-title">Contactable rules</div>
+    <p class="hint" style="margin-bottom:8px;">The October Orbis noise filter, run inside the CRM. A company that fails any rule that is on becomes <strong>not contactable</strong>, with the reason on the company — campaigns leave it out unless they include not-contactable companies. A choice made by hand on a company always wins. Nothing changes until you <strong>Run rules</strong> and then <strong>Apply</strong>.</p>
+    <div id="ctRuleList" style="margin-bottom:8px;"></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:0.85rem;">
+      <span>Owner revenue (Orbis gives it in USD) is converted at 1 EUR =</span>
+      <input type="number" step="0.0001" class="field" id="ctRate" style="width:110px;"> <span>USD — Orbis's rate for</span>
+      <select class="field" id="ctRateYear" style="width:90px;"></select>
+    </div>
+    <button class="btn btn--primary btn--sm" id="saveCtRulesBtn" data-perm="search.admin">Save contactable rules</button>
+    <button class="btn btn--ghost btn--sm" id="ctRunBtn" data-perm="search.flags">▶ Run rules (preview first)</button>
+    <span class="hint" id="ctRulesNote"></span>
+    </div>
+
     <div class="modal-section-title">Brokers</div>
     <div id="brokerList" style="margin-bottom:10px;"></div>
     <div class="form-row">
@@ -1002,6 +1016,17 @@
 </div>
 
 <!-- Re-import change report modal -->
+<div class="overlay" id="ctRunModal" style="display:none;">
+  <div class="modal modal--lg">
+    <div class="modal-title">Run contactable rules</div>
+    <div id="ctRunBody" style="font-size:0.86rem;"></div>
+    <div class="modal-err" id="ctRunErr"></div>
+    <div class="modal-actions">
+      <button class="btn btn--ghost" id="ctRunCloseBtn">Close</button>
+      <button class="btn btn--primary" id="ctApplyBtn" disabled>Apply</button>
+    </div>
+  </div>
+</div>
 <div class="overlay" id="reportModal" style="display:none;">
   <div class="modal modal--lg">
     <div class="modal-title">Re-import Change Report</div>
@@ -1267,7 +1292,7 @@ import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/
 import {
   collection, doc,
   getDocs, getDoc, query, where, orderBy, limit, serverTimestamp, Timestamp,
-  onSnapshot, arrayUnion, arrayRemove, getCountFromServer, documentId
+  onSnapshot, arrayUnion, arrayRemove, getCountFromServer, documentId, deleteField
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -1687,6 +1712,189 @@ function tierPill(c){
   return `<span class="prio prio-${t.toLowerCase()}"${own ? '' : ' style="opacity:0.6;"'} title="Tier ${t} — ${own ? 'set on the company' : 'from the tier rules'}"><span class="prio-dot"></span>${t}${own ? '' : ' <small>(rule)</small>'}</span>`;
 }
 
+// ── Contactable rules (Tier & Contactable plan, Phase 2) ──────────────────────
+// The October 2026 Orbis noise filter (v6, 28,174 kept of 37,937), run inside
+// the CRM so every company carries a verdict and the reason for it. Settings in
+// searchConfig/contactableRules (search.admin); defaults below = v6 with André's
+// 8 Oct rule-9 thresholds (D8). A verdict is only ever written by "Run rules"
+// (preview, then Apply); a choice made by hand (contactableSource 'manual')
+// always wins and is never overwritten. "Do not contact" stays a separate hard
+// block. Gated by the "search.contactableRules" release switch.
+const CT_LEGAL_FORMS = ['Limited liability company - LDA', 'One-person company with limited liability - LDA', 'Public limited company - SA'];
+const CT_HARD = new Set(['Public authority, state, government', 'Insurance company', 'Private equity firm', 'Venture capital', 'Foundation, research Institute', 'Hedge fund', 'Public']);
+const CT_SOFT = new Set(['Financial company', 'Mutual and pension fund, nominee, trust, trustee']);
+const CT_PERSONLIKE = new Set(['One or more named individuals or families', 'Employees, managers, directors']);
+const CT_FAMILY = 'One or more named individuals or families';
+const CT_GUO_EXCL = new Set([...CT_HARD, 'Mutual and pension fund, nominee, trust, trustee', 'Bank']);
+const CT_FUND_RE = /\b(FCR|FUNDO|FUNDOS|FUND|FUNDS|SICAR|SCSP|LP)\b|S\.C\.SP|\bL\.P\.|PRIVATE EQUITY|CAPITAL DE RISCO/i;
+const CT_NONPROFIT_RE = /\b(ASSOCIACAO|FUNDACAO|STIFTUNG|FOUNDATION|MUNICIPIO|MUNICIPIOS|CAMARA MUNICIPAL|JUNTA DE FREGUESIA|COOPERATIVA|SANTA CASA|MISERICORDIA|DIOCESE|CLUBE|SINDICATO|FEDERACAO|UNIVERSIDADE|ORDEM DOS|MUTUALIDADE|MUTUELLE)\b/i;
+const CT_LDA_END = /(,|\s)LDA\.?$/i;
+const CT_TITLE = /^(MR|MRS|MS|MISS)\b/i;
+// Orbis's EUR → USD year-end rates ("Exchange rate from original currency USD",
+// 8 Oct 2026 export). Owner revenue comes from Orbis in USD only.
+const CT_EUR_USD = { 2025: 1.175, 2024: 1.0389, 2023: 1.105, 2022: 1.0666, 2021: 1.1326, 2020: 1.2271, 2019: 1.1234, 2018: 1.145, 2017: 1.1993, 2016: 1.0541 };
+const CT_RULES = [
+  { id: 'r1',  name: 'Status is Active',                    params: [] },
+  { id: 'r2',  name: 'Legal form LDA, 1-person LDA or SA',   params: [] },
+  { id: 'r3',  name: 'Entity type is Corporate',             params: [] },
+  { id: 'r4',  name: 'Revenue (2025, else 2024)',            params: [['maxRevenueM', 'at most €', 'M']] },
+  { id: 'r5',  name: 'EBITDA (2025, else 2024)',             params: [['minEbitdaM', 'between €', 'M'], ['maxEbitdaM', 'and €', 'M']] },
+  { id: 'r6',  name: 'Employees (2025, else 2024)',          params: [['maxEmployees', 'at most', '']] },
+  { id: 'r7',  name: 'No excluded shareholder type',         params: [], hint: 'Cut: state, insurance, private equity, venture capital, foundation/research, hedge fund, "Public". Financial company or pension/nominee/trust shareholders also cut, unless the ultimate owner is a family.' },
+  { id: 'r8',  name: 'Ultimate owner type, listing, name',   params: [], hint: 'Cut: owner is PE / VC / state / insurance / foundation / hedge / pension-nominee-trust / bank, or listed (a ticker; "Delisted" is fine), or has a fund-like or non-profit name (names ending in LDA are fine). Never when the owner name has a person title (MR / MRS / MS).' },
+  { id: 'r9',  name: 'Ultimate owner size / group',          params: [['ownerMaxEmployees', 'owner under', 'employees'], ['ownerMaxRevenueEurM', 'and under €', 'M revenue'], ['groupMaxCompanies', 'fewer than', 'companies in the CRM'], ['groupMaxEmployees', 'group under', 'employees'], ['groupMaxRevenueEurM', 'and under €', 'M'], ['foreignFamilyMaxCompanies', 'foreign family under', 'companies']], hint: 'For company or financial owners (never a person title): the owner\'s own size (Orbis, USD converted at the EUR/USD rate below), how many companies it owns in the CRM, and those companies\' total employees / revenue. A foreign family owner (owner country not PT; if blank, its family shareholders\' country) with too many companies is also cut.' },
+  { id: 'r10', name: 'Shareholders',                         params: [['maxShareholders', 'at most', '']] },
+];
+const CT_DEFAULTS = {
+  rateYear: 2025,
+  rules: {
+    r1: { on: true, missing: 'keep' }, r2: { on: true, missing: 'keep' }, r3: { on: true, missing: 'keep' },
+    r4: { on: true, missing: 'exclude', maxRevenueM: 50 },
+    r5: { on: true, missing: 'exclude', minEbitdaM: -3, maxEbitdaM: 10 },
+    r6: { on: true, missing: 'keep', maxEmployees: 350 },
+    r7: { on: true, missing: 'keep' }, r8: { on: true, missing: 'keep' },
+    r9: { on: true, missing: 'keep', ownerMaxEmployees: 1000, ownerMaxRevenueEurM: 200, groupMaxCompanies: 10, groupMaxEmployees: 1000, groupMaxRevenueEurM: 200, foreignFamilyMaxCompanies: 4 },
+    r10: { on: true, missing: 'keep', maxShareholders: 10 },
+  },
+};
+// Stored settings on top of the defaults, rule by rule (a rule added later
+// still gets its defaults).
+function ctConfig(stored){
+  const out = { rateYear: stored?.rateYear || CT_DEFAULTS.rateYear, eurUsd: { ...CT_EUR_USD, ...(stored?.eurUsd || {}) }, rules: {}, version: stored?.version || 0 };
+  for (const id of Object.keys(CT_DEFAULTS.rules)) out.rules[id] = { ...CT_DEFAULTS.rules[id], ...(stored?.rules?.[id] || {}) };
+  return out;
+}
+const ctPlainUpper = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+// Latest of 2025 / 2024 for an Orbis metric (thousand EUR, employees as is).
+function ctLatest(c, metric){
+  for (const y of ['2025', '2024']){
+    const v = c?.orbisFinancials?.[y]?.[metric];
+    if (v != null && v !== '' && isFinite(Number(v))) return { v: Number(v), year: y };
+  }
+  return null;
+}
+const ctM = (thEur) => (Math.round(thEur / 100) / 10).toLocaleString('en', { maximumFractionDigits: 1 });
+// The key that groups companies under one owner: the owner's BvD ID (foreign
+// owners too), else its Portuguese NIF from older imports, else its UCI.
+function ctOwnerKey(om){
+  if (!om) return null;
+  return om.guoBvdId || (om.guoNif ? 'PT' + om.guoNif : null) || (om.guoUci ? 'u_' + om.guoUci : null);
+}
+function ctForeignFamily(om){
+  if (!om || om.guoType !== CT_FAMILY) return false;
+  if (om.guoCountry) return om.guoCountry !== 'PT';
+  const fam = om.familyShCountries || [];
+  return fam.length > 0 && !fam.includes('PT');   // D9: no owner country → its family shareholders'
+}
+// One verdict per company: { fails: [{ id, text }] }. Groups (rule 9) are
+// counted over the whole list passed in, so pass the FULL dataset.
+function contactableVerdicts(list, cfg){
+  const R = cfg.rules, rate = Number(cfg.eurUsd?.[cfg.rateYear]) || CT_EUR_USD[2025];
+  const groups = new Map(), foreignFam = new Map();
+  for (const c of list){
+    const om = c.ownershipMeta, key = ctOwnerKey(om);
+    if (!key) continue;
+    if (om.guoType === 'Corporate' || om.guoType === 'Financial company'){
+      const g = groups.get(key) || { n: 0, emp: 0, rev: 0 };
+      g.n++; g.emp += ctLatest(c, 'numberOfEmployees')?.v || 0; g.rev += ctLatest(c, 'operatingRevenue')?.v || 0;
+      groups.set(key, g);
+    } else if (ctForeignFamily(om)) foreignFam.set(key, (foreignFam.get(key) || 0) + 1);
+  }
+  const out = new Map();
+  for (const c of list){
+    const fails = [];
+    const check = (id, res) => {
+      if (!R[id]?.on || !res) return;
+      if (res.fail) fails.push({ id, text: res.text });
+      else if (res.missing && R[id].missing === 'exclude') fails.push({ id, text: res.missingText });
+    };
+    const om = c.ownershipMeta || {};
+    const gt = om.guoType || null, gname = om.guoName || '', titled = CT_TITLE.test(gname);
+    // 1 status — Orbis keeps a history; the last line is the current status.
+    { const s = String(c.status || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean).pop();
+      check('r1', !s ? { missing: true, missingText: 'Rule 1: no status' } : { fail: s !== 'Active', text: `Rule 1: status "${s}"` }); }
+    check('r2', !c.nationalLegalForm ? { missing: true, missingText: 'Rule 2: no legal form' } : { fail: !CT_LEGAL_FORMS.includes(c.nationalLegalForm), text: `Rule 2: legal form "${c.nationalLegalForm}"` });
+    check('r3', !c.entityType ? { missing: true, missingText: 'Rule 3: no entity type' } : { fail: c.entityType !== 'Corporate', text: `Rule 3: entity type "${c.entityType}"` });
+    { const r = ctLatest(c, 'operatingRevenue'), max = Number(R.r4.maxRevenueM) * 1000;
+      check('r4', !r ? { missing: true, missingText: 'Rule 4: no revenue for 2025 or 2024' } : { fail: r.v > max, text: `Rule 4: revenue €${ctM(r.v)}M in ${r.year}, above €${R.r4.maxRevenueM}M` }); }
+    { const e = ctLatest(c, 'ebitda'), lo = Number(R.r5.minEbitdaM) * 1000, hi = Number(R.r5.maxEbitdaM) * 1000;
+      check('r5', !e ? { missing: true, missingText: 'Rule 5: no EBITDA for 2025 or 2024' } : { fail: !(e.v > lo && e.v < hi), text: `Rule 5: EBITDA €${ctM(e.v)}M in ${e.year}, outside €${R.r5.minEbitdaM}M to €${R.r5.maxEbitdaM}M` }); }
+    { const e = ctLatest(c, 'numberOfEmployees');
+      check('r6', !e ? { missing: true, missingText: 'Rule 6: no employee count' } : { fail: e.v > Number(R.r6.maxEmployees), text: `Rule 6: ${e.v.toLocaleString('en')} employees in ${e.year}, above ${R.r6.maxEmployees}` }); }
+    { const t = om.shTypes || [];
+      if (!t.length) check('r7', { missing: true, missingText: 'Rule 7: no shareholder types' });
+      else {
+        const hard = t.filter(x => CT_HARD.has(x)), soft = t.filter(x => CT_SOFT.has(x));
+        if (hard.length) check('r7', { fail: true, text: `Rule 7: shareholder type ${hard.join(', ')}` });
+        else if (soft.length && gt && !CT_PERSONLIKE.has(gt)) check('r7', { fail: true, text: `Rule 7: shareholder type ${soft.join(', ')} (ultimate owner is ${gt})` });
+      } }
+    if (!gt) check('r8', { missing: true, missingText: 'Rule 8: no ultimate owner type' });
+    else {
+      const why = [];
+      if (CT_GUO_EXCL.has(gt) && !titled) why.push(`owner type ${gt}`);
+      if (om.guoTicker && !/^delisted$/i.test(om.guoTicker)) why.push(`listed owner (${om.guoTicker})`);
+      if (!CT_PERSONLIKE.has(gt) && !titled){
+        const n = ctPlainUpper(gname);
+        if (CT_FUND_RE.test(n)) why.push('fund-like owner name');
+        if (CT_NONPROFIT_RE.test(n) && !CT_LDA_END.test(n)) why.push('non-profit / institutional owner name');
+      }
+      check('r8', { fail: why.length > 0, text: `Rule 8: ${why.join(' + ')}${gname ? ` (${gname})` : ''}` });
+    }
+    { const P = R.r9, key = ctOwnerKey(om);
+      if (gt === CT_FAMILY){
+        const n = key && ctForeignFamily(om) ? (foreignFam.get(key) || 0) : 0;
+        check('r9', { fail: n >= Number(P.foreignFamilyMaxCompanies), text: `Rule 9: foreign family owner with ${n} companies in the CRM${gname ? ` (${gname})` : ''}` });
+      } else if ((gt === 'Corporate' || gt === 'Financial company') && !titled){
+        const why = [];
+        const emp = om.guoEmployees ?? null;
+        const revEur = om.guoRevenueMEur ?? (om.guoRevenueMUsd != null ? om.guoRevenueMUsd / rate : null);
+        if (emp != null && emp >= Number(P.ownerMaxEmployees)) why.push(`owner has ${emp.toLocaleString('en')} employees`);
+        if (revEur != null && revEur >= Number(P.ownerMaxRevenueEurM)) why.push(`owner revenue ≈ €${Math.round(revEur).toLocaleString('en')}M`);
+        const g = key ? groups.get(key) : null;
+        if (g && g.n >= Number(P.groupMaxCompanies)) why.push(`owner has ${g.n} companies in the CRM`);
+        if (g && (g.emp >= Number(P.groupMaxEmployees) || g.rev >= Number(P.groupMaxRevenueEurM) * 1000)) why.push(`group total ${Math.round(g.emp).toLocaleString('en')} employees / €${ctM(g.rev)}M`);
+        if (why.length) check('r9', { fail: true, text: `Rule 9: ${why.join(' + ')}${gname ? ` (${gname})` : ''}` });
+        else if (emp == null && revEur == null) check('r9', { missing: true, missingText: 'Rule 9: no owner size' });
+      } }
+    { const n = c.peopleCounts?.sh;
+      check('r10', n == null ? { missing: true, missingText: 'Rule 10: no shareholder count' } : { fail: n > Number(R.r10.maxShareholders), text: `Rule 10: ${n} shareholders, above ${R.r10.maxShareholders}` }); }
+    out.set(c.id, { fails });
+  }
+  return out;
+}
+// What "Apply" would change. A company decided by hand — or marked before the
+// rules existed (no source) — is left alone; a rules verdict is replaced when
+// the rules now say something else, and cleared when the company now passes.
+function contactablePlan(list, verdicts){
+  const plan = { cut: [], clear: [], update: [], unchanged: 0, manual: 0, firstRule: {} };
+  for (const c of list){
+    const v = verdicts.get(c.id); if (!v) continue;
+    const src = c.contactableSource || (c.contactable === false || c.contactable === true ? 'manual' : null);
+    if (src === 'manual'){ plan.manual++; continue; }
+    if (v.fails.length){
+      plan.firstRule[v.fails[0].id] = (plan.firstRule[v.fails[0].id] || 0) + 1;
+      const failed = v.fails.map(f => f.id), reasons = v.fails.map(f => f.text);
+      const same = c.contactable === false && src === 'rules' && JSON.stringify(c.contactableRules?.failed || []) === JSON.stringify(failed)
+        && JSON.stringify(c.contactableRules?.reasons || []) === JSON.stringify(reasons);
+      if (same){ plan.unchanged++; continue; }
+      (c.contactable === false ? plan.update : plan.cut).push({ c, failed, reasons });
+    } else if (src === 'rules') plan.clear.push({ c });
+    else plan.unchanged++;
+  }
+  return plan;
+}
+// searchConfig/contactableRules on top of the defaults (set again in loadAll()).
+// Declared after CT_DEFAULTS: a `let` above it would read the consts too early.
+let contactableCfg = ctConfig(null);
+// The "not contactable" badge: solid when chosen by hand, faded with "(rule)"
+// when it comes from the contactable rules — same convention as the tier pill.
+function contactableBadge(c, extraStyle = ''){
+  if (c?.contactable !== false) return '';
+  const rule = c.contactableSource === 'rules';
+  const why = c.contactableNote || (rule ? '' : 'No reason given');
+  return `<span class="badge badge-grey" data-feature="search.tier" style="${extraStyle}${rule ? 'opacity:0.65;' : ''}" title="Not contactable${rule ? ' — from the contactable rules' : ' — set by hand'}${why ? ': ' + esc(why) : ''}">not contactable${rule ? ' <small>(rule)</small>' : ''}</span>`;
+}
+
 function computeFields(co){
   // Orbis first, the old grid only as fallback -- the same rule calcFit()
   // applies to fitScore, so the list columns, filters, sorting, CSV and the
@@ -1941,11 +2149,13 @@ onAuthStateChanged(auth, async user => {
 
 // ── Load ─────────────────────────────────────────────────────────────────────
 async function loadAll(){
-  const [cfgSnap, brokerSnap, tierSnap] = await Promise.all([
+  const [cfgSnap, brokerSnap, tierSnap, ctSnap] = await Promise.all([
     getDoc(doc(db, 'searchConfig', 'fitCriteria')),
     getDocs(collection(db, 'searchBrokers')),
     getDoc(doc(db, 'searchConfig', 'targetTiers')).catch(() => null),
+    getDoc(doc(db, 'searchConfig', 'contactableRules')).catch(() => null),
   ]);
+  contactableCfg = ctConfig(ctSnap?.exists?.() ? ctSnap.data() : null);
   tierRulesStored = tierSnap?.exists?.() ? (tierSnap.data().rules || []) : [];
   tierRules = isOn('search.tier') ? tierRulesStored : [];
   fitCriteria = cfgSnap.exists() ? { ...DEFAULT_FIT, ...cfgSnap.data() } : { ...DEFAULT_FIT };
@@ -3041,7 +3251,7 @@ function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
   return `<tr class="row-clickable" data-id="${c.id}">
     <td class="sel-col" onclick="event.stopPropagation()"><input type="checkbox" class="rowSel" data-id="${esc(c.id)}" aria-label="Select ${esc(c.name)}"${selectedCo.has(c.id) ? ' checked' : ''}></td>
-    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}${c.doNotContact?.on ? ' <span class="badge badge-red" style="margin-left:4px;" title="Do not contact">🚫</span>' : ''}${c.contactable === false ? ` <span class="badge badge-grey" data-feature="search.tier" style="margin-left:4px;" title="Not contactable${c.contactableNote ? ' — ' + esc(c.contactableNote) : ''}">not contactable</span>` : ''}</td>
+    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}${c.doNotContact?.on ? ' <span class="badge badge-red" style="margin-left:4px;" title="Do not contact">🚫</span>' : ''}${c.contactable === false ? ' ' + contactableBadge(c, 'margin-left:4px;') : ''}</td>
     <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
     <td class="sector-cell" title="${esc(c.sector||'')}${c.subSector?' › '+esc(c.subSector):''}">${esc(c.sector||'—')}${c.subSector?'<br><span style="font-size:0.72rem;">'+esc(c.subSector)+'</span>':''}</td>
     <td>${tierPill(c)}</td>
@@ -3373,7 +3583,7 @@ function renderDetail(){
     ${SOURCE_LABELS[c.sourceType]?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
     ${c.activeCampaignName ? `<a class="badge badge-blue" href="/portal/outreach.html" title="In this Outreach campaign" style="text-decoration:none;">📣 ${esc(c.activeCampaignName)}</a>` : ''}
     ${c.doNotContact?.on ? `<span class="badge badge-red" title="${esc(c.doNotContact.reason || 'No reason given')}">🚫 Do not contact</span>` : ''}
-    ${c.contactable === false ? `<span class="badge badge-grey" data-feature="search.tier" title="${esc(c.contactableNote || 'No reason given')}">Not contactable</span>` : ''}
+    ${contactableBadge(c)}${c.contactableSource === 'manual' || (c.contactableSource == null && typeof c.contactable === 'boolean') ? ' <button type="button" class="btn btn--ghost btn--sm" data-ct-reset data-feature="search.contactableRules" title="Forget the choice made by hand; the contactable rules decide at the next Run rules">↺ Back to the rules</button>' : ''}
     ${headerOwner(c, primary)}`;
   const ctB = document.getElementById('contactableBtn');
   if (ctB) ctB.textContent = c.contactable === false ? '✓ Contactable again' : 'Not contactable';
@@ -9673,8 +9883,9 @@ document.getElementById('contactableBtn').addEventListener('click', async () => 
   let note = null;
   if (makeNo) { note = prompt('Mark as NOT CONTACTABLE? Campaigns leave it out unless a campaign includes not-contactable companies. Reason (optional):', ''); if (note === null) return; }
   try {
-    await updateDoc(doc(db, 'searchCompanies', id), { contactable: !makeNo, contactableNote: makeNo ? (note.trim() || null) : null, updatedAt: serverTimestamp() });
-    if (c) { c.contactable = !makeNo; c.contactableNote = makeNo ? (note.trim() || null) : null; }
+    // A choice made by hand: tagged 'manual' so Run rules never overrides it.
+    await updateDoc(doc(db, 'searchCompanies', id), { contactable: !makeNo, contactableNote: makeNo ? (note.trim() || null) : null, contactableSource: 'manual', contactableRules: deleteField(), updatedAt: serverTimestamp() });
+    if (c) { c.contactable = !makeNo; c.contactableNote = makeNo ? (note.trim() || null) : null; c.contactableSource = 'manual'; delete c.contactableRules; }
     renderDetail(); renderList();
   } catch (e) { alert(e.message || String(e)); }
 });
@@ -9688,12 +9899,14 @@ document.getElementById('tierSel').addEventListener('change', async (e) => {
     renderDetail(); renderList();
   } catch (err) { alert(err.message || String(err)); }
 });
-async function bulkSetCompanies(fields, label){
+// `local` = what to apply to the in-memory company (deleteField() sentinels
+// can't be copied onto it); `drop` = keys to remove from it.
+async function bulkSetCompanies(fields, label, local = fields, drop = []){
   const list = companies.filter(c => selectedCo.has(c.id));
   if (!list.length) return;
   if (!confirm(`${label} for ${list.length.toLocaleString('en')} selected compan${list.length === 1 ? 'y' : 'ies'}?`)) return;
   try {
-    await commitInChunks(list, 400, (batch, c) => { batch.update(doc(db, 'searchCompanies', c.id), { ...fields, updatedAt: serverTimestamp() }); Object.assign(c, fields); c.targetTier = tierOf(c); });
+    await commitInChunks(list, 400, (batch, c) => { batch.update(doc(db, 'searchCompanies', c.id), { ...fields, updatedAt: serverTimestamp() }); Object.assign(c, local); for (const k of drop) delete c[k]; c.targetTier = tierOf(c); return true; });
     renderList(); alert('Done.');
   } catch (e) { alert(e.message || String(e)); }
 }
@@ -9705,12 +9918,19 @@ document.getElementById('selBarTier').addEventListener('click', () => {
   bulkSetCompanies({ priority: v ? v.toLowerCase() : null, targetTierManual: null }, v ? `Set tier ${v}` : 'Go back to the tier rules');
 });
 document.getElementById('selBarContactable').addEventListener('click', () => {
-  const a = prompt('Type NO to mark the selected companies not contactable, or YES to make them contactable again:', 'NO');
+  const rulesOn = isOn('search.contactableRules');
+  const a = prompt(`Type NO to mark the selected companies not contactable, or YES to make them contactable again${rulesOn ? ' — or RULES to hand them back to the contactable rules' : ''}:`, 'NO');
   if (a === null) return;
   const v = a.trim().toLowerCase();
-  if (!['yes','no'].includes(v)) { alert('Type YES or NO.'); return; }
+  if (!['yes','no', ...(rulesOn ? ['rules'] : [])].includes(v)) { alert(rulesOn ? 'Type YES, NO or RULES.' : 'Type YES or NO.'); return; }
+  const CT_KEYS = ['contactable', 'contactableNote', 'contactableSource', 'contactableRules'];
+  if (v === 'rules'){
+    bulkSetCompanies(Object.fromEntries(CT_KEYS.map(k => [k, deleteField()])), 'Hand back to the contactable rules (they decide at the next Run rules)', {}, CT_KEYS);
+    return;
+  }
   const note = v === 'no' ? (prompt('Reason (optional):', '') ?? '') : '';
-  bulkSetCompanies({ contactable: v === 'yes', contactableNote: v === 'no' ? (note.trim() || null) : null }, v === 'no' ? 'Mark NOT contactable' : 'Mark contactable');
+  const local = { contactable: v === 'yes', contactableNote: v === 'no' ? (note.trim() || null) : null, contactableSource: 'manual' };
+  bulkSetCompanies({ ...local, contactableRules: deleteField() }, v === 'no' ? 'Mark NOT contactable' : 'Mark contactable', local, ['contactableRules']);
 });
 // The tier rules follow the "search.tier" switch (its setting can arrive after the companies).
 onFeaturesChange(() => {
@@ -9798,6 +10018,141 @@ document.getElementById('saveTierRulesBtn').addEventListener('click', async () =
     document.getElementById('tierRulesNote').textContent = `Saved — ${companies.filter(c => c.targetTier).length.toLocaleString('en')} loaded companies have a tier.`;
   } catch (e) { document.getElementById('tierRulesNote').textContent = 'Could not save: ' + (e.message || e); }
   finally { btn.disabled = false; }
+});
+
+// Settings → Contactable rules (save: search.admin; run / apply: search.flags).
+function renderCtRules(){
+  const cfg = contactableCfg;
+  document.getElementById('ctRuleList').innerHTML = CT_RULES.map(r => {
+    const s = cfg.rules[r.id];
+    const params = r.params.map(([k, before, after]) =>
+      `<span style="white-space:nowrap;">${esc(before)} <input type="number" step="any" class="field" data-ct-rule="${r.id}" data-ct-param="${k}" value="${esc(s[k])}" style="width:84px;display:inline-block;padding:2px 6px;"> ${esc(after)}</span>`).join(' ');
+    return `<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:start;padding:8px 0;border-bottom:1px solid var(--border);font-size:0.85rem;">
+      <input type="checkbox" data-ct-rule="${r.id}" data-ct-param="on" ${s.on ? 'checked' : ''} aria-label="Rule ${r.id.slice(1)} on" style="margin-top:3px;">
+      <div>
+        <div><strong>${r.id.slice(1)}. ${esc(r.name)}</strong>${params ? ' · ' + params : ''}</div>
+        ${r.hint ? `<div class="hint" style="margin:2px 0 0;">${esc(r.hint)}</div>` : ''}
+        <div style="margin-top:4px;">If the data is missing:
+          <select class="field" data-ct-rule="${r.id}" data-ct-param="missing" style="width:auto;display:inline-block;padding:2px 6px;">
+            <option value="keep"${s.missing === 'keep' ? ' selected' : ''}>passes</option>
+            <option value="exclude"${s.missing === 'exclude' ? ' selected' : ''}>not contactable</option>
+          </select></div>
+      </div></div>`;
+  }).join('');
+  const ys = Object.keys(cfg.eurUsd).sort().reverse();
+  document.getElementById('ctRateYear').innerHTML = ys.map(y => `<option value="${y}"${String(cfg.rateYear) === y ? ' selected' : ''}>${y}</option>`).join('');
+  document.getElementById('ctRate').value = cfg.eurUsd[cfg.rateYear];
+}
+document.getElementById('ctRateYear').addEventListener('change', e => { document.getElementById('ctRate').value = contactableCfg.eurUsd[e.target.value] ?? ''; });
+function readCtRulesForm(){
+  const rules = {};
+  for (const r of CT_RULES) rules[r.id] = { ...contactableCfg.rules[r.id] };
+  for (const el of document.querySelectorAll('[data-ct-rule]')){
+    const id = el.dataset.ctRule, k = el.dataset.ctParam;
+    if (k === 'on') rules[id].on = el.checked;
+    else if (k === 'missing') rules[id].missing = el.value;
+    else { const n = Number(el.value); if (el.value === '' || !isFinite(n)) throw new Error(`Rule ${id.slice(1)}: "${el.value}" is not a number.`); rules[id][k] = n; }
+  }
+  const rateYear = Number(document.getElementById('ctRateYear').value), rate = Number(document.getElementById('ctRate').value);
+  if (!(rate > 0)) throw new Error('The EUR → USD rate must be a positive number.');
+  return { rules, rateYear, eurUsd: { ...contactableCfg.eurUsd, [rateYear]: rate } };
+}
+document.getElementById('saveCtRulesBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('saveCtRulesBtn'), note = document.getElementById('ctRulesNote');
+  btn.disabled = true;
+  try {
+    const f = readCtRulesForm();
+    const version = (contactableCfg.version || 0) + 1;
+    await setDoc(doc(db, 'searchConfig', 'contactableRules'), { ...f, version, updatedAt: serverTimestamp(), updatedBy: auth.currentUser?.email || null });
+    contactableCfg = ctConfig({ ...f, version });
+    note.textContent = `Saved (version ${version}). Nothing on the companies changes until you Run rules and Apply.`;
+  } catch (e) { note.textContent = 'Could not save: ' + (e.message || e); }
+  finally { btn.disabled = false; }
+});
+
+let ctPlan = null;
+document.getElementById('ctRunBtn').addEventListener('click', async () => {
+  // Run uses the SAVED rules, so the version on each company means something.
+  try { const f = readCtRulesForm(); if (JSON.stringify(ctConfig({ ...f, version: contactableCfg.version })) !== JSON.stringify(contactableCfg)){ document.getElementById('ctRulesNote').textContent = 'You have unsaved changes — Save first (Run uses the saved rules).'; return; } }
+  catch (e) { document.getElementById('ctRulesNote').textContent = e.message || String(e); return; }
+  const body = document.getElementById('ctRunBody'), applyBtn = document.getElementById('ctApplyBtn');
+  document.getElementById('ctRunErr').textContent = '';
+  applyBtn.disabled = true; applyBtn.textContent = 'Apply'; ctPlan = null;
+  showEl('ctRunModal', true);
+  body.innerHTML = '<p>Loading every company…</p>';
+  try { await loadCompaniesWithProgress(companyListLoadStatus(body)); }
+  catch (e) { body.innerHTML = '<p>⚠ Could not load the company list — close and try again.</p>'; return; }
+  body.innerHTML = '<p>Confirming the full company list…</p>';
+  // Rule 9 counts groups across the whole CRM: a partial list would count too few.
+  if (!(await waitForServerConfirmedDataset())){ body.innerHTML = '<p>⚠ Could not confirm the full company list after 90s, so the rules were not run (owner groups would be counted on a partial list). Close and try again.</p>'; return; }
+  const verdicts = contactableVerdicts(companies, contactableCfg);
+  const plan = contactablePlan(companies, verdicts);
+  ctPlan = plan;
+  const n = (x) => x.toLocaleString('en');
+  const writes = plan.cut.length + plan.update.length + plan.clear.length;
+  const ruleRows = CT_RULES.map(r => `<tr><td>${r.id.slice(1)}. ${esc(r.name)}${contactableCfg.rules[r.id].on ? '' : ' <span class="badge badge-grey">off</span>'}</td><td style="text-align:right;">${n(plan.firstRule[r.id] || 0)}</td></tr>`).join('');
+  const sample = [...plan.cut, ...plan.update].slice(0, 60).map(x => `<tr><td>${esc(x.c.name)}</td><td>${x.reasons.map(esc).join('<br>')}</td></tr>`).join('');
+  body.innerHTML = `
+    <p>Saved rules, version ${contactableCfg.version || 'default (never saved)'} · ${n(companies.length)} companies checked. Nothing is saved until you click <strong>Apply</strong>.</p>
+    <table class="preview-table" style="margin-bottom:12px;"><tbody>
+      <tr><td>Become <strong>not contactable</strong></td><td style="text-align:right;"><strong>${n(plan.cut.length)}</strong></td></tr>
+      <tr><td>Already not contactable by the rules, reason changes</td><td style="text-align:right;">${n(plan.update.length)}</td></tr>
+      <tr><td>Back to <strong>contactable</strong> (the rules no longer cut them)</td><td style="text-align:right;">${n(plan.clear.length)}</td></tr>
+      <tr><td>No change</td><td style="text-align:right;">${n(plan.unchanged)}</td></tr>
+      <tr><td>Decided by hand — left alone</td><td style="text-align:right;">${n(plan.manual)}</td></tr>
+    </tbody></table>
+    <div class="modal-section-title" style="margin-top:0;">Not contactable, by the first rule they fail</div>
+    <table class="preview-table" style="margin-bottom:12px;"><tbody>${ruleRows}</tbody></table>
+    ${sample ? `<div class="modal-section-title" style="margin-top:0;">Examples (first ${Math.min(60, plan.cut.length + plan.update.length)})</div>
+    <div style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);"><table class="preview-table"><thead><tr><th>Company</th><th>Reason</th></tr></thead><tbody>${sample}</tbody></table></div>` : ''}`;
+  applyBtn.disabled = writes === 0;
+  applyBtn.textContent = writes ? `Apply — update ${n(writes)} compan${writes === 1 ? 'y' : 'ies'}` : 'Nothing to apply';
+});
+document.getElementById('ctRunCloseBtn').addEventListener('click', () => showEl('ctRunModal', false));
+document.getElementById('ctApplyBtn').addEventListener('click', async () => {
+  const plan = ctPlan; if (!plan) return;
+  const btn = document.getElementById('ctApplyBtn'), err = document.getElementById('ctRunErr');
+  const items = [...plan.cut.map(x => ({ ...x, kind: 'cut' })), ...plan.update.map(x => ({ ...x, kind: 'cut' })), ...plan.clear.map(x => ({ ...x, kind: 'clear' }))];
+  if (!confirm(`Update ${items.length.toLocaleString('en')} companies with the contactable rules?`)) return;
+  btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Applying…'; err.textContent = '';
+  const CT_KEYS = ['contactable', 'contactableNote', 'contactableSource', 'contactableRules'];
+  const version = contactableCfg.version || 0;
+  try {
+    // No updatedAt: a rules verdict is background enrichment, not an edit, so it
+    // must not reorder "recently updated" (same as the Orbis imports).
+    const written = await commitInChunks(items, 450, (batch, x) => {
+      if (x.kind === 'clear'){
+        batch.update(doc(db, 'searchCompanies', x.c.id), Object.fromEntries(CT_KEYS.map(k => [k, deleteField()])));
+        for (const k of CT_KEYS) delete x.c[k];
+      } else {
+        const rules = { failed: x.failed, reasons: x.reasons, version, at: Timestamp.now() };
+        batch.update(doc(db, 'searchCompanies', x.c.id), { contactable: false, contactableNote: x.reasons[0], contactableSource: 'rules', contactableRules: rules });
+        Object.assign(x.c, { contactable: false, contactableNote: x.reasons[0], contactableSource: 'rules', contactableRules: rules });
+      }
+      return true;
+    }, { onProgress: (done, total) => { btn.innerHTML = `<span class="spin-sm"></span>Applying… ${done.toLocaleString('en')}/${total.toLocaleString('en')}`; } });
+    await logPortal('contactable_rules_apply', { version, notContactable: plan.cut.length, reasonChanged: plan.update.length, backToContactable: plan.clear.length, manualLeftAlone: plan.manual, written });
+    cacheCompanies(); renderList(); if (currentCoId) renderDetail();
+    ctPlan = null;
+    btn.textContent = 'Applied';
+    document.getElementById('ctRunBody').insertAdjacentHTML('afterbegin', `<p style="color:var(--success, #2E7D4F);font-weight:600;">✓ Applied — ${written.toLocaleString('en')} companies updated.</p>`);
+  } catch (e) {
+    err.textContent = 'Stopped with an error: ' + (e.message || e) + ' — what was already written stays; Run rules again to finish.';
+    btn.disabled = false; btn.textContent = 'Apply';
+  }
+});
+// "↺ Back to the rules" on a company decided by hand.
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-ct-reset]'); if (!b) return;
+  const c = getCompany(); const id = currentCoId; if (!id) return;
+  if (window.pageAccess && !window.pageAccess.can('search.flags')) { alert('You need the flags permission to change this.'); return; }
+  if (!confirm('Forget the choice made by hand? The company counts as contactable until the next Run rules decides.')) return;
+  const CT_KEYS = ['contactable', 'contactableNote', 'contactableSource', 'contactableRules'];
+  try {
+    await updateDoc(doc(db, 'searchCompanies', id), { ...Object.fromEntries(CT_KEYS.map(k => [k, deleteField()])), updatedAt: serverTimestamp() });
+    if (c) for (const k of CT_KEYS) delete c[k];
+    renderDetail(); renderList();
+  } catch (err) { alert(err.message || String(err)); }
 });
 
 document.getElementById('dncBtn').addEventListener('click', async () => {
@@ -10210,6 +10565,7 @@ async function saveDeal(){
 // ── Settings ─────────────────────────────────────────────────────────────────
 function openSettings(){
   tierRulesDraft = tierRulesStored.map(r => ({ ...r })); renderTierRules(); document.getElementById('tierRulesNote').textContent = '';
+  renderCtRules(); document.getElementById('ctRulesNote').textContent = '';
   document.getElementById('setSizeFloor').value = fitCriteria.sizeFloor;
   document.getElementById('setSizeCeiling').value = fitCriteria.sizeCeiling;
   document.getElementById('setMarginTarget').value = fitCriteria.marginTarget;
