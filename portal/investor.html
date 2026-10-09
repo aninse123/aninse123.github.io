@@ -290,8 +290,8 @@
 
   <script type="module">
     import { auth, db, ADMIN_EMAILS, addDoc } from './firebase-config.js';
-    import { getAccess } from './access.js';
-    import { startFeatures, isOn } from './features.js';
+    import { getAccess, stagingAllowed } from './access.js';
+    import { startFeatures, isOn, SITE } from './features.js';
     import {
       onAuthStateChanged, signOut
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -389,6 +389,8 @@
       // Team access — "View as": pick an investor, see their portal (read only).
       let docEmails = [email];
       const access = await getAccess(user).catch(() => null);
+      // Staging is for partners and testers (10 Oct) — investors and the team use douropartners.pt.
+      if (SITE === 'staging' && !stagingAllowed(access)) { window.location.href = '/portal/staging-only.html'; return; }
       // Feature switch "Investor view" (investors themselves are never affected).
       if (access?.can('portal.viewas')) await startFeatures(access);
       if (access?.can('portal.viewas') && isOn('investorview')) {

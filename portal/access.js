@@ -12,7 +12,7 @@
 // Keep PERMS in sync with functions/access/perms.js (tests/portal parity test).
 import { auth, db, addDoc } from './firebase-config.js';
 import { doc, onSnapshot, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
-import { startFeatures, isOn, onFeaturesChange, PAGE_FEATURE } from './features.js';
+import { startFeatures, isOn, onFeaturesChange, PAGE_FEATURE, SITE, currentFlags } from './features.js';
 
 // Every CSV export is recorded in the Activity Log (who, which page, how many
 // rows) — hiding the Export button is a friction, this is the trail.
@@ -187,10 +187,21 @@ export function watchAccess(user, a) {
 
 // Page guard: the person may open this tab, or is sent to their home tab
 // (or the login page). Returns the access object, or null after redirecting.
+// Staging is for partners and testers (10 Oct): the Admin (also while previewing a
+// role), partners, and anyone named as a tester on a feature switch (Team → Features).
+// Everyone else is sent to the live site. "Test features before release" is Admin-only,
+// so naming someone on a switch is how a non-partner keeps staging.
+export function stagingAllowed(a, flags = currentFlags()) {
+  if (!a) return false;
+  if (a.partner || a.role === 'preview') return true;
+  return !!a.email && Object.values(flags || {}).some((f) => Array.isArray(f?.testers) && f.testers.includes(a.email));
+}
+
 export async function guardPage(user, tabKey) {
   if (!user) { window.location.href = '/portal/login.html'; return null; }
   const a = await getAccess(user);
   await startFeatures(a); // feature switches: hide what's Off, badge what's in Test
+  if (SITE === 'staging' && !stagingAllowed(a)) { window.location.href = '/portal/staging-only.html'; return null; }
   if (!a.can(TAB_PERM[tabKey]) || !tabFeatureOn(tabKey)) {
     const home = homeFor(a);
     window.location.href = home || '/portal/investor.html';

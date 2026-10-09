@@ -59,7 +59,13 @@ function seed({ real = true } = {}) {
   ok("person emails: typed first, then Orbis newest-first; legacy single field only as last resort", personEmails({ email: "a@x.pt", orbisEmails: ["o1@x.pt", "o2@x.pt"], orbisEmail: "old@x.pt" }).join() === "a@x.pt,o2@x.pt,o1@x.pt" && personEmails({ orbisEmail: "old@x.pt" }).join() === "old@x.pt");
   ok("People ranked: current sócio-gerente first, then 40% shareholder, former manager last", [...new Set(list.filter((r) => r.kind === "person").map((r) => r.name))].join() === "João Silva,Maria Silva,Antigo Gerente");
   ok("personal address flagged", list.find((r) => r.email === "joao.silva@gmail.com").personal === true && !list.find((r) => r.email === "rita@silva.pt").personal);
-  ok("rank: top role beats big shareholder beats plain manager", rankPerson({ mgmtRoles: ["Gerente"], mgmtCurrent: true }) > rankPerson({ shTotalPct: 70 }) && rankPerson({ shTotalPct: 70 }) > rankPerson({ mgmtRoles: ["Director de vendas"], mgmtCurrent: true }));
+  // 10 Oct (André): owners first — GUO person > majority + manages > majority > sócio-gerente smaller stake
+  // > minority shareholders > hired gerente / CEO > other managers > other roles; current data only.
+  const R = (l, g) => rankPerson(l, g);
+  const ladder = [R({ personName: "Ana Silva", shTotalPct: 5 }, "MRS ANA SILVA"), R({ mgmtRoles: ["Gerente"], shTotalPct: 60 }), R({ shTotalPct: 70 }), R({ mgmtRoles: ["Sócio-Gerente"], shTotalPct: 10 }), R({ shTotalPct: 5 }), R({ mgmtRoles: ["Gerente"], mgmtCurrent: true }), R({ mgmtRoles: ["Director de vendas"], mgmtCurrent: true }), R({ mgmtRoles: ["Assistente"] })];
+  ok("rank ladder: GUO person > majority who manages > majority > sócio-gerente small stake > minority > hired gerente > manager > other", ladder.every((x, k) => k === 0 || ladder[k - 1] > x));
+  ok("rank: GUO also from Orbis's 'Ultimate owner' role; larger stake first inside a level", R({ personName: "X", mgmtRoles: ["Shareholder (Ultimate owner)"] }) >= 200 && R({ shTotalPct: 30 }) > R({ shTotalPct: 10 }));
+  ok("rank: current data only — sold stake or former manager counts 0", R({ shTotalPct: 80, shCurrent: false }) === 0 && R({ mgmtRoles: ["Gerente"], mgmtCurrent: false }) === 0);
   ok("policy: best person = the sócio-gerente; primary contact = first contact; company = generic", pickByPolicy(list, "best_person").name === "João Silva" && pickByPolicy(list, "primary_contact").email === "rita@silva.pt" && pickByPolicy(list, "company").email === "geral@silva.pt");
   ok("policy falls back to the company address", pickByPolicy([{ kind: "company", email: "g@x.pt" }], "primary_contact").email === "g@x.pt");
 
@@ -114,6 +120,14 @@ function seed({ real = true } = {}) {
   store.set("searchPersonLinks/lh", { companyId: "co1", personId: "h1", personName: "HOLDING SILVA SGPS", personEntityType: "entity", shTotalPct: 100, mgmtRoles: ["Gerente"], mgmtCurrent: true });
   const withHolding = await companyRecipients("co1", get("searchCompanies/co1"));
   ok("B5: a holding (entity) is never a recipient, even as 100% owner and gerente", !withHolding.some((r) => r.email === "holding@silva.pt") && pickByPolicy(withHolding, "best_person").name === "João Silva");
+  // 10 Oct: the GUO person goes first; joint holdings / estates are never a recipient; typed contacts after People.
+  store.set("searchPeople/g1", { name: "Rui Silva", email: "rui@silva.pt" });
+  store.set("searchPersonLinks/lg", { companyId: "co1", personId: "g1", personName: "Rui Silva", shTotalPct: 2, shCurrent: true });
+  store.set("searchPeople/j1", { name: "Herança de Jose Silva", email: "heranca@silva.pt" });
+  store.set("searchPersonLinks/lj", { companyId: "co1", personId: "j1", personName: "Herança de Jose Silva", shTotalPct: 30, shCurrent: true });
+  const withGuo = await companyRecipients("co1", { ...get("searchCompanies/co1"), guoName: "MR RUI SILVA" });
+  ok("GUO person with an email is the best person; an estate (herança) never a recipient", pickByPolicy(withGuo, "best_person").name === "Rui Silva" && !withGuo.some((r) => r.email === "heranca@silva.pt"));
+  ok("typed contacts rank after every linked person with a role or stake", withGuo.find((r) => r.email === "rita@silva.pt").rank < withGuo.filter((r) => r.kind === "person" && r.rank > 0).reduce((m, r) => Math.min(m, r.rank), 999));
   // I2: who each "Emails go to" option reaches.
   const cb2 = (await camp({ action: "save", campaign: { name: "Quem recebe", recipientPolicy: "best_person", steps: [{ templateId: "t1" }] } })).campaignId;
   await camp({ action: "enrol", campaignId: cb2, companyIds: ["co1", "co2", "co3"] });

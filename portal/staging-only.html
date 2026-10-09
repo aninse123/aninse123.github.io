@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Test site — Douro Partners</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="icon" href="/assets/favicon.ico" sizes="any">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <style>
+    :root { --primary: #4A6B8A; --primary-dark: #3A5570; --bg: #F7F3EC; --text: #2C2C2C; --text-light: #6B7280; --border: #D8D3C8; --white: #FFFFFF; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font: 15px/1.6 'Inter', 'Helvetica Neue', sans-serif; padding: 24px 16px; }
+    .card { max-width: 460px; background: var(--white); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 24px rgba(30, 42, 56, 0.08); padding: 32px 28px; text-align: center; }
+    h1 { font: 600 1.5rem 'Playfair Display', Georgia, serif; margin-bottom: 10px; }
+    p { color: var(--text-light); margin-bottom: 22px; }
+    a.btn { display: inline-block; background: var(--primary); color: var(--white); text-decoration: none; font-weight: 500; padding: 10px 20px; border-radius: 8px; }
+    a.btn:hover, a.btn:focus-visible { background: var(--primary-dark); }
+    a.btn:focus-visible { outline: 2px solid var(--primary-dark); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <!-- 10 Oct 2026: staging is for partners and testers (access.js stagingAllowed). -->
+  <main class="card">
+    <h1>This is the test site</h1>
+    <p>It's only open to partners and testers. Your portal is on douropartners.pt — same sign-in, same data.</p>
+    <a class="btn" href="https://douropartners.pt/portal/">Go to douropartners.pt</a>
+  </main>
+</body>
+</html>
