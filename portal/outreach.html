@@ -3388,12 +3388,22 @@ Optional note for them:`, '');
       // I3: on which day of a company's sequence each step comes (sending days after its first step).
       const dayOf = []; let acc = 0;
       steps.forEach((st, i) => { if (i > 0) acc += Number(st.wait?.days) || 0; dayOf.push(i === 0 ? 'day 1' : `day ${num(acc + 1)}${st.wait?.unit === 'calendar' ? '*' : ''}`); });
+      // Follow-ups can't finish before the last company's previous step + the wait,
+      // and they trickle out as companies start (new per day), not all at once.
+      const pendingN = live.filter(e => e.status === 'pending').length;
+      const newPerDay = c.audienceType !== 'people' ? (c.pacing?.newPerDay || 20) : pace;
+      const waitSend = (st) => { const d = Number(st.wait?.days) || 0; return st.wait?.unit === 'calendar' ? Math.ceil(d * (win.days || [1, 2, 3, 4, 5]).length / 7) : d; };
+      let prevDone = 0;
       const rows = steps.map((st, i) => {
         const left = live.filter(e => e.status === 'pending' || e.currentStep <= i).length;
         if ((st.channel || 'email') !== 'email') return `<tr><td>${i + 1}. ${esc(st.name)}</td><td class="num">${dayOf[i]}</td><td class="num">${num(left)}</td><td colspan="2" style="font-size:0.8rem;">task — as fast as you do them</td></tr>`;
         const stepPace = i === 0 && c.audienceType !== 'people' ? Math.min(pace, c.pacing?.newPerDay || 20) : pace;
-        const days = left ? Math.ceil(left / stepPace) : 0;
-        return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">starts ${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'working'} day(s) after each previous step</div>` : ''}</td><td class="num">${dayOf[i]}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td><td style="white-space:nowrap;font-size:0.8rem;">${days ? '≈ ' + dayFmt.format(addSendingDays(days)) : 'done'}</td></tr>`;
+        // Sending days: at least as long as it takes the companies not yet started to start.
+        const days = left ? Math.max(Math.ceil(left / stepPace), pendingN ? Math.ceil(pendingN / newPerDay) : 0) : 0;
+        // Done by: the later of "all of them at this pace" and "previous step done + this step's wait".
+        const doneIn = left ? Math.max(days, i > 0 && prevDone ? prevDone + waitSend(st) : 0) : 0;
+        if (doneIn) prevDone = doneIn;
+        return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">starts ${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'working'} day(s) after each previous step</div>` : ''}</td><td class="num">${dayOf[i]}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td><td style="white-space:nowrap;font-size:0.8rem;">${doneIn ? '≈ ' + dayFmt.format(addSendingDays(doneIn)) : 'done'}</td></tr>`;
       }).join('');
       return `<p class="note">Effective pace: <b>${num(pace)}</b> emails a day — the lowest of this campaign's limit (${c.pacing?.maxPerDay ? num(c.pacing.maxPerDay) : 'none'}), the automations limit (${num(globalLimit)}, shared by all campaigns) and the addresses' daily caps (${num(addrCap)}).</p>
         <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th class="num" title="When this step comes in each company's sequence, counted from its first step">Day</th><th class="num">Still to go</th><th class="num" title="Sending days this step needs for everyone still to go, at the pace above">Sending days</th><th>Done by</th></tr></thead><tbody>${rows}</tbody></table></div>
