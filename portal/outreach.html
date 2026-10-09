@@ -51,8 +51,7 @@
     .usage__row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.8rem; }
     .usage__label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-light); }
     .usage__num { font-variant-numeric: tabular-nums; font-weight: 600; }
-    .usage__bar { height: 16px; background: #EEEAE2; border-radius: 4px; overflow: hidden; margin: 6px 0 4px; display: flex; }
-    .usage__seg { display: grid; place-items: center; font-size: 0.62rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; }
+    .usage__bar { height: 10px; background: #EEEAE2; border-radius: 4px; overflow: hidden; margin: 6px 0 4px; display: flex; }
     .usage__bar--thin { height: 4px; }
     .usage__seg { height: 100%; transition: width 0.3s; }
     /* Series colours: reference categorical slots 1-4, validated (dataviz
@@ -63,7 +62,7 @@
     .seg-rep { background: var(--s-rep); }
     .seg-in  { background: var(--s-in); }
     .seg-oth { background: var(--s-oth); }
-    .usage__bar .usage__seg + .usage__seg { border-left: 2px solid var(--white); }
+    .usage__bar .usage__seg + .usage__seg { box-shadow: inset 2px 0 0 var(--white); }
     /* Over the target: keep the series colours readable, flag it with a red outline (the number turns red too). */
     .usage__bar.over { box-shadow: 0 0 0 2px var(--danger); }
     .usage__fill-month { height: 100%; background: var(--amber); }
@@ -275,7 +274,11 @@
     .task__box a { color: var(--primary); }
     .task__text { white-space: pre-wrap; overflow-wrap: anywhere; font-family: Arial, Helvetica, sans-serif; }
     .outcomes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-    .btn.is-busy { opacity: 1; filter: saturate(0.8); cursor: progress; }
+    /* U3 (9 Oct): spinner for busy buttons — white on dark buttons, dark on light ones. */
+    .spin-sm { display: inline-block; flex: none; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; box-sizing: border-box; }
+    .btn--ghost .spin-sm, .chip .spin-sm, .btn:not(.btn--primary):not(.btn--danger) .spin-sm { border-color: rgba(0,0,0,0.15); border-top-color: var(--primary); }
+    .btn.is-busy { opacity: 1; filter: saturate(0.8); cursor: progress; justify-content: center; line-height: inherit; }
+    @media (prefers-reduced-motion: reduce) { .spin-sm { animation-duration: 2s; } }
     .outcomes .btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #fff; }
     .info { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--border); font-size: 0.66rem; font-weight: 600; color: var(--text-light); cursor: help; vertical-align: 1px; }
     .ch { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 100px; font-size: 0.7rem; font-weight: 700; background: #EEF3F8; color: var(--primary-dark); }
@@ -937,8 +940,9 @@
       const other = Math.max(0, total - out - rep - rin);
       const scale = Math.max(target, total) || 1;
       const w = (n) => (n / scale * 100) + '%';
-      // I18: a segment that has anything is at least wide enough to see, with its number on it.
-      [['segOut', out], ['segRep', rep], ['segIn', rin], ['segOth', other]].forEach(([id, n]) => { const s = $(id); s.style.width = w(n); s.style.minWidth = n ? '18px' : '0'; s.textContent = n ? num(n) : ''; });
+      // Each segment is to scale against the daily limit (a thin sliver at least, so a
+      // small count never disappears); the numbers are in the legend and on hover.
+      [['segOut', out, 'Outreach'], ['segRep', rep, 'Replies'], ['segIn', rin, 'Received'], ['segOth', other, 'Other']].forEach(([id, n, l]) => { const s = $(id); s.style.width = w(n); s.style.minWidth = n ? '4px' : '0'; s.textContent = ''; s.title = n ? `${l}: ${num(n)}` : ''; });
       $('usageBar').classList.toggle('over', total >= target);
       $('usageToday').textContent = `${approx ? '≈ ' : ''}${num(total)} / ${num(target)}`;
       $('usageToday').style.color = total >= target ? 'var(--danger)' : '';
@@ -986,15 +990,16 @@
     }
 
     const nifSearch = { nif: null, ids: null };
-    function filteredThreads() {
+    function filteredThreads(owner) {
+      const own = owner || ownerFilter;
       const q = norm($('inboxSearch')?.value || '').trim();
       return threads.filter(t => {
         if (q && !(nifSearch.ids && /^\d{9}$/.test(q) && nifSearch.ids.has(t.companyId)) && ![t.companyName, t.contactEmail, t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
         if (stateFilter === 'closed' && t.status !== 'closed') return false;
         if (stateFilter === 'bounced' && !['bounced', 'failed'].includes(t.status)) return false;
         if (stateFilter === 'replied' && t.status !== 'replied') return false;
-        if (ownerFilter === 'mine' && t.owner && t.owner !== myOwner) return false;
-        if (ownerFilter !== 'mine' && ownerFilter !== 'all' && t.owner !== ownerFilter) return false;
+        if (own === 'mine' && t.owner && t.owner !== myOwner) return false;
+        if (own !== 'mine' && own !== 'all' && t.owner !== own) return false;
         if (stateFilter === 'unread' && !t.unread) return false;
         if (stateFilter === 'needs' && !(t.lastDirection === 'in' && t.status === 'replied')) return false;
         if (stateFilter === 'unmatched' && !t.unmatched) return false;
@@ -1005,7 +1010,12 @@
     function renderThreads() {
       const list = filteredThreads();
       if (!list.length) {
-        $('threadList').innerHTML = `<div class="empty">${threads.length ? 'No conversations match these filters.' : 'No conversations yet. Send the first email from Compose.'}</div>`;
+        // U5: nothing of yours here, but other people have some — say so.
+        const inAll = ownerFilter !== 'all' && threads.length ? filteredThreads('all').length : 0;
+        $('threadList').innerHTML = inAll
+          ? `<div class="empty">None ${ownerFilter === 'mine' ? 'of yours' : 'for this person'} — ${num(inAll)} in all conversations.<br><button type="button" class="btn btn--ghost btn--sm" id="threadShowAll" style="margin-top:8px;">Show all</button></div>`
+          : `<div class="empty">${threads.length ? 'No conversations match these filters.' : 'No conversations yet. Send the first email from Compose.'}</div>`;
+        $('threadShowAll')?.addEventListener('click', () => { $('ownerChips').querySelector('[data-owner="all"]')?.click(); });
         return;
       }
       $('threadList').innerHTML = list.map(t => {
@@ -2640,10 +2650,10 @@
     // and stays disabled until the action is done. Returns a restore function.
     function busyBtn(btn, label) {
       if (!btn) return () => {};
-      const html = btn.innerHTML, w = btn.offsetWidth;
-      btn.disabled = true; btn.classList.add('is-busy'); if (w) btn.style.minWidth = w + 'px';
+      const html = btn.innerHTML, w = btn.offsetWidth, h = btn.offsetHeight;
+      btn.disabled = true; btn.classList.add('is-busy'); if (w) btn.style.minWidth = w + 'px'; if (h) btn.style.height = h + 'px';
       btn.innerHTML = `<span class="spin-sm"></span>${esc(label || 'Working…')}`;
-      return () => { if (!btn.isConnected) return; btn.disabled = false; btn.classList.remove('is-busy'); btn.innerHTML = html; btn.style.minWidth = ''; };
+      return () => { if (!btn.isConnected) return; btn.disabled = false; btn.classList.remove('is-busy'); btn.innerHTML = html; btn.style.minWidth = ''; btn.style.height = ''; };
     }
     async function campCall(data, okMsg) {
       try { const r = (await callCampaign(data)).data; if (okMsg) toast(typeof okMsg === 'function' ? okMsg(r) : okMsg); return r; }
