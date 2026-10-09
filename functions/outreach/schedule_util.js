@@ -63,16 +63,27 @@ function isWindowOpen(date, window) {
 
 // When a step becomes due: `wait.days` working days (Mon–Fri, no national
 // holidays) or calendar days after `from`, same time of day. 0 = now.
-function addWait(from, wait) {
+// 9 Oct: a wait in "sending days" counts the campaign's own sending days
+// (`sendingDays` = its window's weekdays, else the global window's; Mon–Fri when
+// none is given), skipping national holidays — so a Thu–Sat campaign waiting 4
+// goes Fri, Sat, Thu, Fri instead of piling up for Thursday. "calendar" = exact days.
+function addWait(from, wait, sendingDays = null) {
   const days = Math.max(0, Number(wait?.days) || 0);
   if (!days) return new Date(from.getTime());
   if (wait.unit === "calendar") return new Date(from.getTime() + days * DAY_MS);
+  const set = Array.isArray(sendingDays) && sendingDays.length ? sendingDays : null;
+  const counts = (p) => (set ? set.includes(p.weekday) && !isHoliday(p) : isWorkingDay(p));
   let t = from.getTime(), counted = 0;
-  while (counted < days) {
+  for (let guard = 0; counted < days && guard < 3660; guard++) {
     t += DAY_MS;
-    if (isWorkingDay(lisbonParts(new Date(t)))) counted++;
+    if (counts(lisbonParts(new Date(t)))) counted++;
   }
   return new Date(t);
+}
+// The weekdays a campaign sends on: its own window, else Settings → General, else Mon–Fri.
+function sendingDaysOf(campaign, settings) {
+  const own = campaign?.sendWindow?.days, global = settings?.sendWindow?.days;
+  return Array.isArray(own) && own.length ? own : Array.isArray(global) && global.length ? global : [1, 2, 3, 4, 5];
 }
 
 // A/B (§5.5): the step's variants with their weights, or — when the step
@@ -107,4 +118,4 @@ function pickSender({ policy, owner, senders, sentToday, usedThisRun, defaultCap
 // still counts as "replied" and not "completed, no reply".
 const FINAL_GRACE = { days: 5, unit: "working" };
 
-module.exports = { FINAL_GRACE, TZ, lisbonParts, easter, nationalHolidays, isHoliday, isWorkingDay, isWindowOpen, addWait, pickVariant, pickSender };
+module.exports = { FINAL_GRACE, TZ, lisbonParts, easter, nationalHolidays, isHoliday, isWorkingDay, isWindowOpen, addWait, sendingDaysOf, pickVariant, pickSender };

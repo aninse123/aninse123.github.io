@@ -3393,21 +3393,26 @@ Optional note for them:`, '');
       const pendingN = live.filter(e => e.status === 'pending').length;
       const newPerDay = c.audienceType !== 'people' ? (c.pacing?.newPerDay || 20) : pace;
       const waitSend = (st) => { const d = Number(st.wait?.days) || 0; return st.wait?.unit === 'calendar' ? Math.ceil(d * (win.days || [1, 2, 3, 4, 5]).length / 7) : d; };
-      let prevDone = 0;
+      let prevDone = 0, firstIn = 0;
+      const dayNames = (() => { const N = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']; const d = [...(win.days || [])].sort(); const run = d.length > 2 && d.every((x, k) => k === 0 || x === d[k - 1] + 1); return run ? `${N[d[0]]}–${N[d[d.length - 1]]}` : d.map(x => N[x]).join(', '); })();
       const rows = steps.map((st, i) => {
         const left = live.filter(e => e.status === 'pending' || e.currentStep <= i).length;
-        if ((st.channel || 'email') !== 'email') return `<tr><td>${i + 1}. ${esc(st.name)}</td><td class="num">${dayOf[i]}</td><td class="num">${num(left)}</td><td colspan="2" style="font-size:0.8rem;">task — as fast as you do them</td></tr>`;
+        if ((st.channel || 'email') !== 'email') { if (i > 0) firstIn += waitSend(st); return `<tr><td>${i + 1}. ${esc(st.name)}</td><td class="num">${dayOf[i]}</td><td colspan="2" style="font-size:0.8rem;">task — as fast as you do them</td><td class="num">${num(left)}</td><td></td></tr>`; }
         const stepPace = i === 0 && c.audienceType !== 'people' ? Math.min(pace, c.pacing?.newPerDay || 20) : pace;
         // Sending days: at least as long as it takes the companies not yet started to start.
         const days = left ? Math.max(Math.ceil(left / stepPace), pendingN ? Math.ceil(pendingN / newPerDay) : 0) : 0;
         // Done by: the later of "all of them at this pace" and "previous step done + this step's wait".
         const doneIn = left ? Math.max(days, i > 0 && prevDone ? prevDone + waitSend(st) : 0) : 0;
         if (doneIn) prevDone = doneIn;
-        return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">starts ${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'working'} day(s) after each previous step</div>` : ''}</td><td class="num">${dayOf[i]}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td><td style="white-space:nowrap;font-size:0.8rem;">${doneIn ? '≈ ' + dayFmt.format(addSendingDays(doneIn)) : 'done'}</td></tr>`;
+        // First companies: the first sending day, then + each step's wait; "underway" once some are past it.
+        firstIn = i === 0 ? 1 : firstIn + waitSend(st);
+        const underway = live.some(e => e.status !== 'pending' && e.currentStep > i) || curEnrols.some(e => (e.history || []).some(h => h.stepId === st.id));
+        const firstTxt = !left ? '—' : underway ? 'underway' : dayFmt.format(addSendingDays(firstIn));
+        return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'sending'} day(s) after each company's previous step</div>` : ''}</td><td class="num">${dayOf[i]}</td><td style="white-space:nowrap;font-size:0.8rem;">${firstTxt}</td><td style="white-space:nowrap;font-size:0.8rem;">${doneIn ? '≈ ' + dayFmt.format(addSendingDays(doneIn)) : 'done'}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td></tr>`;
       }).join('');
       return `<p class="note">Effective pace: <b>${num(pace)}</b> emails a day — the lowest of this campaign's limit (${c.pacing?.maxPerDay ? num(c.pacing.maxPerDay) : 'none'}), the automations limit (${num(globalLimit)}, shared by all campaigns) and the addresses' daily caps (${num(addrCap)}).</p>
-        <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th class="num" title="When this step comes in each company's sequence, counted from its first step">Day</th><th class="num">Still to go</th><th class="num" title="Sending days this step needs for everyone still to go, at the pace above">Sending days</th><th>Done by</th></tr></thead><tbody>${rows}</tbody></table></div>
-        <p class="note" style="margin-top:8px;">Each company goes through the whole sequence in about <b>${num(acc + 1)}</b> ${steps.some(s => s.wait?.unit === 'calendar') ? 'days (* calendar days)' : 'working days'}, from its first step.</p>
+        <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th class="num" title="Sending days after a company's first step (the campaign's sending days, no holidays)">Day in each company's sequence</th><th title="When the first companies reach this step">First companies</th><th title="When the last companies are done with this step">Last companies (done by)</th><th class="num">Still to go</th><th class="num" title="Sending days with emails of this step">Sending days</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <p class="note" style="margin-top:8px;">Each company goes through the whole sequence in about <b>${num(acc + 1)}</b> ${steps.some(s => s.wait?.unit === 'calendar') ? 'days (* calendar days)' : 'sending days'}, from its first step. <b>Day</b> counts this campaign's sending days (${esc(dayNames)}; national holidays skipped); the dates are when the first and the last companies reach each step.</p>
         <p class="hint" style="margin-top:6px;">Estimates — other campaigns share the daily limit, and approval steps wait for you. Recomputed each time the campaign is opened.</p>`;
     }
 
@@ -3938,7 +3943,7 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
               ${d.writtenBy === me ? '<span class="hint">Waiting for André or António.</span>' : ''}
             </div>` : `<div class="actions">
               <button class="btn btn--primary btn--sm" data-dact="approve" data-perm="out.approve">${draftEdits.has(d.id) ? 'Save &amp; approve' : 'Approve'}</button>
-              <button class="btn btn--ghost btn--sm" data-dact="skip" data-perm="out.approve" title="Drop this draft; it's written again the next working day">Skip — try the next working day</button>
+              <button class="btn btn--ghost btn--sm" data-dact="skip" data-perm="out.approve" title="Drop this draft; it's written again the next sending day">Skip — try the next sending day</button>
               <button class="btn btn--danger btn--sm" data-dact="remove" data-perm="out.campaigns">Remove company from the campaign</button>
             </div>`}
           </div>`;
@@ -3993,7 +3998,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             if (ed) { payload.body = ed.body; if (!d.isReply) payload.subject = ed.subject; }
             r = await campCall(payload, (x) => x.approved ? 'Approved — it goes out with the next scheduler run in the sending window.' : 'This draft is no longer waiting.');
           }
-          if (act === 'skip') r = await campCall({ action: 'skipDraft', messageId: id }, 'Skipped — drafted again the next working day.');
+          if (act === 'skip') r = await campCall({ action: 'skipDraft', messageId: id }, 'Skipped — drafted again the next sending day.');
           if (act === 'send') {
             const ed = draftEdits.get(id);
             if (!confirm(`Send this email written by ${writerName(d.writtenBy)} now, from ${d.senderId}?`)) return;
@@ -4434,10 +4439,10 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               <button class="btn btn--danger btn--sm" data-del ${isLocked ? 'disabled' : ''}>Delete</button></div>` : ''}
           </div>
           <div class="step__grid">
-            <div class="field"><label>When<span class="info" title="Wait after the previous step, in working days (Mon–Fri, no holidays) or calendar days, before this step comes due." aria-label="Wait after the previous step, in working days (Mon–Fri, no holidays) or calendar days, before this step comes due.">i</span></label>
+            <div class="field"><label>When<span class="info" title="Wait after the previous step before this step comes due: in sending days (the days this campaign sends — Mon–Fri unless it has its own window — no national holidays) or in calendar days." aria-label="Wait after the previous step before this step comes due: in sending days (the days this campaign sends — Mon–Fri unless it has its own window — no national holidays) or in calendar days.">i</span></label>
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
                 <input type="text" inputmode="numeric" data-f="waitDays" value="${esc(s.wait?.days ?? (i === 0 ? 0 : 3))}" style="width:64px;"${dis}>
-                <select data-f="waitUnit" style="width:auto;"${dis}><option value="working"${s.wait?.unit !== 'calendar' ? ' selected' : ''}>working days</option><option value="calendar"${s.wait?.unit === 'calendar' ? ' selected' : ''}>calendar days</option></select>
+                <select data-f="waitUnit" style="width:auto;"${dis}><option value="working"${s.wait?.unit !== 'calendar' ? ' selected' : ''}>sending days</option><option value="calendar"${s.wait?.unit === 'calendar' ? ' selected' : ''}>calendar days</option></select>
                 <span class="hint">${i === 0 ? 'after the company starts' : 'after the previous step'}</span>
               </div></div>
             ${kind ? `<div class="field"><label>${ch === 'email' ? 'Template' : ch === 'letter' ? 'Letter template' : ch === 'call' ? 'Call script (optional)' : 'Message to send (optional)'}</label><select data-f="templateId"${dis}>${tplOptions(s.templateId, kind, !['email', 'letter'].includes(ch))}</select></div>` : ''}

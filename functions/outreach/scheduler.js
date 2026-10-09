@@ -31,7 +31,7 @@ const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
 const Feat = require("../features"); // kill switches (Team & access → Features)
-const { lisbonParts, isWindowOpen, addWait, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
+const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -77,7 +77,7 @@ async function startPending(campaign, now, report) {
     .where("campaignId", "==", campaign.id).where("status", "==", "pending")
     .orderBy("enrolledAt", "asc").limit(room).get();
   let n = 0;
-  const firstDue = ts(addWait(now, campaign.steps[0].wait));
+  const firstDue = ts(addWait(now, campaign.steps[0].wait, campaign._sendingDays));
   for (const d of snap.docs) {
     const started = await db().runTransaction(async (tx) => {
       const cur = await tx.get(d.ref);
@@ -117,7 +117,7 @@ async function recordSent(ref, e, campaign, step, res, { senderId, variantKey, n
   const next = campaign.steps[nextIndex];
   await ref.update({
     currentStep: nextIndex,
-    nextActionAt: ts(addWait(now, next ? next.wait : FINAL_GRACE)),
+    nextActionAt: ts(addWait(now, next ? next.wait : FINAL_GRACE, campaign._sendingDays)),
     threadId: e.threadId || res.threadId,
     senderId,
     [`variants.${step.id}`]: variantKey,
@@ -228,6 +228,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const open = new Map();
   for (const d of campSnap.docs) {
     const c = { id: d.id, ...d.data() };
+    c._sendingDays = sendingDaysOf(c, settings); // waits count this campaign's sending days
     if (ignoreWindow || isWindowOpen(now, c.sendWindow || globalWindow)) open.set(c.id, c);
   }
   report.open = open.size;
@@ -291,7 +292,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         const target = (campaign.steps || []).findIndex((x) => x.id === clickRule.stepId);
         if (target > e.currentStep) {
           const from = e.lastSentAt ? e.lastSentAt.toDate() : now;
-          await unlock(doc.ref, { currentStep: target, nextActionAt: ts(addWait(from, campaign.steps[target].wait)), [`rulesApplied.${prevStep.id}`]: "clicked" });
+          await unlock(doc.ref, { currentStep: target, nextActionAt: ts(addWait(from, campaign.steps[target].wait, campaign._sendingDays)), [`rulesApplied.${prevStep.id}`]: "clicked" });
           report.jumped = (report.jumped || 0) + 1;
           continue;
         }
