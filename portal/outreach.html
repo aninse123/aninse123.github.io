@@ -4559,15 +4559,15 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csRecip">Emails go to</label>
               <select id="csRecip"${dis}>
                 <option value="company"${(c.recipientPolicy || 'company') === 'company' ? ' selected' : ''}>The company address (geral@ / info@)</option>
-                <option value="primary_contact"${c.recipientPolicy === 'primary_contact' ? ' selected' : ''}>The primary contact (else the company address)</option>
-                <option value="best_person"${c.recipientPolicy === 'best_person' ? ' selected' : ''}>The best person — owner / gerente from People (else the company address)</option>
-              </select><span class="hint">Chosen at the first email and kept for the follow-ups. People on personal addresses (gmail, sapo…) are allowed and flagged.</span>
+                <option value="primary_contact"${c.recipientPolicy === 'primary_contact' ? ' selected' : ''}>The primary contact</option>
+                <option value="best_person"${c.recipientPolicy === 'best_person' ? ' selected' : ''}>The best person (owner / gerente)</option>
+              </select><span class="hint">Primary contact / best person (owner or gerente from People): when a company has none with an email, its company address is used. Chosen at the first email and kept for the follow-ups. People on personal addresses (gmail, sapo…) are allowed and flagged.</span>
               ${c.audienceType !== 'people' ? `<div style="margin-top:6px;"><button type="button" class="btn btn--ghost btn--sm" id="csRecipCheck"${curEnrols.length ? '' : ' disabled title="Add companies first"'}>Check who it reaches</button> <span class="hint" id="csRecipOut">${curEnrols.length ? '' : 'Add companies first.'}</span></div>` : ''}</div>
             <div class="field"><label for="csAssignee">Tasks (calls, LinkedIn, letters…) go to</label>
               <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option>${ownerOpts(c.assignee)}</select></div>
             <div class="field"><label for="csSigner">Letters and call scripts signed by</label>
-              <select id="csSigner"${dis}><option value="owner"${(c.signer || 'owner') === 'owner' ? ' selected' : ''}>Default — letters: the company's owner (André if none); calls: whoever makes the call</option>${ownerOpts(c.signer === 'owner' ? '' : c.signer)}</select>
-              <span class="hint">Their name, phone and email fill {{sender.fullName}}, {{sender.phone}}, {{sender.email}}. Each letter or task can be changed.</span></div>
+              <select id="csSigner"${dis}><option value="owner"${(c.signer || 'owner') === 'owner' ? ' selected' : ''}>Default (owner / caller)</option>${ownerOpts(c.signer === 'owner' ? '' : c.signer)}</select>
+              <span class="hint">Default: letters are signed by the company's owner (André if it has none); call scripts by whoever makes the call. Their name, phone and email fill {{sender.fullName}}, {{sender.phone}}, {{sender.email}}. Each letter or task can be changed.</span></div>
           </div>
           <div class="row2">
             <div class="field"><label for="csFooter">Email footer</label>
