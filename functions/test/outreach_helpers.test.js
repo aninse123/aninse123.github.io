@@ -129,6 +129,7 @@ const q = r.buildQuote({ date: new Date("2026-09-24T16:38:00Z"), fromName: "Andr
 const withQ = r.buildPlainEmail({ bodyText: "Sexta está ótimo.", signature: "André Rocha", footerText: "Remover: https://douropartners.pt/u/x.y", unsubscribeUrl: "https://douropartners.pt/u/x.y", quote: q });
 ok("text: body, signature, footer, then the quote last (B7)", withQ.text.startsWith("Sexta está ótimo.\n\nAndré Rocha\n\n--\nRemover:") && withQ.text.includes("\n\nEm qui., 24/09/2026 às 17:38") && withQ.text.trimEnd().endsWith("escreveu:\n> Recebido.\n> \n> On Wed wrote:\n>> Olá"));
 ok("html: footer, then the quote marked the Gmail way (B7)", withQ.html.indexOf("font-size:11px") > 0 && withQ.html.indexOf('class="gmail_quote"') > withQ.html.indexOf("font-size:11px") && withQ.html.includes('<blockquote class="gmail_quote"'));
+ok("V6: Gmail bold (*text*) is quoted plain; a multiplication is left alone", r.buildQuote({ text: "*André Rocha*\nDouro Partners\n2*3 = 6", date: new Date(), fromName: "A", fromEmail: "a@b.pt" }).text === "André Rocha\nDouro Partners\n2*3 = 6");
 ok("long quote capped", r.buildQuote({ date: new Date(), fromName: "", fromEmail: "a@b.pt", text: "linha\n".repeat(3000) }).text.endsWith("[…]"));
 ok("empty quote -> null", r.buildQuote({ date: new Date(), fromEmail: "a@b.pt", text: "  " }) === null);
 

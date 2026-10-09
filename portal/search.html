@@ -4660,7 +4660,7 @@ async function copyLinkToContacts(linkId, role){
   if (contacts.some(ct => personNameKey(ct.name) === personNameKey(link.personName))){ alert(`${link.personName} is already in Contacts.`); return; }
   contacts.push({ name: link.personName, role: role || (link.mgmtRoles || [])[0] || 'Management Team', email:'', phone:'', linkedin:'', source:'online_research', notes:'From Orbis ownership data', isPrimary: contacts.length === 0 });
   try {
-    await updateDoc(doc(db,'searchCompanies',c.id), { contacts, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db,'searchCompanies',c.id), { contacts, emailKeys: companyEmailKeys({ ...c, contacts }), updatedAt: serverTimestamp() });
     c.contacts = contacts; cacheCompanies();
     await logAuto(c.id, 'contact_added', `Added contact from Ownership: ${link.personName}`);
     renderContacts(c);
@@ -8552,6 +8552,7 @@ async function confirmCompaniesImport(){
         ...r.payload,
         ...(derivedSector ? { sector: derivedSector.sector, ...(derivedSector.subSector ? { subSector: derivedSector.subSector } : {}) } : {}),
         nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes,
+        ...((merged.emailKeys || []).length || match.emailKeys ? { emailKeys: merged.emailKeys || [] } : {}),
         computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
         computedEBITDAMargin: merged.computedEBITDAMargin,
         computedEBITDAWeighted: merged.computedEBITDAWeighted, computedEBITDAMarginWeighted: merged.computedEBITDAMarginWeighted,
@@ -9468,7 +9469,7 @@ async function saveCompany(){
       const merged = computeFields({ ...companies[idx], ...changed, ...companyIndexFields({ ...companies[idx], ...changed }) });
       await updateDoc(doc(db,'searchCompanies',editCoId), {
         ...changed,
-        nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes,
+        nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes, emailKeys: merged.emailKeys || [],
         computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
         computedEBITDAMargin: merged.computedEBITDAMargin,
         computedEBITDAWeighted: merged.computedEBITDAWeighted, computedEBITDAMarginWeighted: merged.computedEBITDAMarginWeighted,
@@ -9608,7 +9609,7 @@ async function saveContact(){
   if (editCtIdx!=null) contacts[editCtIdx] = ct; else contacts.push(ct);
   const btn = document.getElementById('contactSaveBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
   try {
-    await updateDoc(doc(db,'searchCompanies',c.id), { contacts, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db,'searchCompanies',c.id), { contacts, emailKeys: companyEmailKeys({ ...c, contacts }), updatedAt: serverTimestamp() });
     c.contacts = contacts; cacheCompanies();
     await logAuto(c.id, editCtIdx!=null ? 'contact_edited' : 'contact_added', `${editCtIdx!=null?'Updated':'Added'} contact: ${name}`);
     showEl('contactModal', false); renderContacts(c); renderDetail();
@@ -9620,7 +9621,7 @@ async function removeContact(idx){
   const removed = (c.contacts||[])[idx];
   if (!confirm(`Remove contact "${removed?.name||'this contact'}"?`)) return;
   const contacts = (c.contacts||[]).filter((_,i)=>i!==idx);
-  await updateDoc(doc(db,'searchCompanies',c.id), { contacts, updatedAt: serverTimestamp() });
+  await updateDoc(doc(db,'searchCompanies',c.id), { contacts, emailKeys: companyEmailKeys({ ...c, contacts }), updatedAt: serverTimestamp() });
   c.contacts = contacts; cacheCompanies();
   await logAuto(c.id, 'contact_removed', `Removed contact: ${removed?.name||''}`);
   renderContacts(c); renderDetail();
@@ -11107,8 +11108,22 @@ function companySearchFields(name, also = []){
 function companyAltNames(c){
   return [c?.emailName, ...String(c?.akaName || '').split(/[;\n|]/)].map(s => String(s || '').trim()).filter(s => s && s !== '-' && !/^n\.?a\.?$/i.test(s));
 }
-// The name-search fields for a company record (name + its other names).
-function companyIndexFields(c){ return companySearchFields(c?.name, companyAltNames(c)); }
+// Outreach V3 (9 Oct): the company's and its contacts' email addresses are
+// searchable by any start of 3+ characters — "ana@em…" or "@empresa.pt" —
+// through array-contains on emailKeys.
+function companyEmailKeys(c){
+  const emails = [c?.companyEmail, ...(c?.contacts || []).map(x => x?.email)]
+    .map(e => String(e || '').trim().toLowerCase()).filter(e => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(e));
+  const keys = new Set();
+  for (const e of new Set(emails)){
+    for (let i = 3; i <= Math.min(e.length, 60); i++) keys.add(e.slice(0, i));
+    const d = '@' + e.split('@')[1];
+    for (let i = 3; i <= Math.min(d.length, 60); i++) keys.add(d.slice(0, i));
+  }
+  return [...keys];
+}
+// The search fields for a company record (name + its other names + emails).
+function companyIndexFields(c){ return { ...companySearchFields(c?.name, companyAltNames(c)), emailKeys: companyEmailKeys(c) }; }
 
 // ── People helpers ───────────────────────────────────────────────────────────
 // Orbis person rows carry no stable ID in list exports and salutations are

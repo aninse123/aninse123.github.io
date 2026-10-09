@@ -127,7 +127,8 @@ function quoteHeader(date, fromName, fromEmail) {
 // The message being replied to, quoted the usual way (it already carries the
 // earlier chain). Capped so a long thread can't bloat the email.
 function buildQuote({ date, fromName, fromEmail, text }) {
-  let t = String(text || "").replace(/\r\n/g, "\n").trim();
+  // V6 (9 Oct): Gmail's plain-text part marks bold as *text*; quote it plain.
+  let t = String(text || "").replace(/\r\n/g, "\n").replace(/(^|[\s(>])\*([^*\n]{1,120})\*(?=$|[\s).,;:!?])/gm, "$1$2").trim();
   if (!t) return null;
   if (t.length > MAX_QUOTE_CHARS) t = t.slice(0, MAX_QUOTE_CHARS).replace(/\n[^\n]*$/, "") + "\n[…]";
   return { header: quoteHeader(date, fromName, fromEmail), text: t };

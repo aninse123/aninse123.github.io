@@ -275,6 +275,7 @@
     .task__box a { color: var(--primary); }
     .task__text { white-space: pre-wrap; overflow-wrap: anywhere; font-family: Arial, Helvetica, sans-serif; }
     .outcomes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .btn.is-busy { opacity: 1; filter: saturate(0.8); cursor: progress; }
     .outcomes .btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #fff; }
     .info { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--border); font-size: 0.66rem; font-weight: 600; color: var(--text-light); cursor: help; vertical-align: 1px; }
     .ch { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 100px; font-size: 0.7rem; font-weight: 700; background: #EEF3F8; color: var(--primary-dark); }
@@ -350,7 +351,7 @@
         <div class="inbox">
           <div class="card inbox__list">
             <div class="inbox__filters">
-              <input type="search" id="inboxSearch" placeholder="Search company, address, subject or text…" aria-label="Search conversations" style="width:100%;margin-bottom:8px;">
+              <input type="search" id="inboxSearch" placeholder="Search company, NIF, address, subject or text…" aria-label="Search conversations" style="width:100%;margin-bottom:8px;" autocomplete="off">
               <div class="chips" id="ownerChips"></div>
               <div class="chips" id="stateChips"></div>
             </div>
@@ -700,10 +701,10 @@
             <div style="padding:18px 20px 6px;"><h2 style="margin:0;">Suppression list</h2>
               <p class="hint" style="margin-top:6px;">Nobody here is ever emailed again, from any address. Bounces, spam complaints and unsubscribes are added automatically. Add a whole domain with <code>@empresa.pt</code>.</p></div>
             <div class="toolbar">
-              <input type="search" id="supSearch" placeholder="Filter…" style="max-width:220px;">
-              <input type="text" id="supAdd" placeholder="email@empresa.pt or @empresa.pt" style="max-width:260px;">
+              <input type="search" id="supSearch" placeholder="Filter…" style="max-width:220px;" autocomplete="off">
+              <input type="text" id="supAdd" placeholder="email@empresa.pt or @empresa.pt" style="max-width:260px;" autocomplete="off">
               <select id="supReason" aria-label="Reason"><option value="do_not_contact">Do not contact</option><option value="manual">Manual</option><option value="unsubscribed">Asked to be removed</option></select>
-              <input type="text" id="supNote" placeholder="Note (optional), e.g. asked by phone" maxlength="300" style="max-width:240px;">
+              <input type="text" id="supNote" placeholder="Note (optional), e.g. asked by phone" maxlength="300" style="max-width:240px;" autocomplete="off">
               <button class="btn btn--ghost btn--sm" id="supAddBtn">Add</button>
               <button class="btn btn--ghost btn--sm" id="supExport" style="margin-left:auto;">Export CSV</button>
             </div>
@@ -966,17 +967,32 @@
       const others = partners.filter(m => m.key !== myOwner).map(m => [m.key, m.label]);
       const owners = hasAddress ? [['mine', 'Mine'], ...others, ['all', 'All']] : [['all', 'All'], ...others];
       $('ownerChips').innerHTML = owners.map(([k, l]) => `<button class="chip${k === ownerFilter ? ' on' : ''}" data-owner="${k}">${esc(l)}</button>`).join('');
-      const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['unmatched', 'Unmatched']];
+      const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['replied', 'Replied'], ['closed', 'Closed'], ['bounced', 'Bounced'], ['unmatched', 'Unmatched']];
       $('stateChips').innerHTML = states.map(([k, l]) => `<button class="chip${k === stateFilter ? ' on' : ''}" data-state="${k}">${esc(l)}</button>`).join('');
       $('ownerChips').addEventListener('click', (e) => { const b = e.target.closest('[data-owner]'); if (!b) return; ownerFilter = b.dataset.owner; $('ownerChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
-      let inboxSearchT; $('inboxSearch').addEventListener('input', () => { clearTimeout(inboxSearchT); inboxSearchT = setTimeout(renderThreads, 150); });
+      // Z2: a 9-digit NIF finds the company (1 read) and shows its conversations.
+      let inboxSearchT; $('inboxSearch').addEventListener('input', () => {
+        clearTimeout(inboxSearchT);
+        inboxSearchT = setTimeout(async () => {
+          const q = $('inboxSearch').value.trim();
+          if (/^\d{9}$/.test(q) && nifSearch.nif !== q) {
+            nifSearch.nif = q; nifSearch.ids = null;
+            try { const s = await getDocs(query(collection(db, 'searchCompanies'), where('nif', '==', q), limit(5))); addReads(s.size || 1); refreshReads(); if (nifSearch.nif === q) nifSearch.ids = new Set(s.docs.map(d => d.id)); } catch (e) { /* name search still works */ }
+          }
+          renderThreads();
+        }, 200);
+      });
       $('stateChips').addEventListener('click', (e) => { const b = e.target.closest('[data-state]'); if (!b) return; stateFilter = b.dataset.state; $('stateChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
     }
 
+    const nifSearch = { nif: null, ids: null };
     function filteredThreads() {
       const q = norm($('inboxSearch')?.value || '').trim();
       return threads.filter(t => {
-        if (q && ![t.companyName, t.contactEmail, t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
+        if (q && !(nifSearch.ids && /^\d{9}$/.test(q) && nifSearch.ids.has(t.companyId)) && ![t.companyName, t.contactEmail, t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
+        if (stateFilter === 'closed' && t.status !== 'closed') return false;
+        if (stateFilter === 'bounced' && !['bounced', 'failed'].includes(t.status)) return false;
+        if (stateFilter === 'replied' && t.status !== 'replied') return false;
         if (ownerFilter === 'mine' && t.owner && t.owner !== myOwner) return false;
         if (ownerFilter !== 'mine' && ownerFilter !== 'all' && t.owner !== ownerFilter) return false;
         if (stateFilter === 'unread' && !t.unread) return false;
@@ -1306,7 +1322,13 @@
       const col = collection(db, 'searchCompanies');
       const digits = raw.replace(/\s/g, '');
       let docs;
-      if (raw.includes('@')) docs = (await getDocs(query(col, where('companyEmail', '==', raw.toLowerCase()), limit(max)))).docs;
+      if (raw.includes('@')) {
+        // V3: any start of 3+ characters of the company's or a contact's address, or "@domain".
+        const q = raw.toLowerCase().replace(/\s/g, '').slice(0, 60);
+        if (q.length < 3) return [];
+        docs = (await getDocs(query(col, where('emailKeys', 'array-contains', q), limit(25)))).docs;
+        if (!docs.length) docs = (await getDocs(query(col, where('companyEmail', '==', q), limit(max)))).docs;   // not re-indexed yet
+      }
       else if (/^\d{9}$/.test(digits)) docs = (await getDocs(query(col, where('nif', '==', digits), limit(max)))).docs;
       else {
         const { nameKey, tokens } = searchKeyOf(raw);
@@ -1401,7 +1423,7 @@
         finally { b.disabled = false; b.textContent = '✨ Suggest an opening'; }
       });
       wireVarBar($('varButtons'), $('panel-compose'), '#cSubject, #cBody');   // inserting fires input → renderPreview
-      $('coHint').textContent = 'Type any word of the name, the email name or "also known as" (e.g. DIMEXA), a NIF or an email address.';
+      $('coHint').textContent = 'Type any word of the name, the email name or "also known as" (e.g. DIMEXA), a NIF, or the start of an email address or "@domain" (company or contacts).';
       let searchTimer = null, lastHits = [];
       $('coSearch').addEventListener('input', () => {
         clearTimeout(searchTimer);
@@ -1412,7 +1434,7 @@
           if ($('coSearch').value !== q) return; // typed on meanwhile
           lastHits = hits;
           const list = $('coResults');
-          list.innerHTML = hits.map(c => `<button type="button" class="picker__item" data-id="${esc(c.id)}">${esc(c.name)}<small>${esc(c.companyEmail || 'no email')}${c.concelho ? ' · ' + esc(c.concelho) : ''}${c.owner ? ' · ' + esc(OWNER_LABEL[c.owner] || c.owner) : ''}</small></button>`).join('')
+          list.innerHTML = hits.map(c => `<button type="button" class="picker__item" data-id="${esc(c.id)}">${esc(c.name)}${c.emailName ? ` <b style="font-weight:600;">· ${esc(c.emailName)}</b>` : ''}<small>${esc(c.companyEmail || 'no email')}${c.concelho ? ' · ' + esc(c.concelho) : ''}${c.owner ? ' · ' + esc(OWNER_LABEL[c.owner] || c.owner) : ''}</small></button>`).join('')
             || (q.trim().length >= 2 ? '<div class="picker__item" style="cursor:default;color:var(--text-light);">No company found</div>' : '');
           list.hidden = !list.innerHTML;
         }, 350);
@@ -2614,6 +2636,15 @@
       if (campSec === 'sequence' && !seqDirty) renderSequence();
     }
 
+    // V7 (9 Oct): an action button says it's working — spinner + "Pausing…" —
+    // and stays disabled until the action is done. Returns a restore function.
+    function busyBtn(btn, label) {
+      if (!btn) return () => {};
+      const html = btn.innerHTML, w = btn.offsetWidth;
+      btn.disabled = true; btn.classList.add('is-busy'); if (w) btn.style.minWidth = w + 'px';
+      btn.innerHTML = `<span class="spin-sm"></span>${esc(label || 'Working…')}`;
+      return () => { if (!btn.isConnected) return; btn.disabled = false; btn.classList.remove('is-busy'); btn.innerHTML = html; btn.style.minWidth = ''; };
+    }
     async function campCall(data, okMsg) {
       try { const r = (await callCampaign(data)).data; if (okMsg) toast(typeof okMsg === 'function' ? okMsg(r) : okMsg); return r; }
       catch (e) { toast(errText(e)); return null; }
@@ -2676,13 +2707,14 @@
       // Q3: after a status change, show it at once (the listener confirms it).
       // I21: starting / resuming in test mode sends this campaign's test emails
       // to whoever clicked (if their address is approved; the server checks).
+      const BUSY = { start: 'Starting…', resume: 'Resuming…', pause: 'Pausing…', finish: 'Finishing…', archive: 'Archiving…', restore: 'Restoring…', runnow: 'Running…', duplicate: 'Copying…', ask: 'Sending…', returnstart: 'Returning…', delete: 'Deleting…' };
       const testMode = !settings || settings.testMode !== false;
       const setStatus = async (status, msg) => {
         const r = await campCall({ action: 'setStatus', campaignId: c.id, status, ...(status === 'active' && testMode ? { testRecipient: defaultTestAddress() } : {}) }, msg);
         if (r) { const cc = curCamp(); if (cc) cc.status = r.status || status; renderCampHeader(); if (campSec === 'overview') renderOverview(); loadCampaignData(); }
         return r;
       };
-      btn.disabled = true;
+      const unbusy = busyBtn(btn, BUSY[a]);
       try {
         if (a === 'start') {
           const live = curEnrols.filter(e => LIVE_ENROL.includes(e.status)).length;
@@ -2730,7 +2762,7 @@ Optional note for them:`, '');
           const r = await campCall({ action: 'delete', campaignId: c.id }, 'Draft deleted.');
           if (r) { seqDirty = csetDirty = false; closeCampaign(); }
         }
-      } finally { btn.disabled = false; }
+      } finally { unbusy(); }
     }
 
     // ── Overview ──
@@ -2887,9 +2919,9 @@ Optional note for them:`, '');
         if (op === 'move') { openMoveCompany(e); return; }
         let reason = null;
         if (op === 'remove') { reason = prompt(`Remove ${e?.companyName || 'this company'} from the campaign? Optional reason:`, ''); if (reason === null) return; }
-        b.disabled = true;
+        const unbusy = busyBtn(b, op === 'remove' ? 'Removing…' : op === 'pause' ? 'Pausing…' : 'Resuming…');
         const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? 'Company removed from the campaign.' : op === 'pause' ? 'Company paused.' : 'Company resumed.');
-        if (r) loadCampaignData(); else b.disabled = false;
+        if (r) loadCampaignData(); else unbusy();
       }));
     }
 
@@ -3611,18 +3643,20 @@ Optional note for them:`, '');
       const byId = (id) => recurring.find(r => r.id === id);
       $('recurView').querySelectorAll('[data-redit]').forEach(b => b.addEventListener('click', () => openRecurringModal(byId(b.dataset.redit))));
       $('recurView').querySelectorAll('[data-rnow]').forEach(b => b.addEventListener('click', async () => {
-        b.disabled = true;
+        const unbusyNow = busyBtn(b, 'Writing…');
         try { const r = (await callRecurring({ action: 'issueNow', recurringId: b.dataset.rnow })).data; toast(`Issue #${r.number} drafted — see Tasks → To approve.${r.superseded ? ' The older waiting draft was replaced.' : ''}`); }
-        catch (e) { toast(errText(e)); } finally { b.disabled = false; }
+        catch (e) { toast(errText(e)); } finally { unbusyNow(); }
       }));
       $('recurView').querySelectorAll('[data-rstat]').forEach(b => b.addEventListener('click', async () => {
         const r = byId(b.dataset.rstat);
+        busyBtn(b, r.status === 'active' ? 'Pausing…' : 'Resuming…');   // the list re-renders when it's saved
         try { await callRecurring({ action: 'setStatus', recurringId: r.id, status: r.status === 'active' ? 'paused' : 'active' }); toast(r.status === 'active' ? 'Paused — no new issues until you resume.' : 'Resumed — the next issue comes on its next date.'); } catch (e) { toast(errText(e)); }
       }));
       $('recurView').querySelectorAll('[data-rdel]').forEach(b => b.addEventListener('click', async () => {
         const r = byId(b.dataset.rdel);
         if (!confirm(`Archive "${r.name}"?\n\nEverything not yet out stops: a waiting or approved issue is cancelled, and an issue part-way through sending stops (nobody else gets it). Emails already sent, and their history, stay. "Show archived" → Restore brings it back, paused.`)) return;
-        try { const x = (await callRecurring({ action: 'delete', recurringId: r.id })).data; toast(`Recurring email archived${x.stopped ? ` — ${x.stopped} issue stopped mid-send` : ''}.`); } catch (e) { toast(errText(e)); }
+        const unbusyDel = busyBtn(b, 'Archiving…');
+        try { const x = (await callRecurring({ action: 'delete', recurringId: r.id })).data; toast(`Recurring email archived${x.stopped ? ` — ${x.stopped} issue stopped mid-send` : ''}.`); } catch (e) { toast(errText(e)); unbusyDel(); }
       }));
       $('recArch')?.addEventListener('change', (e) => { recurShowArchived = e.target.checked; renderRecurring(); });
       $('recurView').querySelectorAll('[data-rrestore]').forEach(b => b.addEventListener('click', async () => {
@@ -3852,9 +3886,12 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         el.querySelector('[data-dbody]').addEventListener('input', markEdit);
         el.querySelectorAll('[data-dact]').forEach(b => b.addEventListener('click', async () => {
           const act = b.dataset.dact;
-          b.disabled = true;
+          // V7: the clicked button says it's working until the action is done.
+          let unbusy = () => {};
+          const goBusy = () => { unbusy = busyBtn(b, { approve: 'Approving…', skip: 'Skipping…', send: 'Sending…', return: 'Returning…', remove: 'Removing…' }[act]); };
           document.activeElement?.blur();
           let r;
+          if (act === 'approve' || act === 'skip') goBusy();
           if (act === 'approve') {
             const ed = draftEdits.get(id);
             const payload = { action: 'approve', messageIds: [id] };
@@ -3864,7 +3901,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           if (act === 'skip') r = await campCall({ action: 'skipDraft', messageId: id }, 'Skipped — drafted again the next working day.');
           if (act === 'send') {
             const ed = draftEdits.get(id);
-            if (!confirm(`Send this email written by ${writerName(d.writtenBy)} now, from ${d.senderId}?`)) { b.disabled = false; return; }
+            if (!confirm(`Send this email written by ${writerName(d.writtenBy)} now, from ${d.senderId}?`)) return;
+            goBusy();
             try {
               const payload = { action: 'approveDraft', messageId: id };
               if (ed) { payload.body = ed.body; if (!d.isReply) payload.subject = ed.subject; }
@@ -3874,15 +3912,17 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           }
           if (act === 'return') {
             const note = prompt(`Return to ${writerName(d.writtenBy)} — what should change? (they see this note)`, '');
-            if (note === null) { b.disabled = false; return; }
+            if (note === null) return;
+            goBusy();
             try { await callSend({ action: 'returnDraft', messageId: id, note }); toast('Returned with your note.'); r = true; }
             catch (e) { toast(errText(e)); r = false; }
           }
           if (act === 'remove') {
-            if (!confirm(`Remove ${d.companyName || 'this company'} from "${campName(d.campaignId)}"? The draft is discarded.`)) { b.disabled = false; return; }
+            if (!confirm(`Remove ${d.companyName || 'this company'} from "${campName(d.campaignId)}"? The draft is discarded.`)) return;
+            goBusy();
             r = await campCall({ action: 'enrolment', enrolmentId: d.enrolmentId, op: 'remove', reason: 'Removed from the approval queue' }, 'Company removed from the campaign.');
           }
-          if (r) draftEdits.delete(id); else b.disabled = false;
+          if (r) draftEdits.delete(id); else unbusy();
         }));
       });
     }
@@ -4166,10 +4206,11 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           if (t.channel === 'linkedin') payload.profileUrl = el.querySelector('[data-tprofile]')?.value || null;
           if (outcome === 'skipped' && !confirm('Skip this step? The sequence moves on without it.')) return;
           el.querySelectorAll('button').forEach(x => { x.disabled = true; });
+          const unbusySave = busyBtn(el.querySelector('[data-tsave]'), 'Saving…');
           document.activeElement?.blur();
           const r = await campCall(payload, (x) => x.status === 'open' ? `Saved — next attempt on ${dayFmt.format(new Date(x.dueAt))}.` : x.sequence === 'stopped' ? `Saved — the sequence stopped for this ${t.companyId ? 'company' : 'person'}.` : outcome === 'skipped' ? 'Step skipped.' : 'Saved.');
           if (r) taskPick.delete(t.id);
-          else el.querySelectorAll('button').forEach(x => { x.disabled = false; });
+          else { unbusySave(); el.querySelectorAll('button').forEach(x => { x.disabled = false; }); }
         });
       });
     }

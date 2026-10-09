@@ -25,7 +25,7 @@ const ok = (l, cond) => { if (!cond) fail++; console.log(`${cond ? 'PASS' : 'FAI
 
 const s = { console };
 vm.createContext(s);
-vm.runInContext([liftFn(search, 'deburr'), liftLine(search, 'LEGAL_FORM_RE'), liftFn(search, 'companySearchFields'), liftFn(search, 'companyAltNames'), liftFn(search, 'companyIndexFields'),
+vm.runInContext([liftFn(search, 'deburr'), liftLine(search, 'LEGAL_FORM_RE'), liftFn(search, 'companySearchFields'), liftFn(search, 'companyAltNames'), liftFn(search, 'companyEmailKeys'), liftFn(search, 'companyIndexFields'),
   'this.__x = { companySearchFields, companyAltNames, companyIndexFields };'].join('\n'), s);
 const { companySearchFields, companyAltNames, companyIndexFields } = s.__x;
 
@@ -36,7 +36,12 @@ ok('nameKey stays the legal name', f.nameKey === companySearchFields(c.name).nam
 ok('email name is searchable (token + prefixes)', f.nameTokens.includes('ASF') && f.namePrefixes.includes('AS'));
 ok('every "also known as" name is searchable, accents removed', f.nameTokens.includes('CLINICA') && f.nameTokens.includes('ALFASAUDE') && f.namePrefixes.includes('CLIN'));
 ok('placeholders ("n.a.", "-") are ignored', JSON.stringify(companyAltNames({ akaName: 'n.a.; -' })) === '[]');
-ok('without other names, exactly the old fields (mobile search parity)', JSON.stringify(companyIndexFields({ name: c.name })) === JSON.stringify(companySearchFields(c.name)));
+{ const { emailKeys, ...rest } = companyIndexFields({ name: c.name }); ok('without other names, exactly the old name fields (mobile search parity)', JSON.stringify(rest) === JSON.stringify(companySearchFields(c.name)) && emailKeys.length === 0); }
+console.log('=== V3: email and domain search keys ===');
+{ const k = companyIndexFields({ name: 'X', companyEmail: 'Geral@Empresa.pt', contacts: [{ email: 'ana@a.pt' }, { email: 'bad' }] }).emailKeys;
+  ok('the company address from 3 characters, lower-case', k.includes('ger') && k.includes('geral@empresa.pt') && !k.includes('ge'));
+  ok('a contact address and its "@domain" (from 3 characters)', k.includes('ana@a.pt') && k.includes('@a.pt') && k.includes('@a.') && k.includes('@empresa.pt'));
+  ok('invalid addresses are ignored', !k.some(x => x.startsWith('bad'))); }
 
 console.log('=== B2: Compose search uses the same normalisation ===');
 const o = { console };
