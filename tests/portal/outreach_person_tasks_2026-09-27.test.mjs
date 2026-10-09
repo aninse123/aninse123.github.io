@@ -15,7 +15,7 @@ const ctx = { window: { teamDir: [{ key: 'andre', name: 'André Rocha', active: 
 vm.createContext(ctx);
 vm.runInContext([
   line('    const OWNER_FULL ='), line('    const PT_SMALL_WORDS ='), lift('titleCasePt'), lift('shortName'), lift('emailNameOf'),
-  lift('scanTemplate'), lift('signerFor'), lift('coCtx'), lift('fillText'),
+  lift('scanTemplate'), lift('signerFor'), lift('joinPt'), lift('teamContext'), lift('coCtx'), lift('fillText'),
   "const esc = (s) => String(s ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));",
   line('    const telHref ='), 'const isMobilePt = () => false;',
   line('    const personCache ='), lift('personOf'), lift('personAsCo'), line('    const taskCo ='), lift('personContactBox'),

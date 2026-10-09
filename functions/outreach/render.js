@@ -50,8 +50,32 @@ function firstName(full) {
   return String(full || "").trim().split(/\s+/)[0] || "";
 }
 
+// "A", "A e B", "A, B e C".
+function joinPt(list) {
+  const l = list.filter(Boolean);
+  return l.length <= 1 ? (l[0] || "") : `${l.slice(0, -1).join(", ")} e ${l[l.length - 1]}`;
+}
+
+// Team fields (9 Oct): {{team.<key>.firstName|fullName}} for everyone active in
+// Team; {{partners.firstNames|fullNames}} = every partner except the sender (all
+// partners when the sender isn't one); {{partner.firstName|fullName}} = the one
+// other partner — empty (send refused unless a fallback) when there isn't exactly one.
+// members: teamDirectory rows { key, name, partner, active }; senderKey: the sending address's owner.
+function teamContext(members = [], senderKey = null) {
+  const active = (members || []).filter((m) => m && m.key && m.active !== false && m.name);
+  const order = (a, b) => (a.key === "andre" ? -1 : b.key === "andre" ? 1 : String(a.name).localeCompare(String(b.name)));
+  const team = Object.fromEntries(active.map((m) => [m.key, { firstName: firstName(m.name), fullName: String(m.name).trim() }]));
+  const others = active.filter((m) => m.partner && m.key !== senderKey).sort(order);
+  const one = others.length === 1 ? others[0] : null;
+  return {
+    team,
+    partners: { firstNames: joinPt(others.map((m) => firstName(m.name))), fullNames: joinPt(others.map((m) => String(m.name).trim())) },
+    partner: { firstName: one ? firstName(one.name) : "", fullName: one ? String(one.name).trim() : "" },
+  };
+}
+
 // Variables a template may use, resolved from the company, contact and sender.
-function buildContext({ company = {}, contactName = "", sender = {}, unsubscribeUrl = "", aiOpener = "" }) {
+function buildContext({ company = {}, contactName = "", sender = {}, unsubscribeUrl = "", aiOpener = "", team = [], senderKey = null }) {
   return {
     company: {
       name: company.name || "",
@@ -62,7 +86,9 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
     },
     contact: { firstName: firstName(contactName) },
     // T4: sender.email = the sending address; sender.phone = its owner's (Team).
-    sender: { firstName: firstName(sender.displayName), name: sender.displayName || "", email: sender.email || "", phone: sender.phone || "", signature: sender.signature || "" },
+    // sender.fullName (9 Oct); sender.name kept so older templates still work.
+    sender: { firstName: firstName(sender.displayName), fullName: sender.displayName || "", name: sender.displayName || "", email: sender.email || "", phone: sender.phone || "", signature: sender.signature || "" },
+    ...teamContext(team, senderKey),
     unsubscribeUrl,
     ai: { opener: aiOpener || "" }, // Phase 4 — written per company, only in approval steps
   };
@@ -192,4 +218,4 @@ function replySubject(subject) {
   return /^(re|res|ref)\s*:/i.test(s) ? s : `Re: ${s}`;
 }
 
-module.exports = { shortCompanyName, emailNameOf, firstName, buildContext, renderTemplate, buildPlainEmail, buildQuote, quoteHeader, replySubject, TEST_FOOTER, PRIVACY_LINE, wantsFooter, footerSource };
+module.exports = { shortCompanyName, emailNameOf, firstName, buildContext, teamContext, joinPt, renderTemplate, buildPlainEmail, buildQuote, quoteHeader, replySubject, TEST_FOOTER, PRIVACY_LINE, wantsFooter, footerSource };

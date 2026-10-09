@@ -11480,7 +11480,8 @@ document.getElementById('semSendBtn').addEventListener('click', sendCompanyEmail
 (function semFieldButtons(){
   const bar = document.getElementById('semVars'); if (!bar) return;
   const TOP = ['company.shortName', 'contact.firstName|Olá', 'sender.firstName', 'company.name', 'company.city'];
-  const MORE = ['company.sector', 'company.cae', 'sender.name', 'sender.phone', 'sender.email'];
+  const MORE = ['company.sector', 'company.cae', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames'];
+  const moreVars = () => [...MORE, ...(window.teamDir || []).filter(m => m.active !== false).flatMap(m => [`team.${m.key}.firstName`, `team.${m.key}.fullName`])];
   const btn = (v) => `<button type="button" class="btn btn--ghost btn--sm" data-semvar="${esc(v)}" style="padding:2px 8px;font-size:0.75rem;">{{${esc(v)}}}</button>`;
   bar.innerHTML = TOP.map(btn).join('') + `<button type="button" class="btn btn--ghost btn--sm" data-semmore aria-expanded="false" style="padding:2px 8px;font-size:0.75rem;">more ▾</button><span data-semrest style="display:none;">${MORE.map(btn).join('')}</span>`;
   const boxes = ['semSubject', 'semMessage'].map(id => document.getElementById(id));
@@ -11489,7 +11490,7 @@ document.getElementById('semSendBtn').addEventListener('click', sendCompanyEmail
   bar.addEventListener('mousedown', (e) => { if (e.target.closest('[data-semvar],[data-semmore]')) e.preventDefault(); });
   bar.addEventListener('click', (e) => {
     const more = e.target.closest('[data-semmore]');
-    if (more) { const r = bar.querySelector('[data-semrest]'); const open = r.style.display === 'none'; r.style.display = open ? 'contents' : 'none'; more.textContent = open ? 'less ▴' : 'more ▾'; more.setAttribute('aria-expanded', String(open)); return; }
+    if (more) { const r = bar.querySelector('[data-semrest]'); const open = r.style.display === 'none'; if (open) r.innerHTML = moreVars().map(btn).join(''); r.style.display = open ? 'contents' : 'none'; more.textContent = open ? 'less ▴' : 'more ▾'; more.setAttribute('aria-expanded', String(open)); return; }
     const b = e.target.closest('[data-semvar]'); if (!b) return;
     const el = last, top = el.scrollTop, x = window.scrollX, y = window.scrollY, ins = `{{${b.dataset.semvar}}}`;
     const s = el.selectionStart ?? el.value.length, en = el.selectionEnd ?? s;

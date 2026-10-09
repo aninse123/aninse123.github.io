@@ -24,6 +24,15 @@ const { companyRecipients } = require("./recipients");
 
 const { db, FieldValue, Timestamp } = store;
 
+// Team directory for {{team.*}} / {{partner.*}} / {{partners.*}} — tiny (a few rows), cached briefly per instance.
+let teamCache = null, teamCacheAt = 0;
+async function teamDirectory() {
+  if (teamCache && Date.now() - teamCacheAt < 5 * 60 * 1000) return teamCache;
+  const snap = await db().collection("teamDirectory").get();
+  teamCache = snap.docs.map((d) => d.data()); teamCacheAt = Date.now();
+  return teamCache;
+}
+
 function fail(code, reason, message, extra = {}) {
   throw new HttpsError(code, message, { reason, ...extra });
 }
@@ -157,7 +166,7 @@ async function prepareEmail(opts) {
   // T4: {{sender.phone}} — the address owner's phone (Team → person).
   let senderPhone = "";
   if (sender.owner) { try { senderPhone = (await db().doc(`teamDirectory/${sender.owner}`).get()).data()?.contactPhone || ""; } catch (e) { /* field stays empty */ } }
-  const ctx = buildContext({ company: ctxCompany, contactName, sender: { ...sender, email: senderId, phone: senderPhone }, unsubscribeUrl, aiOpener: opts.aiOpener || "" });
+  const ctx = buildContext({ company: ctxCompany, contactName, sender: { ...sender, email: senderId, phone: senderPhone }, unsubscribeUrl, aiOpener: opts.aiOpener || "", team: await teamDirectory(), senderKey: sender.owner || null });
 
   let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null;
   if (opts.templateId) {
@@ -178,7 +187,13 @@ async function prepareEmail(opts) {
   const subject = renderTemplate(subjectSrc, ctx);
   const body = renderTemplate(bodySrc, ctx);
   const missing = [...new Set([...subject.missing, ...body.missing])];
-  if (missing.length) fail("invalid-argument", "missing_variables", `These fields are empty for this company: ${missing.join(", ")}. Add a fallback, e.g. {{${missing[0]}|…}}.`, { missing });
+  if (missing.length) {
+    const partnerOnly = missing.every((m) => m.startsWith("partner.") || m.startsWith("partners.") || m.startsWith("team."));
+    const why = partnerOnly
+      ? `{{partner.*}} needs exactly one other partner, and {{team.<name>.*}} someone active in Team — not the case for this sender. Use {{partners.fullNames}} (every partner except the sender) or a fallback, e.g. {{${missing[0]}|os sócios}}.`
+      : `Add a fallback, e.g. {{${missing[0]}|…}}.`;
+    fail("invalid-argument", "missing_variables", `These fields are empty${partnerOnly ? "" : " for this company"}: ${missing.join(", ")}. ${why}`, { missing });
+  }
 
   // CCSL (9 Oct): the footer is optional and off by default — this email's
   // choice, else the conversation's first email, else Settings.

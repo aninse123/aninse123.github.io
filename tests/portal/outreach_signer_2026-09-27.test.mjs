@@ -22,7 +22,7 @@ const ctx = {
 vm.createContext(ctx);
 vm.runInContext([
   line('    const OWNER_FULL ='), line('    const PT_SMALL_WORDS ='), lift('titleCasePt'), lift('shortName'), lift('emailNameOf'),
-  lift('scanTemplate'), lift('signerFor'), lift('coCtx'), lift('fillText'),
+  lift('scanTemplate'), lift('signerFor'), lift('joinPt'), lift('teamContext'), lift('coCtx'), lift('fillText'),
   'globalThis.api = { signerFor, coCtx, fillText };',
 ].join('\n'), ctx);
 const { signerFor, coCtx, fillText } = ctx.api;

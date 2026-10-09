@@ -782,7 +782,28 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.name', 'sender.phone', 'sender.email', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    // 9 Oct: what each team field means (button tooltips).
+    const VAR_HELP = {
+      'sender.fullName': 'Full name of whoever sends (the address owner)',
+      'partner.firstName': 'The one other partner (António when André sends, André when António sends). Empty — send stops — if the sender isn\'t one of two partners; add a fallback with |',
+      'partner.fullName': 'The one other partner, full name. Empty — send stops — if the sender isn\'t one of two partners; add a fallback with |',
+      'partners.firstNames': 'Every partner except the sender, e.g. "André e António" when the intern sends',
+      'partners.fullNames': 'Every partner except the sender, e.g. "André Rocha e António Carvalho" when the intern sends',
+    };
+    // Everyone active in Team gets {{team.<key>.firstName}} / {{team.<key>.fullName}}.
+    const allVars = () => [...VARS, ...(window.teamDir || []).filter(m => m.active !== false).flatMap(m => [`team.${m.key}.firstName`, `team.${m.key}.fullName`])];
+    // Same as the server (render.js teamContext).
+    function joinPt(list) { const l = list.filter(Boolean); return l.length <= 1 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} e ${l[l.length - 1]}`; }
+    function teamContext(members = [], senderKey = null) {
+      const first = (n) => String(n || '').trim().split(/\s+/)[0] || '';
+      const active = (members || []).filter(m => m && m.key && m.active !== false && m.name);
+      const order = (a, b) => (a.key === 'andre' ? -1 : b.key === 'andre' ? 1 : String(a.name).localeCompare(String(b.name)));
+      const team = Object.fromEntries(active.map(m => [m.key, { firstName: first(m.name), fullName: String(m.name).trim() }]));
+      const others = active.filter(m => m.partner && m.key !== senderKey).sort(order);
+      const one = others.length === 1 ? others[0] : null;
+      return { team, partners: { firstNames: joinPt(others.map(m => first(m.name))), fullNames: joinPt(others.map(m => String(m.name).trim())) }, partner: { firstName: one ? first(one.name) : '', fullName: one ? String(one.name).trim() : '' } };
+    }
 
     const fns = getFunctions(auth.app, 'us-central1');
     const callSend = httpsCallable(fns, 'outreachSend');
@@ -1399,8 +1420,8 @@
     // the last box you were in (subject or message) and keeps your place.
     const VARS_TOP = ['company.shortName', 'contact.firstName|Olá', 'sender.firstName', 'company.name', 'company.city'];
     function varBarHtml(extra = '') {
-      const vars = VARS.filter(v => !v.startsWith('ai.'));
-      const btn = (v) => `<button type="button" class="var" data-var="${esc(v)}">{{${esc(v)}}}</button>`;
+      const vars = allVars().filter(v => !v.startsWith('ai.'));
+      const btn = (v) => `<button type="button" class="var" data-var="${esc(v)}"${VAR_HELP[v] || v.startsWith('team.') ? ` title="${esc(VAR_HELP[v] || 'This person (from Team), whoever sends')}"` : ''}>{{${esc(v)}}}</button>`;
       const top = VARS_TOP.filter(v => vars.includes(v)), rest = vars.filter(v => !VARS_TOP.includes(v));
       return top.map(btn).join('') + (rest.length ? ` <button type="button" class="var" data-varmore aria-expanded="false">more ▾</button><span data-varrest hidden>${rest.map(btn).join('')}</span>` : '') + extra;
     }
@@ -1684,7 +1705,8 @@
       return {
         company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '' },
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
-        sender: { firstName: String(s.displayName || '').split(' ')[0], name: s.displayName || '', email: s.id || '', phone: (window.teamDir || []).find(m => m.key === s.owner)?.contactPhone || '', signature: ((s.signatures || []).find(x => x && x.name === $('cSig')?.value)?.text) ?? (s.signature || '') },
+        ...teamContext(window.teamDir || [], s.owner || null),
+        sender: { firstName: String(s.displayName || '').split(' ')[0], fullName: s.displayName || '', name: s.displayName || '', email: s.id || '', phone: (window.teamDir || []).find(m => m.key === s.owner)?.contactPhone || '', signature: ((s.signatures || []).find(x => x && x.name === $('cSig')?.value)?.text) ?? (s.signature || '') },
         unsubscribeUrl: 'https://douropartners.pt/u/…',
       };
     }
@@ -4096,7 +4118,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       return {
         company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '' },
         contact: { firstName: c?._person ? String(c._person.name || '').split(' ')[0] : '' },
-        sender: { firstName: full.split(' ')[0] || '', name: full, phone: m.contactPhone || '', email: m.contactEmail || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
+        ...teamContext(window.teamDir || [], signer || null),
+        sender: { firstName: full.split(' ')[0] || '', fullName: full, name: full, phone: m.contactPhone || '', email: m.contactEmail || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
         unsubscribeUrl: '',
       };
     }
@@ -4540,7 +4563,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option>${ownerOpts(c.assignee)}</select></div>
             <div class="field"><label for="csSigner">Letters and call scripts signed by</label>
               <select id="csSigner"${dis}><option value="owner"${(c.signer || 'owner') === 'owner' ? ' selected' : ''}>Default — letters: the company's owner (André if none); calls: whoever makes the call</option>${ownerOpts(c.signer === 'owner' ? '' : c.signer)}</select>
-              <span class="hint">Their name, phone and email fill {{sender.name}}, {{sender.phone}}, {{sender.email}}. Each letter or task can be changed.</span></div>
+              <span class="hint">Their name, phone and email fill {{sender.fullName}}, {{sender.phone}}, {{sender.email}}. Each letter or task can be changed.</span></div>
           </div>
           <div class="row2">
             <div class="field"><label for="csFooter">Email footer</label>
