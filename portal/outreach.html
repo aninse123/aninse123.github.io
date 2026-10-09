@@ -2044,10 +2044,13 @@
       $('modalSave').textContent = saveLabel;
       $('modal').hidden = false;
       $('modalSave').onclick = async () => {
-        $('modalErr').hidden = true; $('modalSave').disabled = true;
+        $('modalErr').hidden = true;
+        // Spinner + "Saving…" while it works (V7); the label follows the button.
+        const BUSY_LABEL = { Save: 'Saving…', Create: 'Creating…', Forward: 'Forwarding…', Send: 'Sending…', Add: 'Adding…', Delete: 'Deleting…', Archive: 'Archiving…', 'Go live': 'Going live…' };
+        const unbusy = busyBtn($('modalSave'), BUSY_LABEL[saveLabel] || 'Working…');
         try { if (await onSave()) closeModal(); }
         catch (e) { modalError(e.message || String(e)); }
-        finally { $('modalSave').disabled = false; }
+        finally { unbusy(); }
       };
       setTimeout(() => $('modalBody').querySelector('input, select, textarea')?.focus(), 30);
     }
@@ -2059,7 +2062,7 @@
       $('modalCancel').addEventListener('click', closeModal);
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
       ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
-      $('gSave').addEventListener('click', saveGeneral);
+      $('gSave').addEventListener('click', async () => { const unbusy = busyBtn($('gSave'), 'Saving…'); try { await saveGeneral(); } finally { unbusy(); } });
       $('rdRun').addEventListener('click', () => renderReadiness(true));
       $('gTrack').addEventListener('change', async (e) => {
         const on = e.target.checked;
@@ -2070,7 +2073,7 @@
         finally { e.target.disabled = false; }
       });
       ['fEntity', 'fText'].forEach(id => $(id).addEventListener('input', renderFooterPreview));
-      $('fSave').addEventListener('click', saveFooter);
+      $('fSave').addEventListener('click', async () => { const unbusy = busyBtn($('fSave'), 'Saving…'); try { await saveFooter(); } finally { unbusy(); } });
       $('tplNew').addEventListener('click', () => openTemplate(null));
       $('supAddBtn').addEventListener('click', addSuppressionEntry);
       $('supSearch').addEventListener('input', renderSuppression);
@@ -4525,9 +4528,10 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       $('seqDiscard')?.addEventListener('click', () => { seqDraft = null; seqDirty = false; renderSequence(); });
       refreshUnsaved();
       $('seqSave')?.addEventListener('click', async () => {
-        const b = $('seqSave'); b.disabled = true;
+        const b = $('seqSave'); const unbusy = busyBtn(b, 'Saving…');
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: { steps: seqDraft.map(s => ({ ...s, channel: s.channel || 'email' })) } }, 'Sequence saved.');
-        if (r) { seqDirty = false; seqDraft = null; refreshUnsaved(); } else b.disabled = false;
+        unbusy();
+        if (r) { seqDirty = false; seqDraft = null; refreshUnsaved(); b.disabled = true; }
       });
     }
 
@@ -4649,7 +4653,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         if (mode === 'fixed' && !fixed.length) problems.push('Pick at least one address, or use the owner\'s addresses.');
         if (own && (!days.length || !$('csFrom').value || !$('csTo').value || $('csFrom').value >= $('csTo').value)) problems.push('The campaign window needs at least one day and a start time before its end time.');
         if (problems.length) { err.textContent = problems.join(' '); err.hidden = false; return; }
-        const b = $('csSave'); b.disabled = true;
+        const b = $('csSave'); const unbusy = busyBtn(b, 'Saving…');
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: {
           name: $('csName').value, description: $('csDesc').value, priority: Number($('csPrio').value),
           approvalDefault: $('csAppr').value, pacing: { newPerDay: pace, maxPerDay: maxDay }, assignee: $('csAssignee').value, signer: $('csSigner').value, recipientPolicy: $('csRecip').value,
@@ -4659,7 +4663,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, includeNotContactable: !!$('csInclNC')?.checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },
           audience: { mode: $('csAudMode').value },
         } }, 'Settings saved.');
-        b.disabled = false;
+        unbusy();
         if (r) { csetDirty = false; renderCampSettings(); }
         refreshUnsaved();
       });
