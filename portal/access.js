@@ -168,14 +168,14 @@ export function applyPerms(a) {
 }
 
 // Reload when the person's own team record changes (role, permissions) and
-// sign out at once when their access is suspended or ended.
+// sign out at once when their access is suspended or ended, or their NDA is unticked (10 Oct).
 export function watchAccess(user, a) {
   if (!user || a.admin || a.preview) return; // partners are staff: watched like anyone else
   let first = true;
   onSnapshot(doc(db, 'team', a.email), async (snap) => {
     if (first) { first = false; return; }
     const m = snap.exists() ? snap.data() : null;
-    if (!m || ['suspended', 'ended'].includes(m.status)) {
+    if (!m || ['suspended', 'ended'].includes(m.status) || (m.ndaSigned === false && m.roleId !== 'admin')) {
       await auth.signOut().catch(() => {});
       window.location.href = '/portal/login.html?access=ended';
       return;

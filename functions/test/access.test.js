@@ -106,6 +106,12 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
   ok("suspended: sign-in refused, off the login list", (await signIn("maria@douropartners.pt", "uid-maria")).err?.code === "permission-denied" && !store.get("config/teamEmailHashes").hashes.includes(sha("maria@douropartners.pt")));
   await team({ action: "reactivate", email: "maria@douropartners.pt" });
   ok("reactivate: signs in again", (await signIn("maria@douropartners.pt", "uid-maria")).res?.customClaims?.role === "intern");
+  authCalls.length = 0;
+  await team({ action: "update", email: "maria@douropartners.pt", member: { ndaSigned: false } });
+  ok("NDA unticked: sessions revoked and account disabled at once (10 Oct), next sign-in refused", authCalls.some((c) => c.op === "revoke") && authCalls.some((c) => c.op === "update" && c.props.disabled === true) && !!(await signIn("maria@douropartners.pt", "uid-maria")).err);
+  authCalls.length = 0;
+  await team({ action: "update", email: "maria@douropartners.pt", member: { ndaSigned: true } });
+  ok("NDA ticked again: account enabled, signs in", authCalls.some((c) => c.op === "update" && c.props.disabled === false) && (await signIn("maria@douropartners.pt", "uid-maria")).res?.customClaims?.role === "intern");
   ok("the Admin can't be suspended; a partner can (staff), and comes back on reactivate", (await team({ action: "suspend", email: "andre.rocha@douropartners.pt" })).err?.details?.reason === "partner_locked" && !(await team({ action: "suspend", email: "antonio.carvalho@douropartners.pt" })).err && store.get("team/antonio.carvalho@douropartners.pt").status === "suspended" && !(await team({ action: "reactivate", email: "antonio.carvalho@douropartners.pt" })).err && store.get("team/antonio.carvalho@douropartners.pt").status === "active");
 
   // A former team member who is also an investor signs in as an investor only

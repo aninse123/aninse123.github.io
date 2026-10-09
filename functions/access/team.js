@@ -106,7 +106,9 @@ async function refreshClaims(email) {
   const claims = P.claimsFor(email, m, role);
   const auth = getAuth();
   await auth.setCustomUserClaims(m.uid, claims);
-  if (!P.isActive(m) && !P.ADMIN_EMAILS.includes(email)) {
+  // NDA unticked (10 Oct): signed out at once, like Suspend (the next sign-in was already refused).
+  const ndaMissing = !m.ndaSigned && !isFixed(m.roleId);
+  if ((!P.isActive(m) || ndaMissing) && !P.ADMIN_EMAILS.includes(email)) {
     await auth.revokeRefreshTokens(m.uid).catch(() => {});
     await auth.updateUser(m.uid, { disabled: true }).catch(() => {});
   } else {
