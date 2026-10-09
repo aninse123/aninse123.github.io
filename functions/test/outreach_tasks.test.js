@@ -25,6 +25,12 @@ const get = (p) => store.get(p);
 const docs = (coll) => [...store.entries()].filter(([p]) => p.startsWith(coll + "/")).map(([p, d]) => ({ id: p.split("/").pop(), ...d }));
 const run = (iso, extra = {}) => runScheduler({ now: new Date(iso), gap: null, rand: () => 0, ...extra });
 const TUE = "2026-09-29T10:30:00+01:00";
+// The task outcomes use the real clock (call-back dates must not be in the past;
+// the next step is due "now"). Freeze it on the test's own timeline so the suite
+// doesn't break as the calendar moves on (it did from 6 Oct 2026).
+const RealDate = Date; let fakeNow = null;
+global.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [fakeNow ?? RealDate.now()])); } static now() { return fakeNow ?? RealDate.now(); } };
+const setNow = (iso) => { fakeNow = iso ? RealDate.parse(iso) : null; };
 
 function seed({ real = false } = {}) {
   store.clear(); calls.length = 0;
@@ -71,6 +77,7 @@ async function makeCampaign(campaign, ids) {
   ok("next run doesn't create a second task", (await run("2026-10-01T11:05:00+01:00")).tasks === 0 && docs("outreachTasks").length === 3);
 
   // Outcomes
+  setNow("2026-10-01T11:00:00+01:00"); // tasks are completed on Thursday 1 Oct, during the run above
   ok("outcome that doesn't exist for the channel refused", (await camp({ action: "completeTask", taskId: t1id, outcome: "accepted" })).err?.details?.reason === "bad_outcome");
   ok("call back needs a date", (await camp({ action: "completeTask", taskId: t1id, outcome: "callback" })).err?.details?.reason === "date_required");
   const cb = await camp({ action: "completeTask", taskId: t1id, outcome: "callback", reopenAt: "2026-10-05T10:00:00+01:00", notes: "Ligar segunda" });

@@ -1411,7 +1411,7 @@ async function saveContact() {
 function deleteContact() {
   const c = getContact(); if (!c) return;
   deleteTarget = 'contact';
-  document.getElementById('deleteDesc').textContent = `Delete "${c.name}"? All activity history will be permanently removed. This cannot be undone.`;
+  document.getElementById('deleteDesc').textContent = `Delete "${c.name}"? The contact is removed; its activity history is kept, marked "record deleted". This cannot be undone.`;
   showEl('deleteModal', true);
 }
 
