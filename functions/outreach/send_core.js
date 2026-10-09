@@ -17,7 +17,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 const { RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, UNSUBSCRIBE_BASE_URL, DEFAULT_SENDER_CAP, SENDER_DOMAIN } = require("./config");
 const { normEmail, domainOf, isFreeMail, isValidEmail, isTestRecipient, checkMx, makeUnsubToken, parseAddress } = require("./util");
-const { buildContext, renderTemplate, buildPlainEmail, buildQuote, replySubject, TEST_FOOTER } = require("./render");
+const { buildContext, renderTemplate, buildPlainEmail, buildQuote, replySubject, wantsFooter, footerSource } = require("./render");
 const { sendEmail, ResendError } = require("./resend");
 const store = require("./store");
 const { companyRecipients } = require("./recipients");
@@ -42,6 +42,8 @@ function fail(code, reason, message, extra = {}) {
 //   person                   → Phase 5: { email, name, org, refs } — a person, not a company
 //                              (investor, broker, journalist…). No company; {{company.*}} uses
 //                              the organisation; logged on the person's CRM / Network record.
+//   footer                   → true / false: add the email footer (CCSL, 9 Oct); anything
+//                              else = the conversation's choice (replies), else Settings
 //   recipient                → Phase 3b: { email } of the person to write to (the company
 //                              address, a contact or a linked person). Checked against the
 //                              company's own list; fills {{contact.firstName}}. In test mode
@@ -178,16 +180,15 @@ async function prepareEmail(opts) {
   const missing = [...new Set([...subject.missing, ...body.missing])];
   if (missing.length) fail("invalid-argument", "missing_variables", `These fields are empty for this company: ${missing.join(", ")}. Add a fallback, e.g. {{${missing[0]}|…}}.`, { missing });
 
-  let footerSrc = null;
-  if (settings.complianceBlockId) {
-    const cSnap = await db().doc(`outreachCompliance/${settings.complianceBlockId}`).get();
-    if (cSnap.exists) footerSrc = [cSnap.data().legalEntityLine, cSnap.data().footerText].filter(Boolean).join("\n");
+  // CCSL (9 Oct): the footer is optional and off by default — this email's
+  // choice, else the conversation's first email, else Settings.
+  const withFooter = wantsFooter(opts.footer, isReply ? thread.footer : undefined, settings.footerDefaults?.company);
+  let footerSrc = "";
+  if (withFooter) {
+    const cSnap = await db().doc(`outreachCompliance/${settings.complianceBlockId || "default"}`).get();
+    footerSrc = footerSource(cSnap.exists ? cSnap.data() : null);
   }
-  if (!footerSrc) {
-    if (!isTest) fail("failed-precondition", "compliance_missing", "The legal footer isn't configured yet — required before sending to real companies.");
-    footerSrc = TEST_FOOTER;
-  }
-  const footer = renderTemplate(footerSrc, ctx).text;
+  const footer = footerSrc ? renderTemplate(footerSrc, ctx).text : "";
 
   // A reply quotes the last message in the thread (normally the prospect's;
   // for a campaign follow-up, our previous email), so the context survives
@@ -225,7 +226,7 @@ async function prepareEmail(opts) {
   return {
     callerEmail, settings, isReply, isTest, messageRef, messageId, threadRef, thread, companyId, company,
     senderId, sender, to, toDomain, subject: subject.text, bodyText: body.text, text, html, headers,
-    templateId, variantKey, countsAsOutreach,
+    templateId, variantKey, countsAsOutreach, footer: withFooter,
     redirectedFrom: isTest && intended && intended !== to ? intended : null,
     contactName, recipientKind: isReply ? (thread.recipientKind || null) : person ? "people" : (recipient?.kind || "company"),
     person,
@@ -250,7 +251,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
       recipientKind: p.recipientKind, recipientPersonId: p.recipientPersonId, personalAddress: !!p.personalAddress,
       senderId, owner, subject: p.subject, status: "open", unread: false, unmatched: false,
       lastMessageAt: now, lastDirection: "out", rfcIds: [], lastInboundRfcId: null,
-      templateId: p.templateId, variantKey: p.variantKey,
+      templateId: p.templateId, variantKey: p.variantKey, footer: !!p.footer,
       campaignId: campaign?.campaignId || null, enrolmentId: campaign?.enrolmentId || null,
       firstTouchAt: now, repliedAt: null,
       responseCategory: null, isTest, createdAt: now, createdBy: p.callerEmail,
@@ -262,7 +263,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
     inReplyTo: headers["In-Reply-To"] || null, references: headers["References"] || null,
     from: `${sender.displayName} <${senderId}>`, to: [to], cc: [],
     subject: p.subject, text: p.text, html: p.html, snippet: p.bodyText.slice(0, 500),
-    templateId: p.templateId, variantKey: p.variantKey, senderId, sentBy: p.callerEmail, source,
+    templateId: p.templateId, variantKey: p.variantKey, senderId, sentBy: p.callerEmail, source, footer: !!p.footer,
     campaignId: campaign?.campaignId || null, enrolmentId: campaign?.enrolmentId || null, stepId: campaign?.stepId || null,
     redirectedFrom: p.redirectedFrom, approvedBy: campaign?.approvedBy || null,
     recipientKind: p.recipientKind, personalAddress: !!p.personalAddress,

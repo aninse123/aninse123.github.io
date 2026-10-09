@@ -55,6 +55,7 @@ const DEFAULT_CAMPAIGN = {
   lockedStepIds: [],           // steps that have already run for someone (C8)
   recipientPolicy: "company",  // Phase 3b: company | primary_contact | best_person
   audienceType: "companies",   // Phase 5: companies | people (investors, brokers, press…)
+  footer: null,                // CCSL (9 Oct): true / false = add the email footer or not; null = Settings default
 };
 
 class CampaignError extends Error {
@@ -189,6 +190,7 @@ function normalizeCampaign(input, existing = null) {
     // P4: maxPerDay = this campaign's own daily email limit (null = only the global limits).
     pacing: { newPerDay: intIn(src.pacing?.newPerDay, 1, 500, 20), maxPerDay: src.pacing?.maxPerDay == null || src.pacing?.maxPerDay === "" ? null : intIn(src.pacing.maxPerDay, 1, 1000, null) },
     audienceType: src.audienceType === "people" ? "people" : "companies",
+    footer: typeof src.footer === "boolean" ? src.footer : null,
     audience: { mode: audienceMode, sources: base.audience?.sources || [] },
     exclusions: {
       contactedWithinDays: intIn(ex.contactedWithinDays, 0, 3650, 30),

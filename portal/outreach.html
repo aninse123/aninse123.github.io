@@ -447,8 +447,9 @@
             <div class="field">
               <label for="cBody">Message</label>
               <textarea id="cBody" rows="10"></textarea>
-              <span class="hint">Plain text. Your signature and the legal footer are added automatically. Insert a field:</span>
+              <span class="hint">Plain text. Your signature is added automatically. Insert a field:</span>
               <div class="vars" id="varButtons"></div>
+              <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="cFooter"> <span>Add the email footer <span class="hint">(optional — Settings → Email footer)</span></span></label>
             </div>
 
             <div class="banner banner--bad" id="composeErr" hidden style="margin-bottom:12px;"></div>
@@ -582,7 +583,7 @@
         <div class="chips subnav" id="setNav" role="tablist" aria-label="Settings sections">
           <button class="chip on" data-sec="general" data-perm="out.admin">General</button>
           <button class="chip" data-sec="senders" data-perm="out.admin">Addresses</button>
-          <button class="chip" data-sec="footer" data-perm="out.admin">Legal footer</button>
+          <button class="chip" data-sec="footer" data-perm="out.admin">Email footer</button>
           <button class="chip" data-sec="templates">Templates</button>
           <button class="chip" data-sec="suppression">Suppression list</button>
         </div>
@@ -667,17 +668,27 @@
             </div>
           </div>
 
-          <!-- Legal footer -->
+          <!-- Email footer (optional since CCSL, 9 Oct) -->
           <div class="card setsec" id="sec-footer" data-perm="out.admin" hidden>
-            <h2>Legal footer</h2>
-            <p class="hint" style="margin-bottom:14px;">Added to the bottom of every outreach email. Required before test mode can be switched off. Draft for CCSL to review — not legal advice. Keep <code>{{unsubscribeUrl}}</code> in the text: it becomes each recipient's one-click removal link.</p>
-            <div class="field">
-              <label for="fEntity">Legal entity line</label>
-              <input type="text" id="fEntity" placeholder="Douro Partners, Lda. · NIPC [___] · [morada]">
+            <h2>Email footer</h2>
+            <p class="hint" style="margin-bottom:14px;">Optional — CCSL said it isn't needed for our kind of contact, so it's off unless you tick it. Choose the default here; each email, campaign and recurring email can change it. Gmail's and Outlook's hidden one-click unsubscribe works either way.</p>
+            <div class="field"><label>Add the footer by default to</label>
+              <label class="checkline"><input type="checkbox" id="fDefCo"> <span>Company emails — Compose, replies, campaigns and recurring emails</span></label>
+              <label class="checkline" style="margin-top:6px;"><input type="checkbox" id="fDefOne"> <span>One-to-one emails — Investor CRM and Network (the entity line and privacy mention only, never the removal link)</span></label>
             </div>
             <div class="field">
-              <label for="fText">Footer text</label>
-              <textarea id="fText" rows="5"></textarea>
+              <label for="fEntity">Legal entity line <span class="hint">(optional)</span></label>
+              <input type="text" id="fEntity" placeholder="e.g. Valesintemporais, Lda · NIPC … · sede …" autocomplete="off">
+              <span class="hint">A line still holding [___] is never sent.</span>
+            </div>
+            <div class="field">
+              <label for="fText">Footer text — company emails only <span class="hint">(optional)</span></label>
+              <textarea id="fText" rows="4"></textarea>
+              <span class="hint">For a removal link keep <code>{{unsubscribeUrl}}</code> in the text — it becomes each recipient's one-click removal link.</span>
+            </div>
+            <div class="field">
+              <label class="checkline"><input type="checkbox" id="fPrivacy"> <span>Mention the privacy page (douropartners.pt/privacidade)</span></label>
+              <span class="hint" id="fPrivacyHint"></span>
             </div>
             <div class="preview" style="margin-bottom:14px;"><div class="preview__footer" id="fPreview" style="margin-top:0;"></div></div>
             <div class="banner banner--bad" id="fErr" hidden style="margin-bottom:12px;"></div>
@@ -688,7 +699,7 @@
           <div class="card setsec" id="sec-templates" hidden style="padding:0;">
             <div style="padding:18px 20px 10px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
               <div><h2 style="margin:0;">Templates</h2>
-                <p class="hint" style="margin-top:6px;">Content only — the layout (plain, personal-looking), your signature and the legal footer are added when sending. Variants A/B are for testing subject lines or openings; you pick one in Compose.</p></div>
+                <p class="hint" style="margin-top:6px;">Content only — the layout (plain, personal-looking), your signature (and the email footer, when ticked) are added when sending. Variants A/B are for testing subject lines or openings; you pick one in Compose.</p></div>
               <button class="btn btn--primary btn--sm" id="tplNew">New template</button>
             </div>
             <div class="table-wrap">
@@ -869,7 +880,7 @@
         $('composeTestBanner').hidden = !test;
         $('noCompanyWrap').hidden = !test;
         $('testList').innerHTML = (settings?.testRecipients || []).map(e => `<option value="${esc(e)}">`).join('');
-        renderSettings(); renderUsage(); renderPreview();
+        renderSettings(); renderUsage(); syncFooterForm(); renderPreview();
       }, (e) => console.warn('settings', e));
     }
 
@@ -1165,7 +1176,8 @@
           </div>
           <div class="vars" id="replyVars">${varBarHtml()}</div>
           <textarea id="replyText" placeholder="Write your reply…"></textarea>
-          <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature, the previous message quoted below it, and the legal footer. Fields like {{company.shortName}} work here too.</span></div>
+          <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature and the previous message quoted below it. Fields like {{company.shortName}} work here too.</span>
+          <label class="checkline" style="margin-top:6px;"><input type="checkbox" id="replyFooter"${(typeof t.footer === 'boolean' ? t.footer : footerDefault('company')) ? ' checked' : ''}> <span>Add the email footer <span class="hint">(${typeof t.footer === 'boolean' ? 'as in this conversation\'s first email' : 'Settings default'})</span></span></label></div>
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
         <button class="btn btn--primary" id="replyBtn" data-perm="out.write">${esc(SEND_LABEL(true))}</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
@@ -1188,7 +1200,7 @@
       if (!body) { err.textContent = 'Write the reply first.'; err.hidden = false; return; }
       const btn = $('replyBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
       try {
-        const res = await sendWithConfirm({ threadId: t.id, body, requestId: requestId() });
+        const res = await sendWithConfirm({ threadId: t.id, body, requestId: requestId(), footer: !!$('replyFooter')?.checked });
         if (res?.draft) { $('replyText').value = ''; toast('Reply saved — it waits in Tasks → To approve until André or António sends it.'); }
         else if (res) { $('replyText').value = ''; toast(res.warnings?.length ? 'Reply sent. ' + res.warnings[0] : 'Reply sent.'); }
       } catch (e) { err.textContent = errText(e); err.hidden = false; }
@@ -1462,7 +1474,11 @@
       $('cSig').addEventListener('change', renderPreview);
       $('cTpl').addEventListener('change', applyTemplate);
       $('sendBtn').addEventListener('click', sendNew);
-      $('clearBtn').addEventListener('click', () => { pickCompany(null); $('coSearch').value = ''; $('cSubject').value = ''; $('cBody').value = ''; $('composeErr').hidden = true; renderPreview(); });
+      $('clearBtn').addEventListener('click', () => { pickCompany(null); $('coSearch').value = ''; $('cSubject').value = ''; $('cBody').value = ''; $('composeErr').hidden = true; composeFooterTouched = false; $('cFooter').checked = footerDefault('company'); renderPreview(); });
+      $('cFooter').addEventListener('change', () => { composeFooterTouched = true; renderPreview(); });
+      ['fDefCo', 'fDefOne'].forEach(id => $(id).addEventListener('change', () => { footerFormTouched = true; }));
+      ['fEntity', 'fText'].forEach(id => $(id).addEventListener('input', renderFooterPreview));
+      $('fPrivacy').addEventListener('change', renderFooterPreview);
       renderPreview();
     }
 
@@ -1710,10 +1726,11 @@
       const s = renderVars($('cSubject').value, ctx), b = renderVars($('cBody').value, ctx);
       $('pvSubject').innerHTML = s.html || '<span style="color:#aaa">Subject</span>';
       $('pvBody').innerHTML = (b.html || '<span style="color:#aaa">Message</span>') + (ctx.sender.signature ? '\n\n' + esc(ctx.sender.signature) : '');
-      const test = !settings || settings.testMode !== false;
-      $('pvFooter').textContent = (settings?.complianceBlockId && compliance)
-        ? '--\n' + [compliance.legalEntityLine, compliance.footerText].filter(Boolean).join('\n').replace(/\{\{\s*unsubscribeUrl\s*\}\}/g, 'https://douropartners.pt/u/…')
-        : (test ? '--\n[TESTE] Rodapé legal ainda por configurar. Remover: https://douropartners.pt/u/…' : '— legal footer missing: sending is blocked —');
+      // CCSL (9 Oct): the footer only when ticked.
+      const fl = $('cFooter')?.checked ? footerLines(compliance) : [];
+      $('pvFooter').textContent = $('cFooter')?.checked
+        ? (fl.length ? '--\n' + fl.join('\n').replace(/\{\{\s*unsubscribeUrl\s*\}\}/g, 'https://douropartners.pt/u/…') : '(footer ticked, but it has nothing to add yet — Settings → Email footer)')
+        : '';
       const missing = [...new Set([...s.missing, ...b.missing])];
       $('pvMeta').innerHTML = `From <b>${esc($('cFrom').value || '—')}</b> to <b>${esc($('cTo').value || '—')}</b>` +
         (missing.length ? ` · <span style="color:var(--danger)">empty: ${missing.map(esc).join(', ')}</span>` : '');
@@ -1725,6 +1742,7 @@
         companyId: picked?.id || null, senderId: $('cFrom').value, to: $('cTo').value.trim(),
         subject: $('cSubject').value, body: $('cBody').value, requestId: requestId(),
         ...($('cSig')?.value ? { signatureName: $('cSig').value } : {}),
+        footer: !!$('cFooter')?.checked,
       };
       const rcp = picked ? chosenRecipient() : null;
       if (rcp) payload.recipient = { email: rcp.email };
@@ -1964,10 +1982,26 @@
     }
 
     // ── Settings ───────────────────────────────────────────────
-    const DEFAULT_ENTITY = 'Douro Partners, Lda. · NIPC [___] · [morada]';
+    const DEFAULT_ENTITY = '';
+    // CCSL (9 Oct): the same footer the server builds (functions/outreach/render.js footerSource).
+    const PRIVACY_LINE = 'Política de privacidade: douropartners.pt/privacidade';
+    const FOOTER_PLACEHOLDER = /\[(___|morada|a definir)\]/i;
+    function footerLines(block, oneToOne = false) {
+      if (!block) return [];
+      return [block.legalEntityLine, oneToOne ? null : block.footerText, block.mentionPrivacy ? PRIVACY_LINE : null]
+        .map(x => String(x || '').trim()).filter(x => x && !FOOTER_PLACEHOLDER.test(x));
+    }
+    const footerDefault = (kind) => settings?.footerDefaults?.[kind] === true;
+    // The privacy page answers "not found" until it's activated (netlify.toml).
+    let privacyLive = null;
+    async function checkPrivacyLive() {
+      try { const r = await fetch('/privacidade', { method: 'GET', cache: 'no-store', redirect: 'manual' }); privacyLive = r.status === 200; } catch (e) { privacyLive = false; }
+      syncFooterForm();
+    }
     // Draft from spec §10.1 — CCSL to review before go-live.
-    const DEFAULT_FOOTER = 'Contactamos empresas com base em informação empresarial pública, por considerarmos que uma conversa sobre sucessão ou crescimento pode ser do vosso interesse. Se preferir não receber mais emails nossos, responda "remover" ou clique aqui: {{unsubscribeUrl}}. Política de privacidade: douropartners.pt/privacidade';
+    const DEFAULT_FOOTER = 'Contactamos empresas com base em informação empresarial pública, por considerarmos que uma conversa sobre sucessão ou crescimento pode ser do vosso interesse. Se preferir não receber mais emails nossos, responda "remover" ou clique aqui: {{unsubscribeUrl}}.';
     let compliance = null;
+    let composeFooterTouched = false; // CCSL: the Compose tick follows Settings until changed
     let templatesAll = [];
     let suppression = null;
     let generalDirty = false;
@@ -2123,12 +2157,12 @@
       const fetchStatus = async (path) => { try { const r = await fetch(path, { method: 'GET', cache: 'no-store', redirect: 'manual' }); return { status: r.status, text: r.status === 200 ? await r.text() : '' }; } catch (e) { return { status: 0, text: '' }; } };
       const count = async (coll, ...conds) => { try { const r = await getCountFromServer(query(collection(db, coll), ...conds)); addReads(1); return r.data().count; } catch (e) { return null; } };
       try {
-        // 1. Legal footer
-        const footerOk = settings?.complianceBlockId && compliance && !hasPlaceholder(compliance.legalEntityLine) && (compliance.footerText || '').includes('{{unsubscribeUrl}}');
-        add(footerOk ? 'ok' : 'todo', 'Legal footer', footerOk ? 'Entity line and unsubscribe link saved.' : 'Needs the real entity name, NIPC and address (no [___]) — Settings → Legal footer. CCSL to review.', footerOk ? '' : 'footer');
+        // 1. Email footer — optional since CCSL (9 Oct)
+        add('ok', 'Email footer', `Optional (CCSL). By default ${footerDefault('company') ? 'on' : 'off'} for company emails, ${footerDefault('oneToOne') ? 'on' : 'off'} for one-to-one${footerLines(compliance).length ? '' : ' — nothing saved to add'}.`);
         // 2–4. This site: privacy page, unsubscribe rewrite, hidden server code
         const [priv, unsub, src] = await Promise.all([fetchStatus('/privacidade'), fetchStatus('/u/readiness-check'), fetchStatus('/functions/package.json')]);
-        if (priv.status !== 200) add('todo', 'Privacy page', `/privacidade answers ${priv.status || 'nothing'} on ${location.host}.`);
+        if (priv.status === 404) add('ok', 'Privacy page', 'Hidden until activated (after CCSL approves the text) — emails can\'t mention it meanwhile.');
+        else if (priv.status !== 200) add('todo', 'Privacy page', `/privacidade answers ${priv.status || 'nothing'} on ${location.host}.`);
         else if (/Rascunho em revisão|name="robots" content="noindex"/.test(priv.text)) add('check', 'Privacy page', 'Live, but still the draft (banner and noindex) — remove both once CCSL approves it and the [a definir] fields are filled.');
         else add('ok', 'Privacy page', 'Live.');
         add(unsub.status === 400 || unsub.status === 200 ? 'ok' : 'todo', 'Unsubscribe links', unsub.status === 400 || unsub.status === 200 ? `douropartners.pt/u/… works on ${location.host}.` : `/u/… answers ${unsub.status || 'nothing'} here — on production it needs the merge to main (the /u/ rewrite).`);
@@ -2181,13 +2215,10 @@
       $('rdWhen').textContent = `${todo ? `${todo} to do` : 'nothing blocking'} · checked ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
     }
 
-    // Going live is gated on the go-live checklist (spec §13.3); the server
-    // independently refuses real sends without a legal footer.
+    // Going live is gated on the go-live checklist (spec §13.3). The email
+    // footer and the privacy page are optional since CCSL (9 Oct).
     function goLive() {
-      const footerOk = settings?.complianceBlockId && compliance && !hasPlaceholder(compliance.legalEntityLine) && (compliance.footerText || '').includes('{{unsubscribeUrl}}');
-      if (!footerOk) { toast('Set up the legal footer first (Settings → Legal footer) — with the real entity name, NIPC and address, no [___] placeholders.'); showSec('footer'); return; }
       const items = [
-        ['glFooter', 'The legal footer and privacy page are reviewed (CCSL) and the privacy page is live'],
         ['glAddr', 'The addresses going live are active: warm-up stopped in Instantly and ImprovMX forwarding to Resend'],
         ['glRewrite', 'The unsubscribe link works on douropartners.pt (the /u/ rewrite is live on production)'],
         ['glTpl', 'At least one template is written and active'],
@@ -2270,23 +2301,39 @@
         if (wasFirst || !$('fEntity').matches(':focus')) {
           $('fEntity').value = compliance?.legalEntityLine ?? DEFAULT_ENTITY;
           $('fText').value = compliance?.footerText ?? DEFAULT_FOOTER;
+          $('fPrivacy').checked = !!compliance?.mentionPrivacy;
         }
-        $('fState').textContent = compliance ? `Saved${compliance.updatedBy ? ' by ' + compliance.updatedBy : ''}.${hasPlaceholder(compliance.legalEntityLine) ? ' Still has [___] placeholders — fine for testing, not for going live.' : ''}` : 'Not saved yet — this is the draft from the spec.';
-        renderFooterPreview(); renderPreview();
+        $('fState').textContent = compliance ? `Saved${compliance.updatedBy ? ' by ' + compliance.updatedBy : ''}.${hasPlaceholder(compliance.legalEntityLine) ? ' The entity line still has [___] — it is left out until filled.' : ''}` : 'Not saved yet — this is the draft text.';
+        if (wasFirst) checkPrivacyLive();
+        syncFooterForm(); renderFooterPreview(); renderPreview();
       }, (e) => console.warn('compliance', e));
     }
+    // Defaults from Settings; the privacy tick only works once the page is live.
+    let footerFormTouched = false;
+    function syncFooterForm() {
+      if (!$('fDefCo')) return;
+      if (!footerFormTouched) { $('fDefCo').checked = footerDefault('company'); $('fDefOne').checked = footerDefault('oneToOne'); }
+      const p = $('fPrivacy');
+      p.disabled = privacyLive !== true && !p.checked;
+      $('fPrivacyHint').textContent = privacyLive === true ? 'The page is live.' : privacyLive === false ? 'Privacy page is hidden (not found) — activate it first, then tick this.' : 'Checking the privacy page…';
+      if (!composeFooterTouched && $('cFooter')) { $('cFooter').checked = footerDefault('company'); renderPreview(); }
+    }
     function renderFooterPreview() {
-      const txt = [$('fEntity').value.trim(), $('fText').value.trim()].filter(Boolean).join('\n').replace(/\{\{\s*unsubscribeUrl\s*\}\}/g, 'https://douropartners.pt/u/…');
-      $('fPreview').textContent = '--\n' + txt;
+      const block = { legalEntityLine: $('fEntity').value, footerText: $('fText').value, mentionPrivacy: $('fPrivacy').checked };
+      const co = footerLines(block).join('\n').replace(/\{\{\s*unsubscribeUrl\s*\}\}/g, 'https://douropartners.pt/u/…');
+      const one = footerLines(block, true).join('\n');
+      $('fPreview').textContent = `Company emails:\n${co ? '--\n' + co : '(nothing to add)'}\n\nOne-to-one emails:\n${one || '(nothing to add)'}`;
     }
     async function saveFooter() {
       const err = $('fErr'); err.hidden = true;
       const legalEntityLine = $('fEntity').value.trim(), footerText = $('fText').value.trim();
-      if (!legalEntityLine || !footerText) { err.textContent = 'Both the entity line and the footer text are required.'; err.hidden = false; return; }
-      if (!footerText.includes('{{unsubscribeUrl}}')) { err.textContent = 'Keep {{unsubscribeUrl}} in the footer text — it becomes the removal link.'; err.hidden = false; return; }
-      await setDoc(doc(db, 'outreachCompliance', 'default'), { language: 'pt', legalEntityLine, footerText, updatedAt: serverTimestamp(), updatedBy: me }, { merge: true });
-      if (settings?.complianceBlockId !== 'default') await updateDoc(doc(db, 'outreachSettings', 'global'), { complianceBlockId: 'default' });
-      toast(hasPlaceholder(legalEntityLine) ? 'Footer saved — it still has [___] placeholders; fill them before going live.' : 'Footer saved.');
+      const mentionPrivacy = $('fPrivacy').checked && privacyLive === true;
+      const footerDefaults = { company: $('fDefCo').checked, oneToOne: $('fDefOne').checked };
+      if ((footerDefaults.company || footerDefaults.oneToOne) && !footerLines({ legalEntityLine, footerText, mentionPrivacy }).length) { err.textContent = 'The footer is ticked as a default but has nothing to add — fill the entity line or the text, or untick the default.'; err.hidden = false; return; }
+      await setDoc(doc(db, 'outreachCompliance', 'default'), { language: 'pt', legalEntityLine, footerText, mentionPrivacy, updatedAt: serverTimestamp(), updatedBy: me }, { merge: true });
+      await updateDoc(doc(db, 'outreachSettings', 'global'), { complianceBlockId: 'default', footerDefaults, updatedAt: serverTimestamp(), updatedBy: me });
+      footerFormTouched = false;
+      toast(`Footer saved — by default ${footerDefaults.company ? 'on' : 'off'} for company emails, ${footerDefaults.oneToOne ? 'on' : 'off'} for one-to-one.${footerText && !footerText.includes('{{unsubscribeUrl}}') ? ' (No removal link in the text.)' : ''}`);
     }
 
     // Templates: content with A/B variants.
@@ -3591,7 +3638,7 @@ Optional note for them:`, '');
           ${i.lastError ? `<div class="banner banner--bad" style="margin:8px 0;">Last attempt failed: ${esc(i.lastError)}</div>` : ''}
           <div class="field"><label for="isub-${esc(i.id)}">Subject</label><input type="text" id="isub-${esc(i.id)}" maxlength="300" value="${esc(i.subject)}"></div>
           <div class="field"><label for="ibody-${esc(i.id)}">Message</label><textarea id="ibody-${esc(i.id)}" rows="10">${esc(i.body)}</textarea>
-            <span class="hint">Personal fields work as in templates: {{contact.firstName|Caro investidor}}, {{company.shortName}} (= the person's organisation). The legal footer and unsubscribe link are added.</span></div>
+            <span class="hint">Personal fields work as in templates: {{contact.firstName|Caro investidor}}, {{company.shortName}} (= the person's organisation). The email footer is added only if this recurring email has it on.</span></div>
           <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
             <button class="btn btn--ghost btn--sm" data-iskip="${esc(i.id)}" data-perm="out.approve">Skip this issue</button>
             <button class="btn btn--ghost btn--sm" data-itest="${esc(i.id)}" data-perm="out.campaigns" title="The email as the first person on the list would get it, sent only to you">Send a test to me</button>
@@ -3748,12 +3795,15 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
         <div class="field"><label for="rcTime">Goes out at (Lisbon)</label><input type="time" id="rcTime" value="${esc(sc.time)}">
           <span class="hint">Each issue is drafted a day before, into Tasks → To approve. Approve it by then and it goes out on the day, inside the sending window.</span></div>
         <div class="field"><label for="rcMax">Max emails per day</label><input type="text" inputmode="numeric" id="rcMax" value="${esc(r?.maxPerDay ?? 40)}">
-          <span class="hint">Also bounded by the automations limit and the address's daily cap. The approve card shows how many days it will take.</span></div>`,
+          <span class="hint">Also bounded by the automations limit and the address's daily cap. The approve card shows how many days it will take.</span></div>
+        <div class="field"><label for="rcFooter">Email footer</label><select id="rcFooter"><option value=""${typeof r?.footer !== 'boolean' ? ' selected' : ''}>Settings default (${footerDefault('company') ? 'on' : 'off'})</option><option value="on"${r?.footer === true ? ' selected' : ''}>Add the footer</option><option value="off"${r?.footer === false ? ' selected' : ''}>No footer</option></select>
+          <span class="hint">Optional (CCSL). Applies to every issue.</span></div>`,
         async () => {
           const recurringIn = {
             name: $('rcName').value, listId: $('rcList').value, templateId: $('rcTpl').value, senderId: $('rcFrom').value,
             schedule: { freq: $('rcFreq').value, weekday: Number($('rcWd').value), day: Number($('rcDay').value), startMonth: Number($('rcQ').value), time: $('rcTime').value },
             maxPerDay: Number($('rcMax').value),
+            footer: $('rcFooter').value === 'on' ? true : $('rcFooter').value === 'off' ? false : null,
           };
           const out = (await callRecurring({ action: 'save', recurringId: r?.id || null, recurring: recurringIn })).data;
           toast(r ? 'Saved.' : `Created — the first issue goes out ${out.nextIssueAt ? dayFmt.format(new Date(out.nextIssueAt)) : 'on its date'} (drafted a day before). Use "Issue now" to start earlier.`);
@@ -4257,7 +4307,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
             }).join('') : '<tr><td colspan="7" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
           </table></div>
-          <p class="hint" style="padding:10px 14px;">Print on plain A4 and fold into a window envelope (address on the left). The legal entity line from Settings → Legal footer is printed at the bottom. After posting, mark them — the sequence then moves on.</p>
+          <p class="hint" style="padding:10px 14px;">Print on plain A4 and fold into a window envelope (address on the left). The legal entity line from Settings → Email footer (if filled) is printed at the bottom. After posting, mark them — the sequence then moves on.</p>
         </div>`;
       const sync = () => { $('letPrint').disabled = $('letPosted').disabled = !letterSel.size; $('letPrint').textContent = `Print selected (${num(letterSel.size)})`; };
       $('lettersView').querySelectorAll('[data-let]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) letterSel.add(cb.dataset.let); else letterSel.delete(cb.dataset.let); sync(); }));
@@ -4493,6 +4543,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               <span class="hint">Their name, phone and email fill {{sender.name}}, {{sender.phone}}, {{sender.email}}. Each letter or task can be changed.</span></div>
           </div>
           <div class="row2">
+            <div class="field"><label for="csFooter">Email footer</label>
+              <select id="csFooter"${dis}><option value=""${typeof c.footer !== 'boolean' ? ' selected' : ''}>Settings default (${footerDefault('company') ? 'on' : 'off'})</option><option value="on"${c.footer === true ? ' selected' : ''}>Add the footer</option><option value="off"${c.footer === false ? ' selected' : ''}>No footer</option></select>
+              <span class="hint">Optional (CCSL). Applies to every email of this campaign.</span></div>
             <div class="field"><label for="csMaxDay">Max emails per day (this campaign)<span class="info" title="A cap for this campaign only. The automations limit (Settings → General) and each address's daily cap still apply." aria-label="A cap for this campaign only. The automations limit (Settings → General) and each address's daily cap still apply.">i</span></label><input type="text" inputmode="numeric" id="csMaxDay" value="${esc(c.pacing?.maxPerDay ?? '')}" placeholder="no own limit"${dis}>
               <span class="hint">Empty = only the global limits. The portal spreads the sends over the days needed — see "How long each step will take" in the Overview.</span></div>
             ${c.audienceType === 'people' && c.kind !== 'issue' ? `<div class="field"><label for="csPeopleRecent">Skip people the portal emailed in the last … days</label><input type="text" inputmode="numeric" id="csPeopleRecent" value="${esc(c.exclusions?.peopleContactedWithinDays || 0)}"${dis}>
@@ -4577,6 +4630,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: {
           name: $('csName').value, description: $('csDesc').value, priority: Number($('csPrio').value),
           approvalDefault: $('csAppr').value, pacing: { newPerDay: pace, maxPerDay: maxDay }, assignee: $('csAssignee').value, signer: $('csSigner').value, recipientPolicy: $('csRecip').value,
+          footer: $('csFooter').value === 'on' ? true : $('csFooter').value === 'off' ? false : null,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, includeNotContactable: !!$('csInclNC')?.checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },

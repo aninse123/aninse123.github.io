@@ -389,6 +389,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         person: !isFollowUp && e.personEmail ? { email: e.personEmail, name: e.personName, org: e.org, refs: e.refs } : null,
         aiOpener,
         templateId: step.templateId, variantKey,
+        footer: campaign.footer, // CCSL: the campaign's choice, else the conversation's / Settings
         // Approved drafts go out as approved (edited subject/body included);
         // every check still runs again now.
         ...(approved ? { subject: approved.isReply ? null : approved.subject, body: approved.draftBody } : {}),

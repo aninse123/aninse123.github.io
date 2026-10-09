@@ -147,7 +147,7 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
 // (not buildHtml) is what actually renders for combined/"Email All" sends,
 // since buildHtml needs one investorName per recipient and combined sends
 // have no single recipient to address.
-function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescription }) {
+function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescription, legalLines = [] }) {
   const messageHtml = esc(message).replace(/\n/g, '<br>');
 
   const docDescRow = docDescription
@@ -227,7 +227,7 @@ function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescripti
               André Rocha &middot; António Carvalho<br>
               <a href="https://douropartners.pt" style="color:#9CA3AF;text-decoration:none;">
                 douropartners.pt
-              </a>
+              </a>${legalLines.length ? `<br>${legalLines.map(esc).join('<br>')}` : ''}
             </p>
           </td>
         </tr>

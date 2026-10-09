@@ -109,6 +109,27 @@ function renderTemplate(str, ctx) {
 
 const TEST_FOOTER = "[TESTE] Rodapé legal ainda por configurar. Remover: {{unsubscribeUrl}}";
 
+// CCSL (9 Oct): the email footer is optional and off unless chosen — per email,
+// else inherited (the conversation's first email, the campaign), else the
+// default in Settings.
+const PRIVACY_LINE = "Política de privacidade: douropartners.pt/privacidade";
+const FOOTER_PLACEHOLDER = /\[(___|morada|a definir)\]/i;
+function wantsFooter(explicit, inherited, dflt) {
+  if (typeof explicit === "boolean") return explicit;
+  if (typeof inherited === "boolean") return inherited;
+  return dflt === true;
+}
+// The footer's lines from the saved block: entity line, the footer text (company
+// emails only — one-to-one emails never carry the removal link) and the privacy
+// mention once the page is live. Lines still holding [___] placeholders are left out.
+function footerSource(block, { oneToOne = false } = {}) {
+  if (!block) return "";
+  return [block.legalEntityLine, oneToOne ? null : block.footerText, block.mentionPrivacy ? PRIVACY_LINE : null]
+    .map((x) => String(x || "").trim())
+    .filter((x) => x && !FOOTER_PLACEHOLDER.test(x))
+    .join("\n");
+}
+
 const PT_WEEKDAYS = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."];
 const MAX_QUOTE_CHARS = 6000;
 
@@ -171,4 +192,4 @@ function replySubject(subject) {
   return /^(re|res|ref)\s*:/i.test(s) ? s : `Re: ${s}`;
 }
 
-module.exports = { shortCompanyName, emailNameOf, firstName, buildContext, renderTemplate, buildPlainEmail, buildQuote, quoteHeader, replySubject, TEST_FOOTER };
+module.exports = { shortCompanyName, emailNameOf, firstName, buildContext, renderTemplate, buildPlainEmail, buildQuote, quoteHeader, replySubject, TEST_FOOTER, PRIVACY_LINE, wantsFooter, footerSource };

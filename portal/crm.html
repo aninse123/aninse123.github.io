@@ -567,6 +567,7 @@
     <p id="semCcHint" style="font-size:0.78rem;color:var(--text-light);margin:-8px 0 12px;display:none;"></p>
     <div class="form-group"><label>Subject</label><input type="text" class="field" id="semSubject"></div>
     <div class="form-group"><label>Message</label><textarea class="field" id="semMessage" rows="8"></textarea></div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:0.82rem;margin:-6px 0 14px;cursor:pointer;"><input type="checkbox" id="semFooter"> <span>Add the email footer <span style="color:var(--text-light);">(entity line — Outreach → Settings → Email footer)</span></span></label>
     <div class="form-group">
       <label>Attach Document <span style="font-weight:400;text-transform:none;">(optional)</span></label>
       <select class="field" id="semDoc"><option value="">— None —</option></select>
@@ -817,7 +818,7 @@
 import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
 import { guardPage, logExport, editedBadge } from './access.js';
 import { applyDirectory } from './team-dir.js';
-import { sendPeopleEmail, sendNote } from './people-send.js';
+import { sendPeopleEmail, sendNote, syncFooterTick } from './people-send.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
@@ -1857,6 +1858,7 @@ function openSendEmail(idx){
   document.getElementById('semErr').style.display = 'none';
   populateSemDoc();
   updateCcHint();
+  syncFooterTick(document.getElementById('semFooter'));
   showEl('sendEmailModal', true);
 }
 
@@ -1871,6 +1873,7 @@ function openSendEmailAll(){
   document.getElementById('semErr').style.display = 'none';
   populateSemDoc();
   updateCcHint();
+  syncFooterTick(document.getElementById('semFooter'));
   showEl('sendEmailModal', true);
 }
 
@@ -1901,7 +1904,7 @@ async function sendInvestorEmail(){
   const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
   try {
     const result = await sendPeopleEmail({ context: 'crm',
-      recipients, subject, message: msg, from, kind: 'outreach', combined: isAll,
+      recipients, subject, message: msg, from, kind: 'outreach', combined: isAll, footer: document.getElementById('semFooter').checked,
       ...(selectedDoc ? { docName: selectedDoc.name, docCategory: selectedDoc.category || '', docDescription: selectedDoc.description || '', docUrl: selectedDoc.downloadURL || '' } : {}),
     });
     if (!result.sent) throw new Error(sendNote(result) || 'Nothing was sent.');

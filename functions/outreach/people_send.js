@@ -14,7 +14,8 @@
 // The pages keep writing their own activity entries (crmActivities, …).
 //
 // data: { recipients: [{ email, name }], subject, message, from: "andre"|"antonio"|"noreply",
-//         kind: "outreach"|undefined, combined?, docName?, docCategory?, docDescription?, docUrl? }
+//         kind: "outreach"|undefined, combined?, docName?, docCategory?, docDescription?, docUrl?,
+//         footer?: true|false (CCSL, 9 Oct — else the one-to-one default in Settings) }
 
 const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
@@ -24,6 +25,7 @@ const { normEmail, isValidEmail } = require("./util");
 const store = require("./store");
 const resend = require("./resend");
 const { buildHtml, buildOutreachHtml } = require("./branded");
+const { wantsFooter, footerSource } = require("./render");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
 const { db, FieldValue } = store;
@@ -40,7 +42,7 @@ const NOTICE_BLOCKING = ["hard_bounce", "complaint", "provider_suppressed"];
 function fail(code, reason, message) { throw new HttpsError(code, message, { reason }); }
 
 async function peopleSend(data, caller) {
-  const { recipients, subject, message, from, kind, combined, docName, docCategory, docDescription, docUrl } = data || {};
+  const { recipients, subject, message, from, kind, combined, docName, docCategory, docDescription, docUrl, footer } = data || {};
   if (!Array.isArray(recipients) || !recipients.length || !String(subject || "").trim() || !String(message || "").trim()) fail("invalid-argument", "missing_fields", "Recipients, subject and message are required.");
   if (recipients.length > MAX_RECIPIENTS) fail("invalid-argument", "too_many", `Too many recipients (max ${MAX_RECIPIENTS}).`);
   const bad = recipients.find((r) => !isValidEmail(normEmail(r?.email)));
@@ -70,6 +72,15 @@ async function peopleSend(data, caller) {
   const to = (addrs) => (redirect ? [redirect] : addrs);
   const tag = (addrs) => (redirect ? `[TEST → ${addrs.join(", ")}] ${subj}` : subj);
   const base = { from: `${sender.name} <${sender.email}>`, ...(other && !redirect ? { cc: [`${other.name} <${other.email}>`] } : {}) };
+  // CCSL (9 Oct): relationship emails may carry the entity line (and the privacy
+  // mention once that page is live) — never a removal link. Off by default.
+  let legalLines = [];
+  const withFooter = isOutreach && wantsFooter(footer, undefined, settings.footerDefaults?.oneToOne);
+  if (withFooter) {
+    const c = await db().doc(`outreachCompliance/${settings.complianceBlockId || "default"}`).get();
+    legalLines = footerSource(c.exists ? c.data() : null, { oneToOne: true }).split("\n").filter(Boolean);
+  }
+  doc.legalLines = legalLines;
 
   const emails = combined
     ? [{ ...base, to: to(list.map((r) => r.email)), subject: tag(list.map((r) => r.email)), html: buildOutreachHtml({ message: msg, ...doc }) }]
@@ -89,7 +100,7 @@ async function peopleSend(data, caller) {
   }
   await store.recordQuota(quota, "people_send");
   await logRef.set({
-    kind: isOutreach ? "outreach" : "notice", from: sender.email, subject: subj, combined: !!combined,
+    kind: isOutreach ? "outreach" : "notice", from: sender.email, subject: subj, combined: !!combined, footer: !!legalLines.length,
     recipients: list.map((r) => r.email), sent: emails.length, skipped, resendIds: ids,
     isTest: !!redirect, redirectedTo: redirect, docName: docName || null, by: caller, at: FieldValue.serverTimestamp(),
   });

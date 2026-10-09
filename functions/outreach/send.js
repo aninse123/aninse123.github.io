@@ -43,6 +43,7 @@ function draftRequest(input, isReply) {
     subject: isReply ? null : input.subject ?? null,
     body: input.body ?? null,
     signatureName: typeof input.signatureName === "string" ? input.signatureName.slice(0, 60) : null,
+    footer: typeof input.footer === "boolean" ? input.footer : null, // CCSL: optional footer
   };
 }
 
@@ -78,7 +79,7 @@ async function send(request, callerEmail) {
     companyId: req.companyId, senderId: req.senderId, to: req.to,
     recipient: req.recipient,
     templateId: req.templateId, variantKey: req.variantKey,
-    subject: req.subject, body: req.body, signatureName: req.signatureName,
+    subject: req.subject, body: req.body, signatureName: req.signatureName, footer: req.footer,
     confirmOverTarget: !!input.confirmOverTarget,
   });
 
@@ -125,7 +126,7 @@ async function approveDraft(request, callerEmail) {
       callerEmail, settings, messageRef: sendRef,
       threadId: req.threadId, companyId: req.companyId, senderId: req.senderId, to: req.to, recipient: req.recipient,
       templateId: req.templateId, variantKey: req.variantKey, subject: req.subject, body: req.body, signatureName: req.signatureName || null,
-      confirmOverTarget: true,
+      footer: req.footer ?? null, confirmOverTarget: true,
     });
     const res = await deliverEmail(p);
     await sendRef.update({ writtenBy: draft.writtenBy, draftId: draftRef.id }).catch(() => {});

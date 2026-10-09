@@ -64,6 +64,25 @@
   status = 200
   force = true
 
+# Privacy page: built (privacidade.html, draft for CCSL) but hidden until
+# activated — CCSL, 9 Oct 2026. To activate: delete these three rules, push,
+# then tick "Mention the privacy page" in Outreach → Settings → Email footer.
+[[redirects]]
+  from = "/privacidade"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/privacidade.html"
+  to = "/404.html"
+  status = 404
+  force = true
+[[redirects]]
+  from = "/privacidade/*"
+  to = "/404.html"
+  status = 404
+  force = true
+
 # The site publishes the repo root, so server-side source and config would
 # otherwise be downloadable (found 2026-09-25: functions/, netlify/functions/,
 # the rules files and README all returned 200). No secrets live in them, but

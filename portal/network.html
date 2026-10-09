@@ -528,6 +528,7 @@
     </div>
     <div class="form-group"><label>Subject</label><input type="text" class="field" id="semSubject"></div>
     <div class="form-group"><label>Message</label><textarea class="field" id="semMessage" rows="8"></textarea></div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:0.82rem;margin:-6px 0 14px;cursor:pointer;"><input type="checkbox" id="semFooter"> <span>Add the email footer <span style="color:var(--text-light);">(entity line — Outreach → Settings → Email footer)</span></span></label>
     <div class="modal-err" id="semErr"></div>
     <div class="modal-actions">
       <button class="btn btn--ghost" id="semCancelBtn">Cancel</button>
@@ -597,7 +598,7 @@
 import { auth, db, addReads, addDoc, updateDoc, deleteDoc, setDoc } from './firebase-config.js';
 import { guardPage, logExport, editedBadge } from './access.js';
 import { applyDirectory } from './team-dir.js';
-import { sendPeopleEmail, sendNote } from './people-send.js';
+import { sendPeopleEmail, sendNote, syncFooterTick } from './people-send.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import {
@@ -1283,6 +1284,7 @@ function openSendEmailAll() {
   document.getElementById('semSubject').value = '';
   document.getElementById('semMessage').value = '';
   document.getElementById('semErr').style.display = 'none';
+  syncFooterTick(document.getElementById('semFooter'));
   showEl('sendEmailModal', true);
 }
 
@@ -1307,7 +1309,7 @@ async function sendFirmEmailAll() {
   const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
   try {
     const recipients = members.map(c => ({ email: c.email, name: c.name }));
-    const result = await sendPeopleEmail({ context: 'network', recipients, subject, message: msg, from, kind: 'outreach', combined: true });
+    const result = await sendPeopleEmail({ context: 'network', recipients, subject, message: msg, from, kind: 'outreach', combined: true, footer: document.getElementById('semFooter').checked });
     if (!result.sent) throw new Error(sendNote(result) || 'Nothing was sent.');
     if (sendNote(result)) alert(sendNote(result));
     const actData = {
@@ -1448,6 +1450,7 @@ function openSendEmail() {
   document.getElementById('semSubject').value = '';
   document.getElementById('semMessage').value = '';
   document.getElementById('semErr').style.display = 'none';
+  syncFooterTick(document.getElementById('semFooter'));
   showEl('sendEmailModal', true);
 }
 
@@ -1462,7 +1465,7 @@ async function sendContactEmail() {
   if (!subject || !msg) { el.textContent = 'Subject and message are required.'; el.style.display = 'block'; return; }
   const btn = document.getElementById('semSendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Sending…';
   try {
-    const result = await sendPeopleEmail({ context: 'network', recipients: [{ email: c.email, name: c.name }], subject, message: msg, from, kind: 'outreach' });
+    const result = await sendPeopleEmail({ context: 'network', recipients: [{ email: c.email, name: c.name }], subject, message: msg, from, kind: 'outreach', footer: document.getElementById('semFooter').checked });
     if (!result.sent) throw new Error(sendNote(result) || 'Nothing was sent.');
     if (sendNote(result)) alert(sendNote(result));
     const actData = {

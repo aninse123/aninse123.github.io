@@ -2,8 +2,9 @@
 // "notify investors" / "send update" (Outreach Phase 5c). Goes through the
 // outreachPeopleSend Cloud Function (admin sign-in, suppression, test mode,
 // usage bar) instead of the old Netlify notify function and its shared secret.
-import { auth } from './firebase-config.js';
+import { auth, db, addReads } from './firebase-config.js';
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
 const call = httpsCallable(getFunctions(auth.app, 'us-central1'), 'outreachPeopleSend', { timeout: 120000 });
 
@@ -12,6 +13,18 @@ const call = httpsCallable(getFunctions(auth.app, 'us-central1'), 'outreachPeopl
 export async function sendPeopleEmail(payload) {
   try { return (await call(payload)).data; }
   catch (e) { throw new Error(e?.message || String(e)); }
+}
+
+// CCSL (9 Oct): the "Add the email footer" tick in the Send email dialogs starts
+// from the one-to-one default in Outreach → Settings → Email footer (read once).
+let footerDefaultP = null;
+export function syncFooterTick(el) {
+  if (!el) return;
+  footerDefaultP ||= getDoc(doc(db, 'outreachSettings', 'global'))
+    .then(s => { addReads(1); return s.exists() && s.data()?.footerDefaults?.oneToOne === true; })
+    .catch(() => false);
+  el.checked = false;
+  footerDefaultP.then(on => { el.checked = on; });
 }
 
 const REASON = { unsubscribed: 'unsubscribed', hard_bounce: 'address bounced', complaint: 'marked as spam', provider_suppressed: 'blocked by the provider' };

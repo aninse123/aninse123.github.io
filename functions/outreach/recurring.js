@@ -116,6 +116,7 @@ async function validate(input, existing) {
     senderId,
     schedule: normalizeSchedule(src.schedule),
     maxPerDay: intIn(src.maxPerDay, 1, 1000, 40),
+    footer: typeof src.footer === "boolean" ? src.footer : null, // CCSL: null = Settings default
   };
 }
 
@@ -199,7 +200,7 @@ async function createIssue(r, dueAt, by) {
   await ref.set({
     recurringId: r.id, recurringName: r.name, number, subject: v.subject || r.name, body: v.body || "",
     status: "draft", dueAt: Timestamp.fromDate(dueAt), listId: r.listId, listName: r.listName || "", listCount: list.exists ? list.data().count ?? null : null,
-    senderId: r.senderId, maxPerDay: r.maxPerDay || 40, campaignId: null, recipients: null,
+    senderId: r.senderId, maxPerDay: r.maxPerDay || 40, campaignId: null, recipients: null, footer: typeof r.footer === "boolean" ? r.footer : null,
     isTest: !!settings.testMode, createdAt: FieldValue.serverTimestamp(), createdBy: by,
   });
   await db().doc(`outreachRecurring/${r.id}`).update({ issueCount: number, lastIssueId: ref.id, lastIssueAt: FieldValue.serverTimestamp() });
@@ -302,6 +303,7 @@ async function launch(issueId, caller) {
       audienceType: "people", approvalDefault: "auto",
       senderPolicy: { mode: "fixed", senderIds: [issue.senderId] },
       pacing: { maxPerDay: issue.maxPerDay || 40 },
+      footer: typeof issue.footer === "boolean" ? issue.footer : null,
       steps: [{ channel: "email", name: "Issue", templateId: tplRef.id }],
     } }, caller);
     await db().doc(`outreachCampaigns/${campaignId}`).update({ kind: "issue", recurringId: issue.recurringId, issueId });
@@ -333,6 +335,7 @@ async function testIssue({ issueId, subject, body }, caller) {
     callerEmail: caller, settings, messageRef: db().collection("outreachMessages").doc(),
     senderId: issue.senderId, subject: subject ?? issue.subject, body: body ?? issue.body,
     person: { email: caller, name: sample.name || "", org: sample.org || "", refs: [] },
+    footer: typeof issue.footer === "boolean" ? issue.footer : null,
     countsAsOutreach: false, confirmOverTarget: true,
   });
   const headers = Object.fromEntries(Object.entries(p.headers || {}).filter(([k]) => !/^List-Unsubscribe/i.test(k)));

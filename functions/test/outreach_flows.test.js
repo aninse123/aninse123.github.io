@@ -105,7 +105,7 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   ok("List-Unsubscribe via douropartners.pt/u/", /^<https:\/\/douropartners\.pt\/u\/reqAAAAAAAAAAAA1\.[\w-]+>$/.test(sent.body.headers["List-Unsubscribe"]));
   ok("one-click header", sent.body.headers["List-Unsubscribe-Post"] === "List-Unsubscribe=One-Click");
   ok("om tag + idempotency key", sent.body.tags[0].value === "reqAAAAAAAAAAAA1" && sent.headers["Idempotency-Key"] === "reqAAAAAAAAAAAA1");
-  ok("test footer present (no compliance block yet)", sent.body.text.includes("[TESTE]"));
+  ok("no footer by default (CCSL, 9 Oct) and no [TESTE] placeholder", !sent.body.text.includes("\n--\n") && !sent.body.text.includes("[TESTE]"));
   const msg1 = store.get("outreachMessages/reqAAAAAAAAAAAA1");
   ok("message stored as sent, isTest", msg1.status === "sent" && msg1.resendId && msg1.isTest === true);
   const thread1Id = msg1.threadId;
@@ -207,7 +207,7 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   ok("In-Reply-To = prospect's message", rep.body.headers["In-Reply-To"] === "<reply-1@mail.gmail.com>");
   ok("References carry the chain", rep.body.headers["References"].includes("<om-reqAAAAAAAAAAAA1@mail.douropartners-team.pt>") && rep.body.headers["References"].includes("<reply-1@mail.gmail.com>"));
   ok("subject gets Re:", rep.body.subject === "Re: Search funds — Metalúrgica Silva");
-  ok("reply quotes the prospect's message below the footer (B7)", rep.body.text.includes("escreveu:\n> Claro, quinta às 10h?") && rep.body.text.indexOf("escreveu:") > rep.body.text.indexOf("\n--\n"));
+  ok("reply quotes the prospect's message at the end (B7)", rep.body.text.includes("escreveu:\n> Claro, quinta às 10h?") && rep.body.text.indexOf("escreveu:") > rep.body.text.indexOf("\n--\n"));
   ok("thread → waiting, read", store.get("outreachThreads/" + thread1Id).status === "waiting" && store.get("outreachThreads/" + thread1Id).unread === false);
   ok("counted as reply", store.get("outreachDaily/" + day).repliesSent === 1);
 
