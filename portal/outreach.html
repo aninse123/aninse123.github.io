@@ -782,7 +782,7 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'company.inCity|nas vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
     // 9 Oct: what each team field means (button tooltips).
     const VAR_HELP = {
       'sender.fullName': 'Full name of whoever sends (the address owner)',
@@ -790,9 +790,39 @@
       'partner.fullName': 'The one other partner, full name. Empty — send stops — if the sender isn\'t one of two partners; add a fallback with |',
       'partners.firstNames': 'Every partner except the sender, e.g. "André e António" when the intern sends',
       'partners.fullNames': 'Every partner except the sender, e.g. "André Rocha e António Carvalho" when the intern sends',
+      // 9 Oct: owners, municipality, sector, booking link.
+      'owner.of|da gerência': 'After "à atenção" / "ao cuidado": "do Senhor A ou da Senhora B" (the company\'s owners in emails, up to 3 — Search CRM → Edit company). No names → "da gerência"',
+      'owner.with|a gerência': 'After "com" / "para": "o Senhor A ou a Senhora B". No names → "a gerência"',
+      'owner.names': 'The owners\' names only: "A ou B"',
+      'company.inCity|nas vossas instalações': '"em Setúbal", "no Porto", "na Maia" — the municipality with the right word before it (validated municipalities only). Otherwise the text after |',
+      'campaign.sector': 'The campaign\'s "Sector in the emails", e.g. "do trabalho temporário" (campaign → Settings). Empty in Compose — give a fallback with |',
+      'sender.bookingLink': 'The sender\'s booking page (Team → Contact details). To add a sentence only when there is one: {{?sender.bookingLink| ou marcar uma reunião em {{sender.bookingLink}}}}',
     };
     // Everyone active in Team gets {{team.<key>.firstName}} / {{team.<key>.fullName}}.
     const allVars = () => [...VARS, ...(window.teamDir || []).filter(m => m.active !== false).flatMap(m => [`team.${m.key}.firstName`, `team.${m.key}.fullName`])];
+    // Same as the server (render.js joinOu / ownerContext, places.js IN_CITY).
+    function joinOu(list) { const l = list.filter(Boolean); return l.length <= 1 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} ou ${l[l.length - 1]}`; }
+    function ownerContext(company = {}) {
+      const list = (Array.isArray(company?.emailOwners) ? company.emailOwners : [])
+        .map(o => ({ name: String(o?.name || '').replace(/\s+/g, ' ').trim(), gender: o?.gender === 'M' || o?.gender === 'F' ? o.gender : '' }))
+        .filter(o => o.name).slice(0, 3);
+      const of = o => o.gender === 'M' ? `do Senhor ${o.name}` : o.gender === 'F' ? `da Senhora ${o.name}` : `de ${o.name}`;
+      const withO = o => o.gender === 'M' ? `o Senhor ${o.name}` : o.gender === 'F' ? `a Senhora ${o.name}` : o.name;
+      return { of: joinOu(list.map(of)), with: joinOu(list.map(withO)), names: joinOu(list.map(o => o.name)) };
+    }
+    const IN_CITY = {
+      'albufeira': 'em Albufeira', 'alenquer': 'em Alenquer', 'almeirim': 'em Almeirim', 'amarante': 'em Amarante',
+      'arruda dos vinhos': 'em Arruda dos Vinhos', 'aveiro': 'em Aveiro', 'barcelos': 'em Barcelos', 'barreiro': 'no Barreiro',
+      'braga': 'em Braga', 'cinfaes': 'em Cinfães', 'estarreja': 'em Estarreja', 'faro': 'em Faro',
+      'figueira da foz': 'na Figueira da Foz', 'funchal': 'no Funchal', 'gondomar': 'em Gondomar', 'leiria': 'em Leiria',
+      'lisboa': 'em Lisboa', 'loures': 'em Loures', 'machico': 'em Machico', 'mafra': 'em Mafra',
+      'maia': 'na Maia', 'matosinhos': 'em Matosinhos', 'moita': 'na Moita', 'odemira': 'em Odemira',
+      'odivelas': 'em Odivelas', 'ourem': 'em Ourém', 'palmela': 'em Palmela', 'portimao': 'em Portimão',
+      'porto': 'no Porto', 'santarem': 'em Santarém', 'santiago do cacem': 'em Santiago do Cacém', 'seixal': 'no Seixal',
+      'setubal': 'em Setúbal', 'sintra': 'em Sintra', 'tarouca': 'em Tarouca', 'vila franca de xira': 'em Vila Franca de Xira',
+      'vila nova de famalicao': 'em Vila Nova de Famalicão', 'vila nova de gaia': 'em Vila Nova de Gaia', 'vila do conde': 'em Vila do Conde',
+    };
+    const inCityOf = (concelho) => IN_CITY[String(concelho || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()] || '';
     // Same as the server (render.js teamContext).
     function joinPt(list) { const l = list.filter(Boolean); return l.length <= 1 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} e ${l[l.length - 1]}`; }
     function teamContext(members = [], senderKey = null) {
@@ -1703,10 +1733,14 @@
       const s = senders.find(x => x.id === $('cFrom').value) || {};
       const c = picked || ((!settings || settings.testMode !== false) ? TEST_SAMPLE_COMPANY : {});
       return {
-        company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '' },
+        company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '', inCity: inCityOf(c.concelho) },
+        owner: ownerContext(c),
+        campaign: { sector: '' }, // Compose isn't part of a campaign — the fallback shows
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
         ...teamContext(window.teamDir || [], s.owner || null),
-        sender: { firstName: String(s.displayName || '').split(' ')[0], fullName: s.displayName || '', name: s.displayName || '', email: s.id || '', phone: (window.teamDir || []).find(m => m.key === s.owner)?.contactPhone || '', signature: ((s.signatures || []).find(x => x && x.name === $('cSig')?.value)?.text) ?? (s.signature || '') },
+        sender: { firstName: String(s.displayName || '').split(' ')[0], fullName: s.displayName || '', name: s.displayName || '', email: s.id || '', phone: (window.teamDir || []).find(m => m.key === s.owner)?.contactPhone || '', bookingLink: (window.teamDir || []).find(m => m.key === s.owner)?.bookingLink || '',
+          // A template that signs itself: no address signature unless one is picked (same as the server).
+          signature: ((s.signatures || []).find(x => x && x.name === $('cSig')?.value)?.text) ?? (templatesAll.find(t => t.id === ($('cTpl')?.value || '').split('::')[0])?.signs ? '' : (s.signature || '')) },
         unsubscribeUrl: 'https://douropartners.pt/u/…',
       };
     }
@@ -1726,16 +1760,18 @@
         }
         if (close < 0) { out += onText(src.slice(i)); break; }
         out += onText(src.slice(i, open));
-        const m = /^\s*([\w.]+)\s*(?:\|([\s\S]*))?$/.exec(src.slice(open + 2, close));
-        out += m ? onField(m[1], m[2] == null ? null : m[2].trim()) : onText(src.slice(open, close + 2));
+        const m = /^\s*(\??[\w.]+)\s*(?:\|([\s\S]*))?$/.exec(src.slice(open + 2, close));
+        out += m ? onField(m[1], m[2] == null ? null : m[1].startsWith('?') ? m[2] : m[2].trim()) : onText(src.slice(open, close + 2)); // {{?x| text}} keeps its spaces
         i = close + 2;
       }
       return out;
     }
     function renderVars(str, ctx) {
       const missing = [];
-      const render = (x) => scanTemplate(x, (path, fb) => {
+      const render = (x) => scanTemplate(x, (field, fb) => {
+        const onlyIf = field.startsWith('?'), path = onlyIf ? field.slice(1) : field;
         const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), ctx);
+        if (onlyIf) return v != null && String(v).trim() ? render(fb || '') : ''; // {{?field|text}}: the text only when the field has a value
         if (v != null && String(v).trim()) return esc(v);
         if (fb != null) return render(fb);
         missing.push(path); return `<mark>{{${esc(path)}}}</mark>`;
@@ -2409,6 +2445,7 @@
             <div class="field"><label for="tStatus">Status</label><select id="tStatus">${['draft', 'active', 'archived'].map(s => `<option value="${s}"${tpl.status === s ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
           </div>
         </div>
+        <label class="check" style="margin:-2px 0 10px;"><input type="checkbox" id="tSigns"${tpl.signs ? ' checked' : ''}> The template signs <span class="hint">— its own sign-off is in the message (e.g. "Com os melhores cumprimentos, … Douro Partners"), so the sending address's signature isn't added</span></label>
         <div class="field"><label for="tKind">Used for</label><select id="tKind">${TEMPLATE_KINDS.map(([k, l]) => `<option value="${k}"${(tpl.kind || 'email') === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
           <span class="hint">Email templates appear in Compose, replies and email steps; letters, messages and call scripts in the matching campaign steps and tasks.</span></div>
         <p class="hint" style="margin:-4px 0 6px;">Click a field to insert it where you're typing (subject or message). Give a fallback after <code>|</code> for fields that can be empty, e.g. <code>{{contact.firstName|Olá}}</code>. Only <b>active</b> templates can be used.</p>
@@ -2422,7 +2459,7 @@
           const kind = $('tKind').value;
           const needsSubject = kind === 'email';
           if (variants.some(v => (needsSubject && !v.subject.trim()) || !v.body.trim())) { modalError(needsSubject ? 'Every variant needs a subject and a message.' : 'Every variant needs a message.'); return false; }
-          const data = { name, kind, language: $('tLang').value, status: $('tStatus').value, layout: kind === 'letter' ? 'letter' : 'plain', variants, updatedAt: serverTimestamp(), updatedBy: me };
+          const data = { name, kind, language: $('tLang').value, status: $('tStatus').value, layout: kind === 'letter' ? 'letter' : 'plain', signs: $('tSigns').checked, variants, updatedAt: serverTimestamp(), updatedBy: me };
           if (t?.id) await updateDoc(doc(db, 'outreachTemplates', t.id), data);
           else await addDoc(collection(db, 'outreachTemplates'), { ...data, complianceBlockId: 'default', createdAt: serverTimestamp(), createdBy: me });
           toast(`Template "${name}" saved.`);
@@ -4130,21 +4167,25 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const pick = t?.signer || (camp?.signer && camp.signer !== 'owner' ? camp.signer : null) || (t?.channel === 'call' ? t?.assignee : null) || c?.owner || 'andre';
       return (window.teamDir || []).some(m => m.key === pick && m.active !== false) || OWNER_FULL[pick] ? pick : 'andre'; // someone who left doesn't sign
     }
-    function coCtx(c, signer) {
+    function coCtx(c, signer, camp = null) {
       const m = (window.teamDir || []).find(x => x.key === signer) || {};
       const full = m.name || OWNER_FULL[signer] || '';
       return {
-        company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '' },
+        company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '', inCity: inCityOf(c?.concelho) },
+        owner: ownerContext(c?._person ? {} : c),
+        campaign: { sector: camp?.sector || '' },
         contact: { firstName: c?._person ? String(c._person.name || '').split(' ')[0] : '' },
         ...teamContext(window.teamDir || [], signer || null),
-        sender: { firstName: full.split(' ')[0] || '', fullName: full, name: full, phone: m.contactPhone || '', email: m.contactEmail || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
+        sender: { firstName: full.split(' ')[0] || '', fullName: full, name: full, phone: m.contactPhone || '', email: m.contactEmail || '', bookingLink: m.bookingLink || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
         unsubscribeUrl: '',
       };
     }
     // Plain-text fill (for text to copy, WhatsApp links and letters).
     function fillText(str, ctx) {
-      const render = (x) => scanTemplate(x, (path, fb) => {
+      const render = (x) => scanTemplate(x, (field, fb) => {
+        const onlyIf = field.startsWith('?'), path = onlyIf ? field.slice(1) : field;
         const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), ctx);
+        if (onlyIf) return v != null && String(v).trim() ? render(fb || '') : '';
         if (v != null && String(v).trim()) return String(v);
         return fb != null ? render(fb) : `[${path}]`;
       }, (t) => t);
@@ -4155,8 +4196,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       if (!tpl) return null;
       const v = (tpl.variants || []).find(x => x.key === t.variantKey) || (tpl.variants || [])[0];
       if (!v) return null;
-      const ctx = coCtx(c, signerFor(t, c));
-      return { subject: v.subject ? fillText(v.subject, ctx) : '', body: fillText(v.body, ctx), name: tpl.name };
+      const ctx = coCtx(c, signerFor(t, c), campaigns.find(x => x.id === t.campaignId));
+      return { subject: v.subject ? fillText(v.subject, ctx) : '', body: fillText(v.body, ctx), name: tpl.name, signs: !!tpl.signs };
     }
     const telHref = (n) => 'tel:' + String(n || '').replace(/[^\d+]/g, '');
     function waNumber(n) {
@@ -4382,7 +4423,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <p class="date">${esc(date)}</p>
           ${txt.subject ? `<p class="subj"><b>Assunto:</b> ${esc(txt.subject)}</p>` : ''}
           <div class="body">${esc(txt.body)}</div>
-          <div class="sig">${esc(ctx.sender.signature)}</div>
+          <div class="sig">${txt.signs ? '' : esc(ctx.sender.signature)}</div>
           ${entity ? `<footer>${esc(entity)}</footer>` : ''}
         </section>`;
       }).join('');
@@ -4567,7 +4608,11 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <div class="field"><label for="csPrio">Priority when campaigns compete for the daily limit<span class="info" title="When several campaigns want to send more than the daily limit allows, higher-priority campaigns go first." aria-label="When several campaigns want to send more than the daily limit allows, higher-priority campaigns go first.">i</span></label>
               <select id="csPrio"${dis}>${[[1, 'High'], [2, 'Normal'], [3, 'Low']].map(([v, l]) => `<option value="${v}"${(c.priority || 2) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
           </div>
-          <div class="field"><label for="csDesc">Description</label><input type="text" id="csDesc" maxlength="500" value="${esc(c.description || '')}"${dis}></div>
+          <div class="row2">
+            <div class="field"><label for="csDesc">Description</label><input type="text" id="csDesc" maxlength="500" value="${esc(c.description || '')}"${dis}></div>
+            <div class="field"><label for="csSector">Sector in the emails</label><input type="text" id="csSector" maxlength="120" value="${esc(c.sector || '')}" placeholder="e.g. do trabalho temporário"${dis}>
+              <span class="hint">Fills {{campaign.sector}} — written to follow "no setor", e.g. "no setor do trabalho temporário". Empty = the template's fallback.</span></div>
+          </div>
           <div class="row2">
             <div class="field"><label for="csAppr">Before emails go out (steps can override)<span class="info" title="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule." aria-label="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule.">i</span></label>
               <select id="csAppr"${dis}><option value="approval"${c.approvalDefault !== 'auto' ? ' selected' : ''}>Each email waits for approval</option><option value="auto"${c.approvalDefault === 'auto' ? ' selected' : ''}>Emails go out automatically</option></select></div>
@@ -4670,7 +4715,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         if (problems.length) { err.textContent = problems.join(' '); err.hidden = false; return; }
         const b = $('csSave'); const unbusy = busyBtn(b, 'Saving…');
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: {
-          name: $('csName').value, description: $('csDesc').value, priority: Number($('csPrio').value),
+          name: $('csName').value, description: $('csDesc').value, sector: $('csSector').value, priority: Number($('csPrio').value),
           approvalDefault: $('csAppr').value, pacing: { newPerDay: pace, maxPerDay: maxDay }, assignee: $('csAssignee').value, signer: $('csSigner').value, recipientPolicy: $('csRecip').value,
           footer: $('csFooter').value === 'on' ? true : $('csFooter').value === 'off' ? false : null,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },

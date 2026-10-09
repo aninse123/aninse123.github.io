@@ -6,6 +6,7 @@
 // template can be sent without one).
 
 const { escapeHtml } = require("./util");
+const { inCityOf } = require("./places");
 
 const LEGAL_SUFFIX_RE = /[\s,]*(,?\s*(unipessoal|sociedade unipessoal)?\s*,?\s*(lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i;
 
@@ -56,6 +57,27 @@ function joinPt(list) {
   return l.length <= 1 ? (l[0] || "") : `${l.slice(0, -1).join(", ")} e ${l[l.length - 1]}`;
 }
 
+// "A", "A ou B", "A, B ou C" — owners named so that any of them can answer.
+function joinOu(list) {
+  const l = list.filter(Boolean);
+  return l.length <= 1 ? (l[0] || "") : `${l.slice(0, -1).join(", ")} ou ${l[l.length - 1]}`;
+}
+
+// Owners in emails (9 Oct): company.emailOwners = [{ name, gender: "M" | "F" | "" }],
+// up to 3, in the order to name them (validated per company). {{owner.of}} =
+// "do Senhor A ou da Senhora B" (after "à atenção" / "ao cuidado"); {{owner.with}}
+// = "o Senhor A ou a Senhora B" (after "com" / "para"); {{owner.names}} = "A ou B".
+// Unknown gender: no title ("de A" / "A"). No owners: empty — the template's
+// fallback is used ({{owner.of|da gerência}}, {{owner.with|a gerência}}).
+function ownerContext(company = {}) {
+  const list = (Array.isArray(company.emailOwners) ? company.emailOwners : [])
+    .map((o) => ({ name: String(o?.name || "").replace(/\s+/g, " ").trim(), gender: o?.gender === "M" || o?.gender === "F" ? o.gender : "" }))
+    .filter((o) => o.name).slice(0, 3);
+  const of = (o) => (o.gender === "M" ? `do Senhor ${o.name}` : o.gender === "F" ? `da Senhora ${o.name}` : `de ${o.name}`);
+  const withO = (o) => (o.gender === "M" ? `o Senhor ${o.name}` : o.gender === "F" ? `a Senhora ${o.name}` : o.name);
+  return { of: joinOu(list.map(of)), with: joinOu(list.map(withO)), names: joinOu(list.map((o) => o.name)) };
+}
+
 // Team fields (9 Oct): {{team.<key>.firstName|fullName}} for everyone active in
 // Team; {{partners.firstNames|fullNames}} = every partner except the sender (all
 // partners when the sender isn't one); {{partner.firstName|fullName}} = the one
@@ -75,7 +97,8 @@ function teamContext(members = [], senderKey = null) {
 }
 
 // Variables a template may use, resolved from the company, contact and sender.
-function buildContext({ company = {}, contactName = "", sender = {}, unsubscribeUrl = "", aiOpener = "", team = [], senderKey = null }) {
+// campaign: { sector } — "do trabalho temporário", typed per campaign ({{campaign.sector}}).
+function buildContext({ company = {}, contactName = "", sender = {}, unsubscribeUrl = "", aiOpener = "", team = [], senderKey = null, campaign = {} }) {
   return {
     company: {
       name: company.name || "",
@@ -83,11 +106,14 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
       city: company.city || company.concelho || "",
       sector: company.sector || "",
       cae: company.caeDescription || company.caeCode || "",
+      inCity: inCityOf(company.concelho), // "em Setúbal" / "no Porto" — validated municipalities only
     },
+    owner: ownerContext(company),
+    campaign: { sector: String(campaign?.sector || "").trim() },
     contact: { firstName: firstName(contactName) },
     // T4: sender.email = the sending address; sender.phone = its owner's (Team).
     // sender.fullName (9 Oct); sender.name kept so older templates still work.
-    sender: { firstName: firstName(sender.displayName), fullName: sender.displayName || "", name: sender.displayName || "", email: sender.email || "", phone: sender.phone || "", signature: sender.signature || "" },
+    sender: { firstName: firstName(sender.displayName), fullName: sender.displayName || "", name: sender.displayName || "", email: sender.email || "", phone: sender.phone || "", bookingLink: sender.bookingLink || "", signature: sender.signature || "" },
     ...teamContext(team, senderKey),
     unsubscribeUrl,
     ai: { opener: aiOpener || "" }, // Phase 4 — written per company, only in approval steps
@@ -95,6 +121,8 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
 }
 
 // {{company.name}} or {{contact.firstName|Olá}} (fallback after the pipe).
+// {{?sender.bookingLink| ou marcar … {{sender.bookingLink}}}} (9 Oct): the text
+// after the pipe only when the field has a value, else nothing — never "missing".
 // Returns the rendered text plus the variables that resolved to empty with no
 // fallback — the send is refused if any are missing (spec §7.2).
 // A fallback may itself contain fields — {{ai.opener|Escrevo-lhe sobre a
@@ -113,8 +141,8 @@ function scanTemplate(str, onField) {
     }
     if (close < 0) { out += s.slice(i); break; }
     out += s.slice(i, open);
-    const m = /^\s*([\w.]+)\s*(?:\|([\s\S]*))?$/.exec(s.slice(open + 2, close));
-    out += m ? onField(m[1], m[2] == null ? null : m[2].trim()) : s.slice(open, close + 2);
+    const m = /^\s*(\??[\w.]+)\s*(?:\|([\s\S]*))?$/.exec(s.slice(open + 2, close));
+    out += m ? onField(m[1], m[2] == null ? null : m[1].startsWith("?") ? m[2] : m[2].trim()) : s.slice(open, close + 2); // {{?x| text}} keeps its spaces
     i = close + 2;
   }
   return out;
@@ -122,8 +150,10 @@ function scanTemplate(str, onField) {
 
 function renderTemplate(str, ctx) {
   const missing = [];
-  const render = (src) => scanTemplate(src, (path, fallback) => {
+  const render = (src) => scanTemplate(src, (field, fallback) => {
+    const onlyIf = field.startsWith("?"), path = onlyIf ? field.slice(1) : field;
     const value = path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), ctx);
+    if (onlyIf) return value != null && String(value).trim() !== "" ? render(fallback || "") : "";
     if (value != null && String(value).trim() !== "") return String(value);
     if (fallback != null) return render(fallback);
     missing.push(path);
@@ -218,4 +248,4 @@ function replySubject(subject) {
   return /^(re|res|ref)\s*:/i.test(s) ? s : `Re: ${s}`;
 }
 
-module.exports = { shortCompanyName, emailNameOf, firstName, buildContext, teamContext, joinPt, renderTemplate, buildPlainEmail, buildQuote, quoteHeader, replySubject, TEST_FOOTER, PRIVACY_LINE, wantsFooter, footerSource };
+module.exports = { shortCompanyName, emailNameOf, firstName, buildContext, teamContext, joinPt, joinOu, ownerContext, renderTemplate, buildPlainEmail, buildQuote, quoteHeader, replySubject, TEST_FOOTER, PRIVACY_LINE, wantsFooter, footerSource };

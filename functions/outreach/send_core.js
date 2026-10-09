@@ -51,6 +51,7 @@ function fail(code, reason, message, extra = {}) {
 //   person                   → Phase 5: { email, name, org, refs } — a person, not a company
 //                              (investor, broker, journalist…). No company; {{company.*}} uses
 //                              the organisation; logged on the person's CRM / Network record.
+//   campaignFields           → { sector } of the campaign sending ({{campaign.sector}}, 9 Oct)
 //   footer                   → true / false: add the email footer (CCSL, 9 Oct); anything
 //                              else = the conversation's choice (replies), else Settings
 //   recipient                → Phase 3b: { email } of the person to write to (the company
@@ -163,12 +164,13 @@ async function prepareEmail(opts) {
   const ctxCompany = company || (person ? { name: person.org, emailName: person.org }
     : (isReply && thread.companyName ? { name: thread.companyName }
       : (isTest && !isReply ? TEST_SAMPLE_COMPANY : {})));
-  // T4: {{sender.phone}} — the address owner's phone (Team → person).
-  let senderPhone = "";
-  if (sender.owner) { try { senderPhone = (await db().doc(`teamDirectory/${sender.owner}`).get()).data()?.contactPhone || ""; } catch (e) { /* field stays empty */ } }
-  const ctx = buildContext({ company: ctxCompany, contactName, sender: { ...sender, email: senderId, phone: senderPhone }, unsubscribeUrl, aiOpener: opts.aiOpener || "", team: await teamDirectory(), senderKey: sender.owner || null });
+  // T4: {{sender.phone}} — the address owner's phone (Team → person);
+  // {{sender.bookingLink}} (9 Oct) — their booking page, same place.
+  let senderPhone = "", senderBooking = "";
+  if (sender.owner) { try { const m = (await db().doc(`teamDirectory/${sender.owner}`).get()).data() || {}; senderPhone = m.contactPhone || ""; senderBooking = m.bookingLink || ""; } catch (e) { /* fields stay empty */ } }
+  const ctx = buildContext({ company: ctxCompany, contactName, sender: { ...sender, email: senderId, phone: senderPhone, bookingLink: senderBooking }, unsubscribeUrl, aiOpener: opts.aiOpener || "", team: await teamDirectory(), senderKey: sender.owner || null, campaign: opts.campaignFields || {} });
 
-  let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null;
+  let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null, templateSigns = false;
   if (opts.templateId) {
     const tSnap = await db().doc(`outreachTemplates/${opts.templateId}`).get();
     if (!tSnap.exists) fail("not-found", "template_not_found", "Template not found.");
@@ -177,6 +179,7 @@ async function prepareEmail(opts) {
     if (!variant) fail("failed-precondition", "template_empty", "This template has no variants.");
     templateId = tSnap.id;
     variantKey = variant.key;
+    templateSigns = tSnap.data().signs === true; // 9 Oct: the template has its own sign-off — no address signature
     if (!isReply) subjectSrc = opts.subject || variant.subject;
     bodySrc = opts.body || variant.body;
   }
@@ -221,7 +224,8 @@ async function prepareEmail(opts) {
   }
   // I14 (8 Oct): one of the address's other signatures, chosen in Compose.
   const chosenSig = opts.signatureName ? (sender.signatures || []).find((s) => s && s.name === opts.signatureName) : null;
-  const { text, html } = buildPlainEmail({ bodyText: body.text, signature: chosenSig ? chosenSig.text : sender.signature, footerText: footer, unsubscribeUrl, quote });
+  // A template that signs itself gets no address signature, unless one was picked in Compose.
+  const { text, html } = buildPlainEmail({ bodyText: body.text, signature: chosenSig ? chosenSig.text : (templateSigns ? "" : sender.signature), footerText: footer, unsubscribeUrl, quote });
 
   // ── Headers: threading on replies, one-click unsubscribe ──
   // No custom Message-ID: Resend silently replaces it with its own (V1,

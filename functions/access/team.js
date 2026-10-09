@@ -89,6 +89,7 @@ async function syncLoginHashes() {
       key: m.key, name: m.name || m.key, partner: m.roleId === "admin" || m.roleId === "partner",
       contactPhone: m.contactPhone || null,
       contactEmail: m.contactEmail || (/@douropartners\.pt$/.test(d.id) ? d.id : null),
+      bookingLink: m.bookingLink || null, // 9 Oct: {{sender.bookingLink}}
       active: P.ADMIN_EMAILS.includes(d.id) || P.isActive(m, now), updatedAt: FieldValue.serverTimestamp(),
     });
   });
@@ -133,9 +134,12 @@ function cleanMember(src, existing = {}) {
     // T4: printed on letters / call scripts they sign ({{sender.phone}}, {{sender.email}}).
     contactPhone: String(src.contactPhone ?? existing.contactPhone ?? "").trim().slice(0, 30),
     contactEmail: String(src.contactEmail ?? existing.contactEmail ?? "").trim().toLowerCase().slice(0, 120),
+    // 9 Oct: their booking page (Calendly, cal.com…) — {{sender.bookingLink}} in emails.
+    bookingLink: String(src.bookingLink ?? existing.bookingLink ?? "").trim().slice(0, 200),
   };
   if (out.contactPhone && !/^\+?[\d\s().-]{6,30}$/.test(out.contactPhone)) fail("invalid-argument", "bad_phone", "The phone number can have digits, spaces, + ( ) - only.");
   if (out.contactEmail && !EMAIL_RE.test(out.contactEmail)) fail("invalid-argument", "bad_contact_email", "The contact email isn't valid.");
+  if (out.bookingLink && !/^https:\/\/[^\s<>"']+\.[^\s<>"']+$/i.test(out.bookingLink)) fail("invalid-argument", "bad_booking_link", "The booking link must be a web address starting with https://");
   if (out.startsAt && out.endsAt && out.endsAt.toMillis() <= out.startsAt.toMillis()) fail("invalid-argument", "bad_dates", "The end date must be after the start date.");
   return out;
 }

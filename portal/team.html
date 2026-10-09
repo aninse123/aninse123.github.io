@@ -245,7 +245,7 @@
         const live = ['invited', 'active'].includes(p.status);
         const ndaWait = !admin && live && !p.ndaSigned; // G2: can't sign in until the NDA is ticked
         return `<tr>
-          <td><b>${esc(p.name || p.id)}</b> <span class="hint">· ${esc(p.key || '')}</span><div class="hint">${esc(p.id)}</div>${p.contactPhone || p.contactEmail ? `<div class="hint" title="Printed on letters and call scripts they sign">On letters: ${esc([p.contactPhone, p.contactEmail].filter(Boolean).join(' · '))}</div>` : ''}</td>
+          <td><b>${esc(p.name || p.id)}</b> <span class="hint">· ${esc(p.key || '')}</span><div class="hint">${esc(p.id)}</div>${p.contactPhone || p.contactEmail ? `<div class="hint" title="Printed on letters and call scripts they sign">On letters: ${esc([p.contactPhone, p.contactEmail].filter(Boolean).join(' · '))}</div>` : ''}${p.bookingLink ? `<div class="hint" title="{{sender.bookingLink}} in emails they send">Booking: ${esc(p.bookingLink)}</div>` : ''}</td>
           <td>${esc(admin ? 'Admin' : roleName(p.roleId))}${custom ? ' <span class="badge badge--amber" title="Extra or removed permissions">custom</span>' : ''}<div class="hint">${admin ? 'Admin — always full access' : esc(tabsOf(eff).join(' · ') || 'no tabs')}</div></td>
           <td>${statusBadge(p)}${ndaWait ? ' <span class="badge badge--amber" title="They can\'t sign in until the NDA is recorded — Edit → tick NDA signed">waiting for NDA</span>' : ''}</td>
           <td style="white-space:nowrap;">${admin ? '—' : esc(day(p.endsAt))}</td>
@@ -301,6 +301,8 @@
           <div class="field"><label for="cEmail">Email on letters</label><input type="email" id="cEmail" value="${esc(p.contactEmail || '')}" placeholder="empty = ${esc(p.id)}"></div>
         </div>
         <span class="hint" style="display:block;margin:-6px 0 10px;">Printed on letters and call scripts ${esc(String(p.name || '').split(' ')[0])} signs: {{sender.phone}}, {{sender.email}}.</span>
+        <div class="field"><label for="cBooking">Booking link (optional)</label><input type="url" id="cBooking" value="${esc(p.bookingLink || '')}" placeholder="https://cal.com/…  or  https://calendly.com/…">
+          <span class="hint">Used in emails they send: {{sender.bookingLink}}.</span></div>
         <div class="modal-actions"><button class="btn btn--ghost" id="cCancel">Cancel</button><button class="btn btn--primary" id="cSave">Save</button></div>
       </div></div>`;
       const close = () => { $('modalRoot').innerHTML = ''; };
@@ -308,7 +310,7 @@
       $('modalRoot').querySelector('.modal-bg').addEventListener('click', (e) => { if (e.target.classList.contains('modal-bg')) close(); });
       $('cSave').addEventListener('click', async () => {
         $('cSave').disabled = true; $('cErr').hidden = true;
-        try { await call({ action: 'update', email: p.id, member: { contactPhone: $('cPhone').value, contactEmail: $('cEmail').value } }); close(); toast('Contact details saved.'); }
+        try { await call({ action: 'update', email: p.id, member: { contactPhone: $('cPhone').value, contactEmail: $('cEmail').value, bookingLink: $('cBooking').value } }); close(); toast('Contact details saved.'); }
         catch (e) { $('cErr').textContent = errText(e); $('cErr').hidden = false; $('cSave').disabled = false; }
       });
       $('cPhone').focus();
@@ -341,6 +343,8 @@
           <div class="field"><label for="fCEmail">Email on letters (optional)</label><input type="email" id="fCEmail" value="${esc(base.contactEmail || '')}" placeholder="empty = the sign-in email if @douropartners.pt"></div>
         </div>
         <span class="hint" style="display:block;margin:-6px 0 10px;">Printed on letters and call scripts this person signs: {{sender.phone}}, {{sender.email}}.</span>
+        <div class="field"><label for="fBooking">Booking link (optional)</label><input type="url" id="fBooking" value="${esc(base.bookingLink || '')}" placeholder="https://cal.com/…  or  https://calendly.com/…">
+          <span class="hint">Used in emails this person sends: {{sender.bookingLink}}.</span></div>
         <label class="check"><input type="checkbox" id="fNda"${base.ndaSigned ? ' checked' : ''}> NDA signed <span class="hint">— they can't sign in until this is ticked</span></label>
         <div class="field" style="max-width:260px;"><label for="fLang">Invitation language</label><select id="fLang"><option value="pt"${base.inviteLang !== 'en' ? ' selected' : ''}>Portuguese</option><option value="en"${base.inviteLang === 'en' ? ' selected' : ''}>English</option></select></div>
         ${editing ? '' : `<label class="check"><input type="checkbox" id="fMail"> Email them the invitation (from noreply@douropartners.pt, with the link to sign in at ${esc(location.host)})</label><span class="hint" id="fMailHint" style="display:block;margin:-4px 0 10px;"></span>`}
@@ -380,7 +384,7 @@
         const member = {
           email: $('fEmail').value, name: $('fName').value, key: $('fKey').value, roleId: $('fRole').value,
           startsAt: $('fStart').value || null, endsAt: $('fEnd').value || null, // Lisbon days; the server sets 00:00 / 23:59
-          ndaSigned: $('fNda').checked, inviteLang: $('fLang').value, notes: $('fNotes').value, contactPhone: $('fPhone').value, contactEmail: $('fCEmail').value,
+          ndaSigned: $('fNda').checked, inviteLang: $('fLang').value, notes: $('fNotes').value, contactPhone: $('fPhone').value, contactEmail: $('fCEmail').value, bookingLink: $('fBooking').value,
           extraPerms: [...current].filter(x => !roleSet.has(x)), removedPerms: [...roleSet].filter(x => !current.has(x)),
         };
         $('mSave').disabled = true; $('mErr').hidden = true;

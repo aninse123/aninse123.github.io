@@ -653,6 +653,8 @@
     </div>
     <div class="form-group"><label>Email name <span class="opt">(how emails and letters name the company — {{company.shortName}})</span></label><input type="text" class="field" id="cEmailName" maxlength="80">
       <div style="font-size:0.74rem;color:var(--text-light);margin-top:3px;" id="cEmailNameHint"></div></div>
+    <div class="form-group"><label>Owners in emails <span class="opt">(up to 3, in the order to name them — {{owner.of}} / {{owner.with}})</span></label><input type="text" class="field" id="cEmailOwners" maxlength="200" placeholder="Senhor José Peres; Senhora Maria Lima">
+      <div style="font-size:0.74rem;color:var(--text-light);margin-top:3px;">Separate with ";". Start each with Senhor or Senhora (no title if you leave it out). Empty → "à atenção da gerência". Emails write "à atenção do Senhor José Peres ou da Senhora Maria Lima".</div></div>
     <div class="form-row">
       <div class="form-group"><label>Company Email <span class="opt">(general)</span></label><input type="text" class="field" id="cCompanyEmail"></div>
       <div class="form-group"><label>Company Phone</label><input type="text" class="field" id="cCompanyPhone"></div>
@@ -3831,6 +3833,7 @@ function renderLegalCompliance(c){
         <div class="info-row"><span class="k">Previous company name</span><span class="v">${esc(c.previousCompanyName||'—')}</span></div>
         <div class="info-row"><span class="k">Also known as</span><span class="v">${esc(c.akaName||'—')}</span></div>
         <div class="info-row"><span class="k">Email name</span><span class="v">${esc(c.emailName || autoEmailName(c))}${c.emailName ? '' : ' <span style="color:var(--text-light);font-size:0.75rem;">(automatic)</span>'}</span></div>
+        <div class="info-row"><span class="k">Owners in emails</span><span class="v">${esc(emailOwnersText(c.emailOwners) || '—')}</span></div>
         <div class="info-row"><span class="k">Orbis release date</span><span class="v">${c.orbisReleaseDate?fmtDate(c.orbisReleaseDate):'—'}</span></div>
       </div>
       <div class="card">
@@ -9386,7 +9389,7 @@ function lockCompanyFields(isNew){
 function openNewCompany(){
   editCoId = null;
   document.getElementById('companyModalTitle').textContent = 'New Company';
-  ['cName','cNif','cLegalForm','cYearFounded','cWebsite','cLinkedin','cEmailName','cCompanyEmail','cCompanyPhone','cDescription','cSector','cSubSector','cNaceCode','cNaceDesc','cCaeCode','cCaeDesc','cAuditingFirm','cBvdId','cIndependence','cGuo','cConcelho','cPostcode','cHqAddress','cNuts2','cNuts3','cCountries'].forEach(id=>document.getElementById(id).value='');
+  ['cName','cNif','cLegalForm','cYearFounded','cWebsite','cLinkedin','cEmailName','cEmailOwners','cCompanyEmail','cCompanyPhone','cDescription','cSector','cSubSector','cNaceCode','cNaceDesc','cCaeCode','cCaeDesc','cAuditingFirm','cBvdId','cIndependence','cGuo','cConcelho','cPostcode','cHqAddress','cNuts2','cNuts3','cCountries'].forEach(id=>document.getElementById(id).value='');
   ['cOwnershipType','cSuccession','cStage','cPriority','cOwner','cSourceType','cReasonExcluded'].forEach(id=>{ const el=document.getElementById(id); el.value = id==='cStage'?'universe':''; });
   document.getElementById('cMultinational').checked = false;
   document.querySelectorAll('.cRegion').forEach(cb=>cb.checked=false);
@@ -9403,6 +9406,7 @@ function openEditCompany(){
   set('cName',c.name); set('cNif',c.nif); set('cLegalForm',c.legalForm); set('cYearFounded',c.yearFounded);
   set('cWebsite',c.website); set('cLinkedin',c.linkedinUrl); set('cCompanyEmail',c.companyEmail); set('cCompanyPhone',c.companyPhone);
   set('cEmailName',c.emailName);
+  set('cEmailOwners',emailOwnersText(c.emailOwners));
   document.getElementById('cEmailNameHint').textContent = `Leave empty to use: "${autoEmailName(c)}"${c.akaName ? ' (from Orbis "Also known as")' : ' (from the legal name)'}.`;
   set('cDescription',c.description); set('cSector',c.sector); set('cSubSector',c.subSector);
   set('cNaceCode',c.naceCode); set('cNaceDesc',c.naceDescription); set('cCaeCode',c.caeCode); set('cCaeDesc',c.caeDescription);
@@ -9443,6 +9447,7 @@ async function saveCompany(){
     name, nif:v('cNif')||null, legalForm:v('cLegalForm')||null, yearFounded:num(v('cYearFounded'))||null,
     website:v('cWebsite')||null, linkedinUrl:v('cLinkedin')||null, companyEmail:v('cCompanyEmail')||null, companyPhone:v('cCompanyPhone')||null,
     emailName:v('cEmailName')||null,
+    emailOwners:parseEmailOwners(v('cEmailOwners')),
     description:v('cDescription')||null, sector:v('cSector')||null, subSector:v('cSubSector')||null,
     naceCode:v('cNaceCode')||null, naceDescription:v('cNaceDesc')||null, caeCode:v('cCaeCode')||null, caeDescription:v('cCaeDesc')||null,
     auditingFirm:v('cAuditingFirm')||null, bvdId:v('cBvdId')||null, independenceIndicator:v('cIndependence')||null, guoName:v('cGuo')||null,
@@ -9825,6 +9830,18 @@ async function openAddToCampaign(opts){
   };
 }
 
+// Owners in emails (9 Oct): emailOwners = [{ name, gender: 'M' | 'F' | '' }], up to 3 —
+// typed as "Senhor José Peres; Senhora Maria Lima" (Outreach render.js ownerContext).
+function parseEmailOwners(text) {
+  const list = String(text || '').split(';').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 3).map(s => {
+    const m = /^(senhora|sra\.?|senhor|sr\.?)\s+(.+)$/i.exec(s);
+    return m ? { name: m[2].trim(), gender: /^s(enho)?ra/i.test(m[1]) ? 'F' : 'M' } : { name: s, gender: '' };
+  }).filter(o => o.name);
+  return list.length ? list : null;
+}
+function emailOwnersText(list) {
+  return (Array.isArray(list) ? list : []).filter(o => o && o.name).map(o => (o.gender === 'M' ? 'Senhor ' : o.gender === 'F' ? 'Senhora ' : '') + o.name).join('; ');
+}
 // Email name (Phase 3a): same rule as the Outreach server (render.js emailNameOf).
 const EN_SMALL = new Set(['de','da','do','das','dos','e','a','o','em','para','com']);
 function enTitle(s){ return s.toLowerCase().split(/(\s+)/).map((w,i)=>{ if(!w.trim()) return w; if(i>0 && EN_SMALL.has(w)) return w; return w.split('-').map(p=>p.charAt(0).toUpperCase()+p.slice(1)).join('-'); }).join(''); }

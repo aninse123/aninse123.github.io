@@ -56,6 +56,7 @@ const DEFAULT_CAMPAIGN = {
   recipientPolicy: "company",  // Phase 3b: company | primary_contact | best_person
   audienceType: "companies",   // Phase 5: companies | people (investors, brokers, press…)
   footer: null,                // CCSL (9 Oct): true / false = add the email footer or not; null = Settings default
+  sector: "",                  // 9 Oct: {{campaign.sector}} — the sector as written in the emails ("do trabalho temporário")
 };
 
 class CampaignError extends Error {
@@ -191,6 +192,7 @@ function normalizeCampaign(input, existing = null) {
     pacing: { newPerDay: intIn(src.pacing?.newPerDay, 1, 500, 20), maxPerDay: src.pacing?.maxPerDay == null || src.pacing?.maxPerDay === "" ? null : intIn(src.pacing.maxPerDay, 1, 1000, null) },
     audienceType: src.audienceType === "people" ? "people" : "companies",
     footer: typeof src.footer === "boolean" ? src.footer : null,
+    sector: cleanText(src.sector, 120),
     audience: { mode: audienceMode, sources: base.audience?.sources || [] },
     exclusions: {
       contactedWithinDays: intIn(ex.contactedWithinDays, 0, 3650, 30),
