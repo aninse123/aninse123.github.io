@@ -27,8 +27,17 @@ ok('independent + person and company at 50% → "2 holders", Individual + corpor
 o = H.resolveOwnership(GUO, [person('A', 50), person('B', 50), person('C', 50, { shCurrent: false })]);
 ok('a previous 50% holder doesn\'t count', o.joint === true);
 
-o = H.resolveOwnership(GUO, [person('A', 34), person('B', 33), person('C', 33)]);
-ok('3 × 33% keeps the GUO wording and type', !o.joint && /^Ultimate owner of its own group/.test(o.note) && o.guoType === 'Corporate');
+// Shared control (12 Oct, EUROTORF): no holder above half, any split other than 2 × 50%.
+o = H.resolveOwnership(GUO, [person('A', 33.33), person('B', 33.33), person('C', 33.33)]);
+ok('3 × 33.33% (own GUO) → shared control, Individuals, equal, percentages listed', !o.joint && o.shared?.n === 3 && o.shared.equal === true && o.guoType === 'Individuals'
+  && o.note === 'Shared control: no one holds more than half — 3 people: 33.33% · 33.33% · 33.33% (Orbis lists the company as its own ultimate owner)');
+o = H.resolveOwnership({ ownershipMeta: { entityType: 'Independent co' } }, [person('A', 40), person('B', 35, { personEntityType: 'entity' })]);
+ok('40 / 35 (independent), a person and a holding → "2 holders", unequal, 75% recorded, Individual + corporate', o.shared?.n === 2 && o.shared.equal === false && o.shared.largest === 40 && o.guoType === 'Individual + corporate'
+  && /2 holders: 40% · 35% \(75% recorded\) \(Orbis: independent company\)$/.test(o.note));
+o = H.resolveOwnership(GUO, ['A', 'B', 'C', 'D', 'E', 'F'].map((n) => person(n, 16.66, { personEntityType: 'entity' })));
+ok('6 holdings → Corporate, first 4 percentages "and 2 more"', o.guoType === 'Corporate' && /6 holders: 16.66% · 16.66% · 16.66% · 16.66% and 2 more/.test(o.note));
+o = H.resolveOwnership({ ownershipMeta: { entityType: 'GUO', cshKeys: ['x'], cshNames: ['Family'] } }, [person('A', 33), person('B', 33), person('C', 33)]);
+ok('a controlling shareholder named by Orbis wins over shared control', !o.shared && /^Controlling shareholder per Orbis/.test(o.note));
 
 o = H.resolveOwnership(GUO, [person('A', 50)]);
 ok('one 50% holder alone is not joint control', !o.joint);
@@ -36,8 +45,8 @@ ok('one 50% holder alone is not joint control', !o.joint);
 o = H.resolveOwnership({ ownershipMeta: { entityType: 'Independent co' } }, [person('A', 60), person('B', 40)]);
 ok('a holder above 50% is never joint', !o.joint && /^Independent company/.test(o.note));
 
-ok('header pill can be corrected once the links load', /data-own-pill title="Orbis records no controlling shareholder"/.test(page) && /🤝 Joint control · 2 × 50%/.test(page));
-ok('"It is its own ultimate owner" hidden for joint control', page.includes("${own.guoName && !own.joint ? (own.guoNif"));
+ok('header pill can be corrected once the links load (joint / shared)', /data-own-pill title="Orbis records no controlling shareholder"/.test(page) && /🤝 Joint control · 2 × 50%/.test(page) && page.includes('🤝 Shared control · ${own.shared.equal'));
+ok('"It is its own ultimate owner" hidden for joint / shared control', page.includes("${own.guoName && !own.joint && !own.shared ? (own.guoNif"));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');

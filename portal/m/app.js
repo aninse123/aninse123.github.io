@@ -228,7 +228,7 @@ export function companyHtml(c, links, acts, guoCo) {
       <span class="row__sub">${esc(H.fmtPctOwn(l.shDirectPct))}${l.shTotalPct != null && l.shTotalPct !== l.shDirectPct ? ' · ' + esc(H.fmtPctOwn(l.shTotalPct)) + ' total' : ''}${l.shDate ? ' · as of ' + esc(l.shDate) : ''}</span></span>
       <span class="row__side">${crown}${t ? `<span class="pill muted">${esc(t.label)}</span>` : ''}</span></a>`;
   };
-  const guo = own.guoName && !own.joint ? `Ultimate owner: ${guoCo ? `<a href="#c/${encodeURIComponent(guoCo.id)}">${esc(own.guoName)}</a>` : esc(own.guoName)}${own.guoType ? ` <span class="muted">(${esc(own.guoType)})</span>` : ''}` : '';
+  const guo = own.guoName && !own.joint && !own.shared ? `Ultimate owner: ${guoCo ? `<a href="#c/${encodeURIComponent(guoCo.id)}">${esc(own.guoName)}</a>` : esc(own.guoName)}${own.guoType ? ` <span class="muted">(${esc(own.guoType)})</span>` : ''}` : '';
   const ownNote = [own.note ? esc(own.note) : '', own.treasuryPct != null ? `${esc(own.treasuryPct)}% held by the company itself (treasury)` : '', guo].filter(Boolean).join('<br>');
   const shareholders = (ownNote ? `<p class="note">${ownNote}</p>` : '')
     + (curSh.length ? `<div class="list">${curSh.map(shRow).join('')}</div>` : '<p class="hint">No shareholders recorded.</p>')

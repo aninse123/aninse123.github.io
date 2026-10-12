@@ -86,15 +86,30 @@ function resolveOwnership(company, links){
   const jointKind = half.every(l => l.personEntityType === 'entity') ? 'Corporate'
     : half.some(l => l.personEntityType === 'entity') ? 'Individual + corporate' : 'Individuals';
   const jointNote = (why) => `Joint control: 2 ${jointKind === 'Individuals' ? 'people' : 'holders'} hold 50% each, so neither controls alone (${why})`;
+  // Shared control (12 Oct): any other split where no current holder has more
+  // than half — e.g. EUROTORF, 3 × 33.33%. People, companies or both; the pill
+  // says which. Up to 4 percentages; "(x% recorded)" when the cap table is incomplete.
+  const holders = current.filter(l => l.shDirectPct != null && l.shDirectPct > 0).sort((a, b) => b.shDirectPct - a.shDirectPct);
+  const shared = !joint && holders.length >= 2 && holders[0].shDirectPct <= 50;
+  const kindOf = (ls) => ls.every(l => l.personEntityType === 'entity') ? 'Corporate' : ls.some(l => l.personEntityType === 'entity') ? 'Individual + corporate' : 'Individuals';
+  const pctTxt = (v) => (Math.round(v * 100) / 100) + '%';
+  const sharedInfo = shared ? (() => {
+    const sum = holders.reduce((a, l) => a + l.shDirectPct, 0);
+    return { n: holders.length, kind: kindOf(holders), largest: holders[0].shDirectPct,
+      equal: holders[0].shDirectPct - holders[holders.length - 1].shDirectPct < 0.02, recorded: sum < 99 ? Math.round(sum * 100) / 100 : null };
+  })() : null;
+  const sharedNote = (why) => `Shared control: no one holds more than half — ${sharedInfo.n} ${sharedInfo.kind === 'Individuals' ? 'people' : 'holders'}: ${holders.slice(0, 4).map(l => pctTxt(l.shDirectPct)).join(' · ')}${holders.length > 4 ? ` and ${holders.length - 4} more` : ''}${sharedInfo.recorded != null ? ` (${sharedInfo.recorded}% recorded)` : ''} (${why})`;
   if (om && /independent/i.test(om.entityType || '')){
     out.source = 'orbis'; out.independent = true;
     if (joint){ out.joint = true; out.guoType = jointKind; out.note = jointNote('Orbis: independent company'); return out; }
+    if (shared){ out.shared = sharedInfo; out.guoType = sharedInfo.kind; out.note = sharedNote('Orbis: independent company'); return out; }
     out.note = 'Independent company — Orbis records no controlling shareholder';
     return out;
   }
   if (om && /^guo$/i.test((om.entityType || '').trim())){
     out.source = 'orbis'; out.independent = true;
     if (joint){ out.joint = true; out.guoType = jointKind; out.note = jointNote('Orbis lists the company as its own ultimate owner'); return out; }
+    if (shared){ out.shared = sharedInfo; out.guoType = sharedInfo.kind; out.note = sharedNote('Orbis lists the company as its own ultimate owner'); return out; }
     out.note = 'Ultimate owner of its own group — Orbis records no controlling shareholder above it';
     return out;
   }
