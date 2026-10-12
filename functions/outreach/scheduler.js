@@ -262,6 +262,10 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   let campaignSent = daily.campaignSent || 0;
   const budget = settings.automationBudget ?? DEFAULT_SETTINGS.automationBudget;
   const usedThisRun = new Set();
+  // Drafts made in this run, per address (12 Oct): drafts cost no quota, so without
+  // this every draft of a run got the same "least used" address — and approved drafts
+  // keep it, so they left one per run and all follow-ups piled on one address.
+  const draftLoad = {};
   const templates = new Map();
   const redirectTo = settings.testMode ? (settings.campaignTestRecipient || (settings.testRecipients || [])[0]) : null;
   let sendsThisRun = 0;
@@ -345,7 +349,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         await unlock(doc.ref); report.deferred++; continue;
       }
     } else {
-      const args = { policy: campaign.senderPolicy, owner: e.owner, senders, sentToday, defaultCap: DEFAULT_SENDER_CAP };
+      const load = wantsDraft ? Object.fromEntries(senders.map((x) => [x.id, (sentToday[x.id] || 0) + (draftLoad[x.id] || 0)])) : sentToday;
+      const args = { policy: campaign.senderPolicy, owner: e.owner, senders, sentToday: load, defaultCap: DEFAULT_SENDER_CAP };
       const picked = pickSender({ ...args, usedThisRun: wantsDraft ? new Set() : usedThisRun })
         || (wantsDraft ? pickSender({ ...args, usedThisRun: new Set(), sentToday: {} }) : null);
       if (!picked) {
@@ -354,6 +359,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         continue;
       }
       senderId = picked.id;
+      if (wantsDraft) draftLoad[senderId] = (draftLoad[senderId] || 0) + 1;
     }
 
     try {
