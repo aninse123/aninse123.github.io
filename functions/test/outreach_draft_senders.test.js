@@ -40,6 +40,8 @@ const ADDR = ["a.rocha", "an.rocha", "andre.rocha", "rocha.andre"].map((x) => `$
   ok("8 drafts in the morning run, spread 2 per address over the 4 addresses", drafts.length === 8 && ADDR.every((a) => per[a] === 2));
 
   await camp({ action: "approve", messageIds: drafts.map((m) => m.id) });
+  // Approving stamps nextActionAt with the real clock; pin it to the test's day so the frozen runs below find them due.
+  for (const [p, e] of store.entries()) if (p.startsWith("outreachEnrolments/") && e.nextActionAt?.constructor?.fromDate) e.nextActionAt = e.nextActionAt.constructor.fromDate(new Date("2026-10-12T10:20:00+01:00"));
   await runScheduler({ now: new Date("2026-10-12T10:25:00+01:00"), gap: null, rand: () => 0 });
   ok("approved: the next run sends 4 at once (one per address), not 1", sends.length === 4 && new Set(sends.map((s) => s.from)).size === 4);
   await runScheduler({ now: new Date("2026-10-12T10:35:00+01:00"), gap: null, rand: () => 0 });

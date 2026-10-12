@@ -149,6 +149,11 @@
     .att--skip { cursor: default; color: var(--text-light); }
     .reply { border-top: 1px solid var(--border); padding: 14px 20px 18px; background: var(--tint); border-radius: 0 0 var(--radius) var(--radius); }
     .reply textarea { width: 100%; min-height: 110px; }
+    .msg__rcpt { font-size: 0.74rem; color: var(--text-light); margin: -4px 0 8px; overflow-wrap: anywhere; }
+    .rcpt { display: grid; gap: 6px; margin-bottom: 10px; }
+    .rcpt__modes { display: flex; gap: 6px; flex-wrap: wrap; }
+    .rcpt__row { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 8px; margin: 0; }
+    .rcpt__row label { margin: 0; }
 
     /* Forms */
     .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
@@ -873,6 +878,48 @@
     function utcDay() { return new Date().toISOString().slice(0, 10); }
     function senderKey(id) { return String(id || '').replace(/[.@]/g, '_'); }
     function localPart(e) { return String(e || '').split('@')[0]; }
+    // ── Reply recipients (12 Oct) — begin ──
+    // Our outreach addresses and the inbound forwarding addresses (*.resend.app, kept private).
+    const OUR_DOMAIN = 'mail.douropartners-team.pt';
+    function isOurAddr(e) { const d = (String(e || '').split('@')[1] || '').toLowerCase(); return d === OUR_DOMAIN || /\.resend\.app$/.test(d); }
+    // "Ana <a@x.pt>, \"Rocha, André\" <b@y.pt>" (or an array of those) → [{ name, email, ok }]; commas inside quotes or <> stay.
+    function addrTokens(v) {
+      const parts = [];
+      for (const raw of (Array.isArray(v) ? v : [v])) {
+        let cur = '', q = false, ang = false;
+        for (const ch of String(raw || '')) {
+          if (ch === '"') q = !q; else if (ch === '<') ang = true; else if (ch === '>') ang = false;
+          if ((ch === ',' || ch === ';') && !q && !ang) { parts.push(cur); cur = ''; } else cur += ch;
+        }
+        parts.push(cur);
+      }
+      return parts.map(s => s.trim()).filter(Boolean).map(s => {
+        const m = s.match(/^"?([^"<]*?)"?\s*<([^>]+)>$/);
+        const a = m ? { name: m[1].trim(), email: m[2].trim().toLowerCase() } : { name: '', email: s.toLowerCase() };
+        return { ...a, ok: /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/.test(a.email) };
+      });
+    }
+    function addrList(v) { const seen = new Set(); return addrTokens(v).filter(a => a.ok && !seen.has(a.email) && seen.add(a.email)); }
+    // Who an email went to: for a received one the real To header, never the forwarding address.
+    function msgTo(m) { return addrList(m.direction === 'in' ? (m.deliveredTo || []) : (m.to || [])).filter(a => !/\.resend\.app$/.test(a.email)); }
+    function msgCc(m) { return addrList(m.cc || []); }
+    // Reply = the last person who wrote; Reply all = them + everyone else in To and Cc, minus our addresses.
+    const NOT_SENT_STATUSES = ['draft', 'failed', 'approving', 'returned', 'cancelled', 'draftSent'];
+    function replyRecipients(msgs, fallbackEmail, mode) {
+      const sent = (msgs || []).filter(m => !NOT_SENT_STATUSES.includes(m.status));
+      const last = [...sent].reverse().find(m => m.direction === 'in');
+      if (!last) { // nothing received yet: our last email's recipients
+        const out = [...sent].reverse().find(m => m.direction === 'out');
+        const to = out && msgTo(out).length ? msgTo(out) : addrList(fallbackEmail);
+        return { to: to.map(a => a.email), cc: mode === 'all' && out ? msgCc(out).map(a => a.email) : [] };
+      }
+      const from = addrList(last.from).filter(a => !isOurAddr(a.email));
+      if (mode !== 'all') return { to: (from.length ? from : addrList(fallbackEmail)).map(a => a.email), cc: [] };
+      const to = addrList([...from.map(a => a.email), ...msgTo(last).map(a => a.email)]).filter(a => !isOurAddr(a.email));
+      const cc = msgCc(last).filter(a => !isOurAddr(a.email) && !to.some(t => t.email === a.email));
+      return { to: to.map(a => a.email), cc: cc.map(a => a.email) };
+    }
+    // ── Reply recipients — end ──
     function pill(map, key) { const [label, kind] = map[key] || [key || '—', '']; return `<span class="pill${kind ? ' pill--' + kind : ''}">${esc(label)}</span>`; }
     function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; }, 4200); }
     function requestId() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).replace(/-/g, '').slice(0, 32); }
@@ -1097,6 +1144,7 @@
       renderThreads();
       if (msgUnsub) msgUnsub();
       threadMessages = [];
+      replyMode = null; replyEdited = false;
       $('threadView').innerHTML = '<div class="view__head" id="viewHead"></div><div class="msgs" id="msgs"><div class="empty">Loading…</div></div><div id="replyBox"></div>';
       renderThreadHead();
       const t = threads.find(x => x.id === id);
@@ -1120,6 +1168,7 @@
         <div class="view__sub">${company}<span>${esc(t.contactEmail || '')}</span>
           <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
           ${threadPill(t)}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
+        ${t.recipientIssue ? `<div class="banner banner--warn" style="margin:8px 0 4px;"><span>An email in this conversation to several people bounced for one of them (Resend doesn't say which), so nobody was put on the suppression list. Addresses: ${esc((t.recipientIssue.addresses || []).join(', '))}.</span></div>` : ''}
         <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button></div>
         <div class="classify"><span class="classify__label">Classify</span>${CATEGORIES.map(([k, l]) =>
           `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}" data-perm="out.write">${esc(l)}</button>`).join('')}</div>`;
@@ -1161,8 +1210,9 @@
         const body = out ? (m.snippet || m.text || '') : (m.snippet || m.text || '');
         const canFull = (m.html || m.htmlStoragePath || (m.text && m.text !== body));
         return `<article class="msg ${out ? 'msg--out' : 'msg--in'}">
-          <div class="msg__head"><span><span class="msg__from">${esc(out ? 'You' : (m.from || ''))}</span>${out ? ' → ' + esc((m.to || []).join(', ')) : ''}</span>
+          <div class="msg__head"><span><span class="msg__from">${esc(out ? 'You' : (m.from || ''))}</span></span>
             <span>${tags} <span style="font-variant-numeric:tabular-nums;">${esc(m.createdAt ? dtFmt.format(new Date(tsMs(m.createdAt))) : '')}</span></span></div>
+          ${rcptLine(m)}
           <div class="msg__body">${esc(body)}</div>
           ${atts}${unsub}
           ${canFull ? `<div class="msg__actions"><button class="btn btn--ghost btn--sm" data-full="${esc(m.id)}">Show full email</button></div><div id="full-${esc(m.id)}"></div>` : ''}
@@ -1171,6 +1221,28 @@
       $('msgs').querySelectorAll('[data-full]').forEach(b => b.addEventListener('click', () => toggleFull(b)));
       $('msgs').querySelectorAll('[data-att]').forEach(b => b.addEventListener('click', () => openAttachment(b)));
       $('msgs').querySelectorAll('[data-unsub]').forEach(b => b.addEventListener('click', () => suppressThreadContact(threads.find(x => x.id === selectedId), 'reply')));
+      fillReplyRecipients();
+    }
+    // To and Cc of each email (12 Oct): who got it, as in a mail client.
+    function rcptLine(m) {
+      const who = (list) => list.map(a => a.name ? `${a.name} <${a.email}>` : a.email).join(', ');
+      const to = msgTo(m), cc = msgCc(m);
+      if (!to.length && !cc.length) return '';
+      return `<div class="msg__rcpt">${to.length ? `To: ${esc(who(to))}` : ''}${cc.length ? `${to.length ? ' · ' : ''}Cc: ${esc(who(cc))}` : ''}</div>`;
+    }
+    // Reply / Reply all: filled from the conversation until you edit the addresses yourself.
+    let replyMode = null, replyEdited = false;
+    function fillReplyRecipients() {
+      const t = threads.find(x => x.id === selectedId);
+      if (!t || !$('replyTo') || replyEdited) return;
+      if (!replyMode) {
+        const all = replyRecipients(threadMessages, t.contactEmail, 'all'), one = replyRecipients(threadMessages, t.contactEmail, 'reply');
+        replyMode = all.to.length + all.cc.length > one.to.length + one.cc.length ? 'all' : 'reply';
+      }
+      const r = replyRecipients(threadMessages, t.contactEmail, replyMode);
+      $('replyTo').value = r.to.join(', ');
+      $('replyCc').value = r.cc.join(', ');
+      document.querySelectorAll('#replyRcpt [data-rmode]').forEach(b => b.classList.toggle('on', b.dataset.rmode === replyMode));
     }
 
     function attChip(m, a, i) {
@@ -1220,6 +1292,14 @@
       // the cursor (its subject is ignored — a reply keeps "Re: …").
       const tplOpts = templates.flatMap(tp => (tp.variants || []).map(v => `<option value="${esc(tp.id)}::${esc(v.key)}">${esc(tp.name)} — ${esc(v.key)}</option>`)).join('');
       box.innerHTML = `
+        <div class="rcpt" id="replyRcpt">
+          <div class="rcpt__modes" role="group" aria-label="Who the reply goes to">
+            <button type="button" class="chip" data-rmode="reply" title="Only the person who wrote the last email">↩ Reply</button>
+            <button type="button" class="chip" data-rmode="all" title="Everyone in To and Cc of the last email, except our own addresses">↩ Reply all</button>
+          </div>
+          <div class="field rcpt__row"><label for="replyTo">To</label><input id="replyTo" type="text" autocomplete="off" spellcheck="false"></div>
+          <div class="field rcpt__row"><label for="replyCc">Cc</label><input id="replyCc" type="text" autocomplete="off" spellcheck="false" placeholder="Add addresses, separated by commas"></div>
+        </div>
         <div class="field" style="margin-bottom:10px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;">
             <label for="replyText">Reply from ${esc(t.senderId || '—')}</label>
@@ -1232,6 +1312,9 @@
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
         <button class="btn btn--primary" id="replyBtn" data-perm="out.write">${esc(SEND_LABEL(true))}</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
+      box.querySelectorAll('[data-rmode]').forEach(b => b.addEventListener('click', () => { replyMode = b.dataset.rmode; replyEdited = false; fillReplyRecipients(); }));
+      ['replyTo', 'replyCc'].forEach(id => $(id).addEventListener('input', () => { replyEdited = true; }));
+      fillReplyRecipients();
       wireVarBar($('replyVars'), box, '#replyText');
       $('replyTpl')?.addEventListener('change', () => {
         const [tid, key] = $('replyTpl').value.split('::');
@@ -1249,9 +1332,16 @@
       const body = $('replyText').value.trim();
       const err = $('replyErr'); err.hidden = true;
       if (!body) { err.textContent = 'Write the reply first.'; err.hidden = false; return; }
+      const toT = addrTokens($('replyTo').value), ccT = addrTokens($('replyCc').value);
+      const bad = [...toT, ...ccT].filter(a => !a.ok).map(a => a.email);
+      if (bad.length) { err.textContent = `Check the address${bad.length > 1 ? 'es' : ''}: ${bad.join(', ')}`; err.hidden = false; return; }
+      const ours = [...toT, ...ccT].filter(a => isOurAddr(a.email)).map(a => a.email);
+      if (ours.length) { err.textContent = `Remove our own address${ours.length > 1 ? 'es' : ''}: ${ours.join(', ')}`; err.hidden = false; return; }
+      const replyTo = addrList($('replyTo').value).map(a => a.email), replyCc = addrList($('replyCc').value).map(a => a.email).filter(e => !replyTo.includes(e));
+      if (!replyTo.length) { err.textContent = 'Add at least one address in To.'; err.hidden = false; return; }
       const btn = $('replyBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
       try {
-        const res = await sendWithConfirm({ threadId: t.id, body, requestId: requestId(), footer: !!$('replyFooter')?.checked });
+        const res = await sendWithConfirm({ threadId: t.id, body, replyTo, replyCc, requestId: requestId(), footer: !!$('replyFooter')?.checked });
         if (res?.draft) { $('replyText').value = ''; toast('Reply saved — it waits in Tasks → To approve until André or António sends it.'); }
         else if (res) { $('replyText').value = ''; toast(res.warnings?.length ? 'Reply sent. ' + res.warnings[0] : 'Reply sent.'); }
       } catch (e) { err.textContent = errText(e); err.hidden = false; }

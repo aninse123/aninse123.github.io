@@ -8,7 +8,9 @@
 //   new thread : { companyId, senderId, to?, recipient?: { email }, templateId?, variantKey?, subject?, body?, confirmOverTarget?, requestId? }
 //                (recipient = the company address, a contact or a linked person — Phase 3b;
 //                 in test mode `to` is the approved test address)
-//   reply      : { threadId, body, senderId?, confirmOverTarget?, requestId? }
+//   reply      : { threadId, body, senderId?, replyTo?: [email], replyCc?: [email], confirmOverTarget?, requestId? }
+//                (replyTo / replyCc, 12 Oct: Reply / Reply all / edited recipients; without them
+//                 the reply goes to the conversation's address)
 // `to` defaults to the company's companyEmail (Phase 1 recipient, Q10).
 // `requestId` (optional) becomes the message id, so a retried call is a no-op.
 //
@@ -44,6 +46,8 @@ function draftRequest(input, isReply) {
     body: input.body ?? null,
     signatureName: typeof input.signatureName === "string" ? input.signatureName.slice(0, 60) : null,
     footer: typeof input.footer === "boolean" ? input.footer : null, // CCSL: optional footer
+    replyTo: isReply && Array.isArray(input.replyTo) ? input.replyTo.slice(0, 20).map(String) : null,
+    replyCc: isReply && Array.isArray(input.replyCc) ? input.replyCc.slice(0, 20).map(String) : null,
   };
 }
 
@@ -80,6 +84,7 @@ async function send(request, callerEmail) {
     recipient: req.recipient,
     templateId: req.templateId, variantKey: req.variantKey,
     subject: req.subject, body: req.body, signatureName: req.signatureName, footer: req.footer,
+    replyTo: req.replyTo, replyCc: req.replyCc,
     confirmOverTarget: !!input.confirmOverTarget,
   });
 
@@ -87,7 +92,7 @@ async function send(request, callerEmail) {
     // Written by someone who may not send: waits in To approve.
     await messageRef.set({
       threadId: p.isReply ? p.threadRef.id : null, companyId: p.companyId, companyName: p.company?.name || p.thread?.companyName || null,
-      direction: "out", via: "portal", from: `${p.sender.displayName} <${p.senderId}>`, to: [p.to], cc: [],
+      direction: "out", via: "portal", from: `${p.sender.displayName} <${p.senderId}>`, to: p.toList || [p.to], cc: p.ccList || [],
       subject: p.subject, draftBody: p.bodyText, text: p.text, html: p.html, snippet: p.bodyText.slice(0, 500),
       templateId: p.templateId, variantKey: p.variantKey, senderId: p.senderId, source: "manual",
       redirectedFrom: p.redirectedFrom, isReply: p.isReply,
@@ -126,7 +131,7 @@ async function approveDraft(request, callerEmail) {
       callerEmail, settings, messageRef: sendRef,
       threadId: req.threadId, companyId: req.companyId, senderId: req.senderId, to: req.to, recipient: req.recipient,
       templateId: req.templateId, variantKey: req.variantKey, subject: req.subject, body: req.body, signatureName: req.signatureName || null,
-      footer: req.footer ?? null, confirmOverTarget: true,
+      footer: req.footer ?? null, replyTo: req.replyTo || null, replyCc: req.replyCc || null, confirmOverTarget: true,
     });
     const res = await deliverEmail(p);
     await sendRef.update({ writtenBy: draft.writtenBy, draftId: draftRef.id }).catch(() => {});

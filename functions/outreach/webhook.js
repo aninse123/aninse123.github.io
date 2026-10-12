@@ -146,6 +146,18 @@ async function handleDeliveryEvent(type, data) {
   if (permanentBounce) await Usage.bump({ [`email.bounced.${set}`]: 1 });
   else if (type === "email.complained") await Usage.bump({ [`email.complained.${set}`]: 1 });
   else if (type === "email.suppressed") await Usage.bump({ [`email.suppressed.${set}`]: 1 });
+  // A reply to several people (Reply all / Cc, 12 Oct): the event doesn't say
+  // which address bounced, so nobody is suppressed on a guess — the
+  // conversation is flagged instead. A spam complaint suppresses them all.
+  const everyone = [...new Set([...(msg.to || []), ...(msg.cc || [])].map((e) => normEmail(e)).filter(Boolean))];
+  if (everyone.length > 1 && (permanentBounce || type === "email.suppressed")) {
+    if (threadRef) await threadRef.update({ recipientIssue: { type: short, at, messageId: msgSnap.id, addresses: everyone } });
+    logger.warn("outreach: bounce on a multi-recipient email — not suppressed", { messageId: msgSnap.id, type });
+    return true;
+  }
+  if (type === "email.complained" && everyone.length > 1) {
+    for (const e of everyone) await store.addSuppression(e, { reason: "complaint", source: "webhook", companyId });
+  }
   if (permanentBounce) {
     await store.addSuppression(recipient, { reason: "hard_bounce", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });

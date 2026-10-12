@@ -37,6 +37,11 @@ function fail(code, reason, message, extra = {}) {
   throw new HttpsError(code, message, { reason, ...extra });
 }
 
+// Our outreach addresses and the inbound forwarding addresses (*.resend.app,
+// kept private) — never a reply recipient.
+const MAX_REPLY_RECIPIENTS = 10;
+const isOurAddress = (e) => { const d = domainOf(e); return d === SENDER_DOMAIN || d.endsWith(".resend.app"); };
+
 // opts:
 //   callerEmail, settings, messageRef
 //   threadId                 → reply in that conversation; otherwise a new one
@@ -114,12 +119,26 @@ async function prepareEmail(opts) {
   const person = !isReply && opts.person?.email ? { email: normEmail(opts.person.email), name: String(opts.person.name || ""), org: String(opts.person.org || ""), refs: Array.isArray(opts.person.refs) ? opts.person.refs.slice(0, 10) : [] } : null;
   const contactName = isReply ? (thread.contactName || "") : person ? person.name : (recipient?.kind !== "company" ? (recipient?.name || "") : "");
 
+  // ── Reply recipients (12 Oct): Reply / Reply all / edited To and Cc from the
+  // Inbox. Without them a reply goes to the conversation's address, as before
+  // (campaign follow-ups never pass them). Our own outreach addresses and the
+  // inbound forwarding addresses are dropped; every other address gets the
+  // same checks as a single recipient (below).
+  let replyLists = null;
+  if (isReply && Array.isArray(opts.replyTo) && opts.replyTo.length) {
+    const clean = (list) => [...new Set((Array.isArray(list) ? list : []).map((e) => normEmail(e)).filter(Boolean))].filter((e) => !isOurAddress(e));
+    const toL = clean(opts.replyTo), ccL = clean(opts.replyCc).filter((e) => !toL.includes(e));
+    if (!toL.length) fail("invalid-argument", "no_recipient", "Add at least one address in To.");
+    if (toL.length + ccL.length > MAX_REPLY_RECIPIENTS) fail("invalid-argument", "too_many_recipients", `At most ${MAX_REPLY_RECIPIENTS} addresses in To and Cc together.`);
+    replyLists = { to: toL, cc: ccL };
+  }
+
   // ── Recipient checks ──
   const redirect = isTest && opts.redirectTo ? normEmail(opts.redirectTo) : null;
-  const intended = normEmail(isReply ? thread.contactEmail : person ? person.email : (recipient ? recipient.email : (opts.to || company?.companyEmail)));
+  const intended = normEmail(replyLists ? replyLists.to[0] : isReply ? thread.contactEmail : person ? person.email : (recipient ? recipient.email : (opts.to || company?.companyEmail)));
   // Test mode: the email goes to the approved test address; the intended
   // recipient is only used for the wording and recorded as redirectedFrom.
-  const to = normEmail(isReply ? thread.contactEmail : (redirect || (isTest && (recipient || person) ? (opts.to || intended) : intended)));
+  const to = normEmail(replyLists ? replyLists.to[0] : isReply ? thread.contactEmail : (redirect || (isTest && (recipient || person) ? (opts.to || intended) : intended)));
   if (!isValidEmail(to)) fail("invalid-argument", "bad_recipient", to ? `"${to}" is not a valid email address.` : "This company has no email address.");
   const toDomain = domainOf(to);
   const testAllowed = isTestRecipient(to, settings.testRecipients);
@@ -143,6 +162,22 @@ async function prepareEmail(opts) {
   if (!mx.ok) {
     if (mx.reason === "no_mx") fail("failed-precondition", "no_mx", `${toDomain} can't receive email (no mail servers found).`);
     fail("unavailable", "dns_error", `Couldn't check ${toDomain}'s mail servers — try again in a moment.`);
+  }
+  // The other reply recipients: valid, test-approved in test mode, not suppressed, a domain that takes mail.
+  const toList = replyLists ? replyLists.to : [to], ccList = replyLists ? replyLists.cc : [];
+  const others = [...toList.slice(1), ...ccList];
+  for (const e of others) {
+    if (!isValidEmail(e)) fail("invalid-argument", "bad_recipient", `"${e}" is not a valid email address.`);
+    if (isTest && !isTestRecipient(e, settings.testRecipients)) fail("failed-precondition", "test_mode", `Test mode is on: only approved test addresses can receive email (not ${e}).`);
+    const sup = await store.findSuppression(e);
+    if (sup) fail("failed-precondition", "suppressed", `${e} is on the suppression list (${sup.reason}).`);
+  }
+  for (const d of new Set(others.map(domainOf).filter((d) => d !== toDomain))) {
+    const r = await checkMx(d);
+    if (!r.ok) {
+      if (r.reason === "no_mx") fail("failed-precondition", "no_mx", `${d} can't receive email (no mail servers found).`);
+      fail("unavailable", "dns_error", `Couldn't check ${d}'s mail servers — try again in a moment.`);
+    }
   }
 
   // ── Budget (spec §7.6): per-address cap for new outreach; soft account target ──
@@ -244,7 +279,7 @@ async function prepareEmail(opts) {
 
   return {
     callerEmail, settings, isReply, isTest, messageRef, messageId, threadRef, thread, companyId, company,
-    senderId, sender, to, toDomain, subject: subject.text, bodyText: body.text, text, html, headers,
+    senderId, sender, to, toDomain, toList, ccList, subject: subject.text, bodyText: body.text, text, html, headers,
     templateId, variantKey, countsAsOutreach, footer: withFooter,
     redirectedFrom: isTest && intended && intended !== to ? intended : null,
     contactName, recipientKind: isReply ? (thread.recipientKind || null) : person ? "people" : (recipient?.kind || "company"),
@@ -280,7 +315,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
     threadId: threadRef.id, companyId, companyName: company?.name || thread?.companyName || null,
     direction: "out", via: "portal", resendId: null, rfcMessageId: null,
     inReplyTo: headers["In-Reply-To"] || null, references: headers["References"] || null,
-    from: `${sender.displayName} <${senderId}>`, to: [to], cc: [],
+    from: `${sender.displayName} <${senderId}>`, to: p.toList || [to], cc: p.ccList || [],
     subject: p.subject, text: p.text, html: p.html, snippet: p.bodyText.slice(0, 500),
     templateId: p.templateId, variantKey: p.variantKey, senderId, sentBy: p.callerEmail, source, footer: !!p.footer,
     campaignId: campaign?.campaignId || null, enrolmentId: campaign?.enrolmentId || null, stepId: campaign?.stepId || null,
@@ -298,7 +333,8 @@ async function deliverEmail(p, { campaign = null } = {}) {
     const sendKey = sender.kind === "relationship" || domainOf(senderId) !== SENDER_DOMAIN ? RESEND_READ_KEY.value() : RESEND_SEND_KEY.value();
     result = await sendEmail(sendKey, {
       from: `${sender.displayName} <${senderId}>`,
-      to: [to],
+      to: p.toList || [to],
+      ...(p.ccList && p.ccList.length ? { cc: p.ccList } : {}),
       subject: p.subject,
       text: p.text,
       html: p.html,
@@ -376,4 +412,4 @@ async function saveDraft(p, { campaign }) {
   return { messageId: p.messageId };
 }
 
-module.exports = { prepareEmail, deliverEmail, saveDraft, fail };
+module.exports = { prepareEmail, deliverEmail, saveDraft, fail, isOurAddress, MAX_REPLY_RECIPIENTS };
