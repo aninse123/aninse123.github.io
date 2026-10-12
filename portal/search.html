@@ -1368,6 +1368,10 @@ const ACT = {
   person_linked:    { label:'Person linked',     icon:'🧑‍💼', outreach:false },
   person_updated:   { label:'Person link updated', icon:'🧑‍💼', outreach:false },
   person_unlinked:  { label:'Person unlinked',   icon:'🧑‍💼', outreach:false },
+  // 12 Oct: written on every company where the person is current when their
+  // contact details or notes change on the person page.
+  person_contact_edited: { label:'Person contact updated', icon:'👤', outreach:false },
+  person_note:      { label:'Note on a person',  icon:'📝', outreach:false },
 };
 // Set on searchCompanies by the Outreach Cloud Functions (spec §5).
 const OUTREACH_BADGE = {
@@ -4796,17 +4800,25 @@ function renderPersonView(p, links){
     try {
       const patch = { updatedAt: serverTimestamp() };
       for (const f of PERSON_CONTACT_FIELDS) patch[f.key] = document.getElementById('pc_' + f.key).value.trim() || null;
+      const changes = personContactChanges(p, patch);
       await updateDoc(doc(db,'searchPeople',p.id), patch);
       personDocCache.delete(p.id);
       logPortal('person_contact_edit', { personId: p.id, name: p.name });
+      PERSON_CONTACT_FIELDS.forEach(f => { p[f.key] = patch[f.key]; });
+      if (changes.length) await logOnPersonCompanies(p, links, 'person_contact_edited', `Contact details updated — ${personDisplayName(p.name)}: ${changes.join(' · ')}`);
       btn.textContent = '✓ Saved'; setTimeout(() => { btn.textContent = 'Save Contact'; btn.disabled = false; }, 1200);
     } catch(e){ alert('Error: ' + e.message); btn.textContent = 'Save Contact'; btn.disabled = false; }
   });
   document.getElementById('savePersonNotesBtn').addEventListener('click', async () => {
     const btn = document.getElementById('savePersonNotesBtn'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      await updateDoc(doc(db,'searchPeople',p.id), { notes: document.getElementById('personNotes').value.trim() || null, updatedAt: serverTimestamp() });
+      const note = document.getElementById('personNotes').value.trim() || null;
+      const before = String(p.notes || '').trim() || null;
+      await updateDoc(doc(db,'searchPeople',p.id), { notes: note, updatedAt: serverTimestamp() });
       personDocCache.delete(p.id);
+      p.notes = note;
+      // The notes field is overwritten; the company activities keep each version.
+      if (note !== before) await logOnPersonCompanies(p, links, 'person_note', note ? `Note on ${personDisplayName(p.name)}: ${note}` : `Note on ${personDisplayName(p.name)} cleared.`);
       btn.textContent = '✓ Saved'; setTimeout(() => { btn.textContent = 'Save Notes'; btn.disabled = false; }, 1200);
     } catch(e){ alert('Error: ' + e.message); btn.textContent = 'Save Notes'; btn.disabled = false; }
   });
@@ -10429,7 +10441,7 @@ async function recomputeActivityFields(c){
   // lastTouchAt = most recent non-future, non-auto activity
   // email_test: Outreach test-mode sends aren't real touches (they go to our own addresses).
   // task_test: campaign tasks done in test mode (rehearsals) — not real touches either.
-  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test'];
+  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note'];
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));
@@ -10443,6 +10455,23 @@ async function recomputeActivityFields(c){
   await updateDoc(doc(db,'searchCompanies',c.id), upd);
   Object.assign(c, { lastTouchAt, outreachAttempts, lastOutreachAt });
   cacheCompanies();
+}
+// Person page (12 Oct): which contact fields changed, as "email: — → a@b.pt".
+function personContactChanges(before, after){
+  const show = (v) => (v == null || String(v).trim() === '') ? '—' : String(v).trim();
+  return PERSON_CONTACT_FIELDS
+    .filter(f => show(before?.[f.key]) !== show(after?.[f.key]))
+    .map(f => `${f.label.toLowerCase()}: ${show(before?.[f.key])} → ${show(after?.[f.key])}`);
+}
+// The companies where the person is current (shareholder or manager), max 20.
+function currentCompanyIdsOf(links){
+  return [...new Set((links || []).filter(l => l.companyId && (l.shCurrent === true || l.mgmtCurrent === true)).map(l => l.companyId))].slice(0, 20);
+}
+// A person's contact / note change goes on each of their current companies' activities.
+async function logOnPersonCompanies(p, links, type, content){
+  const ids = currentCompanyIdsOf(links);
+  for (const id of ids) { try { await logAuto(id, type, content); } catch(e){ console.warn('activity on', id, e); } }
+  return ids.length;
 }
 async function logAuto(companyId, type, content){
   const data = { companyId, type, date: Timestamp.now(), title:null, content:content||null, status:null, createdAt: serverTimestamp(), createdBy: currentUser };
