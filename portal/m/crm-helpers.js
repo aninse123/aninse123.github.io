@@ -77,13 +77,24 @@ function resolveOwnership(company, links){
   // its own chain: "Independent co" (nobody controls it) or "GUO" (it is itself
   // a group's ultimate owner, so nothing owns it from above). Both are findings,
   // not gaps, and computing a "largest holder" over them would invent a fact.
+  // Exception, 50/50 (12 Oct): Orbis names an owner only above 50%, so two
+  // holders with exactly half each leave the company "its own ultimate owner"
+  // (type Corporate) — e.g. ACCELERATED CONTACT CONSULTING, a couple at 50% each.
+  // That is joint control, and the kind of owner is the holders' own.
+  const half = current.filter(l => l.shDirectPct === 50);
+  const joint = half.length === 2 && !current.some(l => (l.shDirectPct || 0) > 50);
+  const jointKind = half.every(l => l.personEntityType === 'entity') ? 'Corporate'
+    : half.some(l => l.personEntityType === 'entity') ? 'Individual + corporate' : 'Individuals';
+  const jointNote = (why) => `Joint control: 2 ${jointKind === 'Individuals' ? 'people' : 'holders'} hold 50% each, so neither controls alone (${why})`;
   if (om && /independent/i.test(om.entityType || '')){
     out.source = 'orbis'; out.independent = true;
+    if (joint){ out.joint = true; out.guoType = jointKind; out.note = jointNote('Orbis: independent company'); return out; }
     out.note = 'Independent company — Orbis records no controlling shareholder';
     return out;
   }
   if (om && /^guo$/i.test((om.entityType || '').trim())){
     out.source = 'orbis'; out.independent = true;
+    if (joint){ out.joint = true; out.guoType = jointKind; out.note = jointNote('Orbis lists the company as its own ultimate owner'); return out; }
     out.note = 'Ultimate owner of its own group — Orbis records no controlling shareholder above it';
     return out;
   }
