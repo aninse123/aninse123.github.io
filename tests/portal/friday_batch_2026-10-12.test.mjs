@@ -20,6 +20,7 @@ ok('no figures → nothing shown', F.coFiguresHtml({}) === '' && F.coFiguresHtml
 ok('approval row uses it', page.includes('${coFiguresHtml(coCache.get(d.companyId))}'));
 ok('company links open a window on top (Ctrl / middle click still navigate)', page.includes('a[href^="/portal/search.html?company="]') && page.includes('e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0') && page.includes('openCompanyModal(id)'));
 ok('Inbox: campaign tag in the list and a campaign window from the conversation', page.includes('title="From this campaign">📣') && page.includes("id=\"campInfoBtn\"") && page.includes('async function openCampaignInfo(t)'));
+ok('Sent: campaign tag on campaign emails', page.includes('${m.campaignId ? ` <span class="pill pill--info" title="From this campaign">📣'));
 ok('Inbox: Auto-reply tag and state chip', page.includes("['auto', 'Auto-reply']") && page.includes("stateFilter === 'auto' && !(t.lastInboundAuto && t.lastDirection === 'in')"));
 ok('Sent: Auto-reply tag and "Got an auto-reply" filter', page.includes('<option value="__auto">Got an auto-reply</option>') && page.includes("st === '__auto' ? autoThread(m)"));
 ok('classification dropdown with "Not classified yet" and counts', page.includes('id="inboxCat"') && page.includes("['__none', 'Not classified yet', n('__none')]") && page.includes("(!t.responseCategory && t.repliedAt)"));
