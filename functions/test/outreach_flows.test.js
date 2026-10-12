@@ -227,6 +227,7 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   await webhook({ type: "email.received", data: { email_id: "in4", from: "andrenorocha@gmail.com", to: ["an.rocha@teniokarau.resend.app"] } });
   const in4 = docs("outreachMessages").find((m) => m.resendId === "in4");
   ok("auto-reply flagged and doesn't flip thread to replied", in4.isAutoReply === true && store.get("outreachThreads/" + thread1Id).status === repliedAtBefore);
+  ok("12 Oct: the conversation records the auto-reply (Inbox tag / filter, Sent tag)", store.get("outreachThreads/" + thread1Id).lastInboundAuto === true && !!store.get("outreachThreads/" + thread1Id).autoReplyAt);
   receivedEmails["in5"] = { from: "andrenorocha@gmail.com", subject: "Re: Search funds", message_id: "<r5@x>", text: "Por favor remover o nosso email da vossa lista.", headers: { "in-reply-to": "<reply-1@mail.gmail.com>" } };
   await webhook({ type: "email.received", data: { email_id: "in5", from: "andrenorocha@gmail.com", to: ["an.rocha@teniokarau.resend.app"] } });
   ok("'remover' reply gets a suggested unsubscribe (not automatic)", docs("outreachMessages").find((m) => m.resendId === "in5").suggestUnsubscribe === true && !store.get("outreachSuppression/andrenorocha@gmail.com"));

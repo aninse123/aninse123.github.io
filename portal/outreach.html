@@ -295,7 +295,7 @@
     .draft__co { font-weight: 600; font-size: 0.9rem; }
     .draft__meta { font-size: 0.76rem; color: var(--text-light); display: flex; gap: 4px 14px; flex-wrap: wrap; margin-bottom: 10px; }
     .draft textarea { min-height: 150px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
-    .ov-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .ov-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 16px; } /* 12 Oct: stacked, full width (tables fit without their own scroll) */
     .ov-grid > * { min-width: 0; }
     .ov-grid .card + .card { margin-top: 0; }
 
@@ -360,6 +360,7 @@
           <div class="card inbox__list">
             <div class="inbox__filters">
               <input type="search" id="inboxSearch" placeholder="Search company, NIF, address, subject or text…" aria-label="Search conversations" style="width:100%;margin-bottom:8px;" autocomplete="off">
+              <select id="inboxCat" aria-label="Classification" style="width:100%;margin-bottom:8px;"><option value="all">Any classification</option></select>
               <div class="chips" id="ownerChips"></div>
               <div class="chips" id="stateChips"></div>
             </div>
@@ -382,6 +383,7 @@
               <option value="sent">Sent</option><option value="delivered">Delivered</option>
               <option value="delayed">Delayed</option><option value="bounced">Bounced</option>
               <option value="complained">Complained</option><option value="failed">Failed</option>
+              <option value="__auto">Got an auto-reply</option>
             </select>
             <select id="sentTpl" aria-label="Filter by template"><option value="">Any template</option><option value="__none">Written from scratch</option></select>
             <label class="usage__label" for="sentFrom">From</label><input type="date" id="sentFrom" style="width:auto;">
@@ -879,6 +881,76 @@
     function utcDay() { return new Date().toISOString().slice(0, 10); }
     function senderKey(id) { return String(id || '').replace(/[.@]/g, '_'); }
     function localPart(e) { return String(e || '').split('@')[0]; }
+    // ── Company figures and windows (12 Oct) ──
+    const eurShort = (v) => { const n = Number(v); if (v == null || v === '' || !isFinite(n)) return '—'; const a = Math.abs(n); return (n < 0 ? '−' : '') + '€' + (a >= 1e6 ? (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M' : a >= 1e3 ? Math.round(a / 1e3) + 'k' : Math.round(a)); };
+    const finYearOf = (c) => { const ys = Object.keys(c?.orbisFinancials || {}).filter(y => /^\d{4}$/.test(y)).sort(); return c?.computedFinYear || ys[ys.length - 1] || ''; };
+    function coFiguresHtml(c) {
+      if (!c) return '';
+      const bits = [];
+      if (c.fitScore != null) bits.push(`Fit <b>${esc(Math.round(Number(c.fitScore)))}</b>`);
+      if (c.computedRevenue != null) bits.push(`Rev <b>${esc(eurShort(c.computedRevenue))}</b>`);
+      if (c.computedEBITDA != null) bits.push(`EBITDA <b>${esc(eurShort(c.computedEBITDA))}</b>`);
+      const y = finYearOf(c);
+      return bits.length ? ` <span class="hint" style="font-weight:400;" title="Fit score and the latest year's figures in the Search CRM${y ? ' (' + esc(y) + ')' : ''}">· ${bits.join(' · ')}${y && (c.computedRevenue != null || c.computedEBITDA != null) ? ` (${esc(y)})` : ''}</span>` : '';
+    }
+    // Opening a company from Outreach shows it in a window on top (Ctrl / middle click still opens the Search CRM).
+    async function openCompanyModal(id) {
+      openModal('Company', '<div class="empty">Loading…</div>', async () => true, 'Close');
+      let c;
+      try { const s = await getDoc(doc(db, 'searchCompanies', id)); addReads(1); c = s.exists() ? { id, ...s.data() } : null; } catch (e) { modalError(e.message); return; }
+      if (!c) { $('modalBody').innerHTML = '<div class="empty">Company not found.</div>'; return; }
+      coCache.set(id, c);
+      let acts = [];
+      try { const a = await getDocs(query(collection(db, 'searchActivities'), where('companyId', '==', id))); addReads(a.size || 1); acts = a.docs.map(d => d.data()).sort((x, y) => tsMs(y.date || y.createdAt) - tsMs(x.date || x.createdAt)).slice(0, 8); } catch (e) { /* activities are a bonus */ }
+      try { await loadPeopleFor([id]); } catch (e) {}
+      refreshReads();
+      if ($('modal').hidden || $('modalTitle').textContent !== 'Company') return; // closed meanwhile
+      const kv = (k, v) => v ? `<div style="display:flex;gap:10px;padding:3px 0;"><span class="hint" style="min-width:120px;">${esc(k)}</span><span style="min-width:0;overflow-wrap:anywhere;">${v}</span></div>` : '';
+      const people = (peopleCache.get(id) || []).slice(0, 5);
+      const owners = (c.emailOwners || []).map(o => o.name).filter(Boolean).join(', ');
+      $('modalTitle').textContent = c.name || 'Company';
+      $('modalBody').innerHTML = `
+        <div style="margin-bottom:8px;">${coFiguresHtml(c).replace('">· ', '">')}</div>
+        ${kv('NIF', esc(c.nif || ''))}${kv('Where', esc([c.concelho || c.city, c.district].filter(Boolean).join(', ')))}
+        ${kv('Activity', esc([c.caeCode, c.caeDescription].filter(Boolean).join(' — ')))}
+        ${kv('Owner', esc(OWNER_LABEL[c.owner] || c.owner || ''))}${kv('Stage', esc(c.stage || ''))}${kv('Tier', esc(c.targetTier || ''))}
+        ${kv('Contactable', c.contactable === false ? 'No' : c.contactable === true ? 'Yes' : '')}${c.doNotContact?.on ? kv('Do not contact', `<span class="pill pill--bad">on</span> ${esc(c.doNotContact.reason || '')}`) : ''}
+        ${kv('Email', esc(c.companyEmail || ''))}${kv('Phone', c.companyPhone ? `<a href="tel:${esc(String(c.companyPhone).replace(/[^\d+]/g, ''))}">${esc(c.companyPhone)}</a>` : '')}
+        ${kv('Website', c.website ? `<a href="${esc(/^https?:/i.test(c.website) ? c.website : 'https://' + c.website)}" target="_blank" rel="noopener noreferrer">${esc(c.website)}</a>` : '')}
+        ${kv('Owners in emails', esc(owners))}${kv('Campaign', esc(c.activeCampaignName || ''))}
+        ${people.length ? `<h4 style="margin:12px 0 4px;font-size:0.85rem;">People</h4>${people.map(p => `<div style="padding:3px 0;font-size:0.85rem;">👤 ${esc(p.name)}${p.role ? ` <span class="hint">· ${esc(p.role)}</span>` : ''}${p.phone ? ` · <a href="tel:${esc(String(p.phone).replace(/[^\d+]/g, ''))}">${esc(p.phone)}</a>` : ''}${p.email ? ` · ${esc(p.email)}` : ''}</div>`).join('')}` : ''}
+        ${acts.length ? `<h4 style="margin:12px 0 4px;font-size:0.85rem;">Latest activities</h4>${acts.map(a => `<div style="padding:3px 0;font-size:0.82rem;"><span class="hint" style="font-variant-numeric:tabular-nums;">${esc(dayFmt.format(new Date(tsMs(a.date || a.createdAt))))}</span> · ${esc(a.title || String(a.type || '').replace(/_/g, ' '))}${a.content ? ` <span class="hint">— ${esc(String(a.content).slice(0, 140))}${String(a.content).length > 140 ? '…' : ''}</span>` : ''}</div>`).join('')}` : ''}
+        <div class="actions" style="margin-top:12px;"><a class="btn btn--ghost btn--sm" href="/portal/search.html?company=${encodeURIComponent(id)}" target="_blank" rel="noopener" data-nomodal>Open in the Search CRM ↗</a></div>`;
+    }
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest('a[href^="/portal/search.html?company="]');
+      if (!a || a.hasAttribute('data-nomodal') || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+      const id = new URLSearchParams(a.getAttribute('href').split('?')[1]).get('company');
+      if (!id) return;
+      e.preventDefault();
+      openCompanyModal(id);
+    });
+    // The campaign a conversation came from: where this company is in it.
+    async function openCampaignInfo(t) {
+      const c = campaigns.find(x => x.id === t.campaignId);
+      if (!c) { toast('Campaign not found (deleted?).'); return; }
+      let en = null;
+      if (t.enrolmentId) { try { const s = await getDoc(doc(db, 'outreachEnrolments', t.enrolmentId)); addReads(1); refreshReads(); en = s.exists() ? s.data() : null; } catch (e) {} }
+      const steps = c.steps || [];
+      const done = new Map((en?.history || []).map(h => [h.stepId, h]));
+      const EN_LABEL = { pending: 'waiting to start', active: 'in sequence', awaiting_approval: 'draft waiting for approval', awaiting_task: 'task open', paused: 'paused', replied: 'stopped — they replied', completed: 'finished', stopped: 'stopped', removed: 'removed', moved: 'moved' };
+      openModal(c.name, `
+        <div style="margin-bottom:8px;"><span class="pill">${esc(c.status)}</span> <span class="hint">· ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'companies'} · ${num(steps.length)} step${steps.length === 1 ? '' : 's'}${c.sector ? ' · ' + esc(c.sector) : ''}</span></div>
+        ${en ? `<p class="note">This ${c.audienceType === 'people' ? 'person' : 'company'}: <b>${esc(EN_LABEL[en.status] || en.status)}</b>${en.stopReason ? ` <span class="hint">(${esc(en.stopReason)})</span>` : ''}${en.nextActionAt && LIVE_ENROL.includes(en.status) ? ` · next step ${esc(dayFmt.format(new Date(tsMs(en.nextActionAt))))}` : ''}</p>` : ''}
+        <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th>Template</th><th>Here</th></tr></thead><tbody>${steps.map((st, i) => {
+          const h = done.get(st.id);
+          const here = h ? `${esc(String(h.result || 'done'))} · ${esc(dayFmt.format(new Date(tsMs(h.at))))}` : en && (en.currentStep || 0) === i && LIVE_ENROL.includes(en.status) ? '<b>current</b>' : '—';
+          return `<tr><td>${i + 1}. ${esc(st.name)} <span class="ch">${esc(CHANNEL_LABELS[st.channel || 'email'])}</span></td><td class="clip">${esc(st.templateId ? tplName(st.templateId) : '—')}${h && en?.variants?.[st.id] ? ` (${esc(en.variants[st.id])})` : ''}</td><td style="font-size:0.8rem;">${here}</td></tr>`;
+        }).join('')}</tbody></table></div>
+        <div class="actions" style="margin-top:12px;"><button type="button" class="btn btn--ghost btn--sm" id="ciOpen">Open the campaign</button></div>`, async () => true, 'Close');
+      $('ciOpen').addEventListener('click', () => { closeModal(); showTab('campaigns'); openCampaign(c.id); });
+    }
+
     // ── Reply recipients (12 Oct) — begin ──
     // Our outreach addresses and the inbound forwarding addresses (*.resend.app, kept private).
     const OUR_DOMAIN = 'mail.douropartners-team.pt';
@@ -1081,7 +1153,7 @@
       const others = partners.filter(m => m.key !== myOwner).map(m => [m.key, m.label]);
       const owners = hasAddress ? [['mine', 'Mine'], ...others, ['all', 'All']] : [['all', 'All'], ...others];
       $('ownerChips').innerHTML = owners.map(([k, l]) => `<button class="chip${k === ownerFilter ? ' on' : ''}" data-owner="${k}">${esc(l)}</button>`).join('');
-      const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['replied', 'Replied'], ['closed', 'Closed'], ['bounced', 'Bounced'], ['unmatched', 'Unmatched']];
+      const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['replied', 'Replied'], ['auto', 'Auto-reply'], ['closed', 'Closed'], ['bounced', 'Bounced'], ['unmatched', 'Unmatched']];
       $('stateChips').innerHTML = states.map(([k, l]) => `<button class="chip${k === stateFilter ? ' on' : ''}" data-state="${k}">${esc(l)}</button>`).join('');
       $('ownerChips').addEventListener('click', (e) => { const b = e.target.closest('[data-owner]'); if (!b) return; ownerFilter = b.dataset.owner; $('ownerChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
       // Z2: a 9-digit NIF finds the company (1 read) and shows its conversations.
@@ -1097,10 +1169,14 @@
         }, 200);
       });
       $('stateChips').addEventListener('click', (e) => { const b = e.target.closest('[data-state]'); if (!b) return; stateFilter = b.dataset.state; $('stateChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
+      $('inboxCat').addEventListener('change', (e) => { catFilter = e.target.value; renderThreads(); });
     }
 
     const nifSearch = { nif: null, ids: null };
-    function filteredThreads(owner) {
+    // 12 Oct: classification filter (dropdown) — "not classified" = they answered, nobody classified it yet.
+    let catFilter = 'all';
+    const catMatch = (t, k) => k === 'all' || (k === '__none' ? (!t.responseCategory && t.repliedAt) : t.responseCategory === k);
+    function filteredThreads(owner, ignoreCat = false) {
       const own = owner || ownerFilter;
       const q = norm($('inboxSearch')?.value || '').trim();
       return threads.filter(t => {
@@ -1113,11 +1189,14 @@
         if (stateFilter === 'unread' && !t.unread) return false;
         if (stateFilter === 'needs' && !(t.lastDirection === 'in' && t.status === 'replied')) return false;
         if (stateFilter === 'unmatched' && !t.unmatched) return false;
+        if (stateFilter === 'auto' && !(t.lastInboundAuto && t.lastDirection === 'in')) return false;
+        if (!ignoreCat && !catMatch(t, catFilter)) return false;
         return true;
       });
     }
 
     function renderThreads() {
+      renderCatOptions();
       const list = filteredThreads();
       if (!list.length) {
         // U5: nothing of yours here, but other people have some — say so.
@@ -1133,12 +1212,20 @@
         return `<button class="thread${t.unread ? ' unread' : ''}${t.id === selectedId ? ' sel' : ''}" data-id="${esc(t.id)}">
           <div class="thread__top"><span class="thread__who">${esc(who)}</span><span class="thread__time">${esc(when(t.lastMessageAt))}</span></div>
           <div class="thread__subj">${esc(t.subject || '(no subject)')}</div>
-          <div class="thread__meta">${threadPill(t)}${t.responseCategory ? `<span class="pill">${esc(catLabel(t.responseCategory))}</span>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}<span class="thread__alias">${esc(t.contactEmail || '')}${t.senderId ? ' · ' + esc(localPart(t.senderId)) : ''}</span></div>
+          <div class="thread__meta">${threadPill(t)}${t.lastInboundAuto && t.lastDirection === 'in' ? '<span class="pill pill--warn" title="The last email received was automatic (out of office…)">Auto-reply</span>' : ''}${t.responseCategory ? `<span class="pill">${esc(catLabel(t.responseCategory))}</span>` : ''}${t.campaignId ? `<span class="pill pill--info" title="From this campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}</span>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}<span class="thread__alias">${esc(t.contactEmail || '')}${t.senderId ? ' · ' + esc(localPart(t.senderId)) : ''}</span></div>
         </button>`;
       }).join('');
       $('threadList').querySelectorAll('.thread').forEach(b => b.addEventListener('click', () => openThread(b.dataset.id)));
     }
     const catLabel = (k) => (CATEGORIES.find(c => c[0] === k) || [k, k])[1];
+    // The dropdown's counts follow the other filters (person, state, search).
+    function renderCatOptions() {
+      const sel = $('inboxCat'); if (!sel) return;
+      const base = filteredThreads(null, true);
+      const n = (k) => base.filter(t => catMatch(t, k)).length;
+      const opts = [['all', 'Any classification', base.length], ['__none', 'Not classified yet', n('__none')], ...CATEGORIES.map(([k, l]) => [k, l, n(k)])];
+      sel.innerHTML = opts.map(([k, l, c]) => `<option value="${k}"${k === catFilter ? ' selected' : ''}>${esc(l)} (${num(c)})</option>`).join('');
+    }
 
     function openThread(id) {
       selectedId = id;
@@ -1168,7 +1255,7 @@
         <div class="view__title">${esc(t.subject || '(no subject)')}</div>
         <div class="view__sub">${company}<span>${esc(t.contactEmail || '')}</span>
           <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
-          ${threadPill(t)}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
+          ${threadPill(t)}${t.campaignId ? `<button type="button" class="pill pill--info" id="campInfoBtn" style="border:0;cursor:pointer;" title="Show the campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}</button>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
         ${t.recipientIssue ? `<div class="banner banner--warn" style="margin:8px 0 4px;"><span>An email in this conversation to several people bounced for one of them (Resend doesn't say which), so nobody was put on the suppression list. Addresses: ${esc((t.recipientIssue.addresses || []).join(', '))}.</span></div>` : ''}
         <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button>
           <button class="btn btn--ghost btn--sm" id="taskBtn" data-perm="out.tasks" title="Plan a call or other task for this company — or record one that already happened">＋ Task or activity</button></div>
@@ -1177,6 +1264,7 @@
       $('viewHead').querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => classify(t, b.dataset.cat)));
       $('assignBtn')?.addEventListener('click', () => assignCompany(t));
       $('fwdBtn')?.addEventListener('click', () => openForward(t));
+      $('campInfoBtn')?.addEventListener('click', () => openCampaignInfo(t));
       $('taskBtn')?.addEventListener('click', () => {
         if (!t.companyId) { toast('Assign this conversation to a company first.'); return; }
         const last = [...threadMessages].reverse().find(m => m.direction === 'in' && !m.isAutoReply);
@@ -1533,7 +1621,8 @@
       $('sentTpl').innerHTML = '<option value="">Any template</option><option value="__none">Written from scratch</option>' +
         usedTpl.map(id => `<option value="${esc(id)}">${esc(templatesAll.find(t => t.id === id)?.name || 'Deleted template')}</option>`).join('');
       $('sentTpl').value = curTpl;
-      const rows = sentRows.filter(m => !NOT_SENT.includes(m.status) && (!sf || m.senderId === sf) && (!st || m.status === st)
+      const autoThread = (m) => !!threads.find(x => x.id === m.threadId)?.autoReplyAt;
+      const rows = sentRows.filter(m => !NOT_SENT.includes(m.status) && (!sf || m.senderId === sf) && (!st || (st === '__auto' ? autoThread(m) : m.status === st))
         && (!ow || ownerOf(m.senderId) === ow)
         && (!tp || (tp === '__none' ? !m.templateId : m.templateId === tp))
         && tsMs(m.createdAt) >= from && tsMs(m.createdAt) <= to);
@@ -1544,7 +1633,7 @@
           <td class="clip">${esc((m.to || []).join(', '))}</td>
           <td class="clip">${esc(localPart(m.senderId))}${m.via === 'gmail' ? ' <span class="pill">Gmail</span>' : ''}</td>
           <td class="clip" title="${esc(m.subject)}">${esc(m.subject)}</td>
-          <td>${pill(STATUS_PILL, m.status)}</td></tr>`).join('')
+          <td>${pill(STATUS_PILL, m.status)}${autoThread(m) ? ' <span class="pill pill--warn" title="An automatic reply (out of office…) came back in this conversation">Auto-reply</span>' : ''}</td></tr>`).join('')
         : '<tr><td colspan="6" class="empty">No sent emails match.</td></tr>';
     }
     ['sentSender', 'sentStatus', 'sentOwner', 'sentTpl', 'sentFrom', 'sentTo'].forEach(id => $(id).addEventListener('change', renderSent));
@@ -3601,27 +3690,74 @@ Optional note for them:`, '');
       // I3: on which day of a company's sequence each step comes (sending days after its first step).
       const dayOf = []; let acc = 0;
       steps.forEach((st, i) => { if (i > 0) acc += Number(st.wait?.days) || 0; dayOf.push(i === 0 ? 'day 1' : `day ${num(acc + 1)}${st.wait?.unit === 'calendar' ? '*' : ''}`); });
-      // Follow-ups can't finish before the last company's previous step + the wait,
-      // and they trickle out as companies start (new per day), not all at once.
-      const pendingN = live.filter(e => e.status === 'pending').length;
+      // 12 Oct: anchored on where each company really is. A started company's
+      // next step is due on its nextActionAt; later steps add the waits; companies
+      // not started yet start at "new per day" (what's left of today first). Each
+      // step's emails then queue at the pace — first / last dates and sending days
+      // come from that queue (it used to restart every company from tomorrow, so
+      // a running campaign showed Email 2 on the 19th instead of the 16th).
+      const sendDays = win.days || [1, 2, 3, 4, 5];
+      const now = new Date();
+      const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const todayOpen = sendDays.includes(now.getDay()) && hhmm < (win.to || '18:00');
+      const midnight = (x) => { const d = new Date(x); d.setHours(0, 0, 0, 0); return d; };
+      const today0 = midnight(now);
+      // Sending-day index from today: 0 = today (window still open), 1 = next sending day…
+      const idxOf = (ms) => {
+        if (!ms) return todayOpen ? 0 : 1;
+        const target = midnight(ms);
+        if (target <= today0) return todayOpen ? 0 : 1;
+        let k = 0; const c = new Date(today0);
+        while (c < target) { c.setDate(c.getDate() + 1); if (sendDays.includes(c.getDay())) k++; }
+        if (!sendDays.includes(target.getDay())) k++; // due on a day off → the next sending day
+        return k;
+      };
+      const dateOfIdx = (k) => (k <= 0 ? new Date(now) : addSendingDays(k));
+      const waitSend = (st) => { const d = Number(st.wait?.days) || 0; return st.wait?.unit === 'calendar' ? Math.ceil(d * sendDays.length / 7) : d; };
+      const waitBetween = (from, to) => { let w = 0; for (let k = from + 1; k <= to; k++) w += waitSend(steps[k]); return w; };
       const newPerDay = c.audienceType !== 'people' ? (c.pacing?.newPerDay || 20) : pace;
-      const waitSend = (st) => { const d = Number(st.wait?.days) || 0; return st.wait?.unit === 'calendar' ? Math.ceil(d * (win.days || [1, 2, 3, 4, 5]).length / 7) : d; };
-      let prevDone = 0, firstIn = 0;
-      const dayNames = (() => { const N = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']; const d = [...(win.days || [])].sort(); const run = d.length > 2 && d.every((x, k) => k === 0 || x === d[k - 1] + 1); return run ? `${N[d[0]]}–${N[d[d.length - 1]]}` : d.map(x => N[x]).join(', '); })();
+      const startedToday = curEnrols.filter(e => (e.history || []).some(h => h.stepId === steps[0].id && midnight(tsMs(h.at)).getTime() === today0.getTime())).length;
+      const pendingList = live.filter(e => e.status === 'pending');
+      const startIdx = (k) => { // k-th company not started yet
+        const roomToday = todayOpen ? Math.max(0, newPerDay - startedToday) : 0;
+        if (k < roomToday) return 0;
+        return 1 + Math.floor((k - roomToday) / newPerDay);
+      };
+      // When each live company is due on step i (null = already past it): its
+      // current step on its own date; a later step = the day its previous email
+      // actually goes out in the projection (after queueing) + the wait.
+      const sentAt = new Map(); // enrolment → projected day of its previous step
+      const dueOn = (e, i) => {
+        const cur = e.status === 'pending' ? 0 : (e.currentStep || 0);
+        if (cur > i) return null;
+        if (cur === i) return e.status === 'pending' ? startIdx(pendingList.indexOf(e)) : idxOf(['active', 'paused'].includes(e.status) ? tsMs(e.nextActionAt) : 0);
+        return (sentAt.get(e) ?? 0) + waitSend(steps[i]);
+      };
+      let firstIn = 0;
+      const dayNames = (() => { const N = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']; const d = [...sendDays].sort(); const run = d.length > 2 && d.every((x, k) => k === 0 || x === d[k - 1] + 1); return run ? `${N[d[0]]}–${N[d[d.length - 1]]}` : d.map(x => N[x]).join(', '); })();
       const rows = steps.map((st, i) => {
-        const left = live.filter(e => e.status === 'pending' || e.currentStep <= i).length;
-        if ((st.channel || 'email') !== 'email') { if (i > 0) firstIn += waitSend(st); return `<tr><td>${i + 1}. ${esc(st.name)}</td><td class="num">${dayOf[i]}</td><td colspan="2" style="font-size:0.8rem;">task — as fast as you do them</td><td class="num">${num(left)}</td><td></td></tr>`; }
-        const stepPace = i === 0 && c.audienceType !== 'people' ? Math.min(pace, c.pacing?.newPerDay || 20) : pace;
-        // Sending days: at least as long as it takes the companies not yet started to start.
-        const days = left ? Math.max(Math.ceil(left / stepPace), pendingN ? Math.ceil(pendingN / newPerDay) : 0) : 0;
-        // Done by: the later of "all of them at this pace" and "previous step done + this step's wait".
-        const doneIn = left ? Math.max(days, i > 0 && prevDone ? prevDone + waitSend(st) : 0) : 0;
-        if (doneIn) prevDone = doneIn;
-        // First companies: the first sending day, then + each step's wait; "underway" once some are past it.
+        const left = live.filter(e => e.status === 'pending' || (e.currentStep || 0) <= i).length;
+        if ((st.channel || 'email') !== 'email') {
+          live.forEach(e => { const d = dueOn(e, i); if (d != null) sentAt.set(e, d); }); // a task: done on its day
+          if (i > 0) firstIn += waitSend(st); return `<tr><td>${i + 1}. ${esc(st.name)}</td><td class="num">${dayOf[i]}</td><td colspan="2" style="font-size:0.8rem;">task — as fast as you do them</td><td class="num">${num(left)}</td><td></td></tr>`;
+        }
+        const stepPace = i === 0 && c.audienceType !== 'people' ? Math.min(pace, newPerDay) : pace;
+        // Queue this step's emails at the pace: each goes on its due day or the next one with room.
+        const dues = live.map(e => ({ e, d: dueOn(e, i) })).filter(x => x.d != null).sort((x, y) => x.d - y.d);
+        const perDay = new Map(); let cursor = 0, first = null, last = null;
+        for (const { e, d } of dues) {
+          let k = Math.max(d, cursor);
+          while ((perDay.get(k) || 0) >= stepPace) k++;
+          perDay.set(k, (perDay.get(k) || 0) + 1);
+          if ((perDay.get(k) || 0) >= stepPace) cursor = Math.max(cursor, k + 1);
+          sentAt.set(e, k);
+          first = first == null ? k : Math.min(first, k); last = last == null ? k : Math.max(last, k);
+        }
+        const days = perDay.size;
         firstIn = i === 0 ? 1 : firstIn + waitSend(st);
-        const underway = live.some(e => e.status !== 'pending' && e.currentStep > i) || curEnrols.some(e => (e.history || []).some(h => h.stepId === st.id));
-        const firstTxt = !left ? '—' : underway ? 'underway' : dayFmt.format(addSendingDays(firstIn));
-        return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'sending'} day(s) after each company's previous step</div>` : ''}</td><td class="num">${dayOf[i]}</td><td style="white-space:nowrap;font-size:0.8rem;">${firstTxt}</td><td style="white-space:nowrap;font-size:0.8rem;">${doneIn ? '≈ ' + dayFmt.format(addSendingDays(doneIn)) : 'done'}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td></tr>`;
+        const underway = live.some(e => e.status !== 'pending' && (e.currentStep || 0) > i) || curEnrols.some(e => (e.history || []).some(h => h.stepId === st.id));
+        const firstTxt = !left ? '—' : underway ? 'underway' : dayFmt.format(dateOfIdx(first ?? firstIn));
+        return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'sending'} day(s) after each company's previous step</div>` : ''}</td><td class="num">${dayOf[i]}</td><td style="white-space:nowrap;font-size:0.8rem;">${firstTxt}</td><td style="white-space:nowrap;font-size:0.8rem;">${left && last != null ? '≈ ' + dayFmt.format(dateOfIdx(last)) : 'done'}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td></tr>`;
       }).join('');
       return `<p class="note">Effective pace: <b>${num(pace)}</b> emails a day — the lowest of this campaign's limit (${c.pacing?.maxPerDay ? num(c.pacing.maxPerDay) : 'none'}), the automations limit (${num(globalLimit)}, shared by all campaigns) and the addresses' daily caps (${num(addrCap)}).</p>
         <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th class="num" title="Sending days after a company's first step (the campaign's sending days, no holidays)">Day in each company's sequence</th><th title="When the first companies reach this step">First companies</th><th title="When the last companies are done with this step">Last companies (done by)</th><th class="num">Still to go</th><th class="num" title="Sending days with emails of this step">Sending days</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -4136,7 +4272,7 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
           const test = d.redirectedFrom ? `<span class="pill pill--test">TEST</span> goes to ${esc((d.to || [])[0])} instead of ${who}${esc(d.redirectedFrom)}${personalTag}` : `to ${who}${esc((d.to || [])[0] || '')}${personalTag}`;
           return `<div class="draft" data-did="${esc(d.id)}">
             <div class="draft__head">
-              <span class="draft__co"><a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" style="color:var(--text);">${esc(d.companyName || 'Company')}</a></span>
+              <span class="draft__co"><a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" style="color:var(--text);">${esc(d.companyName || 'Company')}</a>${coFiguresHtml(coCache.get(d.companyId))}</span>
               <span class="hint">drafted ${esc(when(d.createdAt))}</span>
             </div>
             ${approvalContext(d)}

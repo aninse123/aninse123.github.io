@@ -20,6 +20,7 @@ const ctx = {
   settings: { automationBudget: 80, sendWindow: { days: [1, 2, 3, 4, 5] } },
   senders: [1, 2, 3, 4].map(i => ({ id: `s${i}`, status: 'active', dailyCap: 25 })),
   esc: (s) => String(s), num: (n) => String(n),
+  tsMs: (t) => (t ? new RealDate(t).getTime() : 0),
   dayFmt: { format: (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` },
   curEnrols: Array.from({ length: 69 }, () => ({ status: 'pending', currentStep: 0 })),
 };
@@ -46,6 +47,24 @@ show(r2);
 // From Friday evening the next Thu–Sat sending day is Saturday 10 Oct; + 4 of its sending days = Thu 15, Fri 16, Sat 17, Thu 22.
 ok('Thu–Sat: first emails Sat 10 Oct; Email 2 first on Thu 22 Oct (4 of its sending days later, skipping Sun–Wed)', r2[0][2] === '2026-10-10' && r2[1][2] === '2026-10-22');
 ok('note: Day counts this campaign\'s sending days (Thu–Sat), holidays skipped', /sending days \(Thu–Sat; national holidays skipped\)/.test(h2));
+
+// 12 Oct: a campaign already running — the bug. Monday 12 Oct evening, 10 companies
+// did Email 1 today (Email 2 due Fri 16 Oct), 59 not started yet.
+ctx.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super('2026-10-12T19:00:00'); } };
+const steps3 = camp.steps.map((st, i) => ({ ...st, id: 's' + i }));
+ctx.curEnrols = [
+  ...Array.from({ length: 10 }, () => ({ status: 'active', currentStep: 1, nextActionAt: '2026-10-16T09:00:00', history: [{ stepId: 's0', at: '2026-10-12T10:30:00' }] })),
+  ...Array.from({ length: 59 }, () => ({ status: 'pending', currentStep: 0 })),
+];
+const r3 = cells(ctx.__p({ ...camp, steps: steps3 }));
+show(r3);
+ok('running: Email 1 underway, the 59 left done Tue 20 Oct (10 a day from Tue 13)', r3[0][2] === 'underway' && r3[0][3] === '2026-10-20' && r3[0][4] === '59');
+ok('running: Email 2 first Fri 16 Oct (not the 19th), done Mon 26 Oct', r3[1][2] === '2026-10-16' && r3[1][3] === '2026-10-26' && r3[1][4] === '69');
+ok('running: Email 3 first Tue 27 Oct', r3[2][2] === '2026-10-27');
+// Same day at 11:00 with 10 already started: today is full, the rest still from Tue.
+ctx.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super('2026-10-12T11:00:00'); } };
+const r4 = cells(ctx.__p({ ...camp, steps: steps3 }));
+ok('window open but today\'s 10 used → the 59 still from Tue 13, done Tue 20', r4[0][3] === '2026-10-20');
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nall projection tests passed');

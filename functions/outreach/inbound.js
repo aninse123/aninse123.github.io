@@ -176,8 +176,11 @@ async function handleReceived(data) {
     isTest: !!thread.isTest, createdAt: now,
   });
 
+  // 12 Oct: whether the last email received was automatic (out of office…) —
+  // the Inbox "Auto-reply" tag / filter and the tag in Sent.
   const threadUpd = {
     lastMessageAt: Timestamp.now(), lastDirection: "in", unread: true,
+    lastInboundAuto: !!autoReply, ...(autoReply ? { autoReplyAt: Timestamp.now() } : {}),
     ...(rfcMessageId ? { rfcIds: FieldValue.arrayUnion(rfcMessageId), lastInboundRfcId: rfcMessageId } : {}),
   };
   if (!autoReply) {

@@ -17,7 +17,7 @@ const liftToClose = (name) => { const i = page.indexOf(`function ${name}(`); if 
 const line = (a) => { const i = page.indexOf(a); if (i < 0) throw new Error(a); return page.slice(i, page.indexOf('\n', i)); };
 const ctx = {}; vm.createContext(ctx);
 vm.runInContext([
-  liftFn('esc'), line('const dayFmt ='), line('const num ='), line('const norm ='), line('const LIVE_ENROL ='), line('const validEmail ='),
+  liftFn('esc'), line('    function tsMs(t)'), line('const dayFmt ='), line('const num ='), line('const norm ='), line('const LIVE_ENROL ='), line('const validEmail ='),
   liftFn('parseCsv'), liftFn('parsePeopleRows'), liftFn('whereIs'), liftFn('mergePeople'), liftFn('peopleFor'), liftToClose('projectionHtml'),
   'var curEnrols = [], settings = null, senders = [];',
   'globalThis.api = { parsePeopleRows, whereIs, mergePeople, peopleFor, validEmail, projectionHtml, set: (k, v) => { if (k === "curEnrols") curEnrols = v; if (k === "settings") settings = v; if (k === "senders") senders = v; } };',
@@ -67,7 +67,8 @@ const people = { audienceType: 'people', pacing: { maxPerDay: 40 }, senderPolicy
 const rowsOf = (html) => [...html.matchAll(/<tr><td>[\s\S]*?<\/tr>/g)].map(m => [...m[0].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map(c => c[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()));
 const h = projectionHtml(people), pr = rowsOf(h);
 ok('people: pace 40 (own limit < 80 < 200); 140 still at step 1 (10 past it) → 4 sending days', /Effective pace: <b>40<\/b>/.test(h) && pr[0][0].startsWith('1. Update') && pr[0][1] === 'day 1' && pr[0][4] === '140' && pr[0][5] === '4');
-ok('step 2: all 150 still to go → 4 days, wait shown; day 4 of the sequence (I3)', /3 sending day\(s\) after each company's previous step/.test(pr[1][0]) && pr[1][1] === 'day 4' && pr[1][4] === '150' && pr[1][5] === '4' && /whole sequence in about <b>4<\/b> sending days/.test(h));
+// 12 Oct: follow-ups queue after the previous email really goes out — the 10 already at step 2 go on day 1, the 140 three sending days after their first email (4 days) → 5 sending days.
+ok('step 2: all 150 still to go → 5 sending days, wait shown; day 4 of the sequence (I3)', /3 sending day\(s\) after each company's previous step/.test(pr[1][0]) && pr[1][1] === 'day 4' && pr[1][4] === '150' && pr[1][5] === '5' && /whole sequence in about <b>4<\/b> sending days/.test(h));
 const comp = { audienceType: 'companies', pacing: { newPerDay: 20 }, senderPolicy: { mode: 'owner_rotation' }, steps: [{ name: 'Email 1', channel: 'email' }, { name: 'Call', channel: 'call' }] };
 const hc = projectionHtml(comp), cr = rowsOf(hc);
 ok('companies: rotation ignores relationship senders (cap 25) and step 1 uses new-per-day (20): 140/20 = 7 days', /Effective pace: <b>25<\/b>/.test(hc) && /addresses' daily caps \(25\)/.test(hc) && cr[0][0].startsWith('1. Email 1') && cr[0][1] === 'day 1' && cr[0][4] === '140' && cr[0][5] === '7');
