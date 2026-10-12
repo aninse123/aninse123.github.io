@@ -875,7 +875,8 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   const note = String(notes || "").trim().slice(0, 2000);
   const reopen = o.reopen ? parseDate(reopenAt) : null;
   if (o.reopen && (!reopen || reopen.getTime() < Date.now() - 86400000)) fail("invalid-argument", "date_required", "Pick the date for the next attempt.");
-  const campaign = (await db().doc(`outreachCampaigns/${t.campaignId}`).get()).data() || {};
+  // Own tasks (12 Oct) have no campaign: no sequence to move, only the touch and the task.
+  const campaign = t.campaignId ? ((await db().doc(`outreachCampaigns/${t.campaignId}`).get()).data() || {}) : {};
   const campaignDays = sendingDaysOf(campaign, await store.getSettings());
   const linkedinUrl = t.channel === "linkedin" ? cleanUrl(profileUrl) : null;
   // Phase 2c branch for this outcome (set on the step): go to a later step or end.
@@ -898,8 +899,8 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
       type: t.isTest ? "task_test" : o.activity,
       date: Timestamp.now(), title, content: note || null, via: t.channel, direction: "out",
       outcome: o.key, responseCategory: null, status: null, isTest: !!t.isTest,
-      campaignId: t.campaignId, stepId: t.stepId, enrolmentId: t.enrolmentId, taskId, channel: t.channel,
-      linkedinUrl, createdAt: FieldValue.serverTimestamp(), createdBy: caller,
+      campaignId: t.campaignId || null, stepId: t.stepId || null, enrolmentId: t.enrolmentId || null, taskId, channel: t.channel,
+      threadId: t.threadId || null, linkedinUrl, createdAt: FieldValue.serverTimestamp(), createdBy: caller,
     });
     activityId = ref.id;
     await store.touchCompany(t.companyId, { direction: "out", isTest: t.isTest, outreach: t.channel !== "other" });
@@ -915,7 +916,14 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     return { ok: true, status: "open", dueAt: reopen.toISOString(), activityId };
   }
 
-  // 3. Close the task, then stop or advance the sequence.
+  // 3. Close the task, then stop or advance the sequence (an own task has none).
+  if (!t.campaignId || !t.enrolmentId) {
+    await taskRef.update({
+      status: o.key === "skipped" ? "skipped" : "done", outcome: o.key, notes: note, activityId,
+      completedAt: FieldValue.serverTimestamp(), completedBy: caller, ...(linkedinUrl ? { linkedinUrl } : {}),
+    });
+    return { ok: true, status: o.key === "skipped" ? "skipped" : "done", sequence: "none", activityId };
+  }
   const enrolRef = db().doc(`outreachEnrolments/${t.enrolmentId}`);
   await taskRef.update({
     status: o.key === "skipped" ? "skipped" : "done", outcome: o.key, notes: note, activityId,
@@ -988,6 +996,74 @@ async function updateTask({ taskId, assignee, signer, dueAt, notes }, caller) {
   return { ok: true };
 }
 
+// ── Own tasks and activities (12 Oct) ──────────────────────────────────────
+// A task that isn't a campaign step (call, LinkedIn, WhatsApp, letter, visit,
+// other) for a company — from Outreach → Tasks or from a conversation — and a
+// touch recorded straight away (what a task's outcome would write). Both on
+// the company; a conversation's company when started from one.
+const OWN_CHANNELS = ["call", "linkedin", "whatsapp", "letter", "visit", "other"];
+async function taskTarget({ companyId, threadId }) {
+  let thread = null;
+  if (threadId) {
+    const th = await db().doc(`outreachThreads/${String(threadId)}`).get();
+    if (!th.exists) fail("not-found", "thread_not_found", "Conversation not found.");
+    thread = { id: th.id, ...th.data() };
+  }
+  const cid = String(companyId || thread?.companyId || "");
+  if (!cid) fail("invalid-argument", "company_required", thread ? "This conversation has no company yet — assign it to a company first." : "Choose a company.");
+  const c = await db().doc(`searchCompanies/${cid}`).get();
+  if (!c.exists) fail("not-found", "company_not_found", "Company not found.");
+  return { companyId: cid, company: c.data(), thread };
+}
+async function teamKeyOk(key) {
+  return /^[a-z][a-z0-9-]{1,19}$/.test(String(key)) && (["andre", "antonio"].includes(key) || (await db().doc(`teamDirectory/${key}`).get()).exists);
+}
+
+async function createTask({ companyId, threadId, channel, dueAt, assignee, instructions, templateId }, caller) {
+  if (!OWN_CHANNELS.includes(channel)) fail("invalid-argument", "bad_channel", "Choose call, LinkedIn, WhatsApp, letter, visit or other.");
+  const { companyId: cid, company, thread } = await taskTarget({ companyId, threadId });
+  const due = dueAt ? parseDate(dueAt) : new Date();
+  if (!due) fail("invalid-argument", "bad_date", "Invalid date.");
+  let who = assignee === undefined || assignee === "" ? (company.owner || null) : assignee;
+  if (who !== null && !(await teamKeyOk(who))) fail("invalid-argument", "bad_assignee", "Assign to someone on the team, or nobody.");
+  let tpl = null, variantKey = null;
+  if (templateId && channel === "letter") {
+    const ts = await db().doc(`outreachTemplates/${String(templateId)}`).get();
+    if (!ts.exists) fail("not-found", "template_not_found", "Template not found.");
+    tpl = ts.id; variantKey = (ts.data().variants || [])[0]?.key || null;
+  }
+  const ref = await db().collection("outreachTasks").add({
+    campaignId: null, campaignName: "", enrolmentId: null, stepId: null, stepName: "", stepIndex: null, stepCount: null,
+    companyId: cid, companyName: company.name || "",
+    channel, instructions: String(instructions || "").trim().slice(0, 2000), templateId: tpl, variantKey,
+    assignee: who, dueAt: Timestamp.fromDate(due), status: "open", outcome: null, notes: "", activityId: null,
+    source: "own", threadId: thread?.id || null, isTest: !!thread?.isTest,
+    createdAt: FieldValue.serverTimestamp(), createdBy: caller, completedAt: null, completedBy: null,
+  });
+  return { ok: true, taskId: ref.id };
+}
+
+async function logActivity({ companyId, threadId, channel, outcome, notes, date }, caller) {
+  if (!OWN_CHANNELS.includes(channel)) fail("invalid-argument", "bad_channel", "Choose call, LinkedIn, WhatsApp, letter, visit or other.");
+  const o = outcome === "skipped" ? null : findOutcome(channel, outcome);
+  if (!o || !o.activity) fail("invalid-argument", "bad_outcome", `Unknown outcome "${outcome}" for ${CHANNEL_LABEL[channel]}.`);
+  const { companyId: cid, thread } = await taskTarget({ companyId, threadId });
+  const when = date ? parseDate(date) : new Date();
+  if (!when || when.getTime() > Date.now() + 86400000) fail("invalid-argument", "bad_date", "The date can't be in the future.");
+  const isTest = !!thread?.isTest;
+  const note = String(notes || "").trim().slice(0, 2000);
+  const ref = await db().collection("searchActivities").add({
+    companyId: cid, type: isTest ? "task_test" : o.activity, date: Timestamp.fromDate(when),
+    title: `${isTest ? "[TEST] " : ""}${CHANNEL_LABEL[channel]} — ${o.label}`, content: note || null,
+    via: channel, direction: "out", outcome: o.key, responseCategory: null, status: null, isTest,
+    channel, threadId: thread?.id || null, source: "outreach",
+    createdAt: FieldValue.serverTimestamp(), createdBy: caller,
+  });
+  await store.touchCompany(cid, { direction: "out", isTest, outreach: channel !== "other" });
+  if (o.reply) await store.touchCompany(cid, { direction: "in", isTest });
+  return { ok: true, activityId: ref.id };
+}
+
 // Do not contact (spec §10): stops every campaign for the company and blocks
 // enrolment and new outreach until switched off.
 async function setDoNotContact({ companyId, on, reason }, caller) {
@@ -1007,6 +1083,7 @@ const CAMPAIGN_ACTION_PERM = {
   enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
   requestStart: "out.campaigns", returnStart: "out.approve", runNow: "out.approve",
   approve: "out.approve", skipDraft: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
+  createTask: "out.tasks", logActivity: "out.tasks",
 };
 function campaignActionPerm(data) {
   // Starting / resuming sends emails; finishing ends a live campaign.
@@ -1065,6 +1142,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "skipDraft": return await skipDraft(data, caller);
       case "completeTask": return await completeTask(data, caller);
       case "updateTask": return await updateTask(data, caller);
+      case "createTask": return await createTask(data, caller);
+      case "logActivity": return await logActivity(data, caller);
       case "setDoNotContact": return await setDoNotContact(data, caller);
       default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
     }

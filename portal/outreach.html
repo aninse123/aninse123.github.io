@@ -535,6 +535,7 @@
           <button class="chip on" data-tview="todo">To do <span id="todoChipN"></span></button>
           <button class="chip" data-tview="approve">To approve <span id="approveChipN"></span></button>
           <button class="chip" data-tview="letters">Letters to print <span id="lettersChipN"></span></button>
+          <button class="btn btn--primary btn--sm" id="newTaskBtn" data-perm="out.tasks" style="margin-left:auto;" title="Plan a call, LinkedIn, WhatsApp, letter, visit or other task for a company — or record one that already happened">＋ Task or activity</button>
         </div>
         <div id="todoView"></div>
         <div id="issueView" data-feature="outreach.recurring" hidden></div>
@@ -1169,12 +1170,96 @@
           <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
           ${threadPill(t)}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
         ${t.recipientIssue ? `<div class="banner banner--warn" style="margin:8px 0 4px;"><span>An email in this conversation to several people bounced for one of them (Resend doesn't say which), so nobody was put on the suppression list. Addresses: ${esc((t.recipientIssue.addresses || []).join(', '))}.</span></div>` : ''}
-        <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button></div>
+        <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button>
+          <button class="btn btn--ghost btn--sm" id="taskBtn" data-perm="out.tasks" title="Plan a call or other task for this company — or record one that already happened">＋ Task or activity</button></div>
         <div class="classify"><span class="classify__label">Classify</span>${CATEGORIES.map(([k, l]) =>
           `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}" data-perm="out.write">${esc(l)}</button>`).join('')}</div>`;
       $('viewHead').querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => classify(t, b.dataset.cat)));
       $('assignBtn')?.addEventListener('click', () => assignCompany(t));
       $('fwdBtn')?.addEventListener('click', () => openForward(t));
+      $('taskBtn')?.addEventListener('click', () => {
+        if (!t.companyId) { toast('Assign this conversation to a company first.'); return; }
+        const last = [...threadMessages].reverse().find(m => m.direction === 'in' && !m.isAutoReply);
+        openTaskModal({ companyId: t.companyId, companyName: t.companyName, threadId: t.id, who: last ? addrList(last.from)[0] : null });
+      });
+    }
+
+    // Own task or activity (12 Oct): plan a call / LinkedIn / WhatsApp / letter /
+    // visit / other for a company — or record one that already happened (it goes
+    // straight to the company's activities). From Tasks, or from a conversation.
+    const OWN_CHANNELS = ['call', 'linkedin', 'whatsapp', 'letter', 'visit', 'other'];
+    function openTaskModal(pre = {}) {
+      let co = pre.companyId ? { id: pre.companyId, name: pre.companyName || 'Company' } : null, mode = 'task';
+      const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      const who = pre.who ? `${pre.who.name || pre.who.email}${pre.who.name ? ` (${pre.who.email})` : ''}` : '';
+      openModal(pre.threadId ? 'Task or activity — this conversation' : 'New task or activity', `
+        <div class="field picker"><label for="ntCoQ">Company</label>${co ? `<div><b>${esc(co.name)}</b></div>`
+          : `<input type="search" id="ntCoQ" placeholder="Search by name, NIF or email…" autocomplete="off"><div class="picker__list" id="ntCoRes" hidden></div><span class="hint" id="ntCoPicked"></span>`}</div>
+        <div class="field"><label for="ntCh">What</label><select id="ntCh">${OWN_CHANNELS.map(k => `<option value="${k}">${esc(CHANNEL_LABELS[k])}</option>`).join('')}</select></div>
+        <div class="chips" role="group" aria-label="Plan or record" style="margin-bottom:12px;">
+          <button type="button" class="chip on" data-ntmode="task">Plan a task</button>
+          <button type="button" class="chip" data-ntmode="done">Record it — already done</button></div>
+        <div id="ntTask">
+          <div class="field"><label for="ntDue">Due</label><input type="date" id="ntDue" value="${today}"></div>
+          <div class="field"><label for="ntWho">For</label><select id="ntWho"><option value="">nobody</option>${ownerOpts(myOwner)}</select></div>
+          <div class="field" id="ntTplF" hidden><label for="ntTpl">Letter template (optional)</label><select id="ntTpl"><option value="">None</option>${templatesAll.filter(x => x.status === 'active').map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select></div>
+          <div class="field"><label for="ntIns">To do (optional)</label><textarea id="ntIns" rows="2" placeholder="e.g. Call back after 15:00">${esc(who ? `Follow up with ${who}` : '')}</textarea></div>
+        </div>
+        <div id="ntDone" hidden>
+          <div class="field"><label for="ntOut">What happened</label><select id="ntOut"></select></div>
+          <div class="field"><label for="ntDate">When</label><input type="date" id="ntDate" value="${today}" max="${today}"></div>
+          <div class="field"><label for="ntNotes">Notes (optional)</label><textarea id="ntNotes" rows="3" placeholder="What was said">${esc(who ? `With ${who}. ` : '')}</textarea></div>
+        </div>
+        <p class="hint" id="ntHint"></p>`, async () => {
+        if (!co) { modalError('Choose a company.'); return false; }
+        const ch = $('ntCh').value;
+        if (mode === 'task') {
+          if (!$('ntDue').value) { modalError('Pick the due date.'); return false; }
+          await callCampaign({ action: 'createTask', companyId: co.id, threadId: pre.threadId || null, channel: ch, dueAt: new Date($('ntDue').value + 'T09:00:00').toISOString(),
+            assignee: $('ntWho').value || null, instructions: $('ntIns').value, templateId: ch === 'letter' ? ($('ntTpl').value || null) : null });
+          toast(`${CHANNEL_LABELS[ch]} task added for ${co.name}${ch === 'letter' ? ' — in Tasks → Letters to print' : ' — in Tasks → To do'}.`);
+          return true;
+        }
+        await callCampaign({ action: 'logActivity', companyId: co.id, threadId: pre.threadId || null, channel: ch, outcome: $('ntOut').value,
+          date: new Date($('ntDate').value + 'T12:00:00').toISOString(), notes: $('ntNotes').value });
+        toast(`Recorded on ${co.name}'s activities.`);
+        return true;
+      }, 'Save');
+      const sync = () => {
+        const ch = $('ntCh').value;
+        $('ntTask').hidden = mode !== 'task'; $('ntDone').hidden = mode !== 'done';
+        $('ntTplF').hidden = ch !== 'letter';
+        const outs = (TASK_OUTCOMES[ch] || []).filter(o => o[2] !== 'reopen');
+        const cur = $('ntOut').value;
+        $('ntOut').innerHTML = outs.map(([k, l]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(l)}</option>`).join('');
+        $('ntHint').textContent = mode === 'task'
+          ? `Shows in Tasks → ${ch === 'letter' ? 'Letters to print' : 'To do'} for the person chosen; its outcome is saved on the company's activities. It doesn't change any campaign.`
+          : 'Saved now on the company\'s activities (Search CRM → Activities). It doesn\'t change any campaign.';
+        document.querySelectorAll('[data-ntmode]').forEach(b => b.classList.toggle('on', b.dataset.ntmode === mode));
+      };
+      $('ntCh').addEventListener('change', sync);
+      document.querySelectorAll('[data-ntmode]').forEach(b => b.addEventListener('click', () => { mode = b.dataset.ntmode; sync(); }));
+      if (!co) {
+        let timer = null;
+        $('ntCoQ').addEventListener('input', () => {
+          clearTimeout(timer); const q = $('ntCoQ').value;
+          timer = setTimeout(async () => {
+            let hits = [];
+            try { hits = await findCompanies(q); } catch (e) { $('ntCoPicked').textContent = 'Search failed: ' + e.message; }
+            if (!$('ntCoQ') || $('ntCoQ').value !== q) return;
+            $('ntCoRes').innerHTML = hits.map(c => `<button type="button" class="picker__item" data-id="${esc(c.id)}">${esc(c.name)}<small> ${esc(c.concelho || '')}${c.owner ? ' · ' + esc(OWNER_LABEL[c.owner] || c.owner) : ''}</small></button>`).join('');
+            $('ntCoRes').hidden = !hits.length;
+            $('ntCoRes').querySelectorAll('[data-id]').forEach(b => b.addEventListener('click', () => {
+              const c = hits.find(x => x.id === b.dataset.id); co = { id: c.id, name: c.name };
+              $('ntCoQ').value = c.name; $('ntCoRes').hidden = true;
+              $('ntCoPicked').textContent = `Chosen: ${c.name}`;
+              if (c.owner && $('ntWho').querySelector(`option[value="${c.owner}"]`) && !$('ntWho').dataset.touched) $('ntWho').value = c.owner;
+            }));
+          }, 300);
+        });
+        $('ntWho').addEventListener('change', () => { $('ntWho').dataset.touched = '1'; });
+      }
+      sync();
     }
     // I17: closed — and why (spam complaint / unsubscribed).
     function threadPill(t) {
@@ -2671,6 +2756,7 @@
 
     function setupCampaigns() {
       $('taskTop').addEventListener('click', (e) => { const b = e.target.closest('[data-tview]'); if (b) showTaskView(b.dataset.tview); });
+      $('newTaskBtn').addEventListener('click', () => openTaskModal());
       $('campTop').addEventListener('click', (e) => {
         const b = e.target.closest('[data-cview]'); if (!b) return;
         $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b));
@@ -4345,13 +4431,13 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       if (document.activeElement?.closest?.('#todoView .task')) return;
       const open = tasks.filter(t => t.channel !== 'letter');
       const list = open.filter(t => (todoWho === 'all' || (todoWho === 'mine' ? mineOrOpen(t) : todoWho === 'none' ? !t.assignee : t.assignee === todoWho))
-        && (todoChannel === 'all' || t.channel === todoChannel) && (todoCampaign === 'all' || t.campaignId === todoCampaign));
+        && (todoChannel === 'all' || t.channel === todoChannel) && (todoCampaign === 'all' || (todoCampaign === 'own' ? !t.campaignId : t.campaignId === todoCampaign)));
       const shown = list.slice(0, 40);
       await loadCompaniesFor(shown.map(t => t.companyId));
       await loadPeopleFor(shown.map(t => t.companyId));
       await loadPersonRecords(shown.filter(t => !t.companyId && t.personEmail));
       if (document.activeElement?.closest?.('#todoView .task')) return;
-      const campOpts = [...new Set(open.map(t => t.campaignId))];
+      const campOpts = [...new Set(open.map(t => t.campaignId).filter(Boolean))];
       const eot = endOfToday();
       const dueNow = shown.filter(t => tsMs(t.dueAt) <= eot), later = shown.filter(t => tsMs(t.dueAt) > eot);
       const card = (t) => {
@@ -4366,7 +4452,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <span class="hint">${overdue ? '<b style="color:var(--danger);">overdue</b> · ' : ''}due ${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}${t.attempts?.length ? ` · ${t.attempts.length} earlier attempt${t.attempts.length === 1 ? '' : 's'}` : ''}</span>
           </div>
           <div class="draft__meta">
-            <span><button class="camp-link" style="font-size:0.76rem;" data-topencamp="${esc(t.campaignId)}">${esc(t.campaignName || 'Campaign')}</button> · ${esc(t.stepName || '')} (${(t.stepIndex ?? 0) + 1} of ${t.stepCount || '?'})</span>
+            ${t.campaignId ? `<span><button class="camp-link" style="font-size:0.76rem;" data-topencamp="${esc(t.campaignId)}">${esc(t.campaignName || 'Campaign')}</button> · ${esc(t.stepName || '')} (${(t.stepIndex ?? 0) + 1} of ${t.stepCount || '?'})</span>`
+              : `<span>Own task · added by ${esc(OWNER_LABEL[OWNER_BY_EMAIL[t.createdBy]] || localPart(t.createdBy) || '—')}${t.threadId ? ` · <button class="camp-link" style="font-size:0.76rem;" data-topenthread="${esc(t.threadId)}">from a conversation</button>` : ''}</span>`}
             <span>for <select data-tassign style="width:auto;padding:2px 6px;font-size:0.76rem;"><option value="">nobody</option>${ownerOpts(t.assignee)}</select></span>
             ${txt ? `<span title="Name, phone and email in the ${t.channel === 'call' ? 'script' : 'text'}">signed by <select data-tsigner style="width:auto;padding:2px 6px;font-size:0.76rem;">${ownerOpts(signerFor(t, c))}</select></span>` : ''}
           </div>
@@ -4382,9 +4469,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <div class="field" style="margin-bottom:8px;"><label>Notes</label><textarea data-tnotes rows="2" placeholder="What happened (saved on the ${c._person ? 'person\'s record' : 'company\'s activity'})">${esc(t.notes || '')}</textarea></div>
           ${t.channel === 'linkedin' ? '<div class="field" style="margin-bottom:8px;"><label>Profile URL (optional)</label><input type="text" data-tprofile placeholder="https://www.linkedin.com/in/…"></div>' : ''}
           ${outs.some(o => o[2] === 'reopen') ? '<div class="field" style="margin-bottom:8px;max-width:260px;"><label>Next attempt (for call back / reschedule)</label><input type="date" data-treopen></div>' : ''}
-          ${outs.some(o => o[2] === 'reply') ? `<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this ${c._person ? 'person' : 'company'}</span></label>` : ''}
+          ${t.campaignId && outs.some(o => o[2] === 'reply') ? `<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this ${c._person ? 'person' : 'company'}</span></label>` : ''}
           <div class="outcomes">${outs.map(([k, l]) => `<button class="btn btn--ghost btn--sm" data-tout="${k}" data-perm="out.tasks" aria-pressed="${taskPick.get(t.id) === k}">${esc(l)}</button>`).join('')}
-            <button class="btn btn--ghost btn--sm" data-tout="skipped" data-perm="out.tasks" aria-pressed="${taskPick.get(t.id) === 'skipped'}" style="margin-left:auto;" title="Move on without doing this step">Skip step</button></div>
+            <button class="btn btn--ghost btn--sm" data-tout="skipped" data-perm="out.tasks" aria-pressed="${taskPick.get(t.id) === 'skipped'}" style="margin-left:auto;" title="${t.campaignId ? 'Move on without doing this step' : 'Close this task without doing it'}">${t.campaignId ? 'Skip step' : 'Cancel task'}</button></div>
           <div class="actions" style="margin-top:8px;align-items:center;"><span class="hint" data-tpicked>${taskPick.has(t.id) ? `Selected: <b>${esc(pickedLabel(t, taskPick.get(t.id)))}</b> — nothing is saved until you press Save.` : 'Choose what happened, then Save.'}</span>
             <button class="btn btn--primary btn--sm" data-tsave data-perm="out.tasks" style="margin-left:auto;"${taskPick.has(t.id) ? '' : ' disabled'}>Save</button></div>
         </div>`;
@@ -4394,18 +4481,19 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <div class="toolbar">
             <div class="chips" id="todoWho">${[['mine', 'Mine'], ...(window.teamDir || []).filter(m => m.active && m.key !== myOwner).map(m => [m.key, m.label]), ['none', 'Unassigned'], ['all', 'All']].map(([k, l]) => `<button class="chip${todoWho === k ? ' on' : ''}" data-who="${k}">${esc(l)}</button>`).join('')}</div>
             <select id="todoCh" aria-label="Channel"><option value="all">All channels</option>${Object.keys(TASK_OUTCOMES).filter(k => k !== 'letter').map(k => `<option value="${k}"${todoChannel === k ? ' selected' : ''}>${esc(CHANNEL_LABELS[k])}</option>`).join('')}</select>
-            <select id="todoCamp" aria-label="Campaign"><option value="all">All campaigns</option>${campOpts.map(id => `<option value="${esc(id)}"${todoCampaign === id ? ' selected' : ''}>${esc(campaigns.find(c => c.id === id)?.name || 'Campaign')}</option>`).join('')}</select>
+            <select id="todoCamp" aria-label="Campaign"><option value="all">All campaigns</option>${open.some(t => !t.campaignId) ? `<option value="own"${todoCampaign === 'own' ? ' selected' : ''}>Own tasks</option>` : ''}${campOpts.map(id => `<option value="${esc(id)}"${todoCampaign === id ? ' selected' : ''}>${esc(campaigns.find(c => c.id === id)?.name || 'Campaign')}</option>`).join('')}</select>
           </div>
-          <p class="hint" style="padding:10px 14px;">Calls, LinkedIn, WhatsApp, visits and other steps from campaigns. Each outcome is saved on the company's activities (people: on their Investor CRM / Network record); the sequence waits until the task is done or skipped. Letters are under <b>Letters to print</b>.</p>
+          <p class="hint" style="padding:10px 14px;">Calls, LinkedIn, WhatsApp, visits and other steps from campaigns, and your own tasks (<b>＋ Task or activity</b>). Each outcome is saved on the company's activities (people: on their Investor CRM / Network record); a campaign's sequence waits until its task is done or skipped. Letters are under <b>Letters to print</b>.</p>
         </div>
         ${dueNow.length ? `<div class="day-head">Due now (${num(dueNow.length)})</div>${dueNow.map(card).join('')}` : ''}
         ${later.length ? `<div class="day-head">Later</div>${later.map(card).join('')}` : ''}
-        ${!shown.length ? '<div class="card"><div class="empty">Nothing to do here. Tasks appear when a campaign reaches a call, LinkedIn, WhatsApp, visit or other step.</div></div>' : ''}
+        ${!shown.length ? '<div class="card"><div class="empty">Nothing to do here. Tasks appear when a campaign reaches a call, LinkedIn, WhatsApp, visit or other step — or add your own with <b>＋ Task or activity</b>.</div></div>' : ''}
         ${list.length > shown.length ? `<p class="hint" style="margin-top:10px;">Showing the first ${num(shown.length)} of ${num(list.length)}.</p>` : ''}`;
       $('todoWho').querySelectorAll('[data-who]').forEach(b => b.addEventListener('click', () => { todoWho = b.dataset.who; renderTodo(); }));
       $('todoCh').addEventListener('change', (e) => { todoChannel = e.target.value; renderTodo(); });
       $('todoCamp').addEventListener('change', (e) => { todoCampaign = e.target.value; renderTodo(); });
       $('todoView').querySelectorAll('[data-topencamp]').forEach(b => b.addEventListener('click', () => { showTab('campaigns'); openCampaign(b.dataset.topencamp); }));
+      $('todoView').querySelectorAll('[data-topenthread]').forEach(b => b.addEventListener('click', () => { showTab('inbox'); openThread(b.dataset.topenthread); }));
       $('todoView').querySelectorAll('.task').forEach(el => {
         const t = tasks.find(x => x.id === el.dataset.tid);
         el.querySelector('[data-tcopy]')?.addEventListener('click', async () => {
@@ -4436,7 +4524,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           }
           if (def?.[2] === 'reply') payload.stopSequence = el.querySelector('[data-tstop]')?.checked !== false;
           if (t.channel === 'linkedin') payload.profileUrl = el.querySelector('[data-tprofile]')?.value || null;
-          if (outcome === 'skipped' && !confirm('Skip this step? The sequence moves on without it.')) return;
+          if (outcome === 'skipped' && !confirm(t.campaignId ? 'Skip this step? The sequence moves on without it.' : 'Cancel this task? It closes without an activity.')) return;
           el.querySelectorAll('button').forEach(x => { x.disabled = true; });
           const unbusySave = busyBtn(el.querySelector('[data-tsave]'), 'Saving…');
           document.activeElement?.blur();
@@ -4473,7 +4561,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}></td>
                 <td>${c._person ? `${esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
-                <td style="font-size:0.8rem;">${esc(t.campaignName || '')} · ${esc(t.stepName || '')}</td>
+                <td style="font-size:0.8rem;">${t.campaignId ? `${esc(t.campaignName || '')} · ${esc(t.stepName || '')}` : `Own task${t.instructions ? ` · ${esc(t.instructions)}` : ''}`}</td>
                 <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
                 <td style="white-space:nowrap;"><select data-lsigner="${esc(t.id)}" style="width:auto;padding:2px 6px;font-size:0.78rem;">${ownerOpts(signerFor(t, c))}</select>${(window.teamDir || []).find(m => m.key === signerFor(t, c))?.contactPhone ? '' : ' <span class="pill pill--warn" title="Add it in Team → Contact details">no phone</span>'}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
