@@ -1751,6 +1751,7 @@ const CT_RULES = [
   { id: 'r8',  name: 'Ultimate owner type, listing, name',   params: [], hint: 'Cut: owner is PE / VC / state / insurance / foundation / hedge / pension-nominee-trust / bank, or listed (a ticker; "Delisted" is fine), or has a fund-like or non-profit name (names ending in LDA are fine). Never when the owner name has a person title (MR / MRS / MS).' },
   { id: 'r9',  name: 'Ultimate owner size / group',          params: [['ownerMaxEmployees', 'owner under', 'employees'], ['ownerMaxRevenueEurM', 'and under €', 'M revenue'], ['groupMaxCompanies', 'fewer than', 'companies in the CRM'], ['groupMaxEmployees', 'group under', 'employees'], ['groupMaxRevenueEurM', 'and under €', 'M'], ['foreignFamilyMaxCompanies', 'foreign family under', 'companies']], hint: 'For company or financial owners (never a person title): the owner\'s own size (Orbis, USD converted at the EUR/USD rate below), how many companies it owns in the CRM, and those companies\' total employees / revenue. A foreign family owner (owner country not PT; if blank, its family shareholders\' country) with too many companies is also cut.' },
   { id: 'r10', name: 'Shareholders',                         params: [['maxShareholders', 'at most', '']] },
+  { id: 'r11', name: 'Not controlled by a foreign company',  params: [['personMaxHoldings', 'keep when a person holds it through at most', 'foreign companies (0 = no exception)'], ['personMaxCompanies', 'and owns at most', 'companies in the CRM']], hint: 'Cut: Orbis says "Controlled subsidiary" and the control chain includes a foreign company (GmbH, SAS, B.V., Inc., Ltd, S.L., S.R.L., A/S… or an Orbis "(HQ)" group) — e.g. Royal Canin via Mars, Incorporated (HQ). Kept: a person (not a "… family", no "(HQ)") holding it through a few foreign holdings, with few companies in the CRM.' },
 ];
 const CT_DEFAULTS = {
   rateYear: 2025,
@@ -1762,6 +1763,7 @@ const CT_DEFAULTS = {
     r7: { on: true, missing: 'keep' }, r8: { on: true, missing: 'keep' },
     r9: { on: true, missing: 'keep', ownerMaxEmployees: 1000, ownerMaxRevenueEurM: 200, groupMaxCompanies: 10, groupMaxEmployees: 1000, groupMaxRevenueEurM: 200, foreignFamilyMaxCompanies: 4 },
     r10: { on: true, missing: 'keep', maxShareholders: 10 },
+    r11: { on: true, missing: 'keep', personMaxHoldings: 2, personMaxCompanies: 2 },
   },
 };
 // Stored settings on top of the defaults, rule by rule (a rule added later
@@ -1787,6 +1789,15 @@ function ctOwnerKey(om){
   if (!om) return null;
   return om.guoBvdId || (om.guoNif ? 'PT' + om.guoNif : null) || (om.guoUci ? 'u_' + om.guoUci : null);
 }
+// Rule 11 (13 Oct): a foreign company in the control chain — a foreign legal
+// form at the end of the name, or Orbis's "(HQ)" group entry; estates ("em
+// comum", herança) aren't companies.
+const CT_FOREIGN_END = /(\bGMBH|\bAG|\bKG|\bKGAA|\bSAS|\bSASU|\bSARL|\bB\.?\s?V|\bN\.?\s?V|\bINC|\bINCORPORATED|\bLLC|\bLTD|\bLIMITED|\bPLC|\bCORP|\bCORPORATION|\bS\.?\s?L\.?\s?U?|\bS\.?\s?R\.?\s?L|\bS\.?\s?P\.?\s?A|\bA\/S|\bAPS|\bAB|\bOYJ?|\bASA|\bPTE\.?\s?LTD|\bBVBA|\bS\.?R\.?O|\bSP\.?\s?Z\s?O\.?\s?O|& CO\.? KG|S\.?[AÀ]\.?\s?R\.?\s?L)\.?\s*$/i;
+function ctForeignCo(name){
+  const s = String(name || '').trim();
+  if (!s || /EM COMUM|HERAN[CÇ]A/i.test(s)) return false;
+  return /\(HQ\)/i.test(s) || CT_FOREIGN_END.test(s.replace(/\s*\(HQ\)\s*$/i, ''));
+}
 function ctForeignFamily(om){
   if (!om || om.guoType !== CT_FAMILY) return false;
   if (om.guoCountry) return om.guoCountry !== 'PT';
@@ -1797,9 +1808,10 @@ function ctForeignFamily(om){
 // counted over the whole list passed in, so pass the FULL dataset.
 function contactableVerdicts(list, cfg){
   const R = cfg.rules, rate = Number(cfg.eurUsd?.[cfg.rateYear]) || CT_EUR_USD[2025];
-  const groups = new Map(), foreignFam = new Map();
+  const groups = new Map(), foreignFam = new Map(), ownerCount = new Map();
   for (const c of list){
     const om = c.ownershipMeta, key = ctOwnerKey(om);
+    const ok11 = key || om?.guoName; if (ok11) ownerCount.set(ok11, (ownerCount.get(ok11) || 0) + 1);
     if (!key) continue;
     if (om.guoType === 'Corporate' || om.guoType === 'Financial company'){
       const g = groups.get(key) || { n: 0, emp: 0, rev: 0 };
@@ -1865,6 +1877,19 @@ function contactableVerdicts(list, cfg){
       } }
     { const n = c.peopleCounts?.sh;
       check('r10', n == null ? { missing: true, missingText: 'Rule 10: no shareholder count' } : { fail: n > Number(R.r10.maxShareholders), text: `Rule 10: ${n} shareholders, above ${R.r10.maxShareholders}` }); }
+    if (/controlled subs/i.test(om.entityType || '')){
+      const chain = om.cshNames || [];
+      if (!chain.length) check('r11', { missing: true, missingText: 'Rule 11: controlled subsidiary, no control chain' });
+      else {
+        const foreign = chain.filter(ctForeignCo);
+        if (foreign.length){
+          const P = R.r11, maxH = Number(P?.personMaxHoldings) || 0, owns = ownerCount.get(ctOwnerKey(om) || om.guoName) || 0;
+          const personKept = maxH > 0 && CT_PERSONLIKE.has(gt) && !/\b(FAMILY|FAMILIE|FAMILIA)\b/i.test(gname)
+            && !chain.some(n => /\(HQ\)/i.test(n)) && foreign.length <= maxH && owns <= Number(P?.personMaxCompanies ?? 2);
+          check('r11', { fail: !personKept, text: `Rule 11: controlled by a foreign company (${foreign[0]})` });
+        }
+      }
+    }
     out.set(c.id, { fails });
   }
   return out;
