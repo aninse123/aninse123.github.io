@@ -537,12 +537,14 @@
           <button class="chip on" data-tview="todo">To do <span id="todoChipN"></span></button>
           <button class="chip" data-tview="approve">To approve <span id="approveChipN"></span></button>
           <button class="chip" data-tview="letters">Letters to print <span id="lettersChipN"></span></button>
+          <button class="chip" data-tview="outbox" title="What goes out next, across all campaigns">Outbox</button>
           <button class="btn btn--primary btn--sm" id="newTaskBtn" data-perm="out.tasks" style="margin-left:auto;" title="Plan a call, LinkedIn, WhatsApp, letter, visit or other task for a company — or record one that already happened">＋ Task or activity</button>
         </div>
         <div id="todoView"></div>
         <div id="issueView" data-feature="outreach.recurring" hidden></div>
         <div id="approveView" hidden></div>
         <div id="lettersView" hidden></div>
+        <div id="outboxView" hidden></div>
       </section>
 
       <section class="panel" id="panel-metrics" hidden>
@@ -883,6 +885,162 @@
     function utcDay() { return new Date().toISOString().slice(0, 10); }
     function senderKey(id) { return String(id || '').replace(/[.@]/g, '_'); }
     function localPart(e) { return String(e || '').split('@')[0]; }
+    // ── Outbox (13 Oct) — planner begin ──
+    // What goes out next, across campaigns: a dry run of the scheduler's rules
+    // over the coming days — a run every 10 minutes inside each campaign's
+    // window (and holidays choice), new companies at "new per day", at most 4
+    // emails per run and one per address per run, each address's daily cap,
+    // the automations limit, each campaign's max per day; approval steps become
+    // drafts (they leave the Outbox for To approve), approved drafts go out.
+    // Estimates: other people's actions and replies change the queue.
+    const OB_MAX_SENDS = 4, OB_MAX_DRAFTS = 50, OB_CAP = 25;
+    function obAddWait(from, wait, c, isOpenDay) {
+      const days = Math.max(0, Number(wait?.days) || 0);
+      if (!days) return new Date(from.getTime());
+      if (wait.unit === 'calendar') return new Date(from.getTime() + days * 86400000);
+      const d = new Date(from.getTime()); let k = 0, guard = 0;
+      while (k < days && guard++ < 3660) { d.setDate(d.getDate() + 1); if (isOpenDay(c, d)) k++; }
+      return d;
+    }
+    function outboxPlan({ now, campaigns, enrols, approved, senders, settings, daily, days = 5, maxRows = 500 }) {
+      const D = 86400000;
+      const camps = new Map((campaigns || []).filter(c => c.status === 'active' && (c.steps || []).length).map(c => [c.id, c]));
+      const gWin = settings?.sendWindow || { days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
+      const budget = settings?.automationBudget ?? 80;
+      const winOf = (c) => c.sendWindow || gWin;
+      const skipOf = (c) => (typeof c?.skipHolidays === 'boolean' ? c.skipHolidays : settings?.skipNationalHolidays !== false);
+      const hm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const isOpenDay = (c, d) => (winOf(c).days || []).includes(d.getDay()) && !(skipOf(c) && isPtHoliday(d));
+      const isOpen = (c, d) => isOpenDay(c, d) && hm(d) >= (winOf(c).from || '09:00') && hm(d) < (winOf(c).to || '18:00');
+      const needsApproval = (c, st) => ((st.approval === 'inherit' || !st.approval) ? c.approvalDefault : st.approval) === 'approval';
+      const active = (senders || []).filter(x => x.status === 'active');
+      const capOf = (id) => active.find(x => x.id === id)?.dailyCap || OB_CAP;
+      const items = (enrols || []).filter(e => camps.has(e.campaignId) && ['active', 'pending', 'awaiting_approval'].includes(e.status)).map(e => {
+        const ap = approved?.get?.(e.id) || null;
+        return { e, c: camps.get(e.campaignId), step: e.status === 'pending' ? 0 : (e.currentStep || 0), pending: e.status === 'pending', awaiting: e.status === 'awaiting_approval',
+          due: e.status === 'active' ? (tsMs(e.nextActionAt) || now.getTime()) : null, approved: ap, sender: e.senderId || ap?.senderId || null, done: false };
+      });
+      const pendingOf = new Map();
+      items.filter(it => it.pending).sort((a, b) => tsMs(a.e.enrolledAt) - tsMs(b.e.enrolledAt)).forEach(it => { (pendingOf.get(it.c.id) || pendingOf.set(it.c.id, []).get(it.c.id)).push(it); });
+      const rows = [], rowDays = new Set();
+      let slot = new Date(now.getTime()); slot.setSeconds(0, 0); slot.setMinutes(Math.ceil(slot.getMinutes() / 10) * 10);
+      const end = now.getTime() + 21 * D;
+      let curDay = null, sentBy = {}, autoSent = 0, campDay = {}, started = {};
+      const todayKey = dayKey(now);
+      for (; slot.getTime() < end && rows.length < maxRows && rowDays.size <= days; slot = new Date(slot.getTime() + 600000)) {
+        const k = dayKey(slot);
+        if (k !== curDay) {
+          curDay = k; campDay = {}; started = {};
+          sentBy = {}; autoSent = 0;
+          if (k === todayKey) {
+            active.forEach(x => { sentBy[x.id] = daily?.bySender?.[senderKey(x.id)] || 0; });
+            autoSent = daily?.campaignSent || 0;
+            camps.forEach(c => { campDay[c.id] = c.sentToday?.day === k ? (c.sentToday.count || 0) : 0; started[c.id] = c.startedToday?.day === k ? (c.startedToday.count || 0) : 0; });
+          }
+        }
+        const openNow = [...camps.values()].filter(c => isOpen(c, slot));
+        if (!openNow.length) continue;
+        // 1. Starts, up to "new per day".
+        for (const c of openNow) {
+          const perDay = c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20);
+          const q = pendingOf.get(c.id) || [];
+          while (q.length && (started[c.id] || 0) < perDay) {
+            const it = q.shift(); it.pending = false; it.step = 0; it.startedAt = slot.getTime();
+            it.due = obAddWait(slot, c.steps[0].wait, c, isOpenDay).getTime(); started[c.id] = (started[c.id] || 0) + 1;
+          }
+        }
+        // 2. Due steps, campaign priority first, then the oldest due.
+        const due = items.filter(it => !it.done && !it.pending && !it.awaiting && it.due != null && it.due <= slot.getTime() && isOpen(it.c, slot) && it.step < it.c.steps.length)
+          .sort((a, b) => (a.c.priority || 2) - (b.c.priority || 2) || a.due - b.due);
+        let sends = 0, drafts = 0; const used = new Set();
+        const push = (r) => { rows.push(r); rowDays.add(k); };
+        for (const it of due) {
+          const st = it.c.steps[it.step], ch = st.channel || 'email';
+          const base = { at: new Date(slot.getTime()), enrolmentId: it.e.id, companyId: it.e.companyId || null, companyName: it.e.companyName || it.e.personName || it.e.personEmail || '', campaignId: it.c.id, stepIndex: it.step, stepCount: it.c.steps.length, stepName: st.name || '', starts: it.startedAt === slot.getTime() && it.step === 0 };
+          if (ch !== 'email') { push({ ...base, kind: 'task', channel: ch }); it.done = true; continue; }
+          if (needsApproval(it.c, st) && !it.approved) {
+            if (drafts >= OB_MAX_DRAFTS) continue;
+            drafts++; push({ ...base, kind: 'draft', senderId: it.sender }); it.awaiting = true; continue;
+          }
+          if (sends >= OB_MAX_SENDS || autoSent >= budget || (it.c.pacing?.maxPerDay && (campDay[it.c.id] || 0) >= it.c.pacing.maxPerDay)) continue;
+          let sid = it.sender;
+          if (sid) { if (used.has(sid) || (sentBy[sid] || 0) >= capOf(sid)) continue; }
+          else {
+            const sp = it.c.senderPolicy || {};
+            const pool = active.filter(x => (x.kind !== 'relationship' || sp.mode === 'fixed') && (sp.mode === 'fixed' ? (sp.senderIds || []).includes(x.id) : (!it.e.owner || x.owner === it.e.owner)))
+              .filter(x => !used.has(x.id) && (sentBy[x.id] || 0) < (x.dailyCap || OB_CAP)).sort((a, b) => (sentBy[a.id] || 0) - (sentBy[b.id] || 0) || a.id.localeCompare(b.id));
+            sid = pool[0]?.id || null; if (!sid) continue;
+          }
+          push({ ...base, kind: 'send', senderId: sid, approvedMessageId: it.approved?.id || null });
+          used.add(sid); sentBy[sid] = (sentBy[sid] || 0) + 1; sends++; autoSent++; campDay[it.c.id] = (campDay[it.c.id] || 0) + 1;
+          it.sender = sid; it.approved = null; it.step++;
+          if (it.step >= it.c.steps.length) it.done = true; else it.due = obAddWait(slot, it.c.steps[it.step].wait, it.c, isOpenDay).getTime();
+        }
+      }
+      return { rows, awaiting: items.filter(it => it.e.status === 'awaiting_approval').length };
+    }
+    // ── Outbox — planner end ──
+
+    let obFilterCamp = 'all', obFilterAddr = 'all', obLoading = false;
+    async function renderOutbox() {
+      if (obLoading) return; obLoading = true;
+      $('outboxView').innerHTML = '<div class="card"><div class="empty">Working out what goes out next…</div></div>';
+      try {
+        const live = campaigns.filter(c => c.status === 'active');
+        if (!live.length) { $('outboxView').innerHTML = '<div class="card"><div class="empty">No campaign is running, so nothing is queued. Emails you send by hand go out at once.</div></div>'; return; }
+        const [es, ms] = await Promise.all([
+          getDocs(query(collection(db, 'outreachEnrolments'), where('status', 'in', ['active', 'pending', 'awaiting_approval']))),
+          getDocs(query(collection(db, 'outreachMessages'), where('status', '==', 'approved'))),
+        ]);
+        addReads((es.size || 1) + (ms.size || 1)); refreshReads();
+        const enrols = es.docs.map(d => ({ id: d.id, ...d.data() }));
+        const approved = new Map(ms.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.enrolmentId).map(m => [m.enrolmentId, m]));
+        const plan = outboxPlan({ now: new Date(), campaigns, enrols, approved, senders, settings, daily: dailyDoc });
+        const rows = plan.rows.filter(r => (obFilterCamp === 'all' || r.campaignId === obFilterCamp) && (obFilterAddr === 'all' || r.senderId === obFilterAddr));
+        const usedAddr = [...new Set(plan.rows.map(r => r.senderId).filter(Boolean))].sort();
+        const KIND = { send: ['Sends', 'pill--good'], draft: ['Becomes a draft', 'pill--info'], task: ['Becomes a task', ''] };
+        const dayLabel = (d) => { const t = new Date(); t.setHours(0, 0, 0, 0); const x = new Date(d); x.setHours(0, 0, 0, 0); const diff = Math.round((x - t) / 86400000); return diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : dayFmt.format(d); };
+        const byDay = new Map(); rows.forEach(r => { const k = dayLabel(r.at); (byDay.get(k) || byDay.set(k, []).get(k)).push(r); });
+        const row = (r) => {
+          const c = campaigns.find(x => x.id === r.campaignId);
+          const [kl, kc] = KIND[r.kind];
+          return `<tr data-ob="${esc(r.enrolmentId)}"><td style="white-space:nowrap;font-variant-numeric:tabular-nums;">≈ ${esc(timeFmt.format(r.at))}</td>
+            <td><span class="pill ${kc}">${esc(kl)}</span>${r.starts ? ' <span class="hint">· first email</span>' : ''}${r.approvedMessageId ? ' <span class="hint">· approved</span>' : ''}</td>
+            <td class="clip">${r.companyId ? `<a href="/portal/search.html?company=${encodeURIComponent(r.companyId)}" style="color:var(--text);">${esc(r.companyName || 'Company')}</a>` : esc(r.companyName || '')}</td>
+            <td class="clip" style="font-size:0.8rem;">${esc(c?.name || 'Campaign')} · ${esc(r.stepName || 'Step')} (${r.stepIndex + 1} of ${r.stepCount})</td>
+            <td class="clip" style="font-size:0.8rem;">${r.senderId ? esc(localPart(r.senderId)) : '<span class="hint">chosen then</span>'}</td>
+            <td style="text-align:right;white-space:nowrap;">${r.approvedMessageId ? `<button class="btn btn--ghost btn--sm" data-obback="${esc(r.approvedMessageId)}" data-perm="out.approve" title="Not sent yet — take it back to To approve">Back to To approve</button>` : ''}
+              <button class="btn btn--ghost btn--sm" data-obpause="${esc(r.enrolmentId)}" data-perm="out.campaigns" title="Pause this company in its campaign (resume from the campaign's people list)">Pause</button></td></tr>`;
+        };
+        $('outboxView').innerHTML = `
+          <div class="card" style="padding:0;margin-bottom:14px;">
+            <div class="toolbar">
+              <select id="obCamp" aria-label="Campaign"><option value="all">All campaigns</option>${live.map(c => `<option value="${esc(c.id)}"${obFilterCamp === c.id ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+              <select id="obAddr" aria-label="Address"><option value="all">All addresses</option>${usedAddr.map(a => `<option value="${esc(a)}"${obFilterAddr === a ? ' selected' : ''}>${esc(localPart(a))}</option>`).join('')}</select>
+              <button class="btn btn--ghost btn--sm" id="obRefresh" style="margin-left:auto;">↻ Refresh</button>
+            </div>
+            <p class="hint" style="padding:10px 14px;">An estimate of the next sending days, following the scheduler's rules: a run every 10 minutes inside each campaign's sending window${settings?.skipNationalHolidays !== false ? ' (national holidays skipped)' : ''}, new companies at each campaign's daily pace, at most ${OB_MAX_SENDS} emails per run and one per address, each address's daily cap and the automations limit (${num(settings?.automationBudget ?? 80)}/day). Approval steps become drafts in To approve; their send time is set when you approve. Replies, pauses and approvals change it.${plan.awaiting ? ` <b>${num(plan.awaiting)}</b> draft${plan.awaiting === 1 ? '' : 's'} waiting in <button class="camp-link" id="obToApprove">To approve</button>.` : ''}</p>
+          </div>
+          ${rows.length ? [...byDay.entries()].map(([d, rs]) => `<div class="day-head">${esc(d)} <span class="hint">· ${num(rs.filter(r => r.kind === 'send').length)} email${rs.filter(r => r.kind === 'send').length === 1 ? '' : 's'}${rs.some(r => r.kind === 'draft') ? ` · ${num(rs.filter(r => r.kind === 'draft').length)} draft${rs.filter(r => r.kind === 'draft').length === 1 ? '' : 's'}` : ''}</span></div>
+            <div class="card" style="padding:0;margin-bottom:12px;"><div class="table-wrap"><table><thead><tr><th>Time</th><th>What</th><th>Company</th><th>Campaign · step</th><th>From</th><th></th></tr></thead><tbody>${rs.map(row).join('')}</tbody></table></div></div>`).join('')
+            : '<div class="card"><div class="empty">Nothing queued for the next sending days with these filters.</div></div>'}`;
+        $('obCamp').addEventListener('change', (e) => { obFilterCamp = e.target.value; renderOutbox(); });
+        $('obAddr').addEventListener('change', (e) => { obFilterAddr = e.target.value; renderOutbox(); });
+        $('obRefresh').addEventListener('click', () => renderOutbox());
+        $('obToApprove')?.addEventListener('click', () => showTaskView('approve'));
+        $('outboxView').querySelectorAll('[data-obback]').forEach(b => b.addEventListener('click', async () => {
+          if (!confirm('Take this email back to To approve? It won\'t go out until it\'s approved again.')) return;
+          b.disabled = true; if (await campCall({ action: 'unapprove', messageId: b.dataset.obback }, 'Back in To approve.')) renderOutbox(); else b.disabled = false;
+        }));
+        $('outboxView').querySelectorAll('[data-obpause]').forEach(b => b.addEventListener('click', async () => {
+          if (!confirm('Pause this company in its campaign? Nothing more goes to it until you resume it (campaign → people).')) return;
+          b.disabled = true; if (await campCall({ action: 'enrolment', enrolmentId: b.dataset.obpause, op: 'pause' }, 'Paused.')) renderOutbox(); else b.disabled = false;
+        }));
+      } catch (e) { $('outboxView').innerHTML = `<div class="card"><div class="empty">Couldn't load the queue: ${esc(e.message)}</div></div>`; }
+      finally { obLoading = false; }
+    }
+
     // ── National holidays (13 Oct), mirrored from functions/outreach/schedule_util.js ──
     function easterUtc(y) {
       const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
@@ -2896,6 +3054,8 @@
       $('todoView').hidden = v !== 'todo';
       $('approveView').hidden = v !== 'approve'; $('issueView').hidden = v !== 'approve';
       $('lettersView').hidden = v !== 'letters';
+      $('outboxView').hidden = v !== 'outbox';
+      if (v === 'outbox') renderOutbox();
       if (v === 'todo') renderTodo();
       if (v === 'approve') { renderIssues(); renderApprove(); }
       if (v === 'letters') renderLetters();

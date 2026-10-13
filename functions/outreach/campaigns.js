@@ -796,6 +796,24 @@ async function approve({ messageIds, subject, body }, caller) {
   return { approved, skipped };
 }
 
+// Outbox (13 Oct): an approved draft that hasn't gone out yet goes back to
+// "To approve" — the reverse of approve. Refused while the scheduler is sending it.
+async function unapprove({ messageId }, caller) {
+  if (!messageId) fail("invalid-argument", "draft_required", "Choose an email.");
+  const msgRef = db().doc(`outreachMessages/${String(messageId)}`);
+  return db().runTransaction(async (tx) => {
+    const m = await tx.get(msgRef);
+    if (!m.exists || m.data().source !== "campaign" || m.data().status !== "approved") fail("failed-precondition", "not_approved", "This email isn't waiting to go out any more (already sent, or not approved).");
+    const enrolRef = db().doc(`outreachEnrolments/${m.data().enrolmentId}`);
+    const e = await tx.get(enrolRef);
+    if (!e.exists || e.data().status !== "active") fail("failed-precondition", "not_waiting", "This company's campaign has moved on.");
+    if (e.data().lockUntil && e.data().lockUntil.toMillis() > Date.now()) fail("failed-precondition", "sending_now", "It's being sent right now — check Sent in a minute.");
+    tx.update(msgRef, { status: "draft", approvedBy: null, approvedAt: null, unapprovedBy: caller, unapprovedAt: FieldValue.serverTimestamp() });
+    tx.update(enrolRef, { status: "awaiting_approval", draftMessageId: msgRef.id, lastError: null });
+    return { ok: true };
+  });
+}
+
 async function skipDraft({ messageId }, caller) {
   if (!messageId) fail("invalid-argument", "draft_required", "Choose a draft.");
   const msgRef = db().doc(`outreachMessages/${messageId}`);
@@ -1083,7 +1101,7 @@ const CAMPAIGN_ACTION_PERM = {
   save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns", recipientsPreview: "out.campaigns",
   enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
   requestStart: "out.campaigns", returnStart: "out.approve", runNow: "out.approve",
-  approve: "out.approve", skipDraft: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
+  approve: "out.approve", skipDraft: "out.approve", unapprove: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
   createTask: "out.tasks", logActivity: "out.tasks",
 };
 function campaignActionPerm(data) {
@@ -1141,6 +1159,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "enrolPeople": return await enrolPeople(data, caller);
       case "approve": return await approve(data, caller);
       case "skipDraft": return await skipDraft(data, caller);
+      case "unapprove": return await unapprove(data, caller);
       case "completeTask": return await completeTask(data, caller);
       case "updateTask": return await updateTask(data, caller);
       case "createTask": return await createTask(data, caller);
