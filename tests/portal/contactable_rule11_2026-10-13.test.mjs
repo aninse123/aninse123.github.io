@@ -25,7 +25,7 @@ const list = [
   co('deep', { entityType: 'Controlled subs.', guoType: fam, guoName: 'MR Z', guoBvdId: 'P7', cshNames: ['MR Z', 'A LTD', 'B LTD', 'C LTD'] }),
 ];
 const has11 = (v, id) => v.get(id).fails.some((f) => f.id === 'r11');
-const v = contactableVerdicts(list, ctConfig({}));
+const v = contactableVerdicts(list, ctConfig({ rules: { r11: { personMaxHoldings: 2 } } })); // the exception as an option (default 0 since 13 Oct)
 ok('Royal Canin (Mars family via Mars, Incorporated (HQ)) is cut, with the reason', has11(v, 'royal') && v.get('royal').fails.find((f) => f.id === 'r11').text === 'Rule 11: controlled by a foreign company (MARS, INCORPORATED (HQ))');
 ok('a person through one foreign holding (Ferfor via Enerpal España SL) is kept', !has11(v, 'ferfor'));
 ok('a "… FAMILY" at the top (Alpla, Lehner family) is cut', has11(v, 'alpla'));
@@ -34,15 +34,15 @@ ok('a Portuguese holding (… LDA) is not foreign', !has11(v, 'ptholding'));
 ok('an estate ("em comum") is not a company', !has11(v, 'estate'));
 ok('not a controlled subsidiary → rule 11 doesn\'t apply', !has11(v, 'indep'));
 ok('more than 2 foreign holdings → cut even with a person at the top', has11(v, 'deep'));
-const cut = contactableVerdicts(list, ctConfig({ rules: { r11: { missing: 'exclude' } } }));
+const cut = contactableVerdicts(list, ctConfig({ rules: { r11: { missing: 'exclude', personMaxHoldings: 2 } } }));
 ok('controlled subsidiary without a chain: "missing" policy applies', !has11(v, 'nochain') && has11(cut, 'nochain'));
-const noEx = contactableVerdicts(list, ctConfig({ rules: { r11: { personMaxHoldings: 0 } } }));
-ok('exception off (0) → the person-held case is cut too', has11(noEx, 'ferfor'));
+const noEx = contactableVerdicts(list, ctConfig({}));
+ok('default (13 Oct): no exception — the person-held case is cut too', has11(noEx, 'ferfor') && ctConfig({}).rules.r11.personMaxHoldings === 0);
 const off = contactableVerdicts(list, ctConfig({ rules: { r11: { on: false } } }));
 ok('rule switched off never cuts', !list.some((c) => has11(off, c.id)));
 // Owner with more than 2 companies in the CRM → not a grey case.
 const many = [1, 2, 3].map((i) => co('p' + i, { entityType: 'Controlled subs.', guoType: fam, guoName: 'MR W', guoBvdId: 'PW', cshNames: ['MR W', 'W HOLDING LTD'] }));
-ok('a person owning 3 companies in the CRM through a foreign holding → cut', many.every((c) => has11(contactableVerdicts(many, ctConfig({})), c.id)));
+ok('a person owning 3 companies in the CRM through a foreign holding → cut', many.every((c) => has11(contactableVerdicts(many, ctConfig({ rules: { r11: { personMaxHoldings: 2 } } })), c.id)));
 ok('foreign names recognised: GmbH, B.V., Inc., S.L.U., S.à r.l., A/S, PTE. LTD.; Portuguese not', ['ALPLA HOLDING GMBH', 'MARS NEDERLAND B.V.', 'SINGLESTORE, INC.', 'LASEM 2011 SLU', 'ROOT JVCO S.À R.L.', 'COLOPLAST A/S', 'SOMA HOLDING PTE. LTD.'].every(ctForeignCo) && !['FERREIRAFRIO - SGPS, UNIPESSOAL, LDA', 'PERFICHAPA, S.A.', 'MR JOAO'].some(ctForeignCo));
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');

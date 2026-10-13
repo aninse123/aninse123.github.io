@@ -1763,7 +1763,7 @@ const CT_DEFAULTS = {
     r7: { on: true, missing: 'keep' }, r8: { on: true, missing: 'keep' },
     r9: { on: true, missing: 'keep', ownerMaxEmployees: 1000, ownerMaxRevenueEurM: 200, groupMaxCompanies: 10, groupMaxEmployees: 1000, groupMaxRevenueEurM: 200, foreignFamilyMaxCompanies: 4 },
     r10: { on: true, missing: 'keep', maxShareholders: 10 },
-    r11: { on: true, missing: 'keep', personMaxHoldings: 2, personMaxCompanies: 2 },
+    r11: { on: true, missing: 'keep', personMaxHoldings: 0, personMaxCompanies: 2 }, // 13 Oct, André: no exception — cut them all
   },
 };
 // Stored settings on top of the defaults, rule by rule (a rule added later
