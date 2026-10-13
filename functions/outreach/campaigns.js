@@ -35,7 +35,7 @@ const { REGION, TEST_RECIPIENTS } = require("./config");
 const { normEmail } = require("./util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const store = require("./store");
-const { addWait, sendingDaysOf, FINAL_GRACE } = require("./schedule_util");
+const { addWait, sendingDaysOf, skipHolidaysOf, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const {
@@ -806,7 +806,7 @@ async function skipDraft({ messageId }, caller) {
     const enrolRef = db().doc(`outreachEnrolments/${m.data().enrolmentId}`);
     const e = await tx.get(enrolRef);
     const camp = m.data().campaignId ? (await tx.get(db().doc(`outreachCampaigns/${m.data().campaignId}`))).data() : null;
-    const next = addWait(new Date(), { days: 1, unit: "working" }, sendingDaysOf(camp, settings));
+    const next = addWait(new Date(), { days: 1, unit: "working" }, sendingDaysOf(camp, settings), skipHolidaysOf(camp, settings));
     tx.update(msgRef, { status: "cancelled", cancelledReason: `Skipped by ${caller} — drafted again the next sending day` });
     if (e.exists && e.data().status === "awaiting_approval" && e.data().draftMessageId === messageId) {
       tx.update(enrolRef, { status: "active", nextActionAt: Timestamp.fromDate(next), draftMessageId: null });
@@ -877,7 +877,8 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   if (o.reopen && (!reopen || reopen.getTime() < Date.now() - 86400000)) fail("invalid-argument", "date_required", "Pick the date for the next attempt.");
   // Own tasks (12 Oct) have no campaign: no sequence to move, only the touch and the task.
   const campaign = t.campaignId ? ((await db().doc(`outreachCampaigns/${t.campaignId}`).get()).data() || {}) : {};
-  const campaignDays = sendingDaysOf(campaign, await store.getSettings());
+  const settingsNow = await store.getSettings();
+  const campaignDays = sendingDaysOf(campaign, settingsNow), campaignHolidays = skipHolidaysOf(campaign, settingsNow);
   const linkedinUrl = t.channel === "linkedin" ? cleanUrl(profileUrl) : null;
   // Phase 2c branch for this outcome (set on the step): go to a later step or end.
   const stepIdx = (campaign.steps || []).findIndex((x) => x.id === t.stepId);
@@ -955,7 +956,7 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     const next = steps[nextIndex];
     tx.update(enrolRef, {
       status: "active", currentStep: nextIndex, taskId: null,
-      nextActionAt: Timestamp.fromDate(addWait(new Date(), next ? next.wait : FINAL_GRACE, campaignDays)),
+      nextActionAt: Timestamp.fromDate(addWait(new Date(), next ? next.wait : FINAL_GRACE, campaignDays, campaignHolidays)),
       history: FieldValue.arrayUnion({ stepId: t.stepId, at: Timestamp.now(), result: o.key, taskId, activityId }),
       lastError: null,
     });

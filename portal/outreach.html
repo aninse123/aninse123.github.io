@@ -628,6 +628,8 @@
                 <span style="display:flex;gap:6px;align-items:center;"><input type="time" id="gFrom" style="width:auto;" aria-label="From"> – <input type="time" id="gTo" style="width:auto;" aria-label="To"></span>
               </div>
               <span class="hint">When campaigns send their emails (Phase 2). Emails you send by hand and replies go out immediately.</span>
+              <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gHolidays"> <span>Skip national holidays <span class="hint">(no campaign emails, drafts or task dates on them; a campaign can choose otherwise)</span></span></label>
+              <details style="margin-top:4px;"><summary class="hint" style="cursor:pointer;">The national holidays</summary><div id="gHolList" class="hint" style="margin-top:6px;"></div></details>
             </div>
             <div class="field" style="margin-top:14px;">
               <label for="gTestList">Approved test addresses</label>
@@ -881,6 +883,26 @@
     function utcDay() { return new Date().toISOString().slice(0, 10); }
     function senderKey(id) { return String(id || '').replace(/[.@]/g, '_'); }
     function localPart(e) { return String(e || '').split('@')[0]; }
+    // ── National holidays (13 Oct), mirrored from functions/outreach/schedule_util.js ──
+    function easterUtc(y) {
+      const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+      const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+      const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+      const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+      return Date.UTC(y, month - 1, day);
+    }
+    function ptHolidays(y) {
+      const md = (ms) => new Date(ms).toISOString().slice(5, 10), e = easterUtc(y), D = 86400000;
+      const fixed = { '01-01': 'Ano Novo', '04-25': 'Dia da Liberdade', '05-01': 'Dia do Trabalhador', '06-10': 'Dia de Portugal', '08-15': 'Assunção de Nossa Senhora', '10-05': 'Implantação da República', '11-01': 'Todos os Santos', '12-01': 'Restauração da Independência', '12-08': 'Imaculada Conceição', '12-25': 'Natal' };
+      const all = { ...fixed, [md(e - 2 * D)]: 'Sexta-feira Santa', [md(e)]: 'Páscoa', [md(e + 60 * D)]: 'Corpo de Deus' };
+      return Object.keys(all).sort().map(k => ({ date: `${y}-${k}`, name: all[k] }));
+    }
+    function isPtHoliday(d) {
+      const y = d.getFullYear(), key = `${y}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return ptHolidays(y).some(h => h.date === key);
+    }
+    const skipHolidaysFor = (c) => (typeof c?.skipHolidays === 'boolean' ? c.skipHolidays : settings?.skipNationalHolidays !== false);
+
     // ── Company figures and windows (12 Oct) ──
     const eurShort = (v) => { const n = Number(v); if (v == null || v === '' || !isFinite(n)) return '—'; const a = Math.abs(n); return (n < 0 ? '−' : '') + '€' + (a >= 1e6 ? (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M' : a >= 1e3 ? Math.round(a / 1e3) + 'k' : Math.round(a)); };
     const finYearOf = (c) => { const ys = Object.keys(c?.orbisFinancials || {}).filter(y => /^\d{4}$/.test(y)).sort(); return c?.computedFinYear || ys[ys.length - 1] || ''; };
@@ -2361,7 +2383,7 @@
       $('setNav').addEventListener('click', (e) => { const b = e.target.closest('[data-sec]'); if (b) showSec(b.dataset.sec); });
       $('modalCancel').addEventListener('click', closeModal);
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
-      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
+      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gHolidays', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
       $('gSave').addEventListener('click', async () => { const unbusy = busyBtn($('gSave'), 'Saving…'); try { await saveGeneral(); } finally { unbusy(); } });
       $('rdRun').addEventListener('click', () => renderReadiness(true));
       $('gTrack').addEventListener('change', async (e) => {
@@ -2423,6 +2445,9 @@
       const win = s.sendWindow || { days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
       $('gDays').querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = (win.days || []).includes(Number(cb.value)); });
       $('gFrom').value = win.from || '09:00'; $('gTo').value = win.to || '18:00';
+      $('gHolidays').checked = s.skipNationalHolidays !== false;
+      const yNow = new Date().getFullYear();
+      $('gHolList').innerHTML = [yNow, yNow + 1].map(y => `<div style="margin-bottom:6px;"><b>${y}</b> · ${ptHolidays(y).map(h => `${esc(dayFmt.format(new Date(h.date + 'T12:00:00')))} ${esc(h.name)}`).join(' · ')}</div>`).join('');
       const campTest = s.campaignTestRecipient || 'andrenorocha@gmail.com';
       const campOpts = [...new Set([campTest, ...(s.testRecipients || [])])].filter(e => !/@resend\.dev$/i.test(e));
       $('gCampTest').innerHTML = campOpts.map(e => `<option value="${esc(e)}"${e === campTest ? ' selected' : ''}>${esc(e)}</option>`).join('');
@@ -2459,7 +2484,7 @@
       if (campTest && !list.includes(campTest)) { err.textContent = `The campaign test address (${campTest}) must be on the approved list.`; err.hidden = false; return; }
       await setDoc(doc(db, 'outreachSettings', 'global'), {
         dailyTarget: target, automationBudget: auto, blockPersonalDomains: $('gPersonal').checked,
-        testRecipients: list, sendWindow: { days, from: wFrom, to: wTo, tz: 'Europe/Lisbon' },
+        testRecipients: list, sendWindow: { days, from: wFrom, to: wTo, tz: 'Europe/Lisbon' }, skipNationalHolidays: $('gHolidays').checked,
         ...(campTest ? { campaignTestRecipient: campTest } : {}),
         aiEnabled: $('gAiOn').checked, aiModel: $('gAiModel').value, aiDailyCap: aiCap,
         updatedAt: serverTimestamp(), updatedBy: me,
@@ -3225,7 +3250,7 @@ Optional note for them:`, '');
           </div>
           <div class="card">
             <h3>Pace</h3>
-            <p class="note">The scheduler checks every 10 minutes and sends ${esc(windowText(c.sendWindow))} (Lisbon), never on national holidays. It starts up to <b>${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))}</b> new ${c.audienceType === 'people' ? 'people' : 'companies'} a day${c.pacing?.maxPerDay ? ` and sends at most <b>${num(c.pacing.maxPerDay)}</b> emails a day for this campaign` : ''}.</p>
+            <p class="note">The scheduler checks every 10 minutes and sends ${esc(windowText(c.sendWindow))} (Lisbon)${skipHolidaysFor(c) ? ', never on national holidays' : ', national holidays included'}. It starts up to <b>${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))}</b> new ${c.audienceType === 'people' ? 'people' : 'companies'} a day${c.pacing?.maxPerDay ? ` and sends at most <b>${num(c.pacing.maxPerDay)}</b> emails a day for this campaign` : ''}.</p>
             <p class="note" style="margin-top:8px;">With ${num(steps.length)} email${steps.length === 1 ? '' : 's'} per ${c.audienceType === 'people' ? 'person' : 'company'} that's about <b>${num(perDay)}</b> emails a day once the campaign is in full swing — the automations limit is <b>${num(limitN)}</b> a day for all campaigns together${perDay > limitN ? ' (<b>above the limit</b>: emails will queue up; lower the pace in Settings)' : ''}.</p>
             ${c.status === 'draft' ? '<p class="note" style="margin-top:8px;">Nothing is sent while the campaign is a draft.</p>' : ''}
           </div>
@@ -3686,7 +3711,9 @@ Optional note for them:`, '');
       })();
       const pace = Math.max(1, Math.min(c.pacing?.maxPerDay || Infinity, globalLimit, addrCap || Infinity));
       const win = c.sendWindow || settings?.sendWindow || { days: [1, 2, 3, 4, 5] };
-      const addSendingDays = (n) => { const d = new Date(); let k = 0; while (k < n) { d.setDate(d.getDate() + 1); if ((win.days || []).includes(d.getDay())) k++; } return d; };
+      const skipHol = skipHolidaysFor(c);
+      const isSendDay = (d) => (win.days || []).includes(d.getDay()) && !(skipHol && isPtHoliday(d));
+      const addSendingDays = (n) => { const d = new Date(); let k = 0; while (k < n) { d.setDate(d.getDate() + 1); if (isSendDay(d)) k++; } return d; };
       // I3: on which day of a company's sequence each step comes (sending days after its first step).
       const dayOf = []; let acc = 0;
       steps.forEach((st, i) => { if (i > 0) acc += Number(st.wait?.days) || 0; dayOf.push(i === 0 ? 'day 1' : `day ${num(acc + 1)}${st.wait?.unit === 'calendar' ? '*' : ''}`); });
@@ -3699,7 +3726,7 @@ Optional note for them:`, '');
       const sendDays = win.days || [1, 2, 3, 4, 5];
       const now = new Date();
       const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      const todayOpen = sendDays.includes(now.getDay()) && hhmm < (win.to || '18:00');
+      const todayOpen = isSendDay(now) && hhmm < (win.to || '18:00');
       const midnight = (x) => { const d = new Date(x); d.setHours(0, 0, 0, 0); return d; };
       const today0 = midnight(now);
       // Sending-day index from today: 0 = today (window still open), 1 = next sending day…
@@ -3708,8 +3735,8 @@ Optional note for them:`, '');
         const target = midnight(ms);
         if (target <= today0) return todayOpen ? 0 : 1;
         let k = 0; const c = new Date(today0);
-        while (c < target) { c.setDate(c.getDate() + 1); if (sendDays.includes(c.getDay())) k++; }
-        if (!sendDays.includes(target.getDay())) k++; // due on a day off → the next sending day
+        while (c < target) { c.setDate(c.getDate() + 1); if (isSendDay(c)) k++; }
+        if (!isSendDay(target)) k++; // due on a day off (or a holiday) → the next sending day
         return k;
       };
       const dateOfIdx = (k) => (k <= 0 ? new Date(now) : addSendingDays(k));
@@ -3761,7 +3788,7 @@ Optional note for them:`, '');
       }).join('');
       return `<p class="note">Effective pace: <b>${num(pace)}</b> emails a day — the lowest of this campaign's limit (${c.pacing?.maxPerDay ? num(c.pacing.maxPerDay) : 'none'}), the automations limit (${num(globalLimit)}, shared by all campaigns) and the addresses' daily caps (${num(addrCap)}).</p>
         <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th class="num" title="Sending days after a company's first step (the campaign's sending days, no holidays)">Day in each company's sequence</th><th title="When the first companies reach this step">First companies</th><th title="When the last companies are done with this step">Last companies (done by)</th><th class="num">Still to go</th><th class="num" title="Sending days with emails of this step">Sending days</th></tr></thead><tbody>${rows}</tbody></table></div>
-        <p class="note" style="margin-top:8px;">Each company goes through the whole sequence in about <b>${num(acc + 1)}</b> ${steps.some(s => s.wait?.unit === 'calendar') ? 'days (* calendar days)' : 'sending days'}, from its first step. <b>Day</b> counts this campaign's sending days (${esc(dayNames)}; national holidays skipped); the dates are when the first and the last companies reach each step.</p>
+        <p class="note" style="margin-top:8px;">Each company goes through the whole sequence in about <b>${num(acc + 1)}</b> ${steps.some(s => s.wait?.unit === 'calendar') ? 'days (* calendar days)' : 'sending days'}, from its first step. <b>Day</b> counts this campaign's sending days (${esc(dayNames)}${skipHol ? '; national holidays skipped' : '; national holidays included'}); the dates are when the first and the last companies reach each step.</p>
         <p class="hint" style="margin-top:6px;">Estimates — other campaigns share the daily limit, and approval steps wait for you. Recomputed each time the campaign is opened.</p>`;
     }
 
@@ -4968,7 +4995,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <div id="csWin" style="display:${win ? 'flex' : 'none'};flex-wrap:wrap;gap:6px 14px;align-items:center;margin-top:6px;">
               ${DAY_NAMES.map(([d, n]) => `<label class="checkline"><input type="checkbox" value="${d}" ${((win || gw).days || []).includes(d) ? 'checked' : ''}${dis}> <span>${n}</span></label>`).join('')}
               <span style="display:flex;gap:6px;align-items:center;"><input type="time" id="csFrom" value="${esc((win || gw).from)}" style="width:auto;"${dis}> – <input type="time" id="csTo" value="${esc((win || gw).to)}" style="width:auto;"${dis}></span>
-            </div></div>
+            </div>
+            <label for="csHol" style="margin-top:8px;display:block;font-weight:500;font-size:0.82rem;">National holidays</label>
+            <select id="csHol" style="max-width:360px;"${dis}><option value=""${typeof c.skipHolidays !== 'boolean' ? ' selected' : ''}>As in Settings (${settings?.skipNationalHolidays !== false ? 'skip them' : 'send on them'})</option><option value="skip"${c.skipHolidays === true ? ' selected' : ''}>Skip them</option><option value="send"${c.skipHolidays === false ? ' selected' : ''}>Send on them too</option></select></div>
         </div>
         <div class="card"${c.audienceType === 'people' ? ' hidden' : ''}>
           <h3>Who can be added</h3>
@@ -5034,6 +5063,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           footer: $('csFooter').value === 'on' ? true : $('csFooter').value === 'off' ? false : null,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,
+          skipHolidays: $('csHol').value === 'skip' ? true : $('csHol').value === 'send' ? false : null,
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, includeNotContactable: !!$('csInclNC')?.checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },
           audience: { mode: $('csAudMode').value },
         } }, 'Settings saved.');

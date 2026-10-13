@@ -18,7 +18,7 @@ const line = (a) => { const i = page.indexOf(a); if (i < 0) throw new Error(a); 
 const ctx = {}; vm.createContext(ctx);
 vm.runInContext([
   liftFn('esc'), line('    function tsMs(t)'), line('const dayFmt ='), line('const num ='), line('const norm ='), line('const LIVE_ENROL ='), line('const validEmail ='),
-  liftFn('parseCsv'), liftFn('parsePeopleRows'), liftFn('whereIs'), liftFn('mergePeople'), liftFn('peopleFor'), liftToClose('projectionHtml'),
+  liftFn('parseCsv'), liftFn('parsePeopleRows'), liftFn('whereIs'), liftFn('mergePeople'), liftFn('peopleFor'), liftFn('easterUtc'), liftFn('ptHolidays'), liftFn('isPtHoliday'), line('    const skipHolidaysFor ='), liftToClose('projectionHtml'),
   'var curEnrols = [], settings = null, senders = [];',
   'globalThis.api = { parsePeopleRows, whereIs, mergePeople, peopleFor, validEmail, projectionHtml, set: (k, v) => { if (k === "curEnrols") curEnrols = v; if (k === "settings") settings = v; if (k === "senders") senders = v; } };',
 ].join('\n'), ctx);

@@ -25,7 +25,8 @@ const ctx = {
   curEnrols: Array.from({ length: 69 }, () => ({ status: 'pending', currentStep: 0 })),
 };
 vm.createContext(ctx);
-vm.runInContext(liftFn('projectionHtml') + '\nthis.__p = projectionHtml;', ctx);
+const holAt = page.indexOf('const skipHolidaysFor ='), holLine = page.slice(holAt, page.indexOf('\n', holAt));
+vm.runInContext([liftFn('easterUtc'), liftFn('ptHolidays'), liftFn('isPtHoliday'), holLine, liftFn('projectionHtml')].join('\n') + '\nthis.__p = projectionHtml;', ctx);
 const camp = { audienceType: 'companies', pacing: { newPerDay: 10 }, senderPolicy: { mode: 'fixed', senderIds: ['s1', 's2', 's3', 's4'] },
   steps: [{ name: 'Email 1' }, { name: 'Email 2', wait: { days: 4, unit: 'working' } }, { name: 'Email 3', wait: { days: 7, unit: 'working' } }] };
 const strip = (s) => s.replace(/<[^>]+>/g, '').replace(/≈ /, '').trim();

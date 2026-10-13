@@ -43,6 +43,7 @@ const DEFAULT_CAMPAIGN = {
   approvalDefault: "approval", // D4: recommended start — review before anything goes out
   senderPolicy: { mode: "owner_rotation", senderIds: [] },
   sendWindow: null,            // null = the global window (Settings → General)
+  skipHolidays: null,          // 13 Oct: null = Settings → General; true / false = this campaign's choice
   pacing: { newPerDay: 20 },   // spec §11: 80/day ÷ ~4 emails per company
   audience: { mode: "static", sources: [] },
   exclusions: {
@@ -188,6 +189,7 @@ function normalizeCampaign(input, existing = null) {
     recipientPolicy: ["primary_contact", "best_person"].includes(src.recipientPolicy) ? src.recipientPolicy : "company",
     senderPolicy,
     sendWindow: normalizeWindow(src.sendWindow),
+    skipHolidays: typeof src.skipHolidays === "boolean" ? src.skipHolidays : null,
     // P4: maxPerDay = this campaign's own daily email limit (null = only the global limits).
     pacing: { newPerDay: intIn(src.pacing?.newPerDay, 1, 500, 20), maxPerDay: src.pacing?.maxPerDay == null || src.pacing?.maxPerDay === "" ? null : intIn(src.pacing.maxPerDay, 1, 1000, null) },
     audienceType: src.audienceType === "people" ? "people" : "companies",

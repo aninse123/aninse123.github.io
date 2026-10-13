@@ -45,6 +45,21 @@ function nationalHolidays(y) {
   return set;
 }
 
+// The same list with names, for Settings (13 Oct).
+const HOLIDAY_NAMES = { "01-01": "Ano Novo", "04-25": "Dia da Liberdade", "05-01": "Dia do Trabalhador", "06-10": "Dia de Portugal", "08-15": "Assunção de Nossa Senhora", "10-05": "Implantação da República", "11-01": "Todos os Santos", "12-01": "Restauração da Independência", "12-08": "Imaculada Conceição", "12-25": "Natal" };
+function holidayList(y) {
+  const e = easter(y);
+  const moving = { [mmdd(e - 2 * DAY_MS)]: "Sexta-feira Santa", [mmdd(e)]: "Páscoa", [mmdd(e + 60 * DAY_MS)]: "Corpo de Deus" };
+  return [...nationalHolidays(y)].sort().map((md) => ({ date: `${y}-${md}`, name: HOLIDAY_NAMES[md] || moving[md] || "" }));
+}
+
+// 13 Oct: skipping national holidays is a choice — the campaign's own setting
+// (true / false), else Settings → General (skipNationalHolidays), else yes.
+function skipHolidaysOf(campaign, settings) {
+  if (typeof campaign?.skipHolidays === "boolean") return campaign.skipHolidays;
+  return settings?.skipNationalHolidays !== false;
+}
+
 function isHoliday(parts) {
   return nationalHolidays(parts.y).has(`${String(parts.m).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}`);
 }
@@ -55,9 +70,9 @@ function isWorkingDay(parts) {
 
 // Emails go out on the window's days, between its times, never on a national
 // holiday. `window` = { days: [0-6], from: "HH:MM", to: "HH:MM" } in Lisbon time.
-function isWindowOpen(date, window) {
+function isWindowOpen(date, window, skipHolidays = true) {
   const p = lisbonParts(date);
-  if (!window?.days?.includes(p.weekday) || isHoliday(p)) return false;
+  if (!window?.days?.includes(p.weekday) || (skipHolidays && isHoliday(p))) return false;
   return p.hhmm >= window.from && p.hhmm < window.to;
 }
 
@@ -67,12 +82,12 @@ function isWindowOpen(date, window) {
 // (`sendingDays` = its window's weekdays, else the global window's; Mon–Fri when
 // none is given), skipping national holidays — so a Thu–Sat campaign waiting 4
 // goes Fri, Sat, Thu, Fri instead of piling up for Thursday. "calendar" = exact days.
-function addWait(from, wait, sendingDays = null) {
+function addWait(from, wait, sendingDays = null, skipHolidays = true) {
   const days = Math.max(0, Number(wait?.days) || 0);
   if (!days) return new Date(from.getTime());
   if (wait.unit === "calendar") return new Date(from.getTime() + days * DAY_MS);
   const set = Array.isArray(sendingDays) && sendingDays.length ? sendingDays : null;
-  const counts = (p) => (set ? set.includes(p.weekday) && !isHoliday(p) : isWorkingDay(p));
+  const counts = (p) => (set ? set.includes(p.weekday) : p.weekday >= 1 && p.weekday <= 5) && !(skipHolidays && isHoliday(p));
   let t = from.getTime(), counted = 0;
   for (let guard = 0; counted < days && guard < 3660; guard++) {
     t += DAY_MS;
@@ -118,4 +133,4 @@ function pickSender({ policy, owner, senders, sentToday, usedThisRun, defaultCap
 // still counts as "replied" and not "completed, no reply".
 const FINAL_GRACE = { days: 5, unit: "working" };
 
-module.exports = { FINAL_GRACE, TZ, lisbonParts, easter, nationalHolidays, isHoliday, isWorkingDay, isWindowOpen, addWait, sendingDaysOf, pickVariant, pickSender };
+module.exports = { FINAL_GRACE, TZ, lisbonParts, easter, nationalHolidays, holidayList, skipHolidaysOf, isHoliday, isWorkingDay, isWindowOpen, addWait, sendingDaysOf, pickVariant, pickSender };
