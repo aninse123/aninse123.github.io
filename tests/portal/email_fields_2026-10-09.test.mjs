@@ -30,7 +30,7 @@ let fail = 0;
 const ok = (l, cond) => { if (!cond) fail++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${l}`); };
 
 const s = {}; vm.createContext(s);
-vm.runInContext([liftFn(page, 'joinOu'), liftFn(page, 'ownerContext'), liftConst(page, 'IN_CITY'), liftLine(page, 'inCityOf'), between(page, 'function scanTemplate(', 'function renderPreview('), 'const esc = (x) => String(x);',
+vm.runInContext([liftFn(page, 'joinOu'), liftFn(page, 'joinPt'), liftFn(page, 'ownerContext'), liftConst(page, 'IN_CITY'), liftLine(page, 'inCityOf'), between(page, 'function scanTemplate(', 'function renderPreview('), 'const esc = (x) => String(x);',
   'this.__x = { joinOu, ownerContext, IN_CITY, inCityOf, renderVars };'].join('\n'), s);
 const X = s.__x;
 
