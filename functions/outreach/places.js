@@ -17,5 +17,11 @@ const IN_CITY = {
 };
 const placeKey = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 function inCityOf(concelho) { return IN_CITY[placeKey(concelho)] || ""; }
+// 13 Oct: the same place after a verb of movement — "deslocar-nos a Lisboa / ao Porto / à Maia / às Caldas".
+const TO_FORM = { em: "a", no: "ao", na: "à", nos: "aos", nas: "às" };
+function toCityOf(concelho) {
+  const m = /^(em|no|na|nos|nas) (.+)$/.exec(inCityOf(concelho));
+  return m ? `${TO_FORM[m[1]]} ${m[2]}` : "";
+}
 
-module.exports = { IN_CITY, placeKey, inCityOf };
+module.exports = { IN_CITY, placeKey, inCityOf, toCityOf };

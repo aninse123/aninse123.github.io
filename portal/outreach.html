@@ -794,7 +794,7 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'company.inCity|nas vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
     // 9 Oct: what each team field means (button tooltips).
     const VAR_HELP = {
       'sender.fullName': 'Full name of whoever sends (the address owner)',
@@ -806,7 +806,9 @@
       'owner.of|da gerência': 'After "à atenção" / "ao cuidado": "do Senhor A ou da Senhora B" (the company\'s owners in emails, up to 3 — Search CRM → Edit company). No names → "da gerência"',
       'owner.with|a gerência': 'After "com" / "para": "o Senhor A ou a Senhora B". No names → "a gerência"',
       'owner.names': 'The owners\' names only: "A ou B"',
+      'owner.greeting|Exmos. Senhores': 'A letter-style opening: "Exma. Senhora A e Exmo. Senhor B" (all owners named, with their gender). No names → "Exmos. Senhores"',
       'company.inCity|nas vossas instalações': '"em Setúbal", "no Porto", "na Maia" — the municipality with the right word before it (validated municipalities only). Otherwise the text after |',
+      'company.toCity|às vossas instalações': 'After "deslocar-nos": "a Setúbal", "ao Porto", "à Maia", "às Caldas da Rainha" (validated municipalities only). Otherwise the text after |',
       'campaign.sector': 'The campaign\'s "Sector in the emails", e.g. "do trabalho temporário" (campaign → Settings). Empty in Compose — give a fallback with |',
       'sender.bookingLink': 'The sender\'s booking page (Team → Contact details). To add a sentence only when there is one: {{?sender.bookingLink| ou marcar uma reunião em {{sender.bookingLink}}}}',
     };
@@ -820,7 +822,8 @@
         .filter(o => o.name).slice(0, 3);
       const of = o => o.gender === 'M' ? `do Senhor ${o.name}` : o.gender === 'F' ? `da Senhora ${o.name}` : `de ${o.name}`;
       const withO = o => o.gender === 'M' ? `o Senhor ${o.name}` : o.gender === 'F' ? `a Senhora ${o.name}` : o.name;
-      return { of: joinOu(list.map(of)), with: joinOu(list.map(withO)), names: joinOu(list.map(o => o.name)) };
+      const greet = o => o.gender === 'M' ? `Exmo. Senhor ${o.name}` : o.gender === 'F' ? `Exma. Senhora ${o.name}` : `Exmo(a). Senhor(a) ${o.name}`;
+      return { of: joinOu(list.map(of)), with: joinOu(list.map(withO)), names: joinOu(list.map(o => o.name)), greeting: joinPt(list.map(greet)) };
     }
     const IN_CITY = {
       'albufeira': 'em Albufeira', 'alenquer': 'em Alenquer', 'almeirim': 'em Almeirim', 'amarante': 'em Amarante',
@@ -834,6 +837,7 @@
       'setubal': 'em Setúbal', 'sintra': 'em Sintra', 'tarouca': 'em Tarouca', 'vila franca de xira': 'em Vila Franca de Xira',
       'vila nova de famalicao': 'em Vila Nova de Famalicão', 'vila nova de gaia': 'em Vila Nova de Gaia', 'vila do conde': 'em Vila do Conde',
     };
+    const toCityOf = (concelho) => { const m = /^(em|no|na|nos|nas) (.+)$/.exec(inCityOf(concelho)); return m ? `${({ em: 'a', no: 'ao', na: 'à', nos: 'aos', nas: 'às' })[m[1]]} ${m[2]}` : ''; };
     const inCityOf = (concelho) => IN_CITY[String(concelho || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()] || '';
     // Same as the server (render.js teamContext).
     function joinPt(list) { const l = list.filter(Boolean); return l.length <= 1 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} e ${l[l.length - 1]}`; }
@@ -2177,7 +2181,7 @@
       const s = senders.find(x => x.id === $('cFrom').value) || {};
       const c = picked || ((!settings || settings.testMode !== false) ? TEST_SAMPLE_COMPANY : {});
       return {
-        company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '', inCity: inCityOf(c.concelho) },
+        company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '', inCity: inCityOf(c.concelho), toCity: toCityOf(c.concelho) },
         owner: ownerContext(c),
         campaign: { sector: '' }, // Compose isn't part of a campaign — the fallback shows
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
@@ -4670,7 +4674,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const m = (window.teamDir || []).find(x => x.key === signer) || {};
       const full = m.name || OWNER_FULL[signer] || '';
       return {
-        company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '', inCity: inCityOf(c?.concelho) },
+        company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '', inCity: inCityOf(c?.concelho), toCity: toCityOf(c?.concelho) },
         owner: ownerContext(c?._person ? {} : c),
         campaign: { sector: camp?.sector || '' },
         contact: { firstName: c?._person ? String(c._person.name || '').split(' ')[0] : '' },

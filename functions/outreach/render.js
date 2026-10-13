@@ -6,7 +6,7 @@
 // template can be sent without one).
 
 const { escapeHtml } = require("./util");
-const { inCityOf } = require("./places");
+const { inCityOf, toCityOf } = require("./places");
 
 const LEGAL_SUFFIX_RE = /[\s,]*(,?\s*(unipessoal|sociedade unipessoal)?\s*,?\s*(lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i;
 
@@ -75,7 +75,9 @@ function ownerContext(company = {}) {
     .filter((o) => o.name).slice(0, 3);
   const of = (o) => (o.gender === "M" ? `do Senhor ${o.name}` : o.gender === "F" ? `da Senhora ${o.name}` : `de ${o.name}`);
   const withO = (o) => (o.gender === "M" ? `o Senhor ${o.name}` : o.gender === "F" ? `a Senhora ${o.name}` : o.name);
-  return { of: joinOu(list.map(of)), with: joinOu(list.map(withO)), names: joinOu(list.map((o) => o.name)) };
+  // 13 Oct: {{owner.greeting}} — "Exma. Senhora A e Exmo. Senhor B" (a letter-style opening; all named).
+  const greet = (o) => (o.gender === "M" ? `Exmo. Senhor ${o.name}` : o.gender === "F" ? `Exma. Senhora ${o.name}` : `Exmo(a). Senhor(a) ${o.name}`);
+  return { of: joinOu(list.map(of)), with: joinOu(list.map(withO)), names: joinOu(list.map((o) => o.name)), greeting: joinPt(list.map(greet)) };
 }
 
 // Team fields (9 Oct): {{team.<key>.firstName|fullName}} for everyone active in
@@ -107,6 +109,7 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
       sector: company.sector || "",
       cae: company.caeDescription || company.caeCode || "",
       inCity: inCityOf(company.concelho), // "em Setúbal" / "no Porto" — validated municipalities only
+      toCity: toCityOf(company.concelho), // 13 Oct: "a Setúbal" / "ao Porto" / "à Maia" — after "deslocar-nos"
     },
     owner: ownerContext(company),
     campaign: { sector: String(campaign?.sector || "").trim() },
