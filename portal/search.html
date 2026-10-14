@@ -4897,7 +4897,7 @@ async function renderOwnershipLadder(c, links){
     const sum = k => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
     const isGuo = m => om.guoNif && ownCoNif(m) === om.guoNif && /^PT/i.test(om.guoBvdId || 'PT');
     const ct = m => m.doNotContact?.on ? '🚫 Do not contact' : m.contactable === false ? 'Not contactable' : m.contactable === true ? 'Contactable' : '—';
-    groupHtml = `<div class="ot-meta" style="margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;"><span>Ultimate owner: <strong>${esc(om.guoName || '—')}</strong>${om.guoType ? ` · ${esc(om.guoType)}` : ''}${group.total > rows.length ? ` · showing ${rows.length} of ${group.total} companies (largest first)` : ''}</span><button type="button" class="btn btn--ghost btn--sm" data-group-list title="Open the Search CRM list with only this group (then filter, export or add to a campaign)">Show the group in the list</button></div>
+    groupHtml = `<div class="ot-meta" style="margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;"><span>Ultimate owner: <strong>${esc(om.guoName || '—')}</strong>${om.guoType ? ` · ${esc(om.guoType)}` : ''}${group.total > rows.length ? ` · showing ${rows.length} of ${group.total} companies; all of them with the button` : ''}</span><button type="button" class="btn btn--ghost btn--sm" data-group-list title="Open the Search CRM list with only this group (then filter, export or add to a campaign)">Show the group in the list</button></div>
       <div style="overflow-x:auto;"><table class="own-table own-group-table">
         <thead><tr><th>Company</th><th>CAE</th><th class="num">Revenue</th><th class="num">EBITDA</th><th class="num">Employees</th><th>Stage</th><th>Contactable</th></tr></thead>
         <tbody>${rows.map(m => `<tr${m.id === c.id ? ' class="own-self"' : ''}>
@@ -4948,11 +4948,15 @@ function setGroupKeyFilter(key, label){
   chip.innerHTML = key ? `Same group as ${esc(ownGroupKeyLabel)} <button type="button" class="btn btn--icon btn--ghost" data-clear-group title="Show all companies again" style="padding:0 4px;">✕</button>` : '';
 }
 async function showGroupInList(c){
-  const group = await ownGroup(c).catch(() => null);
-  if (!group) return;
-  // The list holds a window of companies: add the group's, so all of them show.
-  for (const m of group.members) if (!companies.some(x => x.id === m.id)) companies.push(m);
-  setGroupKeyFilter(group.key.value, c.ownershipMeta?.guoName || c.name);
+  const k = ownGroupKey(c); if (!k) return;
+  // The list holds a window of companies: fetch the whole group (the card
+  // stops at OWN_GROUP_MAX) and add the missing ones, so all of them show.
+  let snap;
+  try { snap = await getDocs(query(collection(db, 'searchCompanies'), where(k.field, '==', k.value))); }
+  catch(e){ console.error(e); alert('Could not load the group: ' + e.message); return; }
+  addReads(snap.docs.length || 1);
+  for (const d of snap.docs) if (!companies.some(x => x.id === d.id)) companies.push(computeFields({ id: d.id, ...d.data() }));
+  setGroupKeyFilter(k.value, c.ownershipMeta?.guoName || c.name);
   backToList();
 }
 document.getElementById('panel-ownership').addEventListener('click', e => {
