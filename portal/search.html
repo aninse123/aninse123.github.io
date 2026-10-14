@@ -496,7 +496,7 @@
       <div class="filter-group">CAGR% <input type="number" class="num-filter" id="cagrMin" placeholder="min"> – <input type="number" class="num-filter" id="cagrMax" placeholder="max"></div>
       <select class="filter-sel" id="lastTouchFilter"><option value="">Any time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="never">Never contacted</option></select>
       <select class="filter-sel" id="websiteFilter"><option value="">Website: Any</option><option value="yes">Has website</option><option value="no">No website</option></select>
-      <select class="filter-sel" id="contactableFilter" data-feature="search.tier" title="Not contactable = left out of campaigns unless a campaign includes them"><option value="">Contactable: Any</option><option value="yes">Contactable</option><option value="no">Not contactable</option></select>
+      <select class="filter-sel" id="contactableFilter" data-feature="search.tier" title="Contactable = passes the screening (contactable rules). Not contactable = not a target; left out of campaigns unless a campaign includes them. Not the same as Do not contact (stop)."><option value="">Contactable: Any</option><option value="yes">Contactable</option><option value="no">Not contactable (screening)</option></select><span class="info-icon" data-feature="search.tier" role="img" aria-label="What is the difference?" id="ctHelpIcon" style="align-self:center;">i</span>
       <button class="btn btn--ghost btn--sm" id="clearFiltersBtn">Clear all</button>
     </div>
 
@@ -590,7 +590,7 @@
         <button class="btn btn--action" id="addCoToCampaignBtn" data-perm="out.campaigns" data-feature="outreach outreach.campaigns" title="Add this company to an Outreach campaign">📣 Campaign</button>
         <select class="btn btn--action" id="tierSel" title="Tier — from the tier rules unless you choose one here" style="padding-right:6px;"></select>
         <button class="btn btn--action" id="contactableBtn" data-perm="search.flags" data-feature="search.tier" title="Not contactable: left out of campaigns by default (a campaign can still include it)">Not contactable</button>
-        <button class="btn btn--action" id="dncBtn" data-perm="search.flags" title="Stop all outreach to this company">🚫 Do not contact</button>
+        <button class="btn btn--action" id="dncBtn" data-perm="search.flags" title="Do not contact (stop): never approach this company — always left out of campaigns and blocks outreach emails. Different from &quot;not contactable&quot;, which is a screening result.">🚫 Do not contact</button>
         <button class="btn btn--danger btn--sm" id="deleteCompanyBtn" data-perm="search.delete">Delete</button>
       </div>
     </div>
@@ -1924,9 +1924,13 @@ function contactableBadge(c, extraStyle = ''){
   if (c?.contactable !== false) return '';
   const rule = c.contactableSource === 'rules';
   const why = c.contactableNote || (rule ? '' : 'No reason given');
-  return `<span class="badge badge-grey" data-feature="search.tier" style="${extraStyle}${rule ? 'opacity:0.65;' : ''}" title="Not contactable${rule ? ' — from the contactable rules' : ' — set by hand'}${why ? ': ' + esc(why) : ''}">not contactable${rule ? ' <small>(rule)</small>' : ''}</span>`;
+  return `<span class="badge badge-grey" data-feature="search.tier" style="${extraStyle}${rule ? 'opacity:0.65;' : ''}" title="Not contactable${rule ? ' — from the contactable rules' : ' — set by hand'}${why ? ': ' + esc(why) : ''}">not contactable · screening${rule ? ' <small>(rule)</small>' : ''}</span>`;
 }
 
+// 14 Oct: the three "don't email" concepts, explained wherever they show (ⓘ).
+const CONTACT_HELP = 'Three different things. NOT CONTACTABLE (screening): the company is not a target for us; set by the contactable rules (Run rules) or by hand; campaigns leave it out unless a campaign chooses to include not-contactable companies; an email written by hand is still allowed. DO NOT CONTACT (stop): never approach this company; set by hand with the 🚫 button, e.g. when they asked us not to contact them; always left out of campaigns, taken out of its current campaign, and outreach emails from Compose are blocked; undo with Allow contact again. SUPPRESSION LIST (Outreach → Settings): blocks one email address or a whole domain (unsubscribes, bounces, spam complaints are added automatically); nobody there is emailed again from any address.';
+document.addEventListener('DOMContentLoaded', () => { const el = document.getElementById('ctHelpIcon'); if (el) el.title = CONTACT_HELP; });
+const contactHelpIcon = () => `<span class="info-icon" role="img" aria-label="What is the difference?" title="${esc(CONTACT_HELP)}" style="margin-left:4px;vertical-align:1px;">i</span>`;
 function computeFields(co){
   // Orbis first, the old grid only as fallback -- the same rule calcFit()
   // applies to fitScore, so the list columns, filters, sorting, CSV and the
@@ -3614,8 +3618,8 @@ function renderDetail(){
     ${editedBadge(c)}
     ${SOURCE_LABELS[c.sourceType]?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
     ${c.activeCampaignName ? `<a class="badge badge-blue" href="/portal/outreach.html" title="In this Outreach campaign" style="text-decoration:none;">📣 ${esc(c.activeCampaignName)}</a>` : ''}
-    ${c.doNotContact?.on ? `<span class="badge badge-red" title="${esc(c.doNotContact.reason || 'No reason given')}">🚫 Do not contact</span>` : ''}
-    ${contactableBadge(c)}${c.contactableSource === 'manual' || (c.contactableSource == null && typeof c.contactable === 'boolean') ? ' <button type="button" class="btn btn--ghost btn--sm" data-ct-reset data-feature="search.contactableRules" title="Forget the choice made by hand; the contactable rules decide at the next Run rules">↺ Back to the rules</button>' : ''}
+    ${c.doNotContact?.on ? `<span class="badge badge-red" title="${esc('Do not contact (stop) — ' + (c.doNotContact.reason || 'no reason given'))}">🚫 Do not contact · stop</span>` : ''}
+    ${contactableBadge(c)}${c.doNotContact?.on || c.contactable === false ? contactHelpIcon() : ''}${c.contactableSource === 'manual' || (c.contactableSource == null && typeof c.contactable === 'boolean') ? ' <button type="button" class="btn btn--ghost btn--sm" data-ct-reset data-feature="search.contactableRules" title="Forget the choice made by hand; the contactable rules decide at the next Run rules">↺ Back to the rules</button>' : ''}
     ${headerOwner(c, primary)}`;
   const ctB = document.getElementById('contactableBtn');
   if (ctB) ctB.textContent = c.contactable === false ? '✓ Contactable again' : 'Not contactable';
@@ -9974,7 +9978,7 @@ document.getElementById('contactableBtn').addEventListener('click', async () => 
   const c = getCompany(); const id = currentCoId; if (!id) return;
   const makeNo = c?.contactable !== false;
   let note = null;
-  if (makeNo) { note = prompt('Mark as NOT CONTACTABLE? Campaigns leave it out unless a campaign includes not-contactable companies. Reason (optional):', ''); if (note === null) return; }
+  if (makeNo) { note = prompt('Mark as NOT CONTACTABLE (screening: not a target)? Campaigns leave it out unless a campaign includes not-contactable companies; you can still email it by hand. (To stop all contact, use "Do not contact" instead.) Reason (optional):', ''); if (note === null) return; }
   try {
     // A choice made by hand: tagged 'manual' so Run rules never overrides it.
     await updateDoc(doc(db, 'searchCompanies', id), { contactable: !makeNo, contactableNote: makeNo ? (note.trim() || null) : null, contactableSource: 'manual', contactableRules: deleteField(), updatedAt: serverTimestamp() });
@@ -10253,7 +10257,7 @@ document.getElementById('dncBtn').addEventListener('click', async () => {
   const on = !c?.doNotContact?.on;
   let reason = null;
   if (on) {
-    reason = prompt('Mark as DO NOT CONTACT? Every campaign stops for this company and no new outreach can be sent. Reason (optional):', '');
+    reason = prompt('Mark as DO NOT CONTACT (stop)? Every campaign stops for this company and no new outreach can be sent, not even by hand. (Different from "not contactable", which only means "not a target" from the screening.) Reason (optional):', '');
     if (reason === null) return;
   } else if (!confirm('Allow outreach to this company again?')) return;
   const btn = document.getElementById('dncBtn'); btn.disabled = true;

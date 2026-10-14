@@ -310,7 +310,8 @@
       .row2 { grid-template-columns: 1fr; }
       .tabs { overflow-x: auto; overflow-y: hidden; }
     }
-  </style>
+      .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: var(--line, #E3E8EC); color: var(--muted, #5B6670); font-size: 0.65rem; font-weight: 700; font-style: normal; cursor: help; vertical-align: 1px; margin-left: 4px; }
+</style>
 </head>
 <body>
 
@@ -726,11 +727,11 @@
           <!-- Suppression list -->
           <div class="card setsec" id="sec-suppression" hidden style="padding:0;">
             <div style="padding:18px 20px 6px;"><h2 style="margin:0;">Suppression list</h2>
-              <p class="hint" style="margin-top:6px;">Nobody here is ever emailed again, from any address. Bounces, spam complaints and unsubscribes are added automatically. Add a whole domain with <code>@empresa.pt</code>.</p></div>
+              <p class="hint" style="margin-top:6px;">Nobody here is ever emailed again, from any address. Bounces, spam complaints and unsubscribes are added automatically. Add a whole domain with <code>@empresa.pt</code>. This blocks an <b>email address</b>; a company's 🚫 Do not contact (Search CRM) stops the whole company, and "not contactable" is only a screening result. <span class="info-icon" role="img" aria-label="What is the difference?" title="Three different things. NOT CONTACTABLE (screening): the company is not a target for us; set by the contactable rules (Run rules) or by hand; campaigns leave it out unless a campaign chooses to include not-contactable companies; an email written by hand is still allowed. DO NOT CONTACT (stop): never approach this company; set by hand with the 🚫 button, e.g. when they asked us not to contact them; always left out of campaigns, taken out of its current campaign, and outreach emails from Compose are blocked; undo with Allow contact again. SUPPRESSION LIST (Outreach → Settings): blocks one email address or a whole domain (unsubscribes, bounces, spam complaints are added automatically); nobody there is emailed again from any address.">i</span></p></div>
             <div class="toolbar">
               <input type="search" id="supSearch" placeholder="Filter…" style="max-width:220px;" autocomplete="off">
               <input type="text" id="supAdd" placeholder="email@empresa.pt or @empresa.pt" style="max-width:260px;" autocomplete="off">
-              <select id="supReason" aria-label="Reason"><option value="do_not_contact">Do not contact</option><option value="manual">Manual</option><option value="unsubscribed">Asked to be removed</option></select>
+              <select id="supReason" aria-label="Reason"><option value="do_not_contact">Do not contact (this address)</option><option value="manual">Manual</option><option value="unsubscribed">Asked to be removed</option></select>
               <input type="text" id="supNote" placeholder="Note (optional), e.g. asked by phone" maxlength="300" style="max-width:240px;" autocomplete="off">
               <button class="btn btn--ghost btn--sm" id="supAddBtn">Add</button>
               <button class="btn btn--ghost btn--sm" id="supExport" style="margin-left:auto;">Export CSV</button>
@@ -3291,7 +3292,7 @@
       ['closed', 'Closed'], ['pass', 'Pass'], ['on_hold', 'On hold'],
     ];
     const EXCL_LABELS = {
-      not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact', not_contactable: 'marked not contactable',
+      not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'do not contact (stop)', not_contactable: 'not contactable (screening)',
       unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
       stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
       personal_domain: 'personal email domain',
@@ -5456,7 +5457,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <div class="field"><label>Search CRM stages allowed<span class="info" title="Only companies in these Search CRM stages can be added." aria-label="Only companies in these Search CRM stages can be added.">i</span></label>
             <div class="stage-grid" id="csStages">${STAGE_LABELS.map(([k, l]) => `<label class="checkline"><input type="checkbox" value="${k}" ${ex.allowedStages.includes(k) ? 'checked' : ''}${dis}> <span>${esc(l)}</span></label>`).join('')}</div></div>
           <label class="checkline"><input type="checkbox" id="csReqEmail" ${ex.requireEmail !== false ? 'checked' : ''}${dis}> <span>Skip companies without an email address</span></label>
-          <label class="checkline" data-feature="search.tier"><input type="checkbox" id="csInclNC" ${ex.includeNotContactable ? 'checked' : ''}${dis}> <span>Include companies marked <b>not contactable</b> in the Search CRM (left out by default; "Do not contact" is never included)</span></label>
+          <label class="checkline" data-feature="search.tier"><input type="checkbox" id="csInclNC" ${ex.includeNotContactable ? 'checked' : ''}${dis}> <span>Include companies marked <b>not contactable</b> in the Search CRM (left out by default; "Do not contact" is never included) <span class="info-icon" role="img" aria-label="What is the difference?" title="Three different things. NOT CONTACTABLE (screening): the company is not a target for us; set by the contactable rules (Run rules) or by hand; campaigns leave it out unless a campaign chooses to include not-contactable companies; an email written by hand is still allowed. DO NOT CONTACT (stop): never approach this company; set by hand with the 🚫 button, e.g. when they asked us not to contact them; always left out of campaigns, taken out of its current campaign, and outreach emails from Compose are blocked; undo with Allow contact again. SUPPRESSION LIST (Outreach → Settings): blocks one email address or a whole domain (unsubscribes, bounces, spam complaints are added automatically); nobody there is emailed again from any address.">i</span></span></label>
           <div class="field" style="margin-top:14px;"><label for="csAudMode">Audience<span class="info" title="Static: only the companies you add. Dynamic: every day from 07:00, companies that start matching the campaign's latest Search CRM filter are added." aria-label="Static: only the companies you add. Dynamic: every day from 07:00, companies that start matching the campaign's latest Search CRM filter are added.">i</span></label>
             <select id="csAudMode" style="max-width:520px;"${dis}>
               <option value="static"${c.audience?.mode !== 'dynamic' ? ' selected' : ''}>Static — only the companies you add</option>
