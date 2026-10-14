@@ -48,8 +48,8 @@ const body = (text, extra = {}) => send({ companyId: "co1", senderId: SENDER, su
   const none = R.ownerContext({});
   ok("no owners: empty fields (the template's fallback is used)", none.of === "" && none.with === "" && none.names === "");
   ok("inCity: preposition + accents; any spelling of the concelho", P.inCityOf("Cinfaes") === "em Cinfães" && P.inCityOf("PORTO") === "no Porto" && P.inCityOf("Setúbal") === "em Setúbal" && P.inCityOf("figueira da  foz") === "na Figueira da Foz" && P.inCityOf("Maia") === "na Maia");
-  ok("inCity: a municipality not validated yet → empty", P.inCityOf("Caldas da Rainha") === "" && P.inCityOf("") === "");
-  ok("the campaign's 39 municipalities are listed", Object.keys(P.IN_CITY).length === 39);
+  ok("inCity: unknown place → empty (14 Oct: all 308 known, e.g. nas Caldas da Rainha)", P.inCityOf("Xpto") === "" && P.inCityOf("") === "" && P.inCityOf("Caldas da Rainha") === "nas Caldas da Rainha");
+  ok("all 308 municipalities are listed (14 Oct)", Object.keys(P.IN_CITY).length === 308);
 
   console.log("=== only-if field {{?x|text}} ===");
   const ctxB = R.buildContext({ company: {}, sender: { displayName: "André Rocha", bookingLink: "https://cal.com/andre" } });
@@ -64,7 +64,7 @@ const body = (text, extra = {}) => send({ companyId: "co1", senderId: SENDER, su
   seed({ owners: [{ name: "Carlos Cabaça", gender: "M" }, { name: "Bruno Cabaça", gender: "M" }], booking: "https://cal.com/andre-rocha" });
   let r = await body(FORMAL);
   ok("owners, municipality and booking link filled", r.ok && last().text.startsWith("Agradecemos que faça chegar esta mensagem à atenção do Senhor Carlos Cabaça ou do Senhor Bruno Cabaça. Gostaríamos de conversar com o Senhor Carlos Cabaça ou o Senhor Bruno Cabaça. Teríamos todo o gosto em reunir pessoalmente em Cinfães. Poderá ligar para +351 917 995 784 ou agendar via: https://cal.com/andre-rocha."));
-  seed({ concelho: "Caldas da Rainha" });
+  seed({ concelho: "Xpto" });
   r = await body(FORMAL);
   ok("no owners / municipality / booking link: fallbacks, sentence without the link", r.ok && last().text.startsWith("Agradecemos que faça chegar esta mensagem à atenção da gerência. Gostaríamos de conversar com a gerência. Teríamos todo o gosto em reunir pessoalmente nas vossas instalações. Poderá ligar para +351 917 995 784."));
   r = await body("No setor {{campaign.sector|em que a {{company.shortName}} atua}}.");

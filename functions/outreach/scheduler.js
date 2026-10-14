@@ -31,7 +31,8 @@ const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
 const Feat = require("../features"); // kill switches (Team & access → Features)
-const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, skipHolidaysOf, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
+const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, skipHolidaysOf, skipMunicipalOf, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
+const { isMunicipalHoliday } = require("./places");
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -230,6 +231,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     const c = { id: d.id, ...d.data() };
     c._sendingDays = sendingDaysOf(c, settings); // waits count this campaign's sending days
     c._skipHolidays = skipHolidaysOf(c, settings); // 13 Oct: national holidays skipped unless switched off
+    c._skipMunicipal = skipMunicipalOf(c, settings); // 14 Oct: each company's own municipal holiday
     if (ignoreWindow || isWindowOpen(now, c.sendWindow || globalWindow, c._skipHolidays)) open.set(c.id, c);
   }
   report.open = open.size;
@@ -270,6 +272,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const templates = new Map();
   const redirectTo = settings.testMode ? (settings.campaignTestRecipient || (settings.testRecipients || [])[0]) : null;
   let sendsThisRun = 0;
+  const companyPlace = new Map(); // 14 Oct: companyId → { concelho, distrito, city }, read once per run
+  const todayParts = lisbonParts(now);
 
   for (const doc of due) {
     const campaign = open.get(doc.data().campaignId);
@@ -341,6 +345,20 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       await unlock(doc.ref); report.deferred++; report.campaignCap = (report.campaignCap || 0) + 1; continue;
     }
     if (wantsDraft && report.drafts >= MAX_DRAFTS_PER_RUN) { await unlock(doc.ref); report.deferred++; continue; }
+    // 14 Oct: today is the company's own municipal holiday → this email waits for its next sending day
+    // (drafts are still prepared: a person approves them, and the send itself waits).
+    if (!wantsDraft && campaign._skipMunicipal && e.companyId) {
+      if (!companyPlace.has(e.companyId)) {
+        const co = await db().doc(`searchCompanies/${e.companyId}`).get();
+        const d = co.exists ? co.data() : {};
+        companyPlace.set(e.companyId, { concelho: d.concelho || "", distrito: d.distrito || "", city: d.city || "" });
+      }
+      if (isMunicipalHoliday(companyPlace.get(e.companyId), todayParts)) {
+        await unlock(doc.ref, { nextActionAt: ts(addWait(now, { days: 1, unit: "working" }, campaign._sendingDays, campaign._skipHolidays !== false)) });
+        report.municipalHoliday = (report.municipalHoliday || 0) + 1;
+        continue;
+      }
+    }
 
     // Sender: follow-ups keep the address of the first email.
     let senderId = e.senderId || approved?.senderId || null;

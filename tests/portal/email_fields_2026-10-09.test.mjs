@@ -30,8 +30,8 @@ let fail = 0;
 const ok = (l, cond) => { if (!cond) fail++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${l}`); };
 
 const s = {}; vm.createContext(s);
-vm.runInContext([liftFn(page, 'joinOu'), liftFn(page, 'joinPt'), liftFn(page, 'ownerContext'), liftConst(page, 'IN_CITY'), liftLine(page, 'inCityOf'), between(page, 'function scanTemplate(', 'function renderPreview('), 'const esc = (x) => String(x);',
-  'this.__x = { joinOu, ownerContext, IN_CITY, inCityOf, renderVars };'].join('\n'), s);
+vm.runInContext([liftFn(page, 'joinOu'), liftFn(page, 'joinPt'), liftFn(page, 'ownerContext'), page.slice(page.indexOf('    const munEaster'), page.indexOf('    // Same as the server (render.js teamContext).')), between(page, 'function scanTemplate(', 'function renderPreview('), 'const esc = (x) => String(x);',
+  'this.__x = { joinOu, ownerContext, IN_CITY, MUN_ALIAS, MUN_HOL, inCityOf, renderVars };'].join('\n'), s);
 const X = s.__x;
 
 const owners = [
@@ -40,8 +40,8 @@ const owners = [
   [{ name: '  Spaced   Name ', gender: 'X' }, null, { name: '' }],
 ];
 ok('page ownerContext = server for: none, one, two, four (max 3), messy input', owners.every((o) => JSON.stringify(X.ownerContext({ emailOwners: o })) === JSON.stringify(R.ownerContext({ emailOwners: o }))) && JSON.stringify(X.ownerContext({})) === JSON.stringify(R.ownerContext({})));
-ok('page IN_CITY table = server places.js (same 39 municipalities, same wording)', JSON.stringify(Object.entries(X.IN_CITY).sort()) === JSON.stringify(Object.entries(P.IN_CITY).sort()));
-ok('page inCityOf = server for accents / case / spaces / unknown', ['Cinfaes', 'PORTO', 'Setúbal', 'figueira da  foz', 'Caldas da Rainha', ''].every((c) => X.inCityOf(c) === P.inCityOf(c)));
+ok('page municipality tables = server places.js (308 municipalities, wording, spellings, holidays)', Object.keys(X.IN_CITY).length === 308 && ['IN_CITY', 'MUN_ALIAS', 'MUN_HOL'].every((t) => JSON.stringify(Object.entries(X[t]).sort()) === JSON.stringify(Object.entries(P[t]).sort())));
+ok('page inCityOf = server for accents / case / spaces / unknown', ['Cinfaes', 'PORTO', 'Setúbal', 'figueira da  foz', 'Caldas da Rainha', '', 'CARNAXIDE', 'Lagoa (Sao Miguel)', { concelho: 'Calheta', distrito: 'Madeira' }, { concelho: '', city: '2200 ABRANTES' }].every((c) => X.inCityOf(c) === P.inCityOf(c)));
 const ctx = { sender: { bookingLink: 'https://cal.com/x' }, owner: { of: '' } };
 const tpl = 'Ligue{{?sender.bookingLink| ou marque em {{sender.bookingLink}}}}. {{owner.of|da gerência}} {{?owner.of| (x)}}';
 ok('preview {{?field|text}} = server (spaces kept, nothing when empty, never missing)', X.renderVars(tpl, ctx).html === R.renderTemplate(tpl, ctx).text && X.renderVars(tpl, ctx).html === 'Ligue ou marque em https://cal.com/x. da gerência ' && !X.renderVars(tpl, ctx).missing.length);

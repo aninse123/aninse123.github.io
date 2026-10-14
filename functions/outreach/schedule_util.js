@@ -60,6 +60,13 @@ function skipHolidaysOf(campaign, settings) {
   return settings?.skipNationalHolidays !== false;
 }
 
+// 14 Oct: a company's own municipal holiday (places.js) — skipped by default; the
+// campaign's own choice (true / false), else Settings → General (skipMunicipalHolidays).
+function skipMunicipalOf(campaign, settings) {
+  if (typeof campaign?.skipMunicipalHolidays === "boolean") return campaign.skipMunicipalHolidays;
+  return settings?.skipMunicipalHolidays !== false;
+}
+
 function isHoliday(parts) {
   return nationalHolidays(parts.y).has(`${String(parts.m).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}`);
 }
@@ -133,4 +140,4 @@ function pickSender({ policy, owner, senders, sentToday, usedThisRun, defaultCap
 // still counts as "replied" and not "completed, no reply".
 const FINAL_GRACE = { days: 5, unit: "working" };
 
-module.exports = { FINAL_GRACE, TZ, lisbonParts, easter, nationalHolidays, holidayList, skipHolidaysOf, isHoliday, isWorkingDay, isWindowOpen, addWait, sendingDaysOf, pickVariant, pickSender };
+module.exports = { FINAL_GRACE, TZ, lisbonParts, easter, nationalHolidays, holidayList, skipHolidaysOf, skipMunicipalOf, isHoliday, isWorkingDay, isWindowOpen, addWait, sendingDaysOf, pickVariant, pickSender };

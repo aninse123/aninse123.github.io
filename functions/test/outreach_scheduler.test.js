@@ -331,6 +331,23 @@ const TUE = "2026-09-29T10:30:00+01:00";
   const b3rr = await camp({ action: "setStatus", campaignId: b3D, status: "restore" });
   ok("I5: restore brings it back as a draft", b3rr.status === "draft" && get(`outreachCampaigns/${b3D}`).status === "draft" && !get(`outreachCampaigns/${b3D}`).archivedFrom);
 
+  // ── 14 Oct: each company's own municipal holiday (Maia: Monday after the 2nd Sunday of July → Mon 13 Jul 2026) ──
+  seedBase();
+  store.set("searchCompanies/c1", { ...get("searchCompanies/c1"), concelho: "Maia" });
+  store.set("searchCompanies/c2", { ...get("searchCompanies/c2"), concelho: "Porto" });
+  const mH = await makeCampaign({ name: "Feriado", approvalDefault: "auto", pacing: { newPerDay: 5 }, steps: [{ templateId: "t1" }, { templateId: "t2", wait: { days: 2 } }] }, ["c1", "c2"]);
+  const mhB = sends().length;
+  const mr1 = await run("2026-07-13T10:30:00+01:00");
+  const mE1 = get(`outreachEnrolments/${mH}_c1`);
+  ok("municipal holiday: the Maia company waits (Porto's goes), moved to Tue 14 Jul", mr1.municipalHoliday === 1 && sends().length - mhB === 1 && get(`outreachEnrolments/${mH}_c2`).currentStep === 1 && mE1.currentStep === 0 && S.lisbonParts(mE1.nextActionAt.toDate()).dayKey === "2026-07-14" && mE1.lockUntil === null);
+  const mr2 = await run("2026-07-14T10:30:00+01:00");
+  ok("municipal holiday: sent the next day", mr2.sent === 1 && get(`outreachEnrolments/${mH}_c1`).currentStep === 1);
+  seedBase();
+  store.set("searchCompanies/c1", { ...get("searchCompanies/c1"), concelho: "MAIA" });
+  const mH2 = await makeCampaign({ name: "Sem feriado", approvalDefault: "auto", skipMunicipalHolidays: false, pacing: { newPerDay: 5 }, steps: [{ templateId: "t1" }] }, ["c1"]);
+  const mr3 = await run("2026-07-13T10:30:00+01:00");
+  ok("campaign sends on municipal holidays when it says so", !mr3.municipalHoliday && mr3.sent === 1 && get(`outreachCampaigns/${mH2}`).skipMunicipalHolidays === false);
+  ok("precedence: campaign true / false wins, else Settings, else skip", S.skipMunicipalOf({ skipMunicipalHolidays: null }, { skipMunicipalHolidays: false }) === false && S.skipMunicipalOf({}, {}) === true && S.skipMunicipalOf({ skipMunicipalHolidays: true }, { skipMunicipalHolidays: false }) === true);
   console.log(fail ? `\n${fail} FAILED` : "\nall scheduler tests passed");
   process.exit(fail ? 1 : 0);
 })();

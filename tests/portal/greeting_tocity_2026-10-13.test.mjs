@@ -11,7 +11,7 @@ const page = readFileSync(new URL('../../portal/outreach.html', import.meta.url)
 const lift = (name) => { const a = page.indexOf(`function ${name}(`); let d = 0, i = page.indexOf('{', page.indexOf(')', a)); for (; ; i++) { if (page[i] === '{') d++; else if (page[i] === '}' && --d === 0) break; } return page.slice(a, i + 1); };
 const line = (start) => { const a = page.indexOf(start); let i = page.indexOf('{', a), d = 0; if (start.startsWith('const IN_CITY')) { for (; ; i++) { if (page[i] === '{') d++; else if (page[i] === '}' && --d === 0) break; } return page.slice(a, page.indexOf(';', i) + 1); } return page.slice(a, page.indexOf('\n', a)); };
 const ctx = {}; vm.createContext(ctx);
-vm.runInContext([lift('joinOu'), lift('joinPt'), lift('ownerContext'), line('const IN_CITY = {'), line('const toCityOf ='), line('const inCityOf ='), 'globalThis.C = { ownerContext, toCityOf };'].join('\n'), ctx);
+vm.runInContext([lift('joinOu'), lift('joinPt'), lift('ownerContext'), page.slice(page.indexOf('    const munEaster'), page.indexOf('    // Same as the server (render.js teamContext).')), 'globalThis.C = { ownerContext, toCityOf };'].join('\n'), ctx);
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 
 const two = { emailOwners: [{ name: 'Ana Oliveira', gender: 'F' }, { name: 'Alfredo Cunha', gender: 'M' }] };

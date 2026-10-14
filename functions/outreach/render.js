@@ -108,8 +108,8 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
       city: company.city || company.concelho || "",
       sector: company.sector || "",
       cae: company.caeDescription || company.caeCode || "",
-      inCity: inCityOf(company.concelho), // "em Setúbal" / "no Porto" — validated municipalities only
-      toCity: toCityOf(company.concelho), // 13 Oct: "a Setúbal" / "ao Porto" / "à Maia" — after "deslocar-nos"
+      inCity: inCityOf(company), // "em Setúbal" / "no Porto" — 14 Oct: all 308 municipalities (concelho, any spelling; else city; Calheta / Lagoa by district)
+      toCity: toCityOf(company), // 13 Oct: "a Setúbal" / "ao Porto" / "à Maia" — after "deslocar-nos"
     },
     owner: ownerContext(company),
     campaign: { sector: String(campaign?.sector || "").trim() },
