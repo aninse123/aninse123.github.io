@@ -510,6 +510,10 @@
       <select class="filter-sel" id="lastTouchFilter"><option value="">Any time</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="never">Never contacted</option></select>
       <select class="filter-sel" id="websiteFilter"><option value="">Website: Any</option><option value="yes">Has website</option><option value="no">No website</option></select>
       <select class="filter-sel" id="contactableFilter" data-feature="search.tier" title="Contactable = passes the screening (contactable rules). Not contactable = not a target; left out of campaigns unless a campaign includes them. Not the same as Do not contact (stop)."><option value="">Contactable: Any</option><option value="yes">Contactable</option><option value="no">Not contactable (screening)</option></select><span class="info-icon" data-feature="search.tier" role="img" aria-label="What is the difference?" id="ctHelpIcon" style="align-self:center;">i</span>
+      <select class="filter-sel" id="groupFilter" data-feature="search.ownership" title="Group = companies in the CRM with the same ultimate owner (Orbis)"><option value="">Group: Any</option><option value="2">In a group (2+ companies)</option><option value="5">Group of 5+</option><option value="10">Group of 10+</option></select>
+      <select class="filter-sel" id="subsFilter" data-feature="search.ownership" title="Current shareholdings between companies that are both in the CRM"><option value="">Subsidiaries: Any</option><option value="subs">Has subsidiaries in the CRM</option><option value="parent">Has a parent in the CRM</option></select>
+      <select class="filter-sel" id="ownerOtherFilter" data-feature="search.ownership" title="Its owners (5%+) and managers are owners or managers of other CRM companies too. Auditors and assembly roles left out."><option value="">Owner's other companies: Any</option><option value="yes">Owner has other companies</option><option value="no">Owner has no other company</option></select>
+      <input type="hidden" id="groupKeyFilter"><span class="badge badge-blue" id="groupKeyChip" data-feature="search.ownership" style="display:none;align-self:center;"></span>
       <button class="btn btn--ghost btn--sm" id="clearFiltersBtn">Clear all</button>
     </div>
 
@@ -538,6 +542,8 @@
               <th data-col="computedEBITDA" class="num">EBITDA</th>
               <th data-col="computedEBITDAMargin" class="num">EBITDA%</th>
               <th data-col="computedGrowthRecent" class="num">Growth (Recent)</th>
+              <th data-col="ownGroupSize" class="num" data-feature="search.ownership" title="Companies in the CRM with the same ultimate owner">Group</th>
+              <th data-col="ownGroupRevenue" class="num" data-feature="search.ownership" title="Revenue of the group's companies in the CRM, added up">Group rev.</th>
               <th data-col="lastTouchAt">Last Touch</th>
               <th data-col="outreachAttempts" class="num">Att.</th>
             </tr>
@@ -3146,7 +3152,7 @@ function renderSummary(){
 // Shared with the filter-input listeners near the bottom of the file and with
 // the subset-of-loaded disclaimer banner below — one list, so a filter added
 // in one place is never silently missing from the other two.
-const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter','tierFilter','contactableFilter'];
+const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter','tierFilter','contactableFilter','groupFilter','subsFilter','ownerOtherFilter','groupKeyFilter'];
 // Always states the true total (not just what's loaded) whenever the two
 // differ, right where people are actually looking — the results count next
 // to the table — rather than a separate banner that's easy to scan past.
@@ -3187,6 +3193,13 @@ function getFiltered(){
   const webF   = document.getElementById('websiteFilter').value;
   const tierF  = document.getElementById('tierFilter')?.value || '';
   const ctF    = document.getElementById('contactableFilter')?.value || '';
+  // Ownership (search.ownership): stored by the ownership-graph tool; "same
+  // group" reads the ultimate owner itself, so it works before the tool runs.
+  const ownF  = isOn('search.ownership');
+  const grpF  = ownF ? document.getElementById('groupFilter')?.value || '' : '';
+  const subsF = ownF ? document.getElementById('subsFilter')?.value || '' : '';
+  const ooF   = ownF ? document.getElementById('ownerOtherFilter')?.value || '' : '';
+  const gkF   = ownF ? document.getElementById('groupKeyFilter')?.value || '' : '';
 
   return companies.filter(c => {
     if (search) {
@@ -3230,6 +3243,12 @@ function getFiltered(){
     if (tierF === 'none' ? !!c.targetTier : tierF === 'AB' ? !['A','B'].includes(c.targetTier) : tierF && c.targetTier !== tierF) return false;
     if (ctF === 'yes' && c.contactable === false) return false;
     if (ctF === 'no' && c.contactable !== false) return false;
+    if (grpF && !(c.ownGroupSize >= Number(grpF))) return false;
+    if (subsF === 'subs' && !(c.ownSubs > 0)) return false;
+    if (subsF === 'parent' && !(c.ownParents > 0)) return false;
+    if (ooF === 'yes' && !(c.ownOwnerOther > 0)) return false;
+    if (ooF === 'no' && c.ownOwnerOther !== 0) return false;
+    if (gkF && ownGroupKey(c)?.value !== gkF) return false;
     return true;
   });
 }
@@ -3272,7 +3291,7 @@ function renderList(){
   renderResultsCount(list.length);
   const tbody = document.getElementById('companyBody');
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="14"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No companies found</div><div>Adjust filters or add a company.</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="16"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No companies found</div><div>Adjust filters or add a company.</div></div></td></tr>`;
     showEl('pagination', false);
     return;
   }
@@ -3311,6 +3330,8 @@ function rowHtml(c){
     <td class="num">${fmtEurShort(c.computedEBITDA)}</td>
     <td class="num">${c.computedEBITDAMargin!=null?fmtPct(c.computedEBITDAMargin):'—'}</td>
     <td class="num">${c.computedGrowthRecent!=null?fmtPct(c.computedGrowthRecent):'—'}</td>
+    <td class="num" data-feature="search.ownership">${c.ownGroupSize > 1 ? c.ownGroupSize : '—'}</td>
+    <td class="num" data-feature="search.ownership">${c.ownGroupSize > 1 ? fmtEurShort(c.ownGroupRevenue) : '—'}</td>
     <td style="color:var(--text-light);">${relTime(c.lastTouchAt)}</td>
     <td class="num">${c.outreachAttempts||0}</td>
   </tr>`;
@@ -4876,7 +4897,7 @@ async function renderOwnershipLadder(c, links){
     const sum = k => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
     const isGuo = m => om.guoNif && ownCoNif(m) === om.guoNif && /^PT/i.test(om.guoBvdId || 'PT');
     const ct = m => m.doNotContact?.on ? '🚫 Do not contact' : m.contactable === false ? 'Not contactable' : m.contactable === true ? 'Contactable' : '—';
-    groupHtml = `<div class="ot-meta" style="margin-bottom:6px;">Ultimate owner: <strong>${esc(om.guoName || '—')}</strong>${om.guoType ? ` · ${esc(om.guoType)}` : ''}${group.total > rows.length ? ` · showing ${rows.length} of ${group.total} companies (largest first)` : ''}</div>
+    groupHtml = `<div class="ot-meta" style="margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;"><span>Ultimate owner: <strong>${esc(om.guoName || '—')}</strong>${om.guoType ? ` · ${esc(om.guoType)}` : ''}${group.total > rows.length ? ` · showing ${rows.length} of ${group.total} companies (largest first)` : ''}</span><button type="button" class="btn btn--ghost btn--sm" data-group-list title="Open the Search CRM list with only this group (then filter, export or add to a campaign)">Show the group in the list</button></div>
       <div style="overflow-x:auto;"><table class="own-table own-group-table">
         <thead><tr><th>Company</th><th>CAE</th><th class="num">Revenue</th><th class="num">EBITDA</th><th class="num">Employees</th><th>Stage</th><th>Contactable</th></tr></thead>
         <tbody>${rows.map(m => `<tr${m.id === c.id ? ' class="own-self"' : ''}>
@@ -4916,6 +4937,30 @@ async function renderOwnershipLadder(c, links){
     </div>`;
   ownFillAlso(c, links).catch(e => console.error(e));
 }
+
+// "Same group as…" in the list: the group card's button sets it; a chip shows it.
+let ownGroupKeyLabel = '';
+function setGroupKeyFilter(key, label){
+  const inp = document.getElementById('groupKeyFilter'), chip = document.getElementById('groupKeyChip');
+  if (!inp || !chip) return;
+  inp.value = key || ''; ownGroupKeyLabel = key ? (label || key) : '';
+  chip.style.display = key ? '' : 'none';
+  chip.innerHTML = key ? `Same group as ${esc(ownGroupKeyLabel)} <button type="button" class="btn btn--icon btn--ghost" data-clear-group title="Show all companies again" style="padding:0 4px;">✕</button>` : '';
+}
+async function showGroupInList(c){
+  const group = await ownGroup(c).catch(() => null);
+  if (!group) return;
+  // The list holds a window of companies: add the group's, so all of them show.
+  for (const m of group.members) if (!companies.some(x => x.id === m.id)) companies.push(m);
+  setGroupKeyFilter(group.key.value, c.ownershipMeta?.guoName || c.name);
+  backToList();
+}
+document.getElementById('panel-ownership').addEventListener('click', e => {
+  if (e.target.closest('[data-group-list]')){ const c = getCompany(); if (c) showGroupInList(c); }
+});
+document.getElementById('groupKeyChip')?.addEventListener('click', e => {
+  if (e.target.closest('[data-clear-group]')){ setGroupKeyFilter(null); visibleCount = PAGE; renderList(); }
+});
 
 // Under each owner and manager: the other companies where they are a current
 // owner or manager. Auditors are left out (they sit on many unrelated boards),
@@ -10072,6 +10117,13 @@ function buildFilterSpec(){
   if (v('websiteFilter')) add('website', 'exists', v('websiteFilter') === 'yes', v('websiteFilter') === 'yes' ? 'with website' : 'without website');
   if (v('tierFilter')) { const t = v('tierFilter'); if (t === 'none') add('targetTier', 'exists', false, 'no tier'); else add('targetTier', 'in', t === 'AB' ? ['A','B'] : [t], `tier ${t === 'AB' ? 'A or B' : t}`); }
   if (v('contactableFilter')) add('contactable', 'bool', v('contactableFilter') === 'yes', v('contactableFilter') === 'yes' ? 'contactable' : 'not contactable');
+  // Ownership filters (search.ownership; their selects are hidden while it is Off).
+  {
+    if (v('groupFilter')) add('ownGroupSize', 'gte', Number(v('groupFilter')), `group of ${v('groupFilter')}+`);
+    if (v('subsFilter')) add(v('subsFilter') === 'subs' ? 'ownSubs' : 'ownParents', 'gte', 1, v('subsFilter') === 'subs' ? 'has subsidiaries' : 'has a parent');
+    if (v('ownerOtherFilter')) add('ownOwnerOther', v('ownerOtherFilter') === 'yes' ? 'gte' : 'lte', v('ownerOtherFilter') === 'yes' ? 1 : 0, v('ownerOtherFilter') === 'yes' ? 'owner has other companies' : 'owner has no other company');
+    if (v('groupKeyFilter')) add('ownGroupKey', 'eq', v('groupKeyFilter'), `same group as ${ownGroupKeyLabel || v('groupKeyFilter')}`);
+  }
   return { spec, label: label.join(' · ') };
 }
 
@@ -11285,6 +11337,13 @@ const COMPANY_EXPORT_FIELDS = [
     { key: 'guoName',               label: 'GUO (ultimate owner)',   get: c => c.guoName },
     { key: 'independenceIndicator', label: 'Independence indicator', get: c => c.independenceIndicator },
   ]},
+  { title: 'Ownership (groups)', fields: [
+    { key: 'ownGroupSize',    label: 'Group: CRM companies with the same ultimate owner', get: c => c.ownGroupSize ?? '' },
+    { key: 'ownGroupRevenue', label: 'Group revenue',                       get: c => c.ownGroupRevenue ?? '' },
+    { key: 'ownSubs',         label: 'Subsidiaries in the CRM',             get: c => c.ownSubs ?? '' },
+    { key: 'ownParents',      label: 'Parent companies in the CRM',         get: c => c.ownParents ?? '' },
+    { key: 'ownOwnerOther',   label: "Owner's other companies in the CRM",  get: c => c.ownOwnerOther ?? '' },
+  ]},
   { title: 'Contact', fields: [
     { key: 'website',        label: 'Website',         get: c => c.website },
     { key: 'companyEmail',   label: 'Company email',   get: c => c.companyEmail },
@@ -12229,6 +12288,7 @@ document.getElementById('loadAllBtn').addEventListener('click', loadAllWithProgr
 document.getElementById('advFilterBtn').addEventListener('click', () => document.getElementById('advFilters').classList.toggle('open'));
 document.getElementById('clearFiltersBtn').addEventListener('click', () => {
   FILTER_INPUT_IDS.forEach(id=>document.getElementById(id).value='');
+  setGroupKeyFilter(null);
   document.getElementById('naceLabel').textContent=''; document.getElementById('caeLabel').textContent='';
   visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE; renderList();
 });
