@@ -22,6 +22,7 @@ export const FEATURES = [
   ['investorview', 'Investor portal', 'release', 'Investor view', '"View the portal as" a chosen investor, read only.'],
   ['search.tier', 'Search CRM', 'release', 'Target tier & contactable', 'Target tier (rules and per company), contactable, their filters and bulk actions, and the campaign option to include not-contactable companies.'],
   ['search.contactableRules', 'Search CRM', 'release', 'Contactable rules & owner data', 'Owner size, listing and country on the company page (from the Orbis owner columns); later the contactable rules panel, its preview and the reason on each company.'],
+  ['search.ownership', 'Search CRM', 'release', 'Ownership ladder & groups', 'On the company’s Ownership tab: the ladder up to the ultimate owner, subsidiaries, the group (same ultimate owner) and people’s other companies; group filters in the Search CRM.'],
   ['mobile', 'Mobile', 'release', 'Douro mobile', 'The phone app (portal/m/) and its search.'],
   ['kill.outreach.sending', 'Kill switches', 'kill', 'Outreach: automatic sending', 'Off: the scheduler sends no campaign emails (drafts still wait). Test: only test campaigns send.'],
   ['kill.outreach.scheduler', 'Kill switches', 'kill', 'Outreach: scheduler', 'Off: nothing moves — no drafts, tasks, starts or new audience matches. Test: only test campaigns move.'],
