@@ -260,6 +260,19 @@
     .contact-grid label { display: flex; flex-direction: column; gap: 4px; }
     .contact-grid label > span { font-size: 0.72rem; color: var(--text-light); font-weight: 600; }
     .contact-grid label > em { font-size: 0.68rem; color: var(--text-light); font-style: normal; opacity: .8; }
+    .own-tree { font-size: 0.82rem; }
+    .own-tree .ot-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+    .own-tree .ot-row:last-child { border-bottom: 0; }
+    .own-tree .ot-arm { color: var(--text-light); width: 10px; }
+    .own-tree .ot-pct { font-variant-numeric: tabular-nums; min-width: 52px; font-weight: 600; }
+    .ot-meta { color: var(--text-light); font-size: 0.76rem; }
+    .ot-help { font-size: 0.76rem; color: var(--text-light); margin: -4px 0 10px; }
+    .also-cos { font-size: 0.76rem; margin-top: 3px; }
+    .also-cos:empty { display: none; }
+    .own-group-table td, .own-group-table th { white-space: nowrap; }
+    .own-group-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .own-group-table tr.own-self td { background: rgba(74,107,138,0.08); }
+    .own-group-table tfoot td { border-top: 2px solid var(--border); }
     .own-legend { display: flex; gap: 16px; font-size: 0.72rem; color: var(--text-light); margin-top: 10px; flex-wrap: wrap; }
     .own-legend .cur::before { content: '—'; color: var(--primary); font-weight: 700; margin-right: 5px; }
     .own-legend .prv::before { content: '—'; color: #B9B2A6; font-weight: 700; margin-right: 5px; }
@@ -4544,6 +4557,7 @@ async function renderOwnership(c){
   }));
   if (currentCoId !== c.id) return;
   const ageOf = l => personAge(peopleById.get(l.personId));
+  const ownOn = isOn('search.ownership');
 
   // Each searchPersonLinks doc already carries BOTH facets when they apply —
   // one card per person/link, not one row per facet split across two
@@ -4595,6 +4609,7 @@ async function renderOwnership(c){
           ${l.personEntityType === 'entity' ? ` <span class="badge badge-grey" title="${esc(l.shTypeOrbis || 'Corporate entity')}">🏢</span>` : ''}${ownerBadge}${highestBadge}
           ${age ? ` <span class="badge badge-grey" title="${age.exact ? 'From Orbis birth date' : 'From the age Orbis gave at import, carried forward'}">🎂 ${age.age}${age.exact ? '' : '~'}</span>` : ''}
           ${shLine}${mgLine}
+          ${ownOn && !allPrev ? `<div class="also-cos" data-also="${esc(l.personId)}"></div>` : ''}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
           ${!allPrev ? contactBtn(l, roleForContact) : ''}${rowActions(l)}
@@ -4631,8 +4646,304 @@ async function renderOwnership(c){
         <span>Minority &lt; 25%</span>
       </div>` : ''}
     </div>
+    ${ownOn ? '<div id="ownLadderWrap" data-feature="search.ownership"></div>' : ''}
     <div class="card" id="ownGraphCard"><div class="sec-title">Network</div><div id="ownGraph"></div></div>`;
   renderNetworkGraph(document.getElementById('ownGraph'), 'company', c.id);
+  if (ownOn) renderOwnershipLadder(c, links);
+}
+
+// ── Ownership ladder, subsidiaries, group, people's other companies ─────────
+// Phase 1 of the ownership plan (14 Oct, switch search.ownership). Read-only.
+// A corporate shareholder that is itself a CRM company (same NIF) carries
+// personMatchedCompanyId on its links: that is what lets the ladder climb to
+// the owners' owners and the subsidiaries descend. Fetched one level at a time
+// with IN queries, so a company with no corporate links costs a read or two.
+const OWN_MAX_LEVELS = 6;        // ladder and subsidiaries depth
+const OWN_MAX_ROWS = 40;         // per company, then "and N more"
+const OWN_GROUP_MAX = 80;        // group rows fetched; the count covers the rest
+const OWN_ALSO_MAX_LINKS = 40;   // in more companies than this: link to their page instead
+const OWN_AUDITOR_RE = /fiscal|auditor|revisor|\bROC\b|statutory/i;
+const ownCompanyCache = new Map();   // companies outside the loaded list
+const ownSubsCache = new Map();      // companyId -> links where it is the shareholder
+const ownGroupCache = new Map();     // group key -> { members, total }
+
+async function ownCompaniesByIds(ids){
+  const out = new Map(), need = [];
+  for (const id of new Set(ids)){
+    const c = companies.find(x => x.id === id) || ownCompanyCache.get(id);
+    if (c) out.set(id, c); else need.push(id);
+  }
+  for (let i = 0; i < need.length; i += PERSON_IN_CHUNK){
+    for (const d of await restFetchByIdsIn('searchCompanies', need.slice(i, i + PERSON_IN_CHUNK))){
+      const c = computeFields(d); ownCompanyCache.set(c.id, c); out.set(c.id, c);
+    }
+  }
+  return out;
+}
+async function ownPeopleByIds(ids){
+  const need = [...new Set(ids)].filter(id => !personDocCache.has(id));
+  for (let i = 0; i < need.length; i += PERSON_IN_CHUNK){
+    const docs = await restFetchByIdsIn('searchPeople', need.slice(i, i + PERSON_IN_CHUNK));
+    for (const p of docs) personDocCache.set(p.id, p);
+  }
+  return new Map([...new Set(ids)].map(id => [id, personDocCache.get(id) || null]));
+}
+// The holdings of these CRM companies: links where they are the shareholder.
+async function ownHoldingLinks(companyIds){
+  const result = new Map(), need = [];
+  for (const id of new Set(companyIds)){
+    if (ownSubsCache.has(id)) result.set(id, ownSubsCache.get(id)); else need.push(id);
+  }
+  for (let i = 0; i < need.length; i += PERSON_IN_CHUNK){
+    const chunk = need.slice(i, i + PERSON_IN_CHUNK);
+    const by = new Map(chunk.map(id => [id, []]));
+    for (const l of await restFetchWhereIn('searchPersonLinks', 'personMatchedCompanyId', chunk)) by.get(l.personMatchedCompanyId)?.push(l);
+    for (const [id, ls] of by){ ownSubsCache.set(id, ls); result.set(id, ls); }
+  }
+  return result;
+}
+const ownCurrentHolders = links => links.filter(l => l.shCurrent === true)
+  .sort((a, b) => (b.shDirectPct ?? -1) - (a.shDirectPct ?? -1) || String(a.personName || '').localeCompare(String(b.personName || '')));
+
+// Up: this company's current shareholders, then the shareholders of those that
+// are CRM companies, and so on. A company met twice is shown once ("above").
+async function ownLadderUp(c, links){
+  const seen = new Set([c.id]);
+  const root = { coId: c.id, children: [] };
+  let frontier = [{ node: root, links }];
+  for (let depth = 1; depth <= OWN_MAX_LEVELS && frontier.length; depth++){
+    const next = [];
+    for (const { node, links: ls } of frontier){
+      for (const l of ownCurrentHolders(ls)){
+        const coId = l.personEntityType === 'entity' ? (l.personMatchedCompanyId || null) : null;
+        const child = { link: l, coId, children: [], repeat: !!coId && seen.has(coId) };
+        node.children.push(child);
+        if (coId && !child.repeat){ seen.add(coId); next.push(child); }
+      }
+    }
+    if (!next.length || depth === OWN_MAX_LEVELS){ next.forEach(n => { n.cut = depth === OWN_MAX_LEVELS; }); break; }
+    const m = await fetchManyCompanyLinks(next.map(n => n.coId));
+    frontier = next.map(n => ({ node: n, links: m.get(n.coId) || [] }));
+  }
+  return root;
+}
+// Down: the CRM companies this one holds, and theirs.
+async function ownSubsDown(c){
+  const seen = new Set([c.id]);
+  const root = { coId: c.id, children: [] };
+  let frontier = [root];
+  for (let depth = 1; depth <= OWN_MAX_LEVELS && frontier.length; depth++){
+    const m = await ownHoldingLinks(frontier.map(n => n.coId));
+    const next = [];
+    for (const n of frontier){
+      for (const l of ownCurrentHolders(m.get(n.coId) || [])){
+        const child = { link: l, coId: l.companyId, children: [], repeat: seen.has(l.companyId) };
+        n.children.push(child);
+        if (!child.repeat){ seen.add(l.companyId); next.push(child); }
+      }
+    }
+    frontier = next;
+  }
+  return root;
+}
+// Same group = same ultimate owner. Orbis's BvD id carries the country, so it
+// is the key; the bare number is only a fallback (a US owner's number can look
+// like a Portuguese NIF).
+function ownGroupKey(c){
+  const om = c.ownershipMeta || {};
+  if (om.guoBvdId) return { field: 'ownershipMeta.guoBvdId', value: String(om.guoBvdId) };
+  if (om.guoNif) return { field: 'ownershipMeta.guoNif', value: String(om.guoNif) };
+  return null;
+}
+async function ownGroup(c){
+  const k = ownGroupKey(c); if (!k) return null;
+  const ck = `${k.field}=${k.value}`;
+  if (ownGroupCache.has(ck)) return ownGroupCache.get(ck);
+  const q = query(collection(db, 'searchCompanies'), where(k.field, '==', k.value), limit(OWN_GROUP_MAX + 1));
+  const snap = await getDocs(q);
+  addReads(snap.docs.length || 1);
+  const members = snap.docs.map(d => companies.find(x => x.id === d.id) || computeFields({ id: d.id, ...d.data() }));
+  let total = members.length;
+  if (total > OWN_GROUP_MAX){
+    const cnt = await getCountFromServer(query(collection(db, 'searchCompanies'), where(k.field, '==', k.value)));
+    addReads(1);
+    total = cnt.data().count;
+  }
+  const res = { key: k, members: members.slice(0, OWN_GROUP_MAX), total };
+  ownGroupCache.set(ck, res);
+  return res;
+}
+
+const ownCoNif = x => onlyDigits(x?.nif) || nifFromAny('', x?.bvdId) || '';
+function ownCoStatus(x){
+  if (!x) return '';
+  const bits = [];
+  if (x.computedRevenue != null) bits.push(fmtEurShort(x.computedRevenue));
+  bits.push(STAGES[x.stage || 'universe']?.label || x.stage);
+  if (x.doNotContact?.on) bits.push('🚫 do not contact');
+  else if (x.contactable === false) bits.push('not contactable');
+  else if (x.contactable === true) bits.push('contactable');
+  if (x.activeCampaignName) bits.push(`📣 ${x.activeCampaignName}`);
+  return bits.map(esc).join(' · ');
+}
+// One tree row: the holder (ladder) or the held company (subsidiaries).
+function ownTreeHtml(node, { mode, cos, people, depth = 1, chainPct = 100 }){
+  const kids = node.children || [];
+  const shown = kids.slice(0, OWN_MAX_ROWS);
+  const rows = shown.map(n => {
+    const l = n.link, pct = l.shDirectPct;
+    const tier = controlTier(pct);
+    const eff = pct != null && chainPct != null ? chainPct * pct / 100 : null;
+    const co = n.coId ? cos.get(n.coId) : null;
+    let name;
+    if (mode === 'up'){
+      name = co
+        ? `<span class="person-link" data-gotoco="${esc(co.id)}"><strong>${esc(co.name || l.personName || '—')}</strong></span> <span class="badge badge-green" title="This shareholder is a company in the CRM">in the CRM</span>`
+        : `<span class="person-link" data-person="${esc(l.personId)}">${esc(l.personName || '—')}</span>${l.personEntityType === 'entity' ? ' <span class="badge badge-grey" title="Corporate shareholder outside the CRM">🏢</span>' : ''}`;
+    } else {
+      name = `<span class="person-link" data-gotoco="${esc(l.companyId)}"><strong>${esc(co?.name || l.companyName || '—')}</strong></span>`;
+    }
+    const meta = [];
+    if (mode === 'up' && !co && l.personEntityType === 'entity'){
+      const p = people.get(l.personId);
+      if (p?.nif) meta.push(`NIF ${esc(p.nif)}`);
+      if (p?.country) meta.push(esc(p.country));
+    }
+    if (co) meta.push(ownCoStatus(co));
+    if (depth > 1 && eff != null) meta.push(mode === 'up' ? `≈ ${fmtPctOwn(eff)} of this company through the chain` : `≈ ${fmtPctOwn(eff)} held through the chain`);
+    if (n.repeat) meta.push('shown above');
+    if (n.cut) meta.push('more levels not shown');
+    return `<div class="ot-row" style="padding-left:${(depth - 1) * 20}px">
+        <span class="ot-arm">${depth > 1 ? '└' : '•'}</span>
+        <span class="ot-pct">${fmtPctOwn(pct)}</span>${tier ? ` <span class="badge ${tier.cls}">${tier.label}</span>` : ''}
+        <span>${name}</span>
+        ${meta.length ? `<span class="ot-meta">${meta.filter(Boolean).join(' · ')}</span>` : ''}
+      </div>${n.children?.length ? ownTreeHtml(n, { mode, cos, people, depth: depth + 1, chainPct: eff }) : ''}`;
+  }).join('');
+  const more = kids.length - shown.length;
+  return rows + (more > 0 ? `<div class="ot-row ot-meta" style="padding-left:${(depth - 1) * 20}px">and ${more} more</div>` : '');
+}
+function ownTreeIds(node, acc = { cos: new Set(), people: new Set(), n: 0 }){
+  for (const k of node.children || []){
+    acc.n++;
+    if (k.coId) acc.cos.add(k.coId);
+    if (k.link?.personEntityType === 'entity' && !k.coId) acc.people.add(k.link.personId);
+    ownTreeIds(k, acc);
+  }
+  return acc;
+}
+
+async function renderOwnershipLadder(c, links){
+  const wrap = document.getElementById('ownLadderWrap'); if (!wrap) return;
+  wrap.innerHTML = '<div class="card"><div class="sec-title">Ladder, subsidiaries and group</div><div style="font-size:0.85rem;color:var(--text-light);">Loading…</div></div>';
+  let up, down, group;
+  try { [up, down, group] = await Promise.all([ownLadderUp(c, links), ownSubsDown(c), ownGroup(c)]); }
+  catch(e){ console.error(e); if (currentCoId === c.id) wrap.innerHTML = `<div class="card"><div class="sec-title">Ladder, subsidiaries and group</div><div class="modal-err" style="display:block;">Failed to load: ${esc(e.message)}</div></div>`; return; }
+  const ids = ownTreeIds(up), idsDown = ownTreeIds(down);
+  const [cos, people] = await Promise.all([
+    ownCompaniesByIds([...ids.cos, ...idsDown.cos]),
+    ownPeopleByIds([...ids.people]),
+  ]);
+  if (currentCoId !== c.id) return;
+
+  // Ladder. Only worth a section when a company sits somewhere above.
+  const corpAbove = up.children.some(n => n.link.personEntityType === 'entity');
+  const myNif = ownCoNif(c);
+  const om = c.ownershipMeta || {};
+  const guoIsSelf = !!(om.guoNif && om.guoNif === myNif);
+  const reachedGuo = !om.guoName || guoIsSelf || (() => {
+    const key = personNameKey(om.guoName);
+    const hit = n => (n.children || []).some(k => (k.coId && ownCoNif(cos.get(k.coId)) === om.guoNif)
+      || (om.guoNif && people.get(k.link.personId)?.nif === om.guoNif)
+      || personNameKey(k.link.personName || '') === key || hit(k));
+    return hit(up);
+  })();
+  const guoLine = reachedGuo ? '' : `<div class="ot-meta" style="margin-top:8px;">The ladder stops before Orbis's ultimate owner: <strong>${esc(om.guoName)}</strong>${om.guoType ? ` (${esc(om.guoType)})` : ''}${om.guoCountry ? ` · ${esc(om.guoCountry)}` : ''}. The steps in between are not in the CRM.</div>`;
+  const ladderHtml = corpAbove
+    ? `<div class="own-tree">${ownTreeHtml(up, { mode: 'up', cos, people })}</div>${guoLine}`
+    : `<div class="ot-meta">${up.children.length ? 'Owned directly by people: no company above it.' : 'No current shareholders recorded.'}</div>${guoLine}`;
+
+  const subsHtml = down.children.length
+    ? `<div class="own-tree">${ownTreeHtml(down, { mode: 'down', cos, people })}</div>`
+    : '<div class="ot-meta">Holds no other company in the CRM.</div>';
+
+  // Group table: same ultimate owner.
+  let groupHtml = '<div class="ot-meta">No ultimate owner recorded by Orbis.</div>';
+  const others = group ? group.members.filter(m => m.id !== c.id) : [];
+  if (group && !others.length) groupHtml = '<div class="ot-meta">No other company in the CRM has the same ultimate owner.</div>';
+  else if (group){
+    const rows = [...group.members].sort((a, b) => (b.computedRevenue || 0) - (a.computedRevenue || 0));
+    const sum = k => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+    const isGuo = m => om.guoNif && ownCoNif(m) === om.guoNif && /^PT/i.test(om.guoBvdId || 'PT');
+    const ct = m => m.doNotContact?.on ? '🚫 Do not contact' : m.contactable === false ? 'Not contactable' : m.contactable === true ? 'Contactable' : '—';
+    groupHtml = `<div class="ot-meta" style="margin-bottom:6px;">Ultimate owner: <strong>${esc(om.guoName || '—')}</strong>${om.guoType ? ` · ${esc(om.guoType)}` : ''}${group.total > rows.length ? ` · showing ${rows.length} of ${group.total} companies (largest first)` : ''}</div>
+      <div style="overflow-x:auto;"><table class="own-table own-group-table">
+        <thead><tr><th>Company</th><th>CAE</th><th class="num">Revenue</th><th class="num">EBITDA</th><th class="num">Employees</th><th>Stage</th><th>Contactable</th></tr></thead>
+        <tbody>${rows.map(m => `<tr${m.id === c.id ? ' class="own-self"' : ''}>
+          <td>${m.id === c.id ? `<strong>${esc(m.name || '—')}</strong> <span class="badge badge-grey">this company</span>` : `<span class="person-link" data-gotoco="${esc(m.id)}">${esc(m.name || '—')}</span>`}${isGuo(m) ? ' <span class="badge badge-green" title="The ultimate owner itself">ultimate owner</span>' : ''}</td>
+          <td>${esc(m.caeCode || '—')}</td>
+          <td class="num">${fmtEurShort(m.computedRevenue)}</td>
+          <td class="num">${fmtEurShort(m.computedEBITDA)}</td>
+          <td class="num">${m.computedEmployees != null ? Number(m.computedEmployees).toLocaleString('de-DE') : '—'}</td>
+          <td>${stagePill(m.stage || 'universe')}</td>
+          <td>${esc(ct(m))}${m.activeCampaignName ? ` · 📣 ${esc(m.activeCampaignName)}` : ''}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td><strong>Group (${rows.length}${group.total > rows.length ? ` of ${group.total}` : ''})</strong></td><td></td>
+          <td class="num"><strong>${fmtEurShort(sum('computedRevenue'))}</strong></td>
+          <td class="num"><strong>${fmtEurShort(sum('computedEBITDA'))}</strong></td>
+          <td class="num"><strong>${sum('computedEmployees').toLocaleString('de-DE')}</strong></td><td></td><td></td></tr></tfoot>
+      </table></div>`;
+    // Header pill: jumps here.
+    const meta = document.getElementById('dMeta');
+    if (meta && !meta.querySelector('[data-group-pill]')){
+      meta.insertAdjacentHTML('beforeend', ` <span class="badge badge-blue" data-group-pill data-feature="search.ownership" role="button" tabindex="0" style="cursor:pointer;" title="Companies in the CRM with the same ultimate owner (Ownership tab)">🏢 Group · ${group.total} companies</span>`);
+    }
+  }
+
+  wrap.innerHTML = `
+    <div class="card" id="ownLadder">
+      <div class="sec-title">Ladder: owners up to the top</div>
+      <div class="ot-help">Current shareholders, then the shareholders of those that are companies in the CRM, up to the ultimate owner. "Through the chain" multiplies the percentages.</div>
+      ${ladderHtml}
+    </div>
+    <div class="card" id="ownSubs">
+      <div class="sec-title">Subsidiaries: what this company owns${down.children.length ? ` <span class="badge badge-grey">${idsDown.n}</span>` : ''}</div>
+      <div class="ot-help">Companies in the CRM where this company is a current shareholder, and their own holdings (up to ${OWN_MAX_LEVELS} levels).</div>
+      ${subsHtml}
+    </div>
+    <div class="card" id="ownGroup">
+      <div class="sec-title">Group: same ultimate owner${others.length ? ` <span class="badge badge-grey">${group.total} companies</span>` : ''}</div>
+      ${groupHtml}
+    </div>`;
+  ownFillAlso(c, links).catch(e => console.error(e));
+}
+
+// Under each owner and manager: the other companies where they are a current
+// owner or manager. Auditors are left out (they sit on many unrelated boards),
+// and so is anyone with no other company (their person doc says so: no read).
+async function ownFillAlso(c, links){
+  const cur = links.filter(linkIsCurrent);
+  const auditorOnly = l => l.shCurrent !== true && (l.mgmtRoles || []).length > 0 && (l.mgmtRoles || []).every(r => OWN_AUDITOR_RE.test(r));
+  const ids = [...new Set(cur.filter(l => !auditorOnly(l)).map(l => l.personId))];
+  const docs = new Map(ids.map(id => [id, personDocCache.get(id) || null]));
+  const want = ids.filter(id => (docs.get(id)?.currentLinkCount || 0) >= 2);
+  const small = want.filter(id => docs.get(id).currentLinkCount <= OWN_ALSO_MAX_LINKS);
+  const m = small.length ? await fetchManyPersonLinks(small) : new Map();
+  if (currentCoId !== c.id) return;
+  const bit = l => {
+    const roles = l.mgmtCurrent === true ? (l.mgmtRoles || []).slice(0, 2).join(' · ') : '';
+    const pct = l.shCurrent === true && l.shDirectPct != null ? fmtPctOwn(l.shDirectPct) : '';
+    const what = [roles, pct].filter(Boolean).join(' · ');
+    return `<span class="person-link" data-gotoco="${esc(l.companyId)}">${esc(l.companyName || '—')}</span>${what ? ` <span class="ot-meta">(${esc(what)})</span>` : ''}`;
+  };
+  for (const el of document.querySelectorAll('#panel-ownership [data-also]')){
+    const pid = el.dataset.also, p = docs.get(pid);
+    if (!want.includes(pid)) continue;
+    if (!m.has(pid)){ el.innerHTML = `Also in ${p.currentLinkCount - 1} other companies · <span class="person-link" data-person="${esc(pid)}">see their page</span>`; continue; }
+    const other = m.get(pid).filter(l => l.companyId !== c.id && linkIsCurrent(l))
+      .sort((a, b) => (b.shCurrent === true ? (b.shDirectPct ?? 0) : -1) - (a.shCurrent === true ? (a.shDirectPct ?? 0) : -1));
+    if (!other.length) continue;
+    el.innerHTML = `Also: ${other.slice(0, 5).map(bit).join(', ')}${other.length > 5 ? `, <span class="person-link" data-person="${esc(pid)}">${other.length - 5} more</span>` : ''}`;
+  }
 }
 
 // ── Person link modal (manual add/edit) ──────────────────────────────────────
@@ -4811,6 +5122,7 @@ function renderPersonView(p, links){
   document.getElementById('personBody').innerHTML = `
     <div class="card">
       <div class="sec-title">Positions</div>
+      ${p.entityType === 'entity' && p.matchedCompanyId ? `<div data-feature="search.ownership" style="font-size:0.82rem;margin-bottom:10px;">🏢 This shareholder is a company in the CRM: <span class="person-link" data-gotoco="${esc(p.matchedCompanyId)}"><strong>open its company page</strong></span> (ladder, subsidiaries and group on its Ownership tab).</div>` : ''}
       ${links.length ? rows : '<div style="font-size:0.85rem;color:var(--text-light);">No known positions.</div>'}
       ${links.length ? `<div class="own-legend"><span class="cur">currently</span><span class="prv">previously</span></div>` : ''}
     </div>
@@ -11570,6 +11882,15 @@ document.getElementById('panel-ownership').addEventListener('click', e => {
   else if (t.dataset.editlink) openPersonLink(t.dataset.editlink);
   else if (t.dataset.rmlink) removePersonLink(t.dataset.rmlink);
   else if (t.dataset.tocontact) copyLinkToContacts(t.dataset.tocontact, t.dataset.crole);
+});
+// The group pill in the company header (search.ownership) jumps to the group.
+document.getElementById('dMeta').addEventListener('click', e => {
+  if (!e.target.closest('[data-group-pill]')) return;
+  setActiveTab('ownership');
+  document.getElementById('ownGroup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+document.getElementById('dMeta').addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('[data-group-pill]')){ e.preventDefault(); e.target.click(); }
 });
 document.getElementById('personBody').addEventListener('click', e => {
   const t = e.target.closest('[data-gotoco],[data-person]');
