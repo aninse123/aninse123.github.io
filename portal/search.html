@@ -1590,6 +1590,7 @@ function num(v){ const n = Number(v); return isFinite(n) ? n : 0; }
 function fmtEurShort(n){
   if (n==null || n==='' || !isFinite(Number(n))) return '—';
   n = Number(n);
+  if (Math.abs(n) >= 1e9) return '€' + (n/1e9).toFixed(1) + 'B';
   if (Math.abs(n) >= 1e6) return '€' + (n/1e6).toFixed(1) + 'M';
   if (Math.abs(n) >= 1e3) return '€' + Math.round(n/1e3) + 'K';
   return '€' + Math.round(n);
@@ -4803,7 +4804,7 @@ function ownCoStatus(x){
   bits.push(STAGES[x.stage || 'universe']?.label || x.stage);
   if (x.doNotContact?.on) bits.push('🚫 do not contact');
   else if (x.contactable === false) bits.push('not contactable');
-  else if (x.contactable === true) bits.push('contactable');
+  else bits.push('contactable');   // not set = contactable, as everywhere else
   if (x.activeCampaignName) bits.push(`📣 ${x.activeCampaignName}`);
   return bits.map(esc).join(' · ');
 }
@@ -4832,7 +4833,7 @@ function ownTreeHtml(node, { mode, cos, people, depth = 1, chainPct = 100 }){
     }
     if (co) meta.push(ownCoStatus(co));
     if (depth > 1 && eff != null) meta.push(mode === 'up' ? `≈ ${fmtPctOwn(eff)} of this company through the chain` : `≈ ${fmtPctOwn(eff)} held through the chain`);
-    if (n.repeat) meta.push('shown above');
+    if (n.repeat) meta.push('also listed elsewhere here');
     if (n.cut) meta.push('more levels not shown');
     return `<div class="ot-row" style="padding-left:${(depth - 1) * 20}px">
         <span class="ot-arm">${depth > 1 ? '└' : '•'}</span>
@@ -4893,10 +4894,11 @@ async function renderOwnershipLadder(c, links){
   const others = group ? group.members.filter(m => m.id !== c.id) : [];
   if (group && !others.length) groupHtml = '<div class="ot-meta">No other company in the CRM has the same ultimate owner.</div>';
   else if (group){
-    const rows = [...group.members].sort((a, b) => (b.computedRevenue || 0) - (a.computedRevenue || 0));
+    // The open company always shows, even in a group larger than the rows fetched.
+    const rows = [...group.members, ...(group.members.some(m => m.id === c.id) ? [] : [c])].sort((a, b) => (b.computedRevenue || 0) - (a.computedRevenue || 0));
     const sum = k => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
     const isGuo = m => om.guoNif && ownCoNif(m) === om.guoNif && /^PT/i.test(om.guoBvdId || 'PT');
-    const ct = m => m.doNotContact?.on ? '🚫 Do not contact' : m.contactable === false ? 'Not contactable' : m.contactable === true ? 'Contactable' : '—';
+    const ct = m => m.doNotContact?.on ? '🚫 Do not contact' : m.contactable === false ? 'Not contactable' : 'Contactable';
     groupHtml = `<div class="ot-meta" style="margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;"><span>Ultimate owner: <strong>${esc(om.guoName || '—')}</strong>${om.guoType ? ` · ${esc(om.guoType)}` : ''}${group.total > rows.length ? ` · showing ${rows.length} of ${group.total} companies; all of them with the button` : ''}</span><button type="button" class="btn btn--ghost btn--sm" data-group-list title="Open the Search CRM list with only this group (then filter, export or add to a campaign)">Show the group in the list</button></div>
       <div style="overflow-x:auto;"><table class="own-table own-group-table">
         <thead><tr><th>Company</th><th>CAE</th><th class="num">Revenue</th><th class="num">EBITDA</th><th class="num">Employees</th><th>Stage</th><th>Contactable</th></tr></thead>

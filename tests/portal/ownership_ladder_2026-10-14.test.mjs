@@ -55,12 +55,12 @@ ok('holder outside the CRM stays a leaf', b.children.find((n) => n.link.personId
 const html = T.ownTreeHtml(up, { mode: 'up', cos: new Map(ctx.companies.map((x) => [x.id, x])), people: ctx.personDocCache });
 ok('through the chain: 60% × 100% = 60% of A for C, 60% × 100% × 100% for Xavier', /100%.*C Holding.*≈ 60% of this company through the chain/s.test(html) && /Xavier.*≈ 60% of this company/s.test(html));
 ok('non-CRM corporate holder shows NIF and country', /pFOREIGN.*NIF 999 · ES/s.test(html));
-ok('CRM company row shows its status (revenue, stage, contactable)', /€5000000 · Universe · contactable/.test(T.ownTreeHtml({ children: [{ link: ent('x', 'Z', 50, 'A'), coId: 'A', children: [] }] }, { mode: 'up', cos: new Map([['A', ctx.companies[0]]]), people: new Map() })));
+ok('CRM company row shows its status (revenue, stage, contactable; not set = contactable)', /€5000000 · Universe · contactable/.test(T.ownTreeHtml({ children: [{ link: ent('x', 'Z', 50, 'A'), coId: 'A', children: [] }] }, { mode: 'up', cos: new Map([['A', ctx.companies[0]]]), people: new Map() })));
 
 const down = await T.ownSubsDown({ id: 'C' });
 ok('C holds B (100%) and D (30%), largest first', down.children.map((n) => n.coId).join() === 'B,D');
 ok('…B holds A (60%)', down.children[0].children.map((n) => n.coId).join() === 'A');
-ok('…D holds C back: shown once, marked as a repeat, not followed', down.children[1].children.length === 1 && down.children[1].children[0].coId === 'C' && down.children[1].children[0].repeat === true);
+ok('…D holds C back: listed once more as a repeat, not followed', down.children[1].children.length === 1 && down.children[1].children[0].coId === 'C' && down.children[1].children[0].repeat === true);
 ok('tree ids count the rows and the CRM companies', T.ownTreeIds(down).n === 4 && [...T.ownTreeIds(down).cos].sort().join() === 'A,B,C,D');
 ok('subsidiary through the chain: C holds ≈ 60% of A', /A Lda.*≈ 60% held through the chain/s.test(T.ownTreeHtml(down, { mode: 'down', cos: new Map(ctx.companies.map((x) => [x.id, x])), people: new Map() })));
 
@@ -78,6 +78,10 @@ ok('filters: group size, subsidiaries / parent, owner has other companies, same 
 ok('list filter reads the stored fields; same group reads the ultimate owner itself', /c\.ownGroupSize >= Number\(grpF\)/.test(page) && /c\.ownSubs > 0/.test(page) && /c\.ownParents > 0/.test(page) && /ownGroupKey\(c\)\?\.value !== gkF/.test(page));
 ok('campaign spec carries the same filters (the server matches flat fields)', /add\('ownGroupSize', 'gte'/.test(page) && /add\('ownOwnerOther'/.test(page) && /add\('ownGroupKey', 'eq'/.test(page));
 ok('Group and Group revenue columns + export group', /data-col="ownGroupSize"/.test(page) && /data-col="ownGroupRevenue"/.test(page) && /title: 'Ownership \(groups\)'/.test(page));
+
+ok('a repeat says "also listed elsewhere here" (the tree is drawn depth-first, the repeat can come before the original)', /also listed elsewhere here/.test(page) && !/shown above'/.test(page));
+ok('money over €1,000M shows in billions', /if \(Math\.abs\(n\) >= 1e9\) return '€' \+ \(n\/1e9\)\.toFixed\(1\) \+ 'B';/.test(page));
+ok('the open company always appears in its group table', /group\.members\.some\(m => m\.id === c\.id\) \? \[\] : \[c\]/.test(page));
 
 console.log(fail ? `\n${fail} FAILED` : '\nall passed');
 process.exit(fail ? 1 : 0);
