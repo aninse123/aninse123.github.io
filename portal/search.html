@@ -3681,7 +3681,25 @@ function renderDetail(){
   renderLegalCompliance(c); renderAdvisors(c); renderDataFreshness(c); renderOrbisFinancials(c);
 }
 
+// 18 Oct: the company's municipal holiday, from the scheduler's own table (portal/mun-holidays.js,
+// generated from functions/outreach/places.js; loaded once, when a company page opens).
+let munHolidaysMod = null;
+async function fillMunHoliday(c){
+  try {
+    munHolidaysMod = munHolidaysMod || import('./mun-holidays.js');
+    const M = await munHolidaysMod;
+    const el = document.querySelector('#panel-overview [data-munhol]');
+    if (!el || currentCoId !== c.id) return;
+    const k = M.municipalityOf(c);
+    if (!k){ el.innerHTML = `<span style="color:var(--text-light)" title="Not one of the 308 municipalities: campaign emails don't wait for a local holiday">— municipality not recognised${c.concelho || c.city ? ` (${esc(c.concelho || c.city)})` : ''}</span>`; return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const next = M.nextMunHoliday(k, today);
+    const d = next ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(next + 'T12:00:00')) : '—';
+    el.innerHTML = `${esc(d)} (${esc(M.munName(k))})${next === today ? ' <span class="badge badge-warn">today: campaign emails wait a day</span>' : ''}`;
+  } catch(e){ console.error(e); }
+}
 function renderOverview(c){
+  fillMunHoliday(c);
   const regions = (c.regions||[]).map(r=>REGION_LABELS[r]||r).join(', ') || '—';
   // Reused for the "Based on Orbis financial data" caption below -- fitBreakdown(c)
   // already computes this internally too; a cheap pure lookup, not worth threading
@@ -3725,6 +3743,7 @@ function renderOverview(c){
           </button>` : ''}
         </div>
         <div class="info-row"><span class="k">Concelho</span><span class="v">${esc(c.concelho||'—')}</span></div>
+        <div class="info-row" data-feature="outreach"><span class="k" title="Campaign emails wait a day on the company's municipal holiday (Outreach → Settings)">Municipal holiday</span><span class="v" data-munhol>…</span></div>
         <div class="info-row"><span class="k">Postcode</span><span class="v">${esc(c.postcode||'—')}</span></div>
         <div class="info-row"><span class="k">Address</span><span class="v">${esc(c.hqAddress||'—')}</span></div>
         <div class="info-row"><span class="k">NUTS II</span><span class="v">${esc(c.nuts2||'—')}</span></div>

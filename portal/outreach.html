@@ -634,6 +634,9 @@
               <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gHolidays"> <span>Skip national holidays <span class="hint">(no campaign emails, drafts or task dates on them; a campaign can choose otherwise)</span></span></label>
               <details style="margin-top:4px;"><summary class="hint" style="cursor:pointer;">The national holidays</summary><div id="gHolList" class="hint" style="margin-top:6px;"></div></details>
               <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gMunHol"> <span>Skip each company's municipal holiday <span class="hint">(on its municipality's holiday a company's email waits for the next sending day — e.g. Lisboa 13 June, Porto 24 June, Maia the Monday after the 2nd Sunday of July; all 308 municipalities; a campaign can choose otherwise)</span></span></label>
+              <details style="margin-top:4px;" id="gMunDetails"><summary class="hint" style="cursor:pointer;">The municipal holidays (308)</summary>
+                <div style="margin-top:6px;"><input type="search" id="gMunSearch" class="field" placeholder="Search a municipality, e.g. Covilhã" aria-label="Search a municipality" style="max-width:300px;">
+                <div id="gMunList" class="hint" style="margin-top:6px;max-height:280px;overflow:auto;"></div></div></details>
             </div>
             <div class="field" style="margin-top:14px;">
               <label for="gTestList">Approved test addresses</label>
@@ -2890,11 +2893,29 @@
       $('gHolidays').checked = s.skipNationalHolidays !== false;
       $('gMunHol').checked = s.skipMunicipalHolidays !== false;
       const yNow = new Date().getFullYear();
+      renderMunList();
       $('gHolList').innerHTML = [yNow, yNow + 1].map(y => `<div style="margin-bottom:6px;"><b>${y}</b> · ${ptHolidays(y).map(h => `${esc(dayFmt.format(new Date(h.date + 'T12:00:00')))} ${esc(h.name)}`).join(' · ')}</div>`).join('');
       const campTest = s.campaignTestRecipient || 'andrenorocha@gmail.com';
       const campOpts = [...new Set([campTest, ...(s.testRecipients || [])])].filter(e => !/@resend\.dev$/i.test(e));
       $('gCampTest').innerHTML = campOpts.map(e => `<option value="${esc(e)}"${e === campTest ? ' selected' : ''}>${esc(e)}</option>`).join('');
     }
+
+    // 18 Oct: the municipal holidays (same table as the scheduler), next date first; search by name.
+    const munName = (k) => { const n = String(IN_CITY[k] || k).replace(/^(em|no|na|nos|nas) /, ''); const r = /\((acores|madeira|algarve)\)/.exec(k); return r ? `${n} (${({ acores: 'Açores', madeira: 'Madeira', algarve: 'Algarve' })[r[1]]})` : n; };
+    function renderMunList() {
+      const box = $('gMunList'); if (!box) return;
+      const today = new Date().toISOString().slice(0, 10), y = Number(today.slice(0, 4));
+      const q = placeKey($('gMunSearch')?.value || '');
+      const fmt = (d) => d ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(d + 'T12:00:00')) : '—';
+      const rows = Object.keys(MUN_HOL).map((k) => {
+        const dates = [y, y + 1].map((yy) => { const md = munHolidayMD(k, yy); return md ? `${yy}-${md}` : ''; });
+        const next = dates.find((d) => d && d >= today) || '';
+        return { k, name: munName(k), next, dates };
+      }).filter((r) => !q || placeKey(r.name).includes(q) || r.k.includes(q))
+        .sort((a, b) => (a.next || '9999').localeCompare(b.next || '9999') || a.name.localeCompare(b.name, 'pt'));
+      box.innerHTML = rows.length ? `<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="text-align:left;">Municipality</th><th style="text-align:left;">Next</th><th style="text-align:left;">${y}</th><th style="text-align:left;">${y + 1}</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.name)}</td><td><b>${esc(fmt(r.next))}</b></td><td>${esc(fmt(r.dates[0]))}</td><td>${esc(fmt(r.dates[1]))}</td></tr>`).join('')}</tbody></table>` : 'No municipality matches.';
+    }
+    $('gMunSearch')?.addEventListener('input', renderMunList);
 
     // Phase 4: whether the ANTHROPIC_API_KEY secret is set (the server says; the key never reaches the page).
     let aiStatusLoaded = false;
