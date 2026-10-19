@@ -1445,9 +1445,16 @@
     function msgCc(m) { return addrList(m.cc || []); }
     // Reply = the last person who wrote; Reply all = them + everyone else in To and Cc, minus our addresses.
     const NOT_SENT_STATUSES = ['draft', 'failed', 'approving', 'returned', 'cancelled', 'draftSent'];
-    function replyRecipients(msgs, fallbackEmail, mode) {
+    // followLatest (19 Oct, one inbox): when our last email is newer than the last one
+    // received (geral@ said "talk to João" and we wrote to joao@), Reply goes to João again.
+    function replyRecipients(msgs, fallbackEmail, mode, followLatest = false) {
       const sent = (msgs || []).filter(m => !NOT_SENT_STATUSES.includes(m.status));
       const last = [...sent].reverse().find(m => m.direction === 'in');
+      const lastOut = [...sent].reverse().find(m => m.direction === 'out');
+      if (followLatest && last && lastOut && mode !== 'all' && sent.indexOf(lastOut) > sent.indexOf(last)) {
+        const to = msgTo(lastOut).filter(a => !isOurAddr(a.email));
+        if (to.length) return { to: to.map(a => a.email), cc: [] };
+      }
       if (!last) { // nothing received yet: our last email's recipients
         const out = [...sent].reverse().find(m => m.direction === 'out');
         const to = out && msgTo(out).length ? msgTo(out) : addrList(fallbackEmail);
@@ -1713,6 +1720,11 @@
       renderReplyBox();
     }
 
+    // 19 Oct (one inbox): every address used in the conversation, the first one first.
+    function addrTrail(t) {
+      const more = isOn('outreach.oneInbox') ? (t.addresses || []).filter(a => a && a !== t.contactEmail) : [];
+      return more.length ? `<span title="Every address used in this conversation, the first one first">${esc([t.contactEmail, ...more].filter(Boolean).join(' → '))}</span>` : `<span>${esc(t.contactEmail || '')}</span>`;
+    }
     function renderThreadHead() {
       const t = threads.find(x => x.id === selectedId); if (!t || !$('viewHead')) return;
       const company = t.companyId
@@ -1720,7 +1732,7 @@
         : `<span class="pill${t.unmatched ? ' pill--warn' : ''}">${t.unmatched ? 'Unmatched' : 'No company'}</span> <button class="btn btn--ghost btn--sm" id="assignBtn" data-perm="out.write">Assign to company</button>`;
       $('viewHead').innerHTML = `
         <div class="view__title">${esc(t.subject || '(no subject)')}</div>
-        <div class="view__sub">${company}<span>${esc(t.contactEmail || '')}</span>
+        <div class="view__sub">${company}${addrTrail(t)}
           <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
           ${threadPill(t)}${t.campaignId ? `<button type="button" class="pill pill--info" id="campInfoBtn" style="border:0;cursor:pointer;" title="Show the campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}</button>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
         ${t.recipientIssue ? `<div class="banner banner--warn" style="margin:8px 0 4px;"><span>An email in this conversation to several people bounced for one of them (Resend doesn't say which), so nobody was put on the suppression list. Addresses: ${esc((t.recipientIssue.addresses || []).join(', '))}.</span></div>` : ''}
@@ -1876,10 +1888,10 @@
       const t = threads.find(x => x.id === selectedId);
       if (!t || !$('replyTo') || replyEdited) return;
       if (!replyMode) {
-        const all = replyRecipients(threadMessages, t.contactEmail, 'all'), one = replyRecipients(threadMessages, t.contactEmail, 'reply');
+        const all = replyRecipients(threadMessages, t.contactEmail, 'all'), one = replyRecipients(threadMessages, t.contactEmail, 'reply', isOn('outreach.oneInbox'));
         replyMode = all.to.length + all.cc.length > one.to.length + one.cc.length ? 'all' : 'reply';
       }
-      const r = replyRecipients(threadMessages, t.contactEmail, replyMode);
+      const r = replyRecipients(threadMessages, t.contactEmail, replyMode, isOn('outreach.oneInbox'));
       $('replyTo').value = r.to.join(', ');
       $('replyCc').value = r.cc.join(', ');
       document.querySelectorAll('#replyRcpt [data-rmode]').forEach(b => b.classList.toggle('on', b.dataset.rmode === replyMode));
@@ -1948,6 +1960,7 @@
           <div class="vars" id="replyVars">${varBarHtml()}</div>
           <textarea id="replyText" placeholder="Write your reply…"></textarea>
           <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature and the previous message quoted below it. Fields like {{company.shortName}} work here too.</span>
+          <label class="checkline" id="replyStopWrap" hidden style="margin-top:6px;"><input type="checkbox" id="replyStop" checked> <span>Stop the campaign for this company <span class="hint" id="replyStopHint"></span></span></label>
           <label class="checkline" style="margin-top:6px;"><input type="checkbox" id="replyFooter"${(typeof t.footer === 'boolean' ? t.footer : footerDefault('company')) ? ' checked' : ''}> <span>Add the email footer <span class="hint">(${typeof t.footer === 'boolean' ? 'as in this conversation\'s first email' : 'Settings default'})</span></span></label></div>
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
         <button class="btn btn--primary" id="replyBtn" data-perm="out.write">${esc(SEND_LABEL(true))}</button>`;
@@ -1955,6 +1968,7 @@
       box.querySelectorAll('[data-rmode]').forEach(b => b.addEventListener('click', () => { replyMode = b.dataset.rmode; replyEdited = false; fillReplyRecipients(); }));
       ['replyTo', 'replyCc'].forEach(id => $(id).addEventListener('input', () => { replyEdited = true; }));
       fillReplyRecipients();
+      showReplyStop(t);
       wireVarBar($('replyVars'), box, '#replyText');
       $('replyTpl')?.addEventListener('change', () => {
         const [tid, key] = $('replyTpl').value.split('::');
@@ -1966,6 +1980,21 @@
         }
         $('replyTpl').value = '';
       });
+    }
+
+    // 19 Oct (one inbox): replying by hand while the company is in a running campaign
+    // offers to stop it (ticked by default), so a follow-up doesn't go to geral@ after
+    // the conversation moved to a person.
+    async function showReplyStop(t) {
+      if (!isOn('outreach.oneInbox') || !t.companyId) return;
+      try {
+        const snap = await getDocs(query(collection(db, 'outreachEnrolments'), where('companyId', '==', t.companyId)));
+        addReads(snap.size || 1); refreshReads();
+        const live = snap.docs.map(d => d.data()).filter(e => LIVE_ENROL.includes(e.status));
+        if (!live.length || selectedId !== t.id || !$('replyStopWrap')) return;
+        $('replyStopHint').textContent = `(${live.map(e => '“' + (e.campaignName || 'campaign') + '”').join(', ')}: ends its automatic emails, as a reply from them would)`;
+        $('replyStopWrap').hidden = false;
+      } catch (e) { /* the box just doesn't show */ }
     }
 
     async function sendReply(t) {
@@ -1981,9 +2010,10 @@
       if (!replyTo.length) { err.textContent = 'Add at least one address in To.'; err.hidden = false; return; }
       const btn = $('replyBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
       try {
-        const res = await sendWithConfirm({ threadId: t.id, body, replyTo, replyCc, requestId: requestId(), footer: !!$('replyFooter')?.checked });
-        if (res?.draft) { $('replyText').value = ''; toast('Reply saved — it waits in Tasks → To approve until André or António sends it.'); }
-        else if (res) { $('replyText').value = ''; toast(res.warnings?.length ? 'Reply sent. ' + res.warnings[0] : 'Reply sent.'); }
+        const stopCampaign = !!($('replyStopWrap') && !$('replyStopWrap').hidden && $('replyStop')?.checked);
+        const res = await sendWithConfirm({ threadId: t.id, body, replyTo, replyCc, requestId: requestId(), footer: !!$('replyFooter')?.checked, ...(stopCampaign ? { stopCampaign: true } : {}) });
+        if (res?.draft) { $('replyText').value = ''; toast('Reply saved — it waits in Tasks → To approve until André or António sends it.' + (stopCampaign ? ' The campaign stops when it\'s sent.' : '')); }
+        else if (res) { $('replyText').value = ''; if ($('replyStopWrap')) $('replyStopWrap').hidden = true; toast((res.warnings?.length ? 'Reply sent. ' + res.warnings[0] : 'Reply sent.') + (res.stoppedCampaigns ? ' The company\'s campaign is stopped.' : '')); }
       } catch (e) { err.textContent = errText(e); err.hidden = false; }
       finally { btn.disabled = false; btn.textContent = SEND_LABEL(true); }
     }
@@ -3316,8 +3346,10 @@
       not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'do not contact (stop)', not_contactable: 'not contactable (screening)',
       unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
       stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
-      personal_domain: 'personal email domain',
+      personal_domain: 'personal email domain', same_inbox: 'same email address as another company, emailed recently',
     };
+    // 19 Oct (one inbox): who else has the address, and when it was last emailed.
+    const inboxDetail = (x) => x.inbox ? ` (${esc(x.inbox.email)} — also ${esc(x.inbox.companyName || 'another company')}${x.inbox.at ? ', last email ' + esc(dayFmt.format(new Date(x.inbox.at))) : ''})` : '';
     const DAY_NAMES = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
 
     let campaigns = [];
@@ -4377,7 +4409,7 @@ Optional note for them:`, '');
           ${p.conflictCount ? `<div class="field"><label>Companies already in another campaign</label>
             <label class="checkline"><input type="radio" name="acConflict" value="skip" checked> <span>Leave them where they are (recommended)</span></label>
             <label class="checkline"><input type="radio" name="acConflict" value="move"> <span>Move them here — their other campaign stops for them</span></label></div>` : ''}
-          ${p.excludedSample.length ? `<details style="margin-bottom:10px;"><summary class="hint" style="cursor:pointer;">See excluded companies</summary><div class="hint" style="margin-top:6px;max-height:140px;overflow-y:auto;">${p.excludedSample.map(x => `${esc(x.companyName || x.companyId)} — ${esc(EXCL_LABELS[x.reason] || x.reason)}`).join('<br>')}</div></details>` : ''}
+          ${p.excludedSample.length ? `<details style="margin-bottom:10px;"><summary class="hint" style="cursor:pointer;">See excluded companies</summary><div class="hint" style="margin-top:6px;max-height:140px;overflow-y:auto;">${p.excludedSample.map(x => `${esc(x.companyName || x.companyId)} — ${esc(EXCL_LABELS[x.reason] || x.reason)}${inboxDetail(x)}`).join('<br>')}</div></details>` : ''}
           <p class="note">${p.eligible || p.conflictCount ? `At ${num(p.newPerDay)} new companies a day, everyone starts within about <b>${num(Math.max(1, p.eligible ? p.daysToStart : p.daysToStartIfMoved))}</b> sending day${Math.max(1, p.eligible ? p.daysToStart : p.daysToStartIfMoved) === 1 ? '' : 's'}${c.status === 'draft' ? ' once the campaign is started' : ''}. ` : ''}The exclusion rules are in the campaign's Settings.</p>`;
       };
 
@@ -4729,8 +4761,24 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       return `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
     }
     let approveCtxLoading = false;
+    // 19 Oct (one inbox): companies whose first email waits because their address
+    // was just emailed through another company — read at most once a minute.
+    let inboxHeld = [], inboxHeldAt = 0, inboxHeldLoading = false;
+    function loadInboxHeld() {
+      if (!isOn('outreach.oneInbox') || inboxHeldLoading || Date.now() - inboxHeldAt < 60000) return;
+      inboxHeldLoading = true;
+      getDocs(query(collection(db, 'outreachEnrolments'), where('holdKind', '==', 'same_inbox')))
+        .then(snap => { addReads(snap.size || 1); refreshReads(); inboxHeld = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(e => e.status === 'active'); inboxHeldAt = Date.now(); if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove(); })
+        .catch(() => {}).finally(() => { inboxHeldLoading = false; });
+    }
+    function inboxHeldCard() {
+      if (!isOn('outreach.oneInbox') || !inboxHeld.length) return '';
+      const row = (e) => `<div style="padding:6px 0;border-top:1px solid var(--border);"><a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a> <span class="hint">· ${esc(e.campaignName || '')}</span><div class="hint">${esc(e.lastError || '')}</div></div>`;
+      return `<div class="card" style="margin-bottom:14px;" data-feature="outreach.oneInbox"><details><summary style="cursor:pointer;"><b>${num(inboxHeld.length)} compan${inboxHeld.length === 1 ? 'y waits' : 'ies wait'}: same email address as another company</b> <span class="hint">— their first email goes out once the other company's is far enough back</span></summary><div style="margin-top:6px;max-height:220px;overflow-y:auto;">${inboxHeld.map(row).join('')}</div></details></div>`;
+    }
     function renderApprove() {
       if (document.activeElement?.closest?.('#approveView .draft')) return; // don't wipe what's being typed
+      loadInboxHeld();
       // I7: load the companies behind the shown drafts once, then render again.
       const needCo = drafts.slice(0, 50).map(d => d.companyId).filter(id => id && !coCache.has(id));
       if (needCo.length && !approveCtxLoading) { approveCtxLoading = true; loadCompaniesFor(needCo).catch(() => {}).finally(() => { approveCtxLoading = false; if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove(); }); }
@@ -4748,6 +4796,7 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       const startReturned = campaigns.filter(c => ['draft', 'paused'].includes(c.status) && !c.startRequest && c.startReturn?.requestedBy === myLower && tsMs(c.startReturn.at) >= Date.now() - 30 * 86400000);
       const campLine = (c) => `<button class="camp-link" data-opencamp="${esc(c.id)}">${esc(c.name)}</button> <span class="hint">· ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'companies'} · ${num((c.steps || []).length)} step${(c.steps || []).length === 1 ? '' : 's'}</span>`;
       $('approveView').innerHTML = `
+        ${inboxHeldCard()}
         ${startReqs.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Campaigns waiting for a partner</h3>${startReqs.map(c => `<div style="padding:8px 0;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><div style="flex:1;min-width:220px;">${campLine(c)} <span class="pill pill--info">${c.status === 'paused' ? 'resume' : 'start'}</span> <span class="hint">· asked by ${esc(personName(c.startRequest.by))} ${esc(when(c.startRequest.at))}</span>${c.startRequest.note ? `<div style="margin-top:4px;">“${esc(c.startRequest.note)}”</div>` : ''}</div><button class="btn btn--primary btn--sm" data-sstart="${esc(c.id)}" data-perm="out.approve">${c.status === 'paused' ? 'Resume' : 'Start'}</button><button class="btn btn--ghost btn--sm" data-sreturn="${esc(c.id)}" data-perm="out.approve">Return with a note</button></div>`).join('')}<p class="hint" style="margin-top:6px;">Open a campaign to check its sequence and audience before starting. Starting runs the same checks as the Start button.</p></div>` : ''}
         ${startReturned.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Campaigns returned to you — changes asked</h3>${startReturned.map(c => `<div style="padding:10px 0;border-top:1px solid var(--border);"><div><b>${esc(c.name)}</b> <span class="hint">· returned ${esc(when(c.startReturn.at))} by ${esc(personName(c.startReturn.by))}</span></div><div class="banner banner--warn" style="margin:6px 0;">${c.startReturn.note ? `“${esc(c.startReturn.note)}”` : 'No note.'}</div><button class="btn btn--primary btn--sm" data-opencamp="${esc(c.id)}">Open the campaign</button> <span class="hint">Make the changes, then click ${c.status === 'paused' ? 'Ask to resume' : 'Ask to start'} again.</span></div>`).join('')}</div>` : ''}
         ${returnedMine.length ? `<div class="card" style="margin-bottom:14px;"><h3 style="margin:0 0 8px;font-size:0.95rem;">Returned to you</h3>${returnedMine.map(m => `<div style="padding:8px 0;border-top:1px solid var(--border);"><b>${esc(m.subject || '(reply)')}</b> <span class="hint">· ${esc(m.companyName || '')} · returned ${esc(when(m.returnedAt))} by ${esc(String(m.returnedBy || '').split('@')[0])}</span>${m.returnNote ? `<div style="margin-top:4px;">“${esc(m.returnNote)}”</div>` : ''}<details style="margin-top:4px;"><summary class="hint" style="cursor:pointer;">Your text</summary><pre style="white-space:pre-wrap;font:inherit;font-size:0.85rem;margin-top:6px;">${esc(m.draftBody || '')}</pre></details></div>`).join('')}<p class="hint" style="margin-top:6px;">Write it again in Compose (or reply in the conversation) with the changes.</p></div>` : ''}

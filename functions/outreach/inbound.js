@@ -16,6 +16,7 @@ const { getReceivedEmail, listReceivedAttachments } = require("./resend");
 const store = require("./store");
 const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
+const Feat = require("../features"); // feature switches (one inbox, 19 Oct)
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -30,7 +31,7 @@ async function findSenderByAlias(toList) {
 }
 
 // Thread matching, in order (spec §7.3).
-async function matchThread({ refIds, fromEmail, senderId }) {
+async function matchThread({ refIds, fromEmail, senderId, byAddresses = false, testMode = false }) {
   // 1. Reply headers point at a Message-ID we sent or stored.
   if (refIds.length) {
     const snap = await db().collection("outreachThreads").where("rfcIds", "array-contains-any", refIds.slice(-10)).limit(1).get();
@@ -47,6 +48,16 @@ async function matchThread({ refIds, fromEmail, senderId }) {
       if (!last || Date.now() - last.getTime() <= MATCH_WINDOW_DAYS * 86400000) {
         return { ref: snap.docs[0].ref, data: t, rule: "address" };
       }
+    }
+    // 2b (19 Oct, one inbox): any other address the conversation used — e.g.
+    // João, after geral@ handed over — in the same window. Test conversations
+    // only in test mode (they store the intended real addresses).
+    if (byAddresses) {
+      const s2 = await db().collection("outreachThreads").where("addresses", "array-contains", fromEmail).limit(20).get();
+      const ms = (x) => x?.toMillis?.() || 0;
+      const t2 = s2.docs.filter((d) => !!d.data().isTest === !!testMode && (!senderId || d.data().senderId === senderId))
+        .sort((a, b) => ms(b.data().lastMessageAt) - ms(a.data().lastMessageAt))[0];
+      if (t2 && Date.now() - ms(t2.data().lastMessageAt) <= MATCH_WINDOW_DAYS * 86400000) return { ref: t2.ref, data: t2.data(), rule: "addresses" };
     }
   }
   // 3. Someone else at a company we wrote to (never on free-mail domains).
@@ -129,7 +140,8 @@ async function handleReceived(data) {
   const snippet = stripQuoted(text).slice(0, 2000);
   const autoReply = isAutoReply(headers, subject);
 
-  const match = await matchThread({ refIds, fromEmail: from.email, senderId: sender?.id || null });
+  const inboxSt = await Feat.jobState("outreach.oneInbox");
+  const match = await matchThread({ refIds, fromEmail: from.email, senderId: sender?.id || null, byAddresses: inboxSt === "on" || (inboxSt === "test" && !!settings.testMode), testMode: !!settings.testMode });
 
   let threadRef, thread;
   const now = FieldValue.serverTimestamp();
@@ -142,6 +154,7 @@ async function handleReceived(data) {
     thread = {
       companyId: match?.data?.companyId || null, companyName: match?.data?.companyName || null,
       contactEmail: from.email, contactDomain: domainOf(from.email), contactName: from.name || "",
+      addresses: [from.email].filter(Boolean),
       senderId: sender?.id || match?.data?.senderId || null,
       owner: sender?.owner || match?.data?.owner || null,
       subject, status: "open", unread: true, unmatched: !match,
@@ -181,6 +194,7 @@ async function handleReceived(data) {
   const threadUpd = {
     lastMessageAt: Timestamp.now(), lastDirection: "in", unread: true,
     lastInboundAuto: !!autoReply, ...(autoReply ? { autoReplyAt: Timestamp.now() } : {}),
+    ...(from.email ? { addresses: FieldValue.arrayUnion(from.email) } : {}),
     ...(rfcMessageId ? { rfcIds: FieldValue.arrayUnion(rfcMessageId), lastInboundRfcId: rfcMessageId } : {}),
   };
   if (!autoReply) {

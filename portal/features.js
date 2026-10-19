@@ -19,6 +19,7 @@ export const FEATURES = [
   ['outreach.recurring', 'Outreach', 'release', 'Recurring emails', 'Recurring emails, e.g. the investor update.'],
   ['outreach.ai', 'Outreach', 'release', 'AI openers', 'AI-written first lines in drafts.'],
   ['outreach.relationship', 'Outreach', 'release', 'Emails from Investor CRM / Network', '"Send email" in the Investor CRM and Network, sent through Outreach. (Admin notices to investors are never switched.)'],
+  ['outreach.oneInbox', 'Outreach', 'release', 'One inbox', 'Same email address on two companies: never two cold emails to one address within the campaign’s "contacted in the last N days" window, nor two first drafts on one day (checked when adding companies and before each first email; the automatic part follows the production setting, Test = test campaigns). Inbox: Reply goes to the address you last wrote to, conversations remember every address, and a reply you write can stop the company’s campaign.'],
   ['investorview', 'Investor portal', 'release', 'Investor view', '"View the portal as" a chosen investor, read only.'],
   ['search.tier', 'Search CRM', 'release', 'Target tier & contactable', 'Target tier (rules and per company), contactable, their filters and bulk actions, and the campaign option to include not-contactable companies.'],
   ['search.contactableRules', 'Search CRM', 'release', 'Contactable rules & owner data', 'Owner size, listing and country on the company page (from the Orbis owner columns); later the contactable rules panel, its preview and the reason on each company.'],

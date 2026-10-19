@@ -33,6 +33,8 @@ const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
 const Feat = require("../features"); // kill switches (Team & access → Features)
 const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, skipHolidaysOf, skipMunicipalOf, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 const { isMunicipalHoliday } = require("./places");
+const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
+const { normEmail } = require("./util");
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -198,7 +200,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [schedState, sendState, aiState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai")]);
+  const [schedState, sendState, aiState, inboxState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
@@ -273,6 +275,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const redirectTo = settings.testMode ? (settings.campaignTestRecipient || (settings.testRecipients || [])[0]) : null;
   let sendsThisRun = 0;
   const companyPlace = new Map(); // 14 Oct: companyId → { concelho, distrito, city }, read once per run
+  const inboxRun = new Map(); // one inbox (19 Oct): address → the company that got a first draft / email in this run
   const todayParts = lisbonParts(now);
 
   for (const doc of due) {
@@ -362,12 +365,14 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
 
     // Sender: follow-ups keep the address of the first email.
     let senderId = e.senderId || approved?.senderId || null;
+    let pickedNow = false;
     if (senderId) {
       const s = senders.find((x) => x.id === senderId);
       if (!wantsDraft && (usedThisRun.has(senderId) || (s && sentToday[senderId] >= (s.dailyCap || DEFAULT_SENDER_CAP)))) {
         await unlock(doc.ref); report.deferred++; continue;
       }
     } else {
+      pickedNow = true;
       const load = wantsDraft ? Object.fromEntries(senders.map((x) => [x.id, (sentToday[x.id] || 0) + (draftLoad[x.id] || 0)])) : sentToday;
       const args = { policy: campaign.senderPolicy, owner: e.owner, senders, sentToday: load, defaultCap: DEFAULT_SENDER_CAP };
       const picked = pickSender({ ...args, usedThisRun: wantsDraft ? new Set() : usedThisRun })
@@ -389,6 +394,37 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       const tpl = templates.get(step.templateId);
       const variantKey = approved?.variantKey || e.variants?.[step.id] || pickVariant(step.variants, tpl?.variants, rand());
       const isFollowUp = e.currentStep > 0 && e.threadId && !step.newSubject;
+      // Phase 3b "Send to": chosen once (first email of the company) and kept.
+      let recipient = e.recipient || null;
+      if (!e.personEmail && !isFollowUp && !recipient && (campaign.recipientPolicy || "company") !== "company") {
+        const co = await db().doc(`searchCompanies/${e.companyId}`).get();
+        const pick = co.exists ? pickByPolicy(await companyRecipients(e.companyId, co.data()), campaign.recipientPolicy) : null;
+        if (pick) { recipient = { email: pick.email, name: pick.name || "", kind: pick.kind }; await doc.ref.update({ recipient }); }
+      }
+      // One inbox (19 Oct, switch "outreach.oneInbox"): before a company's
+      // first email, its address mustn't have had an email through another
+      // company inside the window, a first draft waiting for another company,
+      // or one earlier in this run. Held, not ended: it waits and tries again.
+      if (!isFollowUp && !e.threadId && !e.personEmail && e.companyId && allowed(inboxState, campaign)) {
+        let addr = recipient?.email || null;
+        if (!addr) { const co = await db().doc(`searchCompanies/${e.companyId}`).get(); addr = co.exists ? co.data().companyEmail : e.contactEmail; }
+        addr = normEmail(addr);
+        const windowDays = campaign.exclusions?.contactedWithinDays ?? 30;
+        const c = addr ? await Inbox.clash({ email: addr, companyId: e.companyId, isTest: !!settings.testMode, windowDays, now, thisRun: inboxRun }) : null;
+        if (c) {
+          const nextDay = addWait(now, { days: 1, unit: "working" }, campaign._sendingDays, campaign._skipHolidays !== false);
+          const until = c.untilMs && c.untilMs > nextDay.getTime() ? new Date(c.untilMs) : nextDay;
+          const text = Inbox.holdText(c, until.getTime(), addr);
+          const again = e.holdKind === "same_inbox" && e.holdReason?.companyId === c.companyId;
+          if (pickedNow && wantsDraft) draftLoad[senderId] = Math.max(0, (draftLoad[senderId] || 1) - 1);
+          await unlock(doc.ref, { nextActionAt: ts(until), holdKind: "same_inbox", holdReason: { why: c.kind, email: addr, companyId: c.companyId, companyName: c.companyName || "", at: c.at ? ts(new Date(c.at)) : null, until: ts(until) }, lastError: text });
+          if (!again) await Inbox.logHold({ companyId: e.companyId, text, isTest: !!settings.testMode, campaignId: campaign.id, enrolmentId });
+          report.inboxHeld = (report.inboxHeld || 0) + 1;
+          continue;
+        }
+        if (addr) inboxRun.set(addr, { companyId: e.companyId, companyName: e.companyName || "", at: now.getTime() });
+        if (e.holdKind) await doc.ref.update({ holdKind: null, holdReason: null });
+      }
       // Phase 4: {{ai.opener}} is written only for drafts (a person approves
       // it). If AI isn't available the field stays empty — the template's
       // fallback ({{ai.opener|…}}) is used, or the company pauses with the reason.
@@ -398,13 +434,6 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         try {
           aiOpener = (await getOpener({ companyId: e.companyId, templateId: step.templateId, templateBody: variantBody, settings, apiKey: ANTHROPIC_API_KEY.value() })).text;
         } catch (aiErr) { logger.warn("outreachScheduler: AI opener unavailable", { enrolmentId, reason: aiErr.details?.reason || aiErr.message }); }
-      }
-      // Phase 3b "Send to": chosen once (first email of the company) and kept.
-      let recipient = e.recipient || null;
-      if (!e.personEmail && !isFollowUp && !recipient && (campaign.recipientPolicy || "company") !== "company") {
-        const co = await db().doc(`searchCompanies/${e.companyId}`).get();
-        const pick = co.exists ? pickByPolicy(await companyRecipients(e.companyId, co.data()), campaign.recipientPolicy) : null;
-        if (pick) { recipient = { email: pick.email, name: pick.name || "", kind: pick.kind }; await doc.ref.update({ recipient }); }
       }
       const p = await prepareEmail({
         callerEmail: "scheduler", settings, messageRef,
@@ -429,13 +458,14 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       const campaignRef = { campaignId: campaign.id, enrolmentId, stepId: step.id, approvedBy: approved?.approvedBy || null, kind: campaign.issueId ? "recurring" : "campaign" };
       if (wantsDraft) {
         await saveDraft(p, { campaign: campaignRef });
-        await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id, senderId, [`variants.${step.id}`]: p.variantKey, lastError: null });
+        await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id, senderId, [`variants.${step.id}`]: p.variantKey, lastError: null, ...(e.holdKind ? { holdKind: null, holdReason: null } : {}) });
         report.drafts++;
         continue;
       }
       if (sendsThisRun > 0 && gap) await sleep(gap());
       const res = await deliverEmail(p, { campaign: campaignRef });
       await recordSent(doc.ref, e, campaign, step, res, { senderId, variantKey: p.variantKey, now });
+      if (e.holdKind) await doc.ref.update({ holdKind: null, holdReason: null });
       sendsThisRun++; campaignSent++; report.sent++;
       sentToday[senderId] = (sentToday[senderId] || 0) + 1;
       usedThisRun.add(senderId);

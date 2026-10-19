@@ -34,6 +34,8 @@ vm.runInContext([
   "let approveFilter = 'all'; const draftEdits = new Map(); let returnedMine = []; const coCache = new Map(); let taskView = 'approve'; async function loadCompaniesFor() {}",
   line('    const eurShort ='), line('    const finYearOf ='), lift('coFiguresHtml'),
   lift('approvalContext'), "let approveCtxLoading = false;",
+  // 19 Oct (one inbox): the "companies waiting" card — switch off here, so nothing is read.
+  "const isOn = () => false; let inboxHeld = [], inboxHeldAt = 0, inboxHeldLoading = false;", lift('loadInboxHeld'), lift('inboxHeldCard'),
   lift('renderApprove'),
   'globalThis.run = () => { renderApprove(); return $("approveView").innerHTML; };',
 ].join('\n'), ctx);

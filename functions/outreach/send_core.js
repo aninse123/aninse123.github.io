@@ -301,6 +301,8 @@ async function deliverEmail(p, { campaign = null } = {}) {
   if (!isReply) {
     batch.set(threadRef, {
       companyId, companyName: company?.name || p.person?.org || null, contactEmail: to, contactDomain: toDomain, contactName: p.contactName || "",
+      // 19 Oct: every address the conversation uses (the intended one in test mode) — one inbox, inbound matching.
+      addresses: [normEmail(p.redirectedFrom || to)].filter(Boolean),
       personRefs: p.person?.refs || null, personEmail: p.person?.email || null,
       recipientKind: p.recipientKind, recipientPersonId: p.recipientPersonId, personalAddress: !!p.personalAddress,
       senderId, owner, subject: p.subject, status: "open", unread: false, unmatched: false,
@@ -366,8 +368,11 @@ async function deliverEmail(p, { campaign = null } = {}) {
   });
   // A campaign follow-up is a reply in the thread, but we're still waiting
   // for the prospect — it doesn't close an unread inbound message.
+  // 19 Oct: a reply to someone new (João instead of geral@) is remembered on the conversation.
+  const replyAddrs = isReply ? [...(p.toList || [to]), ...(p.ccList || [])].map(normEmail).filter(Boolean) : [];
   await threadRef.update({
     lastMessageAt: sentAt, lastDirection: "out",
+    ...(replyAddrs.length ? { addresses: FieldValue.arrayUnion(...replyAddrs) } : {}),
     status: isReply && !campaign ? "waiting" : "open",
     ...(isReply && !campaign ? { unread: false } : {}),
   });

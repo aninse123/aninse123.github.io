@@ -109,6 +109,7 @@ const FREE_MAIL_DOMAINS = new Set([
   "yahoo.com", "yahoo.com.br", "yahoo.es", "yahoo.fr", "ymail.com", "icloud.com", "me.com", "mac.com", "aol.com",
   "sapo.pt", "iol.pt", "netcabo.pt", "clix.pt", "telepac.pt", "mail.telepac.pt", "portugalmail.pt",
   "oninet.pt", "zonmail.pt", "vodafone.pt", "meo.pt", "net.novis.pt", "netvisao.pt",
+  "net.sapo.pt", "netmadeira.com", // 19 Oct: internet-provider mailboxes (26 companies)
   "gmx.com", "gmx.net", "gmx.pt", "mail.com", "protonmail.com", "proton.me", "zoho.com", "yandex.com",
 ]);
 

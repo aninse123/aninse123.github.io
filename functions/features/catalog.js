@@ -19,6 +19,7 @@ const FEATURES = [
   { key: "outreach.recurring", area: "Outreach", kind: "release", name: "Recurring emails", description: "Recurring emails, e.g. the investor update." },
   { key: "outreach.ai", area: "Outreach", kind: "release", name: "AI openers", description: "AI-written first lines in drafts." },
   { key: "outreach.relationship", area: "Outreach", kind: "release", name: "Emails from Investor CRM / Network", description: "\"Send email\" in the Investor CRM and Network, sent through Outreach. (Admin notices to investors are never switched.)" },
+  { key: "outreach.oneInbox", area: "Outreach", kind: "release", name: "One inbox", description: "Same email address on two companies: never two cold emails to one address within the campaign’s \"contacted in the last N days\" window, nor two first drafts on one day (checked when adding companies and before each first email; the automatic part follows the production setting, Test = test campaigns). Inbox: Reply goes to the address you last wrote to, conversations remember every address, and a reply you write can stop the company’s campaign." },
   // ── Other areas ──
   { key: "investorview", area: "Investor portal", kind: "release", name: "Investor view", description: "\"View the portal as\" a chosen investor, read only." },
   { key: "search.tier", area: "Search CRM", kind: "release", name: "Target tier & contactable", description: "Target tier (rules and per company), contactable, their filters and bulk actions, and the campaign option to include not-contactable companies." },

@@ -255,7 +255,9 @@ const tsMillis = (t) => (t == null ? null : typeof t.toMillis === "function" ? t
 //
 // ctx: { campaignId, exclusions, firstChannel, blockPersonalDomains,
 //        suppressed: Set of suppression ids ("addr@x.pt" and "@x.pt"),
-//        alreadyEnrolled: bool (an enrolment in this campaign exists), now }
+//        alreadyEnrolled: bool (an enrolment in this campaign exists), now,
+//        companyId, inboxRecent?: Map(email → conversations, newest first) —
+//        only when the "outreach.oneInbox" switch is on (inbox.js) }
 function evaluateCompany(company, ctx) {
   if (!company) return { ok: false, reason: "not_found" };
   if (ctx.alreadyEnrolled) return { ok: false, reason: "already_in_campaign" };
@@ -288,6 +290,12 @@ function evaluateCompany(company, ctx) {
     const reachable = hasEmail || (policy !== "company" && (contactEmail || policy === "best_person"));
     if (ex.requireEmail && !reachable) return { ok: false, reason: "no_email" };
     if (policy === "company" && hasEmail && ctx.blockPersonalDomains && isFreeMail(domainOf(email))) return { ok: false, reason: "personal_domain" };
+    // One inbox (19 Oct): the same address had an email exchange through
+    // another company inside the "contacted in the last N days" window.
+    if (hasEmail && ctx.inboxRecent && ex.contactedWithinDays > 0) {
+      const hit = (ctx.inboxRecent.get(email) || []).find((h) => h.companyId && h.companyId !== ctx.companyId);
+      if (hit) return { ok: false, reason: "same_inbox", inbox: { email, companyId: hit.companyId, companyName: hit.companyName || "", at: hit.at || null, campaignId: hit.campaignId || null } };
+    }
   }
   if (company.activeCampaignId && company.activeCampaignId !== ctx.campaignId) {
     return { ok: false, reason: "in_other_campaign", conflict: { campaignId: company.activeCampaignId, campaignName: company.activeCampaignName || "", enrolmentId: company.activeEnrolmentId || null } };
@@ -308,6 +316,7 @@ const EXCLUSION_LABELS = {
   not_contactable: "marked not contactable",
   no_email: "no email address",
   personal_domain: "personal email domain",
+  same_inbox: "same email address as another company, emailed recently",
   in_other_campaign: "in another campaign",
 };
 

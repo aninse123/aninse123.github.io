@@ -1391,6 +1391,9 @@ const ACT = {
   // contact details or notes change on the person page.
   person_contact_edited: { label:'Person contact updated', icon:'👤', outreach:false },
   person_note:      { label:'Note on a person',  icon:'📝', outreach:false },
+  // 19 Oct (one inbox): a first email held because the address was just emailed
+  // through another company. Not a touch.
+  outreach_hold:    { label:'Held: same email address', icon:'⏸', outreach:false },
 };
 // Set on searchCompanies by the Outreach Cloud Functions (spec §5).
 const OUTREACH_BADGE = {
@@ -10108,8 +10111,10 @@ const CAMP_EXCL_LABELS = {
   not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact', not_contactable: 'marked not contactable',
   unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
   stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
-  personal_domain: 'personal email domain',
+  personal_domain: 'personal email domain', same_inbox: 'same email address as another company, emailed recently',
 };
+// 19 Oct (one inbox): who else has the address, and when it was last emailed.
+const campInboxDetail = x => x.inbox ? ` (${esc(x.inbox.email)} — also ${esc(x.inbox.companyName || 'another company')}${x.inbox.at ? ', last email ' + new Date(x.inbox.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''})` : '';
 
 // The list filters as data: [{ field, op, value }] + a readable label.
 function buildFilterSpec(){
@@ -10263,7 +10268,7 @@ async function openAddToCampaign(opts){
             <label class="camp-radio" style="margin-top:6px;"><input type="checkbox" id="addCampLeaveOut"> <span>Leave them out</span></label></div>` : ''}
           ${preview.conflictCount ? `<label class="camp-radio"><input type="radio" name="addCampConflict" value="skip" checked> <span>Leave those where they are (recommended)</span></label>
             <label class="camp-radio"><input type="radio" name="addCampConflict" value="move"> <span>Move them here — their other campaign stops for them</span></label>` : ''}
-          ${preview.excludedSample.length ? `<details style="margin-top:8px;"><summary style="font-size:0.8rem;color:var(--text-light);cursor:pointer;">See excluded companies</summary><div style="font-size:0.78rem;color:var(--text-light);max-height:140px;overflow-y:auto;margin-top:6px;">${preview.excludedSample.map(x => `${esc(x.companyName || x.companyId)} — ${esc(CAMP_EXCL_LABELS[x.reason] || x.reason)}`).join('<br>')}</div></details>` : ''}
+          ${preview.excludedSample.length ? `<details style="margin-top:8px;"><summary style="font-size:0.8rem;color:var(--text-light);cursor:pointer;">See excluded companies</summary><div style="font-size:0.78rem;color:var(--text-light);max-height:140px;overflow-y:auto;margin-top:6px;">${preview.excludedSample.map(x => `${esc(x.companyName || x.companyId)} — ${esc(CAMP_EXCL_LABELS[x.reason] || x.reason)}${campInboxDetail(x)}`).join('<br>')}</div></details>` : ''}
           ${preview.eligible || preview.conflictCount ? `<p style="font-size:0.8rem;color:var(--text-light);margin-top:10px;">At ${fmt(preview.newPerDay)} new companies a day, everyone starts within about ${fmt(Math.max(1, preview.eligible ? preview.daysToStart : preview.daysToStartIfMoved))} sending day(s)${camp?.status === 'draft' ? ', once the campaign is started' : ''}.</p>` : ''}`;
         if (!preview.eligible && !preview.conflictCount) { next.textContent = 'Close'; next.disabled = false; next.onclick = () => showEl('addCampModal', false); return; }
         next.textContent = 'Add companies'; next.disabled = false;
@@ -10875,7 +10880,7 @@ async function recomputeActivityFields(c){
   // lastTouchAt = most recent non-future, non-auto activity
   // email_test: Outreach test-mode sends aren't real touches (they go to our own addresses).
   // task_test: campaign tasks done in test mode (rehearsals) — not real touches either.
-  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note'];
+  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold'];
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));

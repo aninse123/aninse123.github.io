@@ -35,6 +35,7 @@ const { REGION, TEST_RECIPIENTS } = require("./config");
 const { normEmail } = require("./util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const store = require("./store");
+const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
 const { addWait, sendingDaysOf, skipHolidaysOf, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
@@ -105,8 +106,24 @@ async function evalContext(campaign) {
     suppressed: await loadSuppressed(),
     now: Date.now(),
     isTest: !!(settings.testMode || campaign.isTest),
+    testMode: !!settings.testMode, // conversations and drafts are marked test by the test mode at send time
   };
 }
+
+// One inbox (19 Oct): the recent conversations of these addresses, when the
+// "outreach.oneInbox" switch is on for this request (or job) and the first
+// step is an email. Same window as "contacted in the last N days".
+async function withInbox(ctx, emails, on) {
+  if (!on || ctx.firstChannel !== "email" || !(ctx.exclusions.contactedWithinDays > 0)) return ctx;
+  ctx.inboxRecent = await Inbox.recentByAddress(emails, { sinceMs: ctx.now - ctx.exclusions.contactedWithinDays * Inbox.DAY, isTest: ctx.testMode });
+  return ctx;
+}
+async function companyEmails(ids) {
+  const out = [];
+  for (const group of chunks(ids, READ_CHUNK)) (await db().getAll(...group.map((id) => db().doc(`searchCompanies/${id}`)))).forEach((s) => { if (s.exists && s.data().companyEmail) out.push(s.data().companyEmail); });
+  return out;
+}
+const inboxJobOn = async (campaign) => { const st = await Feat.jobState("outreach.oneInbox"); return st === "on" || (st === "test" && !!campaign.isTest); };
 
 function assertCompanies(campaign) {
   if (campaign.audienceType === "people") fail("failed-precondition", "not_companies", "This campaign is for people — add people, not companies.");
@@ -261,12 +278,13 @@ async function readCompanies(ids, campaignId) {
   return out;
 }
 
-async function preview({ campaignId, companyIds }) {
+async function preview({ campaignId, companyIds }, caller, opts = {}) {
   const campaign = await getCampaign(campaignId);
   assertEnrollable(campaign); assertCompanies(campaign);
   const ids = cleanCompanyIds(companyIds);
   const ctx = await evalContext(campaign);
   const data = await readCompanies(ids, campaignId);
+  await withInbox(ctx, ids.map((id) => data.get(id)?.company?.companyEmail), opts.oneInbox);
   const excluded = {};
   const sample = [];
   const conflicts = [];
@@ -274,7 +292,7 @@ async function preview({ campaignId, companyIds }) {
   let eligible = 0;
   for (const id of ids) {
     const { company, alreadyEnrolled } = data.get(id);
-    const r = evaluateCompany(company, { ...ctx, alreadyEnrolled });
+    const r = evaluateCompany(company, { ...ctx, alreadyEnrolled, companyId: id });
     if (r.ok) { eligible++; continue; }
     if (r.reason === "in_other_campaign") {
       const k = r.conflict.campaignId;
@@ -284,14 +302,14 @@ async function preview({ campaignId, companyIds }) {
       continue;
     }
     excluded[r.reason] = (excluded[r.reason] || 0) + 1;
-    if (sample.length < SAMPLE_LIMIT) sample.push({ companyId: id, companyName: company?.name || "", reason: r.reason });
+    if (sample.length < SAMPLE_LIMIT) sample.push({ companyId: id, companyName: company?.name || "", reason: r.reason, ...(r.inbox ? { inbox: r.inbox } : {}) });
   }
   const conflictCount = Object.values(conflictCampaigns).reduce((a, x) => a + x.count, 0);
   const newPerDay = campaign.pacing?.newPerDay || DEFAULT_CAMPAIGN.pacing.newPerDay;
   // I2+ (António, 8 Oct): companies that could be added but were already
   // contacted — an email conversation, or a call / letter / visit logged by a
   // campaign. Shown as a warning; the person adding them decides.
-  const addable = ids.filter((id) => { const { company, alreadyEnrolled } = data.get(id); const r = evaluateCompany(company, { ...ctx, alreadyEnrolled }); return r.ok || r.reason === "in_other_campaign"; });
+  const addable = ids.filter((id) => { const { company, alreadyEnrolled } = data.get(id); const r = evaluateCompany(company, { ...ctx, alreadyEnrolled, companyId: id }); return r.ok || r.reason === "in_other_campaign"; });
   const contacted = await contactedBefore(addable, data, campaignId);
   return {
     contacted,
@@ -394,7 +412,7 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller) {
   return db().runTransaction(async (tx) => {
     const [cSnap, eSnap] = await tx.getAll(companyRef, enrolRef);
     const company = cSnap.exists ? cSnap.data() : null;
-    let r = evaluateCompany(company, { ...ctx, alreadyEnrolled: eSnap.exists });
+    let r = evaluateCompany(company, { ...ctx, alreadyEnrolled: eSnap.exists, companyId });
     let moveFrom = null;
     if (!r.ok && r.reason === "in_other_campaign") {
       // The company's pointer may be stale (enrolment already ended): check it.
@@ -448,13 +466,14 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller) {
   });
 }
 
-async function enrol({ campaignId, companyIds, source, onConflict }, caller) {
+async function enrol({ campaignId, companyIds, source, onConflict }, caller, opts = {}) {
   const campaign = await getCampaign(campaignId);
   assertEnrollable(campaign); assertCompanies(campaign);
   const ids = cleanCompanyIds(companyIds);
   const src = cleanSource(source);
   const mode = onConflict === "move" ? "move" : "skip";
   const ctx = await evalContext(campaign);
+  if (opts.oneInbox) await withInbox(ctx, await companyEmails(ids), true);
   let enrolled = 0, moved = 0;
   const skipped = {};
   for (const group of chunks(ids, TX_PARALLEL)) {
@@ -859,6 +878,8 @@ async function runDynamicAudience(campaign, now) {
   let enrolled = 0;
   if (matches.length) {
     const ctx = await evalContext(campaign);
+    const byId = new Map(snap.docs.map((d) => [d.id, d.data()]));
+    await withInbox(ctx, matches.map((id) => byId.get(id)?.companyEmail), await inboxJobOn(campaign));
     const source = { type: "dynamic", label: "Dynamic — new matches of the filter" };
     for (const group of chunks(matches, TX_PARALLEL)) {
       const res = await Promise.all(group.map((id) => enrolOne(id, campaign, ctx, source, "skip", "scheduler")));
@@ -1142,6 +1163,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       if (t.exists && ["active", "paused"].includes(t.data().status)) fail("permission-denied", "needs_approve", "This campaign has started — only a partner can change it.");
     }
   }
+  // One inbox (19 Oct): checked when adding companies, if the switch is on for this caller and site.
+  const oneInbox = ["preview", "enrol"].includes(data.action) ? await Feat.isOnFor(request, "outreach.oneInbox") : false;
   try {
     switch (data.action) {
       case "save": return await save(data, caller, { canApprove });
@@ -1149,10 +1172,10 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "returnStart": return await returnStart(data, caller);
       case "duplicate": return await duplicate(data, caller);
       case "delete": return await remove(data, caller);
-      case "preview": return await preview(data, caller);
+      case "preview": return await preview(data, caller, { oneInbox });
       case "recipientsPreview": return await recipientsPreview(data, caller);
       case "runNow": return await runNow(data, caller);
-      case "enrol": return await enrol(data, caller);
+      case "enrol": return await enrol(data, caller, { oneInbox });
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);
       case "previewPeople": return await previewPeople(data, caller);

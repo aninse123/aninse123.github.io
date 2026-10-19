@@ -26,6 +26,14 @@ const IN2 = { ...IN, deliveredTo: 'a.rocha@mail.douropartners-team.pt, "Rui" <ru
 ok('Reply all keeps other To recipients in To', J(R.replyRecipients([OUT, IN2], 'geral@empresa.pt', 'all')) === J({ to: ['ana@empresa.pt', 'rui@empresa.pt'], cc: [] }));
 ok('nothing received yet → our last email\'s recipient', J(R.replyRecipients([OUT], 'geral@empresa.pt', 'reply')) === J({ to: ['geral@empresa.pt'], cc: [] }));
 ok('drafts and failed emails are ignored', J(R.replyRecipients([OUT, IN, { direction: 'out', status: 'draft', to: ['z@z.pt'] }], 'geral@empresa.pt', 'reply')) === J({ to: ['ana@empresa.pt'], cc: [] }));
+// 19 Oct (one inbox): our last email is newer than the last one received → Reply follows it.
+const AUTO = { direction: 'in', status: 'received', from: 'Receção <geral@empresa.pt>', to: ['a.rocha@abc.resend.app'], cc: [], deliveredTo: 'a.rocha@mail.douropartners-team.pt' };
+const TO_JOAO = { direction: 'out', status: 'delivered', to: ['joao@empresa.pt'], cc: [] };
+ok('one inbox: after we wrote to João, Reply goes to João (not back to geral@)', J(R.replyRecipients([OUT, AUTO, TO_JOAO], 'geral@empresa.pt', 'reply', true)) === J({ to: ['joao@empresa.pt'], cc: [] }));
+ok('…switch off: as before, the last person who wrote', J(R.replyRecipients([OUT, AUTO, TO_JOAO], 'geral@empresa.pt', 'reply', false)) === J({ to: ['geral@empresa.pt'], cc: [] }));
+ok('…once João answers, Reply goes to whoever wrote last', J(R.replyRecipients([OUT, AUTO, TO_JOAO, { ...AUTO, from: 'João <joao@empresa.pt>' }], 'geral@empresa.pt', 'reply', true)) === J({ to: ['joao@empresa.pt'], cc: [] }));
+ok('…Reply all unchanged', J(R.replyRecipients([OUT, AUTO, TO_JOAO], 'geral@empresa.pt', 'all', true)) === J({ to: ['geral@empresa.pt', 'a.rocha@mail.douropartners-team.pt'].filter((e) => !R.isOurAddr(e)), cc: [] }));
+ok('page passes the switch to Reply', page.includes("replyRecipients(threadMessages, t.contactEmail, replyMode, isOn('outreach.oneInbox'))"));
 ok('page sends replyTo / replyCc and shows To / Cc lines', page.includes('sendWithConfirm({ threadId: t.id, body, replyTo, replyCc,') && page.includes('${rcptLine(m)}'));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }

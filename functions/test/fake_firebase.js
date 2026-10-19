@@ -93,7 +93,7 @@ class Query {
       .map((p) => new DocSnap(new DocRef(p)));
     for (const { f, op, v } of this.filters) {
       docs = docs.filter((d) => {
-        const x = d.data()[f];
+        const x = String(f).split(".").reduce((o, k) => (o == null ? undefined : o[k]), d.data()); // "a.b" field paths, as in Firestore
         if (op === "==") return JSON.stringify(x) === JSON.stringify(v);
         if (op === "array-contains") return Array.isArray(x) && x.includes(v);
         if (op === "array-contains-any") return Array.isArray(x) && x.some((y) => v.includes(y));

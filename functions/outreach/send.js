@@ -48,6 +48,8 @@ function draftRequest(input, isReply) {
     footer: typeof input.footer === "boolean" ? input.footer : null, // CCSL: optional footer
     replyTo: isReply && Array.isArray(input.replyTo) ? input.replyTo.slice(0, 20).map(String) : null,
     replyCc: isReply && Array.isArray(input.replyCc) ? input.replyCc.slice(0, 20).map(String) : null,
+    // 19 Oct (one inbox): "Stop the campaign for this company", ticked by default on a manual reply.
+    stopCampaign: isReply && input.stopCampaign === true,
   };
 }
 
@@ -106,7 +108,18 @@ async function send(request, callerEmail) {
   }
 
   const res = await deliverEmail(p);
-  return { ...res, sentBy: callerEmail, sentByOwner: request.auth?.token?.key || OWNER_BY_ADMIN[callerEmail] || null };
+  const stoppedCampaigns = await stopAfterReply(request, req, p, callerEmail);
+  return { ...res, stoppedCampaigns, sentBy: callerEmail, sentByOwner: request.auth?.token?.key || OWNER_BY_ADMIN[callerEmail] || null };
+}
+
+// 19 Oct (one inbox, 1-manual): a reply written by hand can stop the
+// company's running campaign, like a reply from them does — so a follow-up
+// doesn't go to geral@ after the conversation moved to a person.
+async function stopAfterReply(request, req, p, callerEmail) {
+  if (!req.stopCampaign || !p.isReply || !p.thread?.companyId) return 0;
+  if (!(await Feat.isOnFor(request, "outreach.oneInbox"))) return 0;
+  const { stopCompanyEnrolments } = require("./campaigns");
+  return stopCompanyEnrolments(p.thread.companyId, `Stopped: ${callerEmail} replied by hand`);
 }
 
 // A partner sends a manual draft: re-prepared as the approver (all checks
@@ -134,11 +147,12 @@ async function approveDraft(request, callerEmail) {
       footer: req.footer ?? null, replyTo: req.replyTo || null, replyCc: req.replyCc || null, confirmOverTarget: true,
     });
     const res = await deliverEmail(p);
+    const stoppedCampaigns = await stopAfterReply(request, req, p, draft.writtenBy || callerEmail).catch(() => 0);
     await sendRef.update({ writtenBy: draft.writtenBy, draftId: draftRef.id }).catch(() => {});
     // "draftSent", not "sent": the email itself is sendRef; this record only says it went out.
     await draftRef.update({ status: "draftSent", sentMessageId: sendRef.id, threadIdSent: res.threadId || null, edited: subject != null || body != null, lastError: null });
     await Usage.countPerson("email.approved", callerEmail);
-    return { ...res, sentBy: callerEmail, writtenBy: draft.writtenBy };
+    return { ...res, stoppedCampaigns, sentBy: callerEmail, writtenBy: draft.writtenBy };
   } catch (e) {
     await draftRef.update({ status: "draft", lastError: e.message || String(e) }).catch(() => {});
     throw e;
