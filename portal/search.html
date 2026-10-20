@@ -5344,7 +5344,7 @@ function renderReachCard(p, links){
         const others = own.filter(x => x.id !== ed.id);
         if (!reachValid(ed.type, value)){ er.textContent = 'Check the value.'; er.style.display = 'block'; return; }
         if (others.some(x => x.type === ed.type && reachNorm(ed.type, x.value) === reachNorm(ed.type, value))){ er.textContent = 'Already in the list.'; er.style.display = 'block'; return; }
-        await save(reachUpdate(own, ed.id, { value, note: note.slice(0, 200) }), hidden, `changed ${ed.value} → ${value}`);
+        await save(reachUpdate(own, ed.id, { value, note: note.slice(0, 200) }), hidden, value === ed.value ? `note on ${value}: ${note || '(cleared)'}` : `changed ${ed.value} → ${value}`);
         return;
       }
       const r = reachAdd(own, { type: document.getElementById('reachType').value, value, note, by: currentUser, at: new Date().toISOString() });
