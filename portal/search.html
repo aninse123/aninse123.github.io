@@ -4234,6 +4234,10 @@ function renderOrbisFinancials(c){
 }
 
 function renderContacts(c){
+  // 20 Oct (people merge, Stage 3, switch search.people): the tab becomes "People".
+  const tabBtn = document.querySelector('.tab[data-tab="contacts"]');
+  if (tabBtn) tabBtn.textContent = isOn('search.people') ? 'People' : 'Contacts';
+  if (isOn('search.people')) { renderCompanyPeople(c); return; }
   const contacts = c.contacts || [];
   const list = contacts.length ? contacts.map((ct,i) => {
     const sentEmails = ct.email
@@ -4290,6 +4294,110 @@ function renderContacts(c){
   document.querySelectorAll('[data-sendct]').forEach(b => b.addEventListener('click', () => openSendEmail(Number(b.dataset.sendct))));
   document.querySelectorAll('[data-editct]').forEach(b => b.addEventListener('click', () => openContact(Number(b.dataset.editct))));
   document.querySelectorAll('[data-rmct]').forEach(b => b.addEventListener('click', () => removeContact(Number(b.dataset.rmct))));
+}
+
+// 20 Oct (people merge, Stage 3): everyone at the company in one list — Orbis
+// owners and managers, then contact people — with their emails, phones and
+// LinkedIn (their own, then Orbis's not hidden). "＋ detail" adds one in place;
+// the person page edits the rest. Corporate shareholders stay on Ownership.
+// The old Contacts list is shown folded until the migration (Stage 5).
+let companyPeopleShowPrev = false, companyPeopleAddFor = null;
+async function renderCompanyPeople(c){
+  const el = document.getElementById('panel-contacts');
+  if (!el.querySelector('[data-people-tab]')) el.innerHTML = '<div class="card" data-people-tab><div class="hint">Loading people…</div></div>';
+  let links;
+  try { links = await fetchCompanyLinks(c.id); } catch(e){ el.innerHTML = `<div class="card"><div class="modal-err" style="display:block;">Couldn't load the people: ${esc(e.message)}</div></div>`; return; }
+  if (currentCoId !== c.id) return;
+  const persons = links.filter(l => l.personId && l.personEntityType !== 'entity');
+  const people = new Map();
+  await Promise.all([...new Set(persons.map(l => l.personId))].map(async id => people.set(id, await fetchPerson(id).catch(() => null))));
+  if (currentCoId !== c.id) return;
+  const canEdit = window.pageAccess ? (window.pageAccess.can('search.reach') || window.pageAccess.can('search.editall')) : true;
+  const mainId = c.primaryContact?.personId || null;
+  const prevN = persons.filter(l => !linkCurrentAny(l)).length;
+  const rows = persons.filter(l => companyPeopleShowPrev || linkCurrentAny(l)).sort((a, b) =>
+    (linkCurrentAny(b) - linkCurrentAny(a)) || ((b.personId === mainId) - (a.personId === mainId)) || ((!!a.isContact) - (!!b.isContact))
+    || (Number(b.shDirectPct) || 0) - (Number(a.shDirectPct) || 0) || String(a.personName || '').localeCompare(String(b.personName || '')));
+  const href = (t, v) => t === 'email' ? `mailto:${v}` : t === 'phone' ? `tel:${reachNorm('phone', v)}` : (/^https?:/i.test(v) ? v : 'https://' + v);
+  const ICON = Object.fromEntries(REACH_TYPES.map(([t, , i]) => [t, i]));
+  const reachLines = (pp) => {
+    const own = (pp?.reach || []).slice().sort((a, b) => (a.status === 'bounced') - (b.status === 'bounced') || (b.primary - a.primary));
+    const orb = REACH_TYPES.flatMap(([t]) => reachOrbis(pp, t).filter(o => !o.hidden && !own.some(e => e.type === t && reachNorm(t, e.value) === reachNorm(t, o.value))).map(o => ({ type: t, value: o.value, orbis: true })));
+    const legacy = PERSON_CONTACT_FIELDS.filter(f => ['email', 'phone', 'linkedin'].includes(f.key) && pp?.[f.key] && !own.some(e => e.type === f.key && reachNorm(f.key, e.value) === reachNorm(f.key, pp[f.key]))).map(f => ({ type: f.key, value: pp[f.key], legacy: true }));
+    const all = [...own, ...legacy, ...orb];
+    if (!all.length) return '<div class="contact-detail hint">No email or phone yet.</div>';
+    return all.map(e => `<div class="contact-detail">${ICON[e.type] || ''} <a href="${esc(href(e.type, e.value))}"${e.type === 'linkedin' ? ' target="_blank" rel="noopener noreferrer"' : ''} style="${e.status === 'bounced' ? 'text-decoration:line-through;' : ''}">${esc(e.value)}</a>${e.primary ? ' <span class="badge badge-blue">★</span>' : ''}${e.status === 'bounced' ? ' <span class="badge badge-red">Bounced</span>' : e.status === 'old' ? ' <span class="badge badge-grey">Old</span>' : ''}${e.orbis ? ' <span class="badge badge-grey">Orbis</span>' : ''}${e.legacy ? ' <span class="hint">(typed before)</span>' : ''}${e.note ? ` <span class="hint">${esc(e.note)}</span>` : ''}</div>`).join('');
+  };
+  const roleLine = (l) => {
+    if (l.isContact) return `Contact${l.contactRole ? ' · ' + esc(l.contactRole) : ''}`;
+    const bits = [];
+    if (linkIsManager(l)) bits.push(esc((l.mgmtRoles || []).join(' · ') || 'Manager'));
+    if (linkIsShareholder(l)) bits.push(l.shDirectPct != null ? `${fmtPctOwn(l.shDirectPct)} shareholder` : 'Shareholder');
+    return bits.join(' · ') || '—';
+  };
+  const addForm = (pid) => `<div class="form-row" style="align-items:end;gap:6px;margin-top:6px;">
+      <div class="form-group" style="max-width:120px;"><select class="field" id="cpAddType">${REACH_TYPES.map(([t, l]) => `<option value="${t}">${l}</option>`).join('')}</select></div>
+      <div class="form-group"><input class="field" id="cpAddValue" placeholder="name@company.pt, +351 …, linkedin.com/in/…"></div>
+      <div class="form-group"><input class="field" id="cpAddNote" placeholder="Note (optional)"></div>
+      <div class="form-group" style="flex:0 0 auto;"><button class="btn btn--primary btn--sm" data-cpaddsave="${esc(pid)}">Add</button> <button class="btn btn--ghost btn--sm" data-cpaddcancel>Cancel</button></div>
+    </div><div class="modal-err" id="cpAddErr"></div>`;
+  const card = (l) => {
+    const pp = people.get(l.personId), cur = linkCurrentAny(l);
+    return `<div class="contact-item${cur ? '' : ' prev'}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <div style="min-width:0;flex:1;">
+          <span class="contact-name person-link" data-person="${esc(l.personId)}">${esc(l.personName || pp?.name || '—')}</span>
+          ${l.personId === mainId ? ' <span class="badge badge-blue">★ Main contact</span>' : ''}
+          ${cur ? '' : ' <span class="badge badge-grey">Previous</span>'}
+          ${l.addedBy ? ` <span class="badge badge-grey" title="Added on the Ownership tab, not from Orbis">✋ ${esc(String(l.addedBy).split('@')[0])}</span>` : ''}
+          <div class="contact-role">${roleLine(l)}</div>
+          ${reachLines(pp)}
+          ${companyPeopleAddFor === l.personId ? addForm(l.personId) : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;">
+          ${canEdit && cur && companyPeopleAddFor !== l.personId ? `<button class="btn btn--ghost btn--sm" data-cpadd="${esc(l.personId)}" title="Add an email, phone or LinkedIn">＋ detail</button>` : ''}
+          ${cur ? (l.personId === mainId ? `<button class="btn btn--ghost btn--sm" data-mainct="" title="Clear the main contact">★</button>` : `<button class="btn btn--ghost btn--sm" data-mainct="${esc(l.personId)}" title="Make them the main contact">☆</button>`) : ''}
+          ${isHandLink(l) ? `<button class="btn btn--ghost btn--sm" data-handcur="${esc(l.id)}">${cur ? 'Mark previous' : 'Mark current'}</button>` : ''}
+          ${l.isContact ? `<button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove this contact from the company">✕</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+  };
+  const old = c.contacts || [];
+  el.innerHTML = `<div class="card" data-people-tab>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <div class="sec-title" style="margin:0;">People</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${prevN ? `<button class="btn btn--ghost btn--sm" data-cpprev>${companyPeopleShowPrev ? 'Hide' : 'Show'} previous (${prevN})</button>` : ''}
+          <button class="btn btn--ghost btn--sm" id="emailCompanyBtn" data-perm="out.send" data-feature="outreach"${c.companyEmail ? '' : ' disabled title="No company email on file"'}>✉ Email company</button>
+          ${canEdit ? '<button class="btn btn--primary btn--sm" data-cpnewcontact title="Someone Orbis doesn\'t list: never counted as owner or manager">＋ Add contact</button>' : ''}
+        </div>
+      </div>
+      <div class="hint" style="margin-bottom:10px;">Owners and managers come from Orbis; contacts are added by hand. Click a name for all their details. Company shareholders are on the Ownership tab.</div>
+      ${rows.map(card).join('') || '<div class="hint">Nobody yet. Import ownership data, or add a contact.</div>'}
+      ${old.length ? `<details style="margin-top:14px;"><summary class="hint" style="cursor:pointer;">Old Contacts list (${old.length}) — moves into People in the migration</summary>${old.map(ct => `<div class="contact-detail" style="margin-top:4px;">${esc(ct.name || '—')}${ct.role ? ' · ' + esc(ct.role) : ''}${ct.email ? ' · ✉ ' + esc(ct.email) : ''}${ct.phone ? ' · 📞 ' + esc(ct.phone) : ''}</div>`).join('')}</details>` : ''}
+    </div>`;
+  document.getElementById('emailCompanyBtn')?.addEventListener('click', () => openSendEmail('company'));
+  el.onclick = async (ev) => {
+    const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink]'); if (!t) return;
+    if (t.dataset.person) { openPerson(t.dataset.person, { type: 'company', id: c.id, tab: 'contacts' }); return; }
+    if (t.dataset.cpprev != null) { companyPeopleShowPrev = !companyPeopleShowPrev; renderCompanyPeople(c); return; }
+    if (t.dataset.cpnewcontact != null) { openContactPerson(); return; }
+    if (t.dataset.cpadd) { companyPeopleAddFor = t.dataset.cpadd; await renderCompanyPeople(c); document.getElementById('cpAddValue')?.focus(); return; }
+    if (t.dataset.cpaddcancel != null) { companyPeopleAddFor = null; renderCompanyPeople(c); return; }
+    if (t.dataset.mainct != null) { await setMainContact(t.dataset.mainct || null); renderCompanyPeople(c); return; }
+    if (t.dataset.handcur) { await toggleHandLink(t.dataset.handcur); renderCompanyPeople(c); return; }
+    if (t.dataset.rmlink) { await removePersonLink(t.dataset.rmlink); renderCompanyPeople(c); return; }
+    if (t.dataset.cpaddsave) {
+      const pp = people.get(t.dataset.cpaddsave); const er = document.getElementById('cpAddErr'); er.style.display = 'none';
+      if (!pp) return;
+      const r = reachAdd(pp.reach || [], { type: document.getElementById('cpAddType').value, value: document.getElementById('cpAddValue').value, note: document.getElementById('cpAddNote').value, by: currentUser, at: new Date().toISOString() });
+      if (r.error) { er.textContent = r.error; er.style.display = 'block'; return; }
+      t.disabled = true;
+      try { await savePersonReach(pp, r.list, pp.hiddenOrbis || [], `added ${r.entry.value}`); companyPeopleAddFor = null; renderCompanyPeople(c); }
+      catch(e){ er.textContent = e.message; er.style.display = 'block'; t.disabled = false; }
+    }
+  };
 }
 
 function renderActivityLog(){
@@ -5197,6 +5305,7 @@ async function saveContactPerson(){
     await logAuto(c.id, 'person_linked', `Added contact: ${personDisplayName(name)}${v('cpRole') ? ' (' + v('cpRole') + ')' : ''}`);
     showEl('contactPersonModal', false);
     renderOwnership(c);
+    if (isOn('search.people')) renderCompanyPeople(c); // 20 Oct (Stage 3): the People tab lists them too
   } catch(e){ fail(e.message); }
   finally { btn.disabled = false; }
 }
@@ -5277,6 +5386,15 @@ function backFromPerson(){
   if (target?.type === 'company' && target.id) openDetail(target.id, target.tab);
   else { showEl('listView', true); renderList(); }
 }
+// 20 Oct (people merge): save a person's emails / phones / LinkedIn and log it
+// on their current companies — used by the person page and the People tab.
+async function savePersonReach(p, reach, hiddenOrbis, change, links){
+  await updateDoc(doc(db,'searchPeople', p.id), { reach, hiddenOrbis, reachEmails: reachEmailsOf(reach), updatedAt: serverTimestamp(), updatedBy: currentUser });
+  p.reach = reach; p.hiddenOrbis = hiddenOrbis; personDocCache.delete(p.id);
+  logPortal('person_contact_edit', { personId: p.id, name: p.name });
+  const ls = links || await fetchPersonLinks(p.id).catch(() => []);
+  await logOnPersonCompanies(p, ls, 'person_contact_edited', `Contact details — ${personDisplayName(p.name)}: ${change}`);
+}
 // 20 Oct (people merge, Stage 2): a person's emails, phones and LinkedIn.
 let reachEditId = null;
 function renderReachCard(p, links){
@@ -5322,10 +5440,8 @@ function renderReachCard(p, links){
   const save = async (reach, hiddenOrbis, change) => {
     const btn = document.getElementById('reachSaveBtn'); if (btn) btn.disabled = true;
     try {
-      await updateDoc(doc(db,'searchPeople', p.id), { reach, hiddenOrbis, reachEmails: reachEmailsOf(reach), updatedAt: serverTimestamp(), updatedBy: currentUser });
-      p.reach = reach; p.hiddenOrbis = hiddenOrbis; personDocCache.delete(p.id); reachEditId = null;
-      logPortal('person_contact_edit', { personId: p.id, name: p.name });
-      await logOnPersonCompanies(p, links, 'person_contact_edited', `Contact details — ${personDisplayName(p.name)}: ${change}`);
+      await savePersonReach(p, reach, hiddenOrbis, change, links);
+      reachEditId = null;
       renderReachCard(p, links);
     } catch(e){ const er = document.getElementById('reachErr'); if (er){ er.textContent = e.message; er.style.display = 'block'; } if (btn) btn.disabled = false; }
   };
