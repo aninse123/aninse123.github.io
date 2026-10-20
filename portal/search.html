@@ -5257,6 +5257,7 @@ async function toggleHandLink(linkId){
     await updateDoc(doc(db,'searchPersonLinks', linkId), patch);
     invalidatePeopleCaches({ companyId: c.id, personId: link.personId });
     if (!link.isContact) await recountCompanyPeople(c.id); // contacts don't change the owner / manager counts
+    if (!toCurrent && c.primaryContact?.personId === link.personId) await clearMainContactOf(c, link); // 20 Oct: no previous main contact
     if (link.personId) await recountPerson(link.personId);
     await logAuto(c.id, 'person_updated', `${link.personName || 'Person'} marked ${toCurrent ? 'current' : 'previous'} by hand`);
     renderOwnership(c); renderOverview(c);
@@ -5316,6 +5317,14 @@ async function mainContactSnapshot(personId, c, link){
   const role = link ? (link.isContact ? (link.contactRole || 'Contact') : ((link.mgmtRoles || [])[0] || (linkIsShareholder(link) ? 'Shareholder' : ''))) : '';
   return { personId, name: personDisplayName(pp?.name || link?.personName || ''), role: role || null, email: personEmailsFor(pp, c)[0] || null, phone: reachFirst(pp, 'phone') || orbisValues(pp, 'orbisPhones').slice(-1)[0] || null };
 }
+// 20 Oct (people merge, Stage 4): a main contact who is removed or marked previous stops being it.
+async function clearMainContactOf(c, link){
+  try {
+    await updateDoc(doc(db,'searchCompanies', c.id), { primaryContact: null, updatedAt: serverTimestamp(), updatedBy: currentUser });
+    c.primaryContact = null; cacheCompanies();
+    await logAuto(c.id, 'company_edited', `Main contact cleared (${link.personName || 'person'} is no longer at the company)`);
+  } catch(e){ console.warn('clear main contact', e); }
+}
 async function setMainContact(personId){
   const c = getCompany(); if (!c) return;
   const link = personId ? (companyLinksCache.get(c.id) || []).find(l => l.personId === personId) : null;
@@ -5336,6 +5345,7 @@ async function removePersonLink(linkId){
     await deleteDoc(doc(db,'searchPersonLinks',linkId));
     invalidatePeopleCaches({ companyId: c.id, personId: link?.personId });
     if (!link?.isContact) await recountCompanyPeople(c.id); // 20 Oct: a contact doesn't change the counts
+    if (link && c.primaryContact?.personId === link.personId) await clearMainContactOf(c, link); // 20 Oct: the main contact left
     if (link?.personId) await recountPerson(link.personId);
     await logAuto(c.id, 'person_unlinked', `Unlinked person: ${link?.personName || linkId}`);
     renderOwnership(c); renderOverview(c);
