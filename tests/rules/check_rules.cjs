@@ -19,6 +19,8 @@ const PARTNER = { email: ANT, perms: P.PARTNER_PERMS, key: 'antonio' };
 const PARTNER_NO_DELETE = { email: ANT, perms: P.PARTNER_PERMS.filter((p) => p !== 'search.delete'), key: 'antonio' };
 const NO_CLAIMS = { email: ANT }; // an old token from before team access
 const INTERN = { email: 'maria@douropartners.pt', perms: ['search.view', 'search.edit', 'search.activity', 'out.view', 'out.draft', 'out.tasks', 'out.campaigns', 'net.view', 'net.edit'], key: 'maria' };
+// 20 Oct (people merge, Stage 2): someone who may only see the CRM and add people's details.
+const REACH = { email: 'rita@douropartners.pt', perms: ['search.view', 'search.reach'], key: 'rita' };
 const docPath = (p) => `/databases/(default)/documents/${p}`;
 // method: get | create | update | delete. data = incoming (create/update); old = stored (update/delete/get).
 const C = (label, who, method, p, expect, data, old) => ({ label, tc: { expectation: expect, request: { auth: { uid: 'u_' + who.email, token: who }, path: docPath(p), method, ...(data ? { resource: { data } } : {}) }, ...(old ? { resource: { data: old } } : {}) } });
@@ -39,6 +41,22 @@ const cases = [
   C('Partner: log a Search CRM activity', PARTNER, 'create', 'searchActivities/a1', 'ALLOW', { companyId: 'c1', type: 'note', createdBy: me }),
   C('Partner: add a person', PARTNER, 'create', 'searchPeople/p1', 'ALLOW', { name: 'X' }),
   C('Partner: link a person to a company', PARTNER, 'create', 'searchPersonLinks/l1', 'ALLOW', { companyId: 'c1', personId: 'p1' }),
+  // ── People merge, Stage 2: "search.reach" (details and contact people only) ──
+  C('Reach: add an email to any person', REACH, 'update', 'searchPeople/p1', 'ALLOW', { name: 'X', reach: [{ type: 'email', value: 'x@y.pt' }], reachEmails: ['x@y.pt'], updatedBy: REACH.email }, { name: 'X' }),
+  C('Reach: cannot rename a person', REACH, 'update', 'searchPeople/p1', 'DENY', { name: 'Y' }, { name: 'X' }),
+  C('Reach: add a contact person', REACH, 'create', 'searchPeople/m_1', 'ALLOW', { name: 'Rita', source: 'manual' }),
+  C('Reach: cannot create an Orbis person', REACH, 'create', 'searchPeople/u_1', 'DENY', { name: 'X', source: 'orbis' }),
+  C('Reach: link a contact person to a company', REACH, 'create', 'searchPersonLinks/m_1__c1', 'ALLOW', { companyId: 'c1', personId: 'm_1', isContact: true, contactCurrent: true }),
+  C('Reach: cannot add an owner or manager', REACH, 'create', 'searchPersonLinks/m_1__c1', 'DENY', { companyId: 'c1', personId: 'm_1', isContact: true, mgmtCurrent: true }),
+  C('Reach: mark a contact previous', REACH, 'update', 'searchPersonLinks/m_1__c1', 'ALLOW', { companyId: 'c1', isContact: true, contactCurrent: false }, { companyId: 'c1', isContact: true, contactCurrent: true }),
+  C('Reach: cannot turn an Orbis link into a contact', REACH, 'update', 'searchPersonLinks/u_1__c1', 'DENY', { companyId: 'c1', isContact: true }, { companyId: 'c1', shCurrent: true }),
+  C('Reach: remove a contact person from a company', REACH, 'delete', 'searchPersonLinks/m_1__c1', 'ALLOW', null, { companyId: 'c1', isContact: true }),
+  C('Reach: cannot remove an Orbis owner', REACH, 'delete', 'searchPersonLinks/u_1__c1', 'DENY', null, { companyId: 'c1', shCurrent: true }),
+  C('Reach: set the company main contact', REACH, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', primaryContact: { personId: 'm_1' }, updatedBy: REACH.email }, { name: 'A' }),
+  C('Reach: cannot edit the company itself', REACH, 'update', 'searchCompanies/c1', 'DENY', { name: 'B', updatedBy: REACH.email }, { name: 'A' }),
+  C('Reach: cannot create review pairs', REACH, 'create', 'peopleReview/r1', 'DENY', { status: 'open' }),
+  C('Partner: decide a review pair', PARTNER, 'update', 'peopleReview/r1', 'ALLOW', { status: 'kept' }, { status: 'open' }),
+  C('Partner: cannot delete a review pair', PARTNER, 'delete', 'peopleReview/r1', 'DENY', null, { status: 'kept' }),
   C('Partner: brokers', PARTNER, 'create', 'searchBrokers/b1', 'ALLOW', { name: 'X' }),
   C('Partner: Search CRM settings (fit criteria)', PARTNER, 'update', 'searchConfig/fitCriteria', 'ALLOW', { a: 2 }, { a: 1 }),
   C('Partner: map lists', PARTNER, 'create', 'searchMapLists/m1', 'ALLOW', { name: 'X' }),

@@ -30,6 +30,7 @@ const PERMS = [
   ["search.activity", "Search CRM", "Add notes and activities, close meetings (any company; never edited or deleted)"],
   ["search.deal", "Search CRM", "Edit deal info and stage"],
   ["search.flags", "Search CRM", "Set Do not contact, contactable and tier"],
+  ["search.reach", "Search CRM", "Add and edit people’s emails, phones and LinkedIn, and contact people (any person)"],
   ["search.stats", "Search CRM", "See Company / People statistics"],
   ["search.delete", "Search CRM", "Delete companies and any activity"],
   ["search.import", "Search CRM", "Import companies and people (Admin)"],
@@ -77,12 +78,12 @@ const DEFAULT_ROLES = {
   partner: { name: "Partner", perms: PARTNER_PERMS, description: "Partners — everything except the Admin-only permissions (editable by the Admin)." },
   analyst: {
     name: "Analyst",
-    perms: ["search.view", "search.edit", "search.editall", "search.activity", "search.deal", "search.stats", "search.export", "out.view", "out.draft", "out.tasks", "out.campaigns", "net.view", "net.edit", "icrm.view"],
+    perms: ["search.view", "search.edit", "search.editall", "search.reach", "search.activity", "search.deal", "search.stats", "search.export", "out.view", "out.draft", "out.tasks", "out.campaigns", "net.view", "net.edit", "icrm.view"],
     description: "Full-time team member: research, campaigns prepared for approval.",
   },
   intern: {
     name: "Intern",
-    perms: ["search.view", "search.edit", "search.activity", "out.view", "out.draft", "out.tasks", "out.campaigns", "net.view", "net.edit"],
+    perms: ["search.view", "search.edit", "search.reach", "search.activity", "out.view", "out.draft", "out.tasks", "out.campaigns", "net.view", "net.edit"],
     description: "Research companies: edit the companies they own, add notes and activities on any company; edit Network contacts; do assigned tasks; write emails and prepare campaigns that a partner approves. No deal info, flags, direct sending, deleting, importing or exporting.",
   },
   viewer: {

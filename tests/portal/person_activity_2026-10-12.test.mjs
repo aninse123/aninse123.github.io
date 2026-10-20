@@ -8,7 +8,7 @@ const lift = (name) => { const a = page.indexOf(`function ${name}(`); let d = 0,
 const fieldsAt = page.indexOf('const PERSON_CONTACT_FIELDS = ['), fieldsEnd = page.indexOf('];', fieldsAt) + 2;
 const ctx = {};
 vm.createContext(ctx);
-vm.runInContext(`${page.slice(fieldsAt, fieldsEnd)}\n${lift('personContactChanges')}\n${lift('currentCompanyIdsOf')}\nglobalThis.T = { personContactChanges, currentCompanyIdsOf };`, ctx);
+vm.runInContext(`${page.slice(fieldsAt, fieldsEnd)}\n${lift('personContactChanges')}\nfunction linkIsCurrent(l){ return l.shCurrent === true || l.mgmtCurrent === true; }\nconst linkCurrentAny = (l) => (l?.isContact ? l.contactCurrent !== false : linkIsCurrent(l));\n${lift('currentCompanyIdsOf')}\nglobalThis.T = { personContactChanges, currentCompanyIdsOf };`, ctx);
 const { T } = ctx;
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 const J = (x) => JSON.stringify(x);

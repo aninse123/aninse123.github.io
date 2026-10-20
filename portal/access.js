@@ -30,6 +30,7 @@ export const PERMS = [
   ["search.activity", "Search CRM", "Add notes and activities, close meetings (any company; never edited or deleted)"],
   ["search.deal", "Search CRM", "Edit deal info and stage"],
   ["search.flags", "Search CRM", "Set Do not contact, contactable and tier"],
+  ["search.reach", "Search CRM", "Add and edit people’s emails, phones and LinkedIn, and contact people (any person)"],
   ["search.stats", "Search CRM", "See Company / People statistics"],
   ["search.delete", "Search CRM", "Delete companies and any activity"],
   ["search.import", "Search CRM", "Import companies and people (Admin)"],
