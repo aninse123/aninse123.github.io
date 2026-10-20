@@ -585,7 +585,12 @@
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
           <input type="text" class="search-input" id="peopleSearchInput" placeholder="Search people by name…" style="max-width:340px;">
           <span class="results-count" id="peopleResultsCount"></span>
+          <span data-feature="search.people" style="display:inline-flex;gap:8px;margin-left:auto;">
+            <button class="btn btn--ghost btn--sm" id="peopleHandBtn" title="People added on a company's Ownership tab, not from Orbis">✋ Added by hand</button>
+            <button class="btn btn--ghost btn--sm" id="peopleReviewBtn" title="After an Orbis import: a person added by hand and an Orbis person with the same or a similar name at the same company">Possible same people <span id="peopleReviewN"></span></button>
+          </span>
         </div>
+        <div id="peopleHandPanel" data-feature="search.people" style="display:none;margin-bottom:12px;"></div>
         <div style="overflow-x:auto;"><table class="own-table">
           <thead><tr><th data-col="name">Name</th><th data-col="entityType">Type</th><th class="num" data-col="age">Age</th><th class="num" data-col="linkCount">Positions</th><th class="num" data-col="currentLinkCount">Current</th><th data-col="country">Country</th></tr></thead>
           <tbody id="peopleBody"></tbody>
@@ -1391,6 +1396,8 @@ const ACT = {
   // contact details or notes change on the person page.
   person_contact_edited: { label:'Person contact updated', icon:'👤', outreach:false },
   person_note:      { label:'Note on a person',  icon:'📝', outreach:false },
+  // 20 Oct (people merge): a person added by hand merged into the Orbis person.
+  person_merged:    { label:'People merged',     icon:'🧑‍💼', outreach:false },
   // 19 Oct (one inbox): a first email held because the address was just emailed
   // through another company. Not a touch.
   outreach_hold:    { label:'Held: same email address', icon:'⏸', outreach:false },
@@ -4625,6 +4632,12 @@ async function renderOwnership(c){
     `<button class="btn btn--icon btn--ghost" data-tocontact="${esc(l.id)}" data-crole="${esc(role)}" data-perm="search.edit" data-coedit title="Copy to Contacts">👤+</button>`;
   const rowActions = l => `<button class="btn btn--icon btn--ghost" data-editlink="${esc(l.id)}" data-perm="search.edit" data-coedit title="Edit">✎</button><button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" data-perm="search.edit" data-coedit title="Remove link">✕</button>`;
   const statusBadge = cur => cur === false ? '<span class="badge badge-grey">Previous</span>' : '<span class="badge badge-green">Current</span>';
+  // 20 Oct (people merge, switch search.people): who added a person by hand,
+  // whether the latest Orbis import listed them, and Mark previous / current.
+  const peopleOn = isOn('search.people');
+  const shortDay = t => { const d = tsToDate(t); return d ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
+  const handChips = l => !peopleOn || !l.addedBy ? '' : `<div class="contact-detail" data-feature="search.people"><span class="badge badge-grey" title="Added on the Ownership tab, not from Orbis">✋ added by hand · ${esc(String(l.addedBy).split('@')[0])}${l.addedAt ? ', ' + esc(shortDay(l.addedAt)) : ''}</span>${isHandLink(l) && l.orbisMissingAt ? ` <span class="badge badge-warn" title="The last Orbis import covering this company didn't list them. Kept as it is — Mark previous if they left.">not in the Orbis import of ${esc(shortDay(l.orbisMissingAt))}</span>` : ''}${!isHandLink(l) ? ' <span class="badge badge-green" title="A later Orbis import lists them; Orbis keeps their roles and % up to date">now in Orbis</span>' : ''}</div>`;
+  const handBtn = l => !peopleOn || !isHandLink(l) ? '' : `<button class="btn btn--ghost btn--sm" data-handcur="${esc(l.id)}" data-feature="search.people" data-perm="search.edit" data-coedit title="Only for people added by hand: imports never change them">${linkIsCurrent(l) ? 'Mark previous' : 'Mark current'}</button>`;
 
   const cards = rows.map(l => {
     const isSh = linkIsShareholder(l), isMg = linkIsManager(l);
@@ -4652,11 +4665,11 @@ async function renderOwnership(c){
           <span class="contact-name person-link" data-person="${esc(l.personId)}">${esc(l.personName || '—')}</span>
           ${l.personEntityType === 'entity' ? ` <span class="badge badge-grey" title="${esc(l.shTypeOrbis || 'Corporate entity')}">🏢</span>` : ''}${ownerBadge}${highestBadge}
           ${age ? ` <span class="badge badge-grey" title="${age.exact ? 'From Orbis birth date' : 'From the age Orbis gave at import, carried forward'}">🎂 ${age.age}${age.exact ? '' : '~'}</span>` : ''}
-          ${shLine}${mgLine}
+          ${shLine}${mgLine}${handChips(l)}
           ${ownOn && !allPrev ? `<div class="also-cos" data-also="${esc(l.personId)}"></div>` : ''}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          ${!allPrev ? contactBtn(l, roleForContact) : ''}${rowActions(l)}
+          ${handBtn(l)}${!allPrev ? contactBtn(l, roleForContact) : ''}${rowActions(l)}
         </div>
       </div>
     </div>`;
@@ -5078,6 +5091,7 @@ async function savePersonLink(){
       shType: isSh ? 'I' : null,
       alsoManager: roles.length > 0,
       source: 'manual', updatedAt: serverTimestamp(),
+      ...(editLinkId ? {} : { addedBy: currentUser, addedAt: serverTimestamp() }), // 20 Oct (people merge, 1-flag)
     }, { merge: true });
     invalidatePeopleCaches({ companyId: c.id, personId: pid });
     await recountCompanyPeople(c.id);
@@ -5087,6 +5101,27 @@ async function savePersonLink(){
     renderOwnership(c); renderOverview(c);
   } catch(e){ console.error(e); errEl.textContent = e.message; errEl.style.display = 'block'; }
   finally { btn.disabled = false; btn.innerHTML = 'Save'; }
+}
+// 20 Oct (people merge, 1-keep): someone added by hand left (or came back) —
+// imports never change them, so you do. Flips the facets the link has.
+async function toggleHandLink(linkId){
+  const c = getCompany(); if (!c) return;
+  const link = (companyLinksCache.get(c.id) || []).find(l => l.id === linkId);
+  if (!link || !isHandLink(link)) return;
+  const toCurrent = !linkIsCurrent(link);
+  const patch = { handStatusBy: currentUser, handStatusAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  if (link.shCurrent != null) patch.shCurrent = toCurrent;
+  if (link.mgmtCurrent != null) patch.mgmtCurrent = toCurrent;
+  if (link.shCurrent == null && link.mgmtCurrent == null) patch.mgmtCurrent = toCurrent;
+  if (!confirm(`Mark ${link.personName || 'this person'} as ${toCurrent ? 'current again' : 'previous (no longer at the company)'}?`)) return;
+  try {
+    await updateDoc(doc(db,'searchPersonLinks', linkId), patch);
+    invalidatePeopleCaches({ companyId: c.id, personId: link.personId });
+    await recountCompanyPeople(c.id);
+    if (link.personId) await recountPerson(link.personId);
+    await logAuto(c.id, 'person_updated', `${link.personName || 'Person'} marked ${toCurrent ? 'current' : 'previous'} by hand`);
+    renderOwnership(c); renderOverview(c);
+  } catch(e){ alert('Error: ' + e.message); }
 }
 async function removePersonLink(linkId){
   const c = getCompany(); if (!c) return;
@@ -5319,7 +5354,54 @@ function renderPeopleRows(){
       <td>${esc(p.country || '—')}</td>
     </tr>`).join('');
 }
+// 20 Oct (people merge, switch search.people): the people added by hand, and
+// the "possible same person" pairs an import found — Merge or Keep separate.
+let peopleReviews = [];
+async function loadPeopleReviews(){
+  if (!isOn('search.people')) return;
+  try {
+    const snap = await getDocs(query(collection(db,'peopleReview'), where('status','==','open'), limit(200)));
+    addReads(snap.docs.length || 1);
+    peopleReviews = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const n = document.getElementById('peopleReviewN'); if (n) n.textContent = peopleReviews.length ? `(${peopleReviews.length})` : '(0)';
+  } catch(e){ console.error('peopleReview', e); }
+}
+async function showHandPeople(){
+  const el = document.getElementById('peopleHandPanel'); el.style.display = ''; el.innerHTML = '<div class="hint">Loading…</div>';
+  try {
+    const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('source','==','manual'), limit(300)));
+    addReads(snap.docs.length || 1);
+    const ls = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    el.innerHTML = `<div class="card" style="padding:12px;"><div class="sec-title" style="margin-bottom:6px;">Added by hand (${ls.length})</div>${ls.length ? ls.map(l => `<div style="padding:4px 0;border-top:1px solid var(--border);font-size:0.84rem;"><span class="person-link" data-person="${esc(l.personId)}">${esc(l.personName || '—')}</span> · <span class="person-link" data-gotoco="${esc(l.companyId)}">${esc(l.companyName || '—')}</span>${l.addedBy ? ` <span class="hint">· ${esc(String(l.addedBy).split('@')[0])}</span>` : ''}${l.orbisMissingAt ? ' <span class="badge badge-warn">not in the latest Orbis import</span>' : ''}${linkIsCurrent(l) ? '' : ' <span class="badge badge-grey">Previous</span>'}</div>`).join('') : '<div class="hint">Nobody yet.</div>'}</div>`;
+  } catch(e){ el.innerHTML = `<div class="hint">Couldn't load: ${esc(e.message)}</div>`; }
+}
+async function showPeopleReviews(){
+  const el = document.getElementById('peopleHandPanel'); el.style.display = '';
+  await loadPeopleReviews();
+  el.innerHTML = `<div class="card" style="padding:12px;"><div class="sec-title" style="margin-bottom:6px;">Possible same people (${peopleReviews.length})</div><div class="hint" style="margin-bottom:6px;">Found by an Orbis import at the same company. Merge moves what was added by hand (phone, email, notes) to the Orbis person and removes the hand-added entry; nothing is merged without your click.</div>${peopleReviews.length ? peopleReviews.map(r => `<div style="padding:6px 0;border-top:1px solid var(--border);font-size:0.84rem;display:flex;gap:8px;flex-wrap:wrap;align-items:center;"><span style="flex:1;min-width:240px;"><span class="person-link" data-gotoco="${esc(r.companyId)}">${esc(r.companyName || '—')}</span>: <b>${esc(r.handName)}</b> (added by hand) ↔ <b>${esc(r.orbisName)}</b> (Orbis) <span class="badge ${r.match === 'same' ? 'badge-green' : 'badge-warn'}">${r.match === 'same' ? 'same name' : 'similar name'}</span></span><button class="btn btn--primary btn--sm" data-rvmerge="${esc(r.id)}" data-perm="search.editall">Merge</button><button class="btn btn--ghost btn--sm" data-rvkeep="${esc(r.id)}" data-perm="search.editall">Keep separate</button></div>`).join('') : '<div class="hint">Nothing to review.</div>'}</div>`;
+}
+async function decidePeopleReview(id, merge){
+  const r = peopleReviews.find(x => x.id === id); if (!r) return;
+  if (merge && !confirm(`Merge "${r.handName}" (added by hand) into the Orbis person "${r.orbisName}" at ${r.companyName}?`)) return;
+  try {
+    if (merge){
+      const [hp, op] = await Promise.all([fetchPerson(r.handPersonId, true), fetchPerson(r.orbisPersonId, true)]);
+      const patch = { updatedAt: serverTimestamp() };
+      for (const f of PERSON_CONTACT_FIELDS) if (hp?.[f.key] && !op?.[f.key]) patch[f.key] = hp[f.key];
+      if (hp?.notes) patch.notes = [op?.notes, `From "${r.handName}" (added by hand): ${hp.notes}`].filter(Boolean).join('\n');
+      if (op) await updateDoc(doc(db,'searchPeople', r.orbisPersonId), patch);
+      await deleteDoc(doc(db,'searchPersonLinks', r.handLinkId));
+      invalidatePeopleCaches({ companyId: r.companyId, personId: r.handPersonId });
+      await recountCompanyPeople(r.companyId);
+      await recountPerson(r.handPersonId);
+      await logAuto(r.companyId, 'person_merged', `Merged "${r.handName}" (added by hand) into the Orbis person "${r.orbisName}"`);
+    }
+    await updateDoc(doc(db,'peopleReview', id), { status: merge ? 'merged' : 'kept', decidedBy: currentUser, decidedAt: serverTimestamp() });
+    await showPeopleReviews();
+  } catch(e){ alert('Error: ' + e.message); }
+}
 async function renderPeople(){
+  loadPeopleReviews();
   showEl('tableCard', false); showEl('groupedCard', false); showEl('mapCard', false); showEl('peopleCard', true); showEl('pagination', false);
   const term = document.getElementById('peopleSearchInput').value.trim();
   const tbody = document.getElementById('peopleBody');
@@ -6435,6 +6517,45 @@ function updatePeopleImportBtn(){
 
 // Shared by confirmPeopleImport() and the "check what this will demote"
 // preview so the two can never compute a different answer from each other.
+// 20 Oct (people merge, stage 1): a link added by hand (Ownership tab → Add
+// Person). Imports never mark it "previous"; a person who was added by hand
+// first and later found by Orbis keeps addedBy but follows the file again.
+const isHandLink = l => !!l && (l.source || 'orbis') !== 'orbis';
+// Is a name in an Orbis file the same person as one added by hand?
+// 'same' = equal once accents, titles and capitals are ignored; 'similar' =
+// all words of the shorter name inside the other, or the same first and last
+// word. Never merged on a guess: both go to the review list (André, 20 Oct).
+function personNameMatch(a, b){
+  const ka = personNameKey(a), kb = personNameKey(b);
+  if (!ka || !kb) return null;
+  if (ka === kb) return 'same';
+  const ta = personNameTokens(ka), tb = personNameTokens(kb);
+  if (ta.length < 2 || tb.length < 2) return null;
+  const [sh, lo] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  if (sh.every(t => lo.includes(t))) return 'similar';
+  if (ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1]) return 'similar';
+  return null;
+}
+// After an import: the hand-added links on companies the file covers that the
+// file doesn't list ("not in the latest Orbis import"), and the pairs to review.
+function handLinksAfterImport(rows, linksByCo, facetScope){
+  const fileByCo = new Map();
+  for (const r of rows) if (r.companyId) (fileByCo.get(r.companyId) || fileByCo.set(r.companyId, []).get(r.companyId)).push(r);
+  const missing = [], reviews = new Map();
+  for (const [cid, arr] of linksByCo){
+    if (!facetScope.shCurrent.touched.has(cid) && !facetScope.mgmtCurrent.touched.has(cid)) continue;
+    for (const l of arr){
+      if (!isHandLink(l) || facetScope.shCurrent.keep.has(l.id) || facetScope.mgmtCurrent.keep.has(l.id)) continue;
+      missing.push(l);
+      for (const r of fileByCo.get(cid) || []){
+        if (r.personId === l.personId) continue;
+        const match = personNameMatch(l.personName, r.personName);
+        if (match) reviews.set(`${l.id}__${r.personId}`, { id: `${l.id}__${r.personId}`, link: l, row: r, match });
+      }
+    }
+  }
+  return { missing, reviews: [...reviews.values()] };
+}
 function computeFacetScope(rows){
   const facetScope = {
     shCurrent:   { touched: new Set(), keep: new Set() },
@@ -6484,6 +6605,7 @@ async function checkPeopleImportDemotions(){
     await mapPool(touchedChunks, async chunk => {
       const docs = await restFetchWhereIn('searchPersonLinks', 'companyId', chunk);
       for (const l of docs){
+        if (isHandLink(l)) continue; // 20 Oct: people added by hand are never marked "previous" by an import
         for (const facet of ['shCurrent','mgmtCurrent']){
           const scope = facetScope[facet];
           if (!scope.touched.has(l.companyId) || scope.keep.has(l.id)) continue;
@@ -7254,6 +7376,9 @@ async function confirmPeopleImport(){
     const demotions = new Map();
     for (const [cid, arr] of linksByCo){
       for (const l of arr){
+        // 20 Oct (people merge, 1-keep): only Orbis links follow the file — a
+        // person added by hand is never marked "previous" by an import.
+        if (isHandLink(l)) continue;
         for (const facet of ['shCurrent','mgmtCurrent']){
           const scope = facetScope[facet];
           // Only demote inside the facet's own scope: a company the file did not
@@ -7271,6 +7396,31 @@ async function confirmPeopleImport(){
         }
       }
     }
+    // 5b) 20 Oct (people merge, 1-flag / 1-review): hand-added people on a
+    //     company this file covers but doesn't list are flagged "not in the
+    //     latest Orbis import"; when the file brings someone with the same or a
+    //     similar name to that company, the pair goes to the review list
+    //     (switch search.people) — never merged automatically. Few writes.
+    const hand = handLinksAfterImport(rows, linksByCo, facetScope);
+    let newReviews = 0;
+    try {
+      await commitInChunks(hand.missing, 450, (batch, l) => { batch.update(doc(db,'searchPersonLinks', l.id), { orbisMissingAt: serverTimestamp() }); return true; }, { cancelToken });
+      if (hand.reviews.length && isOn('search.people')){
+        const fresh = [];
+        for (const rv of hand.reviews){ const ex = await getDoc(doc(db,'peopleReview', rv.id)); addReads(1); if (!ex.exists()) fresh.push(rv); }
+        await commitInChunks(fresh, 450, (batch, rv) => {
+          batch.set(doc(db,'peopleReview', rv.id), {
+            companyId: rv.link.companyId, companyName: rv.link.companyName || companiesById.get(rv.link.companyId)?.name || '',
+            handLinkId: rv.link.id, handPersonId: rv.link.personId, handName: rv.link.personName || '',
+            orbisPersonId: rv.row.personId, orbisName: rv.row.personName || '', match: rv.match,
+            status: 'open', createdAt: serverTimestamp(), createdBy: currentUser,
+          });
+          return true;
+        }, { cancelToken });
+        newReviews = fresh.length;
+      }
+    } catch(e){ console.error('hand-added people check', e); }
+    tally.handKept = hand.missing.length; tally.reviews = newReviews;
     // 6) Refresh denormalised counters — skip a company whose counts and
     //    ownership metadata already match what's stored (companies is already
     //    fully loaded in memory, so this comparison costs no extra reads).
@@ -7322,7 +7472,7 @@ async function confirmPeopleImport(){
     // holding the app hostage for that — it keeps running in the background
     // (refreshPersonTotals(), unawaited) and the still-visible sticky bar
     // keeps tracking it through to genuine completion.
-    await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted, peopleWritten, peopleSkipped, linksWritten, linksSkipped });
+    await logPortal('people_import', { mode: peopleImportStats.mode, links: rows.length, people: byPerson.size, companies: touched.length, demoted, peopleWritten, peopleSkipped, linksWritten, linksSkipped, handKept: hand.missing.length, reviews: newReviews });
     invalidatePeopleCaches();
     cacheCompanies();
     showEl('peopleImportModal', false);
@@ -7386,7 +7536,7 @@ async function confirmPeopleImport(){
       if (cancelToken.cancelled){ ImportProgress.stopped(stoppedSummary('Refreshing totals')); return; }
       const skipped = peopleSkipped + linksSkipped;
       const skipNote = skipped ? ` ${skipped.toLocaleString('de-DE')} record${skipped===1?'':'s'} unchanged since last import — skipped, no write.` : '';
-      ImportProgress.complete(`Imported ${rows.length.toLocaleString('de-DE')} link${rows.length===1?'':'s'} across ${byPerson.size.toLocaleString('de-DE')} people/entities and ${touched.length.toLocaleString('de-DE')} companies.${demoted?` ${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}${skipNote}`);
+      ImportProgress.complete(`Imported ${rows.length.toLocaleString('de-DE')} link${rows.length===1?'':'s'} across ${byPerson.size.toLocaleString('de-DE')} people/entities and ${touched.length.toLocaleString('de-DE')} companies.${demoted?` ${demoted} previous relationship${demoted===1?'':'s'} marked as no longer current.`:''}${hand.missing.length ? ` ${hand.missing.length} hand-added ${hand.missing.length === 1 ? 'person' : 'people'} kept, not in this file.` : ''}${newReviews ? ` ${newReviews} possible same ${newReviews === 1 ? 'person' : 'people'} to review (People view).` : ''}${skipNote}`);
     }
     backgroundTaskStarted = true;
     refreshPersonTotals()
@@ -10880,7 +11030,7 @@ async function recomputeActivityFields(c){
   // lastTouchAt = most recent non-future, non-auto activity
   // email_test: Outreach test-mode sends aren't real touches (they go to our own addresses).
   // task_test: campaign tasks done in test mode (rehearsals) — not real touches either.
-  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold'];
+  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold','person_merged'];
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));
@@ -11960,11 +12110,22 @@ document.getElementById('contactCancelBtn').addEventListener('click', () => show
 document.getElementById('contactSaveBtn').addEventListener('click', saveContact);
 // People & Ownership
 document.getElementById('personBackBtn').addEventListener('click', backFromPerson);
+// 20 Oct (people merge, switch search.people): People view panels.
+document.getElementById('peopleHandBtn').addEventListener('click', showHandPeople);
+document.getElementById('peopleReviewBtn').addEventListener('click', showPeopleReviews);
+document.getElementById('peopleHandPanel').addEventListener('click', e => {
+  const t = e.target.closest('[data-rvmerge],[data-rvkeep],[data-person],[data-gotoco]'); if (!t) return;
+  if (t.dataset.rvmerge) decidePeopleReview(t.dataset.rvmerge, true);
+  else if (t.dataset.rvkeep) decidePeopleReview(t.dataset.rvkeep, false);
+  else if (t.dataset.person) openPerson(t.dataset.person, null);
+  else if (t.dataset.gotoco) openDetail(t.dataset.gotoco);
+});
 document.getElementById('personLinkCancelBtn').addEventListener('click', () => showEl('personLinkModal', false));
 document.getElementById('personLinkSaveBtn').addEventListener('click', savePersonLink);
 document.getElementById('panel-ownership').addEventListener('click', e => {
-  const t = e.target.closest('[data-person],[data-gotoco],[data-editlink],[data-rmlink],[data-tocontact],#addPersonBtn');
+  const t = e.target.closest('[data-person],[data-gotoco],[data-editlink],[data-rmlink],[data-tocontact],[data-handcur],#addPersonBtn');
   if (!t) return;
+  if (t.dataset.handcur) { toggleHandLink(t.dataset.handcur); return; }
   if (t.id === 'addPersonBtn') openPersonLink(null);
   else if (t.dataset.person) openPerson(t.dataset.person, { type:'company', id: currentCoId, tab:'ownership' });
   else if (t.dataset.gotoco) openDetail(t.dataset.gotoco);

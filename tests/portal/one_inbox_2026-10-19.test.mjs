@@ -18,7 +18,7 @@ ok('…only with the switch on and a company, from its live enrolments', /async 
 ok('…sent only when shown and ticked', out.includes("const stopCampaign = !!($('replyStopWrap') && !$('replyStopWrap').hidden && $('replyStop')?.checked);") && out.includes('...(stopCampaign ? { stopCampaign: true } : {})'));
 ok('header: every address used, first one first (switch on)', out.includes('function addrTrail(t)') && out.includes("join(' → ')") && out.includes('${company}${addrTrail(t)}'));
 ok('To approve: companies waiting because of the same address, read at most once a minute', out.includes("where('holdKind', '==', 'same_inbox')") && out.includes('Date.now() - inboxHeldAt < 60000') && out.includes('${inboxHeldCard()}'));
-ok('Search CRM: the hold activity is labelled and never counts as a touch', search.includes("outreach_hold:    { label:'Held: same email address'") && /AUTO_TYPES = \[[^\]]*'outreach_hold'\]/.test(search));
+ok('Search CRM: the hold activity is labelled and never counts as a touch', search.includes("outreach_hold:    { label:'Held: same email address'") && /AUTO_TYPES = \[[^\]]*'outreach_hold'[^\]]*\]/.test(search));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');
