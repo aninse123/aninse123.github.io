@@ -53,6 +53,7 @@ const cases = [
   C('Reach: remove a contact person from a company', REACH, 'delete', 'searchPersonLinks/m_1__c1', 'ALLOW', null, { companyId: 'c1', isContact: true }),
   C('Reach: cannot remove an Orbis owner', REACH, 'delete', 'searchPersonLinks/u_1__c1', 'DENY', null, { companyId: 'c1', shCurrent: true }),
   C('Reach: set the company main contact', REACH, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', primaryContact: { personId: 'm_1' }, updatedBy: REACH.email }, { name: 'A' }),
+  C('Reach: add a person\'s email to the company email search', REACH, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', emailKeys: ['rit', 'rita@empresa.pt'], updatedBy: REACH.email }, { name: 'A' }),
   C('Reach: cannot edit the company itself', REACH, 'update', 'searchCompanies/c1', 'DENY', { name: 'B', updatedBy: REACH.email }, { name: 'A' }),
   C('Reach: cannot create review pairs', REACH, 'create', 'peopleReview/r1', 'DENY', { status: 'open' }),
   C('Partner: decide a review pair', PARTNER, 'update', 'peopleReview/r1', 'ALLOW', { status: 'kept' }, { status: 'open' }),

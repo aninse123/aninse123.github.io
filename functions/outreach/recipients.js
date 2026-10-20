@@ -65,9 +65,36 @@ function rankPerson(link, guoName = "") {
 // Names that aren't one person (joint holdings, estates) or Orbis id numbers.
 const NOT_A_PERSON = /(\d+\s*\/\s*\d+|em comum|sem determina|heran[çc]a|herdeiros|cabe[çc]a de casal)|^P?\d{5,}$/i;
 
-// Returns [{ kind: "company"|"contact"|"person", email, name, role, personId?, isPrimary?, rank, personal }]
+// People merge, Stage 4 (20 Oct, switch "search.people"): a person's own
+// emails (searchPeople.reach, status OK) come first — one on the company's own
+// domain first (company address or website), then the primary — before the
+// typed field and Orbis's; bounced / old / hidden ones are never offered. A
+// contact person (isContact link) ranks after owners and managers and is left
+// out once marked previous. The company's main contact (primaryContact) is
+// what "Send to: primary contact" uses. Off: exactly as before.
+function companyDomains(company) {
+  const d = new Set();
+  const e = domainOf(normEmail(company?.companyEmail));
+  if (e) d.add(e);
+  const w = String(company?.website || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[/?#]/)[0];
+  if (w) d.add(w);
+  return d;
+}
+function personEmailsFor(p, company, usePeople) {
+  if (!usePeople) return personEmails(p);
+  const doms = companyDomains(company);
+  const reach = (p?.reach || []).filter((e) => e && e.type === "email");
+  const ok = reach.filter((e) => (e.status || "ok") === "ok")
+    .sort((a, b) => (doms.has(domainOf(normEmail(b.value))) - doms.has(domainOf(normEmail(a.value)))) || ((b.primary ? 1 : 0) - (a.primary ? 1 : 0)))
+    .map((e) => e.value);
+  const notOk = new Set([...reach.filter((e) => (e.status || "ok") !== "ok").map((e) => normEmail(e.value)), ...(p?.hiddenOrbis || []).map((v) => normEmail(v))]);
+  return [...ok, ...personEmails(p).filter((e) => !notOk.has(normEmail(e)))];
+}
+
+// Returns [{ kind: "company"|"contact"|"person", email, name, role, personId?, isPrimary?, isMain?, rank, personal }]
 // (only entries with a valid email), best person first among People.
-async function companyRecipients(companyId, company) {
+// opts.usePeople: the search.people switch (People merge, Stage 4).
+async function companyRecipients(companyId, company, { usePeople = false } = {}) {
   const out = [];
   const seen = new Set();
   const add = (r) => {
@@ -84,14 +111,16 @@ async function companyRecipients(companyId, company) {
     // B5 (8 Oct): a company holder is stored as "entity" (People import); the
     // old check looked for "company" and let holdings through.
     const ranked = links.docs.map((d) => ({ id: d.id, ...d.data() })).filter((l) => l.personId && !CORPORATE_HOLDER.includes(l.personEntityType) && !NOT_A_PERSON.test(l.personName || ""))
+      .filter((l) => (usePeople ? !(l.isContact && l.contactCurrent === false) : !l.isContact))
       .map((l) => ({ l, rank: rankPerson(l, company?.guoName) })).sort((a, b) => b.rank - a.rank).slice(0, 30);
     if (ranked.length) {
       const snaps = await db().getAll(...ranked.map((x) => db().doc(`searchPeople/${x.l.personId}`)));
       snaps.forEach((s, i) => {
         if (!s.exists) return;
         const p = s.data(), l = ranked[i].l;
-        const role = (l.mgmtRoles || []).join(", ") || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : "");
-        personEmails(p).forEach((email) => add({ kind: "person", email, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank }));
+        const role = l.isContact ? (l.contactRole || "Contact") : (l.mgmtRoles || []).join(", ") || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : "");
+        const isMain = usePeople && company?.primaryContact?.personId === s.id;
+        personEmailsFor(p, company, usePeople).forEach((email) => add({ kind: "person", email, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank, ...(isMain ? { isMain: true } : {}) }));
       });
     }
   }
@@ -103,6 +132,8 @@ async function companyRecipients(companyId, company) {
 function pickByPolicy(recipients, policy) {
   const company = recipients.find((r) => r.kind === "company") || null;
   if (policy === "primary_contact") {
+    const main = recipients.find((r) => r.isMain); // People merge: the company's main contact first
+    if (main) return main;
     const c = recipients.filter((r) => r.kind === "contact").sort((a, b) => b.rank - a.rank)[0];
     return c || company;
   }
@@ -113,4 +144,4 @@ function pickByPolicy(recipients, policy) {
   return company;
 }
 
-module.exports = { companyRecipients, pickByPolicy, rankPerson, isGuoPerson, personEmails, personValues, CORPORATE_HOLDER };
+module.exports = { companyRecipients, pickByPolicy, rankPerson, isGuoPerson, personEmails, personValues, personEmailsFor, companyDomains, CORPORATE_HOLDER };

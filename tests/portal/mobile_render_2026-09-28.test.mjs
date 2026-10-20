@@ -12,7 +12,7 @@ appSrc = appSrc.slice(0, appSrc.indexOf("if (typeof window !== 'undefined'"));  
 const ctx = { console, Intl, URLSearchParams, localStorage: { getItem: () => null, setItem() {} }, document: { getElementById: () => null } };
 vm.createContext(ctx);
 vm.runInContext(helpersSrc + '\nglobalThis.H = { deburr, onlyDigits, personNameKey, nifFromAny, foundedYear, legalFormOf, personAge, controlTier, linkIsCurrent, linkIsShareholder, linkIsManager, fmtPctOwn, resolveOwnership, orbisValues, STAGES, FINANCIALS_YEARS, tierOf, setTierRules };', ctx);
-vm.runInContext('const auth = { app: {} }; const getFunctions = () => ({}); const httpsCallable = () => async () => ({ data: {} });\n'
+vm.runInContext('const auth = { app: {} }; const getFunctions = () => ({}); const httpsCallable = () => async () => ({ data: {} }); const isOn = () => false; /* switches off here (20 Oct: people merge) */\n'
   + appSrc + '\nglobalThis.A = { isStandalone, narrowFrom, nifDigits, normQ, MIN_NAME, money, keyFinancials, companyRowHtml, personRowHtml, companyHtml, personHtml, setDir: (d) => { dir = d; } };', ctx);
 const { A, H } = ctx;
 

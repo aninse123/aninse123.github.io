@@ -2450,6 +2450,26 @@
       if (!out.length && p?.[legacy]) out.push(p[legacy]);
       return out;
     }
+    // 20 Oct (people merge, Stage 4, switch search.people): a person's own details
+    // first — for emails one on the company's own domain, then the primary — and
+    // bounced / old / hidden values never. Switch off: exactly as before.
+    function companyDomainsOf(c) {
+      const d = new Set();
+      const e = String(c?.companyEmail || '').trim().toLowerCase().split('@')[1]; if (e) d.add(e);
+      const w = String(c?.website || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0]; if (w) d.add(w);
+      return d;
+    }
+    function personDetails(p, type, c, on = isOn('search.people')) {
+      const legacy = { email: ['email', 'orbisEmails', 'orbisEmail'], phone: ['phone', 'orbisPhones', 'orbisPhone'], linkedin: ['linkedin', '', ''] }[type];
+      const old = personValues(p, ...legacy);
+      if (!on) return old;
+      const norm = (v) => String(v || '').trim().toLowerCase();
+      const doms = companyDomainsOf(c), reach = (p?.reach || []).filter(e => e && e.type === type);
+      const dom = (v) => (doms.has(norm(v).split('@')[1]) ? 1 : 0);
+      const ok = reach.filter(e => (e.status || 'ok') === 'ok').sort((a, b) => (type === 'email' ? dom(b.value) - dom(a.value) : 0) || ((b.primary ? 1 : 0) - (a.primary ? 1 : 0))).map(e => e.value);
+      const notOk = new Set([...reach.filter(e => (e.status || 'ok') !== 'ok').map(e => norm(e.value)), ...(p?.hiddenOrbis || []).map(norm)]);
+      return [...new Set([...ok, ...old.filter(v => !notOk.has(norm(v)))])];
+    }
     async function loadPeopleFor(companyIds) {
       for (const id of [...new Set(companyIds)].filter(x => x && !peopleCache.has(x))) {
         try {
@@ -2457,6 +2477,7 @@
           addReads(ls.size || 1);
           // B5: a holding is stored as "entity" — never a person to write to.
           const links = ls.docs.map(d => d.data()).filter(l => l.personId && !['entity', 'company'].includes(l.personEntityType))
+            .filter(l => (isOn('search.people') ? !(l.isContact && l.contactCurrent === false) : !l.isContact)) // People merge: contact people
             .map(l => ({ l, rank: rankLink(l) })).sort((a, b) => b.rank - a.rank).slice(0, 30);
           const people = new Map();
           for (let i = 0; i < links.length; i += 30) {
@@ -2466,8 +2487,9 @@
           }
           peopleCache.set(id, links.map(({ l, rank }) => {
             const p = people.get(l.personId) || {};
-            const emails = personValues(p, 'email', 'orbisEmails', 'orbisEmail').map(e => String(e).trim().toLowerCase());
-            return { personId: l.personId, name: p.name || l.personName || '', role: (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personValues(p, 'phone', 'orbisPhones', 'orbisPhone')[0] || '', linkedin: p.linkedin || '', rank };
+            const co = coCache.get(id) || (picked?.id === id ? picked : null);
+            const emails = personDetails(p, 'email', co).map(e => String(e).trim().toLowerCase());
+            return { personId: l.personId, name: p.name || l.personName || '', role: l.isContact ? (l.contactRole || 'Contact') : (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personDetails(p, 'phone', co)[0] || '', linkedin: personDetails(p, 'linkedin', co)[0] || '', rank, isContact: !!l.isContact };
           }));
         } catch (e) { console.warn('people', id, e); peopleCache.set(id, []); }
       }
@@ -5079,8 +5101,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       if (['call', 'whatsapp', 'visit', 'other'].includes(ch) && c?.companyPhone) {
         lines.push(`Company line: <a href="${esc(telHref(c.companyPhone))}">${esc(c.companyPhone)}</a>${isMobilePt(c.companyPhone) ? ' <span class="pill pill--warn" title="A mobile number may be a person\'s own phone — same consent rule as email (D3)">mobile</span>' : ''}`);
       }
-      (peopleCache.get(t.companyId) || []).filter(p => p.rank >= 40 || p.phone || p.email).slice(0, 3).forEach(p => {
-        const bits = [`👤 ${esc(p.name)}`, p.role ? `<span class="hint">${esc(p.role)}</span>` : ''];
+      const mainId = isOn('search.people') ? c?.primaryContact?.personId : null; // People merge: the main contact first
+      (peopleCache.get(t.companyId) || []).filter(p => p.rank >= 40 || p.phone || p.email).sort((a, b) => (b.personId === mainId) - (a.personId === mainId)).slice(0, 3).forEach(p => {
+        const bits = [`👤 ${esc(p.name)}${mainId && p.personId === mainId ? ' <span class="pill pill--info">main contact</span>' : ''}`, p.role ? `<span class="hint">${esc(p.role)}</span>` : ''];
         if (p.phone && ['call', 'whatsapp', 'visit', 'other'].includes(ch)) bits.push(`<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>${isMobilePt(p.phone) ? ' <span class="pill pill--warn" title="Probably a personal mobile (D3)">personal?</span>' : ''}`);
         if (ch === 'linkedin') bits.push(p.linkedin ? `<a href="${esc(/^https?:/i.test(p.linkedin) ? p.linkedin : 'https://' + p.linkedin)}" target="_blank" rel="noopener noreferrer">LinkedIn profile</a>` : `<a href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(p.name + ' ' + cName)}" target="_blank" rel="noopener noreferrer">find on LinkedIn</a>`);
         if (p.email) bits.push(esc(p.email));
@@ -5123,7 +5146,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         const overdue = tsMs(t.dueAt) < new Date().setHours(0, 0, 0, 0);
         const txt = taskTemplateText(t, c);
         const outs = TASK_OUTCOMES[t.channel] || [];
-        const wa = t.channel === 'whatsapp' ? waNumber(c.companyPhone || (c.contacts || []).find(p => p.phone)?.phone) : null;
+        const waPeople = isOn('search.people') ? (peopleCache.get(t.companyId) || []).slice().sort((a, b) => (b.personId === c?.primaryContact?.personId) - (a.personId === c?.primaryContact?.personId)).find(p => p.phone)?.phone : null; // People merge
+        const wa = t.channel === 'whatsapp' ? waNumber(c.companyPhone || (c.contacts || []).find(p => p.phone)?.phone || waPeople) : null;
         return `<div class="task${overdue ? ' task--overdue' : ''}" data-tid="${esc(t.id)}">
           <div class="task__head">
             <span class="task__co"><span class="ch">${esc(CHANNEL_LABELS[t.channel])}</span>${c._person ? `${c._person.link ? `<a href="${esc(c._person.link)}" style="color:var(--text);">${esc(c._person.name)}</a>` : esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : `<a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}" style="color:var(--text);">${esc(t.companyName || c.name || 'Company')}</a>`}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}</span>

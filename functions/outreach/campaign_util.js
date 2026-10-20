@@ -286,7 +286,8 @@ function evaluateCompany(company, ctx) {
     // can still be written to through a contact; People are only checked at
     // send time (they need extra reads), so best_person lets it through.
     const policy = ctx.recipientPolicy || "company";
-    const contactEmail = (company.contacts || []).some((ct) => isValidEmail(normEmail(ct.email)));
+    // People merge (Stage 4): with the switch on, a main contact with an email also makes the company reachable.
+    const contactEmail = (company.contacts || []).some((ct) => isValidEmail(normEmail(ct.email))) || (!!ctx.usePeople && isValidEmail(normEmail(company.primaryContact?.email)));
     const reachable = hasEmail || (policy !== "company" && (contactEmail || policy === "best_person"));
     if (ex.requireEmail && !reachable) return { ok: false, reason: "no_email" };
     if (policy === "company" && hasEmail && ctx.blockPersonalDomains && isFreeMail(domainOf(email))) return { ok: false, reason: "personal_domain" };

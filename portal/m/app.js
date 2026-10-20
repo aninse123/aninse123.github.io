@@ -237,7 +237,10 @@ export function companyHtml(c, links, acts, guoCo) {
   const contactsList = (c.contacts || []).map((ct) => `<div class="contact"><div class="row__title">${esc(ct.name || 'Contact')}${ct.isPrimary ? ' <span class="pill muted">Primary</span>' : ''}</div>
     ${ct.role ? `<div class="row__sub">${esc(ct.role)}</div>` : ''}
     <div class="acts">${ct.phone ? `<a href="${esc(tel(ct.phone))}">${esc(ct.phone)}</a>` : ''}${ct.email ? `<a href="mailto:${esc(ct.email)}">${esc(ct.email)}</a>` : ''}${ct.linkedin ? `<a href="${esc(extUrl(ct.linkedin))}" target="_blank" rel="noopener">LinkedIn</a>` : ''}</div></div>`).join('');
-  const contacts = contactsList || '<p class="hint">No contacts yet.</p>';
+  // People merge (Stage 4, switch search.people): the company's main contact first.
+  const pc = isOn('search.people') ? c.primaryContact : null;
+  const mainRow = pc?.name ? `<div class="contact"><div class="row__title">${esc(pc.name)} <span class="pill info">Main contact</span></div>${pc.role ? `<div class="row__sub">${esc(pc.role)}</div>` : ''}<div class="acts">${pc.phone ? `<a href="${esc(tel(pc.phone))}">${esc(pc.phone)}</a>` : ''}${pc.email ? `<a href="mailto:${esc(pc.email)}">${esc(pc.email)}</a>` : ''}</div></div>` : '';
+  const contacts = (mainRow + contactsList) || '<p class="hint">No contacts yet.</p>';
 
   const mgs = links.filter(H.linkIsManager);
   const curMg = mgs.filter((l) => l.mgmtCurrent !== false), prevMg = mgs.filter((l) => l.mgmtCurrent === false);

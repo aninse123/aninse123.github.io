@@ -124,6 +124,7 @@ async function companyEmails(ids) {
   return out;
 }
 const inboxJobOn = async (campaign) => { const st = await Feat.jobState("outreach.oneInbox"); return st === "on" || (st === "test" && !!campaign.isTest); };
+const peopleJobOn = async (campaign) => { const st = await Feat.jobState("search.people"); return st === "on" || (st === "test" && !!campaign.isTest); };
 
 function assertCompanies(campaign) {
   if (campaign.audienceType === "people") fail("failed-precondition", "not_companies", "This campaign is for people — add people, not companies.");
@@ -283,6 +284,7 @@ async function preview({ campaignId, companyIds }, caller, opts = {}) {
   assertEnrollable(campaign); assertCompanies(campaign);
   const ids = cleanCompanyIds(companyIds);
   const ctx = await evalContext(campaign);
+  ctx.usePeople = !!opts.usePeople; // People merge (Stage 4)
   const data = await readCompanies(ids, campaignId);
   await withInbox(ctx, ids.map((id) => data.get(id)?.company?.companyEmail), opts.oneInbox);
   const excluded = {};
@@ -374,7 +376,7 @@ function tsMs(t) {
 // show "Goes to" without reading again. Reads: the company + its People.
 const RECIP_PREVIEW_MAX = 300;
 const POLICIES = ["company", "primary_contact", "best_person"];
-async function recipientsPreview({ campaignId }) {
+async function recipientsPreview({ campaignId }, caller, opts = {}) {
   const campaign = await getCampaign(campaignId);
   assertCompanies(campaign);
   const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).where("status", "in", LIVE_ENROLMENT).limit(2000).get();
@@ -387,7 +389,7 @@ async function recipientsPreview({ campaignId }) {
     const cos = await db().getAll(...group.map((d) => db().doc(`searchCompanies/${d.data().companyId}`)));
     await Promise.all(group.map(async (d, i) => {
       const co = cos[i].exists ? cos[i].data() : null;
-      const rs = co ? await companyRecipients(d.data().companyId, co) : [];
+      const rs = co ? await companyRecipients(d.data().companyId, co, { usePeople: !!opts.usePeople }) : [];
       const preview = {};
       for (const p of POLICIES) {
         const pick = pickByPolicy(rs, p);
@@ -473,6 +475,7 @@ async function enrol({ campaignId, companyIds, source, onConflict }, caller, opt
   const src = cleanSource(source);
   const mode = onConflict === "move" ? "move" : "skip";
   const ctx = await evalContext(campaign);
+  ctx.usePeople = !!opts.usePeople; // People merge (Stage 4)
   if (opts.oneInbox) await withInbox(ctx, await companyEmails(ids), true);
   let enrolled = 0, moved = 0;
   const skipped = {};
@@ -878,6 +881,7 @@ async function runDynamicAudience(campaign, now) {
   let enrolled = 0;
   if (matches.length) {
     const ctx = await evalContext(campaign);
+    ctx.usePeople = await peopleJobOn(campaign); // People merge (Stage 4)
     const byId = new Map(snap.docs.map((d) => [d.id, d.data()]));
     await withInbox(ctx, matches.map((id) => byId.get(id)?.companyEmail), await inboxJobOn(campaign));
     const source = { type: "dynamic", label: "Dynamic — new matches of the filter" };
@@ -1165,6 +1169,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   }
   // One inbox (19 Oct): checked when adding companies, if the switch is on for this caller and site.
   const oneInbox = ["preview", "enrol"].includes(data.action) ? await Feat.isOnFor(request, "outreach.oneInbox") : false;
+  // People merge (Stage 4): people's own details and the main contact, if the switch is on for this caller and site.
+  const usePeople = ["preview", "enrol", "recipientsPreview"].includes(data.action) ? await Feat.isOnFor(request, "search.people") : false;
   try {
     switch (data.action) {
       case "save": return await save(data, caller, { canApprove });
@@ -1172,10 +1178,10 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "returnStart": return await returnStart(data, caller);
       case "duplicate": return await duplicate(data, caller);
       case "delete": return await remove(data, caller);
-      case "preview": return await preview(data, caller, { oneInbox });
-      case "recipientsPreview": return await recipientsPreview(data, caller);
+      case "preview": return await preview(data, caller, { oneInbox, usePeople });
+      case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople });
       case "runNow": return await runNow(data, caller);
-      case "enrol": return await enrol(data, caller, { oneInbox });
+      case "enrol": return await enrol(data, caller, { oneInbox, usePeople });
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);
       case "previewPeople": return await previewPeople(data, caller);

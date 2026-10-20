@@ -3673,7 +3673,7 @@ function renderDetail(){
   const c = getCompany(); if (!c) return;
   document.getElementById('dName').textContent = c.name || '—';
   document.documentElement.dataset.coedit = canEditCompany(c) ? '1' : '0';
-  const primary = (c.contacts||[]).find(ct=>ct.isPrimary) || (c.contacts||[])[0];
+  const primary = (isOn('search.people') && c.primaryContact?.name) ? { name: c.primaryContact.name, role: c.primaryContact.role || 'main contact' } : ((c.contacts||[]).find(ct=>ct.isPrimary) || (c.contacts||[])[0]); // People merge (Stage 4)
   document.getElementById('dMeta').innerHTML = `
     <div class="stage-wrap">${stagePill(c.stage||'universe')}
       <div class="stage-menu" id="stageMenu">${STAGE_ORDER.map(k=>`<div class="stage-opt" data-stage="${k}">${stagePill(k)}</div>`).join('')}</div>
@@ -5302,6 +5302,8 @@ async function saveContactPerson(){
       source: 'manual', addedBy: currentUser, addedAt: serverTimestamp(), updatedAt: serverTimestamp(),
     });
     invalidatePeopleCaches({ companyId: c.id, personId: pid });
+    const newKeys = companyEmailKeys({ contacts: reach.filter(e => e.type === 'email').map(e => ({ email: e.value })) }).filter(k => !(c.emailKeys || []).includes(k));
+    if (newKeys.length) { const emailKeys = [...(c.emailKeys || []), ...newKeys]; await updateDoc(doc(db,'searchCompanies', c.id), { emailKeys, updatedAt: serverTimestamp(), updatedBy: currentUser }); c.emailKeys = emailKeys; } // People merge (Stage 4)
     await logAuto(c.id, 'person_linked', `Added contact: ${personDisplayName(name)}${v('cpRole') ? ' (' + v('cpRole') + ')' : ''}`);
     showEl('contactPersonModal', false);
     renderOwnership(c);
@@ -5309,9 +5311,15 @@ async function saveContactPerson(){
   } catch(e){ fail(e.message); }
   finally { btn.disabled = false; }
 }
+async function mainContactSnapshot(personId, c, link){
+  const pp = await fetchPerson(personId).catch(() => null);
+  const role = link ? (link.isContact ? (link.contactRole || 'Contact') : ((link.mgmtRoles || [])[0] || (linkIsShareholder(link) ? 'Shareholder' : ''))) : '';
+  return { personId, name: personDisplayName(pp?.name || link?.personName || ''), role: role || null, email: personEmailsFor(pp, c)[0] || null, phone: reachFirst(pp, 'phone') || orbisValues(pp, 'orbisPhones').slice(-1)[0] || null };
+}
 async function setMainContact(personId){
   const c = getCompany(); if (!c) return;
-  const val = personId ? { personId, by: currentUser, at: Timestamp.now() } : null;
+  const link = personId ? (companyLinksCache.get(c.id) || []).find(l => l.personId === personId) : null;
+  const val = personId ? { ...(await mainContactSnapshot(personId, c, link)), by: currentUser, at: Timestamp.now() } : null; // People merge (Stage 4): snapshot
   try {
     await updateDoc(doc(db,'searchCompanies', c.id), { primaryContact: val, updatedAt: serverTimestamp(), updatedBy: currentUser });
     c.primaryContact = val; cacheCompanies();
@@ -5394,6 +5402,22 @@ async function savePersonReach(p, reach, hiddenOrbis, change, links){
   logPortal('person_contact_edit', { personId: p.id, name: p.name });
   const ls = links || await fetchPersonLinks(p.id).catch(() => []);
   await logOnPersonCompanies(p, ls, 'person_contact_edited', `Contact details — ${personDisplayName(p.name)}: ${change}`);
+  // People merge (Stage 4): their companies find them by email (Compose, assigning a
+  // conversation), and a company whose main contact they are keeps its snapshot current.
+  const emails = reachEmailsOf(reach).filter(e => (reach.find(x => x.type === 'email' && reachNorm('email', x.value) === e)?.status || 'ok') === 'ok');
+  for (const cid of currentCompanyIdsOf(ls)) {
+    try {
+      const snap = await getDoc(doc(db,'searchCompanies', cid)); addReads(1);
+      if (!snap.exists()) continue;
+      const co = { id: cid, ...snap.data() };
+      const patch = {};
+      const keys = new Set(co.emailKeys || []);
+      const add = companyEmailKeys({ companyEmail: emails[0], contacts: emails.slice(1).map(email => ({ email })) }).filter(k => !keys.has(k));
+      if (add.length) patch.emailKeys = [...keys, ...add];
+      if (co.primaryContact?.personId === p.id) patch.primaryContact = { ...co.primaryContact, ...(await mainContactSnapshot(p.id, co, ls.find(l => l.companyId === cid))) };
+      if (Object.keys(patch).length) { await updateDoc(doc(db,'searchCompanies', cid), { ...patch, updatedAt: serverTimestamp(), updatedBy: currentUser }); const local = companies.find(x => x.id === cid); if (local) Object.assign(local, patch); }
+    } catch(e){ console.warn('company refresh after details', cid, e); }
+  }
 }
 // 20 Oct (people merge, Stage 2): a person's emails, phones and LinkedIn.
 let reachEditId = null;
@@ -5944,6 +5968,20 @@ function reachOrbis(p, type){
   const hidden = new Set((p?.hiddenOrbis || []).map(String));
   return orbisValues(p, f).map(v => ({ value: v, hidden: hidden.has(String(v)) }));
 }
+// People merge, Stage 4: a person's emails for a company — their own (status
+// OK) first, one on the company's own domain before the primary — then the
+// typed field and Orbis's, without bounced / old / hidden ones.
+function personEmailsFor(p, c){
+  const norm = (v) => String(v || '').trim().toLowerCase();
+  const doms = new Set([norm(c?.companyEmail).split('@')[1], norm(c?.website).replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0]].filter(Boolean));
+  const reach = (p?.reach || []).filter(e => e && e.type === 'email');
+  const dom = (v) => (doms.has(norm(v).split('@')[1]) ? 1 : 0);
+  const ok = reach.filter(e => (e.status || 'ok') === 'ok').sort((a, b) => dom(b.value) - dom(a.value) || ((b.primary ? 1 : 0) - (a.primary ? 1 : 0))).map(e => e.value);
+  const notOk = new Set([...reach.filter(e => (e.status || 'ok') !== 'ok').map(e => norm(e.value)), ...(p?.hiddenOrbis || []).map(norm)]);
+  const old = [p?.email, ...orbisValues(p, 'orbisEmails').slice().reverse()].filter(Boolean);
+  return [...new Set([...ok, ...old.filter(v => !notOk.has(norm(v)))].map(norm))];
+}
+const reachFirst = (p, type) => ((p?.reach || []).filter(e => e && e.type === type && (e.status || 'ok') === 'ok').sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0))[0]?.value || '');
 // A contact person (Stage 2) is current unless marked previous; Orbis links by facet.
 const linkCurrentAny = (l) => (l?.isContact ? l.contactCurrent !== false : linkIsCurrent(l));
 
@@ -11204,12 +11242,15 @@ async function openSendEmail(idx){
   try {
     const ls = await getDocs(query(collection(db, 'searchPersonLinks'), where('companyId', '==', c.id), limit(60)));
     addReads(ls.size || 1);
-    const ids = ls.docs.map(d => d.data()).filter(l => l.personId && l.personEntityType !== 'company');
+    const peopleOn = isOn('search.people'); // People merge (Stage 4)
+    const ids = ls.docs.map(d => d.data()).filter(l => l.personId && l.personEntityType !== 'company' && (peopleOn ? !(l.isContact && l.contactCurrent === false) : !l.isContact))
+      .sort((a, b) => (peopleOn ? (b.personId === c.primaryContact?.personId) - (a.personId === c.primaryContact?.personId) : 0));
     for (let i = 0; i < ids.length && i < 60; i += 30) {
       const ps = await getDocs(query(collection(db, 'searchPeople'), where(documentId(), 'in', ids.slice(i, i + 30).map(l => l.personId))));
       addReads(ps.size || 1);
       // Typed email first, else Orbis's (orbisValues — same fallback as the People profile).
-      ps.docs.forEach(d => { const p = d.data(); const l = ids.find(x => x.personId === d.id) || {}; const emails = [p.email, ...orbisValues(p, 'orbisEmails').slice().reverse()].filter(Boolean); emails.forEach(em => addOpt(em, `👤 ${p.name || l.personName || ''}${(l.mgmtRoles || []).length ? ' (' + l.mgmtRoles.join(', ') + ')' : ''} — ${em}`, 'p:' + d.id)); });
+      const pdocs = ps.docs.slice().sort((a, b) => ids.findIndex(x => x.personId === a.id) - ids.findIndex(x => x.personId === b.id));
+      pdocs.forEach(d => { const p = d.data(); const l = ids.find(x => x.personId === d.id) || {}; const emails = peopleOn ? personEmailsFor(p, c) : [p.email, ...orbisValues(p, 'orbisEmails').slice().reverse()].filter(Boolean); const role = l.isContact ? (l.contactRole || 'contact') : (l.mgmtRoles || []).join(', '); const main = peopleOn && d.id === c.primaryContact?.personId ? ' ★ main contact' : ''; emails.forEach(em => addOpt(em, `👤 ${p.name || l.personName || ''}${role ? ' (' + role + ')' : ''}${main} — ${em}`, 'p:' + d.id)); });
     }
     refreshReads();
   } catch (e) { console.warn('people for send', e); }
@@ -11310,7 +11351,9 @@ function renderActFields(){
   const isFutureOnly = activityType === 'meeting_scheduled';
   const isAnyDate = ['call_attempted','call_connected','email','letter','linkedin'].includes(activityType);
   const needTitle = ['meeting_scheduled','meeting_done','other'].includes(activityType);
-  const contactOpts = (c.contacts||[]).map(ct=>`<option value="${esc(ct.name)}|${esc(ct.role||'')}">${esc(ct.name)}${ct.role?' ('+esc(ct.role)+')':''}</option>`).join('');
+  // People merge (Stage 4): the company's current people (owners, managers, contacts) come first.
+  const peopleOpts = isOn('search.people') ? (companyLinksCache.get(c.id) || []).filter(l => l.personId && l.personEntityType !== 'entity' && linkCurrentAny(l)).map(l => { const role = l.isContact ? (l.contactRole || 'Contact') : ((l.mgmtRoles || [])[0] || (linkIsShareholder(l) ? 'Shareholder' : '')); return `<option value="${esc(l.personName || '')}|${esc(role)}">${esc(l.personName || '')}${role ? ' (' + esc(role) + ')' : ''}</option>`; }).join('') : '';
+  const contactOpts = peopleOpts + (c.contacts||[]).map(ct=>`<option value="${esc(ct.name)}|${esc(ct.role||'')}">${esc(ct.name)}${ct.role?' ('+esc(ct.role)+')':''}</option>`).join('');
   const viaOpts = ['letter','email','call','linkedin','warm_intro','in_person','other'];
   document.getElementById('actFields').innerHTML = `
     ${needTitle?`<div class="form-group"><label>Title *</label><input type="text" class="field" id="actTitle" placeholder="${activityType==='meeting_scheduled'?'e.g. Intro call':''}"></div>`:''}
@@ -11318,7 +11361,7 @@ function renderActFields(){
       <div class="form-group"><label>Date *</label><input type="date" class="field" id="actDate" value="${today}" ${isFutureOnly?`min="${today}"`:isAnyDate?'':`max="${today}"`}></div>
       <div class="form-group"><label>Via</label><select class="field" id="actVia">${viaOpts.map(v=>`<option value="${v}" ${info.via===v?'selected':''}>${v.replace(/_/g,' ')}</option>`).join('')}</select></div>
     </div>
-    ${(c.contacts||[]).length?`<div class="form-group"><label>Contact involved <span class="opt">(optional)</span></label><select class="field" id="actContact"><option value="">—</option>${contactOpts}</select></div>`:''}
+    ${contactOpts?`<div class="form-group"><label>Contact involved <span class="opt">(optional)</span></label><select class="field" id="actContact"><option value="">—</option>${contactOpts}</select></div>`:''}
     ${info.response?`<div class="form-group"><label>Response <span class="opt">(optional)</span></label><select class="field" id="actResponse"><option value="">—</option>${Object.entries(RESPONSE_CATS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>`:''}
     ${isMeeting?`<div class="form-row-3">
       <div class="form-group"><label>Time</label><input type="time" class="field" id="actTime" value="09:00"></div>
@@ -11865,7 +11908,10 @@ const COMPANY_EXPORT_FIELDS = [
     { key: 'companyEmail',   label: 'Company email',   get: c => c.companyEmail },
     { key: 'companyPhone',   label: 'Company phone',   get: c => c.companyPhone },
     { key: 'linkedinUrl',    label: 'LinkedIn',        get: c => c.linkedinUrl },
-    { key: 'primaryContact', label: 'Primary contact', get: c => ((c.contacts||[]).find(x=>x.isPrimary) || (c.contacts||[])[0])?.name },
+    { key: 'primaryContact', label: 'Primary contact', get: c => (isOn('search.people') && c.primaryContact?.name) || ((c.contacts||[]).find(x=>x.isPrimary) || (c.contacts||[])[0])?.name },
+    // People merge (Stage 4): the main contact's details, as saved when it was set or their details changed.
+    { key: 'mainContactEmail', label: 'Main contact email', get: c => c.primaryContact?.email || '' },
+    { key: 'mainContactPhone', label: 'Main contact phone', get: c => c.primaryContact?.phone || '' },
   ]},
   { title: 'Financials', fields: [
     { key: 'revenueY1',    label: 'Revenue (latest year)', get: c => c.computedRevenue ?? '' },
