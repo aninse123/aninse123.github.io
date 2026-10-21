@@ -782,7 +782,7 @@
 <!-- Person link modal (Ownership tab: link a person/manager/shareholder to a company) -->
 <div class="overlay" id="personLinkModal" style="display:none;">
   <div class="modal">
-    <div class="modal-title" id="personLinkModalTitle">Add Person</div>
+    <div class="modal-title" id="personLinkModalTitle">Add owner or manager</div>
     <div class="form-row">
       <div class="form-group"><label>Full name *</label><input type="text" class="field" id="plName"></div>
       <div class="form-group"><label>Country <span class="opt">(optional)</span></label><input type="text" class="field" id="plCountry" placeholder="PT"></div>
@@ -4337,7 +4337,7 @@ async function renderCompanyPeople(c){
   };
   const addForm = (pid) => `<div class="form-row" style="align-items:end;gap:6px;margin-top:6px;">
       <div class="form-group" style="max-width:120px;"><select class="field" id="cpAddType">${REACH_TYPES.map(([t, l]) => `<option value="${t}">${l}</option>`).join('')}</select></div>
-      <div class="form-group"><input class="field" id="cpAddValue" placeholder="name@company.pt, +351 …, linkedin.com/in/…, Rua …"></div>
+      <div class="form-group"><input class="field" id="cpAddValue" placeholder="name@company.pt, +351 …, linkedin.com/in/…, facebook.com/…, Rua …"></div>
       <div class="form-group"><input class="field" id="cpAddNote" placeholder="Note (optional)"></div>
       <div class="form-group" style="flex:0 0 auto;"><button class="btn btn--primary btn--sm" data-cpaddsave="${esc(pid)}">Add</button> <button class="btn btn--ghost btn--sm" data-cpaddcancel>Cancel</button></div>
     </div><div class="modal-err" id="cpAddErr"></div>`;
@@ -4355,7 +4355,7 @@ async function renderCompanyPeople(c){
           ${companyPeopleAddFor === l.personId ? addForm(l.personId) : ''}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;">
-          ${canEdit && cur && companyPeopleAddFor !== l.personId ? `<button class="btn btn--ghost btn--sm" data-cpadd="${esc(l.personId)}" title="Add an email, phone, LinkedIn, address or fax">＋ detail</button>` : ''}
+          ${canEdit && cur && companyPeopleAddFor !== l.personId ? `<button class="btn btn--ghost btn--sm" data-cpadd="${esc(l.personId)}" title="Add an email, phone, LinkedIn, website, address or fax">＋ detail</button>` : ''}
           ${canEdit && l.isContact ? `<button class="btn btn--icon btn--ghost" data-ctedit="${esc(l.id)}" title="Edit the name and role">✎</button>` : ''}
           ${canEdit && cur ? (l.personId === mainId ? `<button class="btn btn--ghost btn--sm" data-mainct="" title="Clear the main contact">★</button>` : `<button class="btn btn--ghost btn--sm" data-mainct="${esc(l.personId)}" title="Make them the main contact">☆</button>`) : ''}
           ${isHandLink(l) && (!l.isContact || canEdit) ? `<button class="btn btn--ghost btn--sm" data-handcur="${esc(l.id)}"${l.isContact ? '' : ' data-perm="search.edit" data-coedit'}>${cur ? 'Mark previous' : 'Mark current'}</button>` : ''}
@@ -4820,7 +4820,7 @@ async function renderOwnership(c){
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <div class="sec-title" style="margin-bottom:0;">People</div>
         <span style="display:inline-flex;gap:6px;">${canReach ? `<button class="btn btn--ghost btn--sm" id="addContactPersonBtn" data-feature="search.people" title="Someone Orbis doesn't list: a commercial director, an office manager… Never counted as owner or manager">＋ Add contact</button>` : ''}
-        <button class="btn btn--ghost btn--sm" id="addPersonBtn" data-perm="search.edit" data-coedit>＋ Add Person</button></span>
+        <button class="btn btn--ghost btn--sm" id="addPersonBtn" data-perm="search.edit" data-coedit title="Someone who owns or runs the company: a share % or a management role">＋ Add owner or manager</button></span>
       </div>
       ${(own.note || own.treasuryPct != null) ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
         ${own.joint || own.shared ? '🤝' : own.independent ? '🏛' : (own.ownerIds.size ? '👑' : 'ℹ️')} ${esc(own.note)}${own.treasuryPct != null ? ` · <strong>${own.treasuryPct}%</strong> held by the company in itself (treasury)` : ''}${own.guoType ? ` · <span class="badge ${/individual|families/i.test(own.guoType) ? 'badge-green' : 'badge-grey'}" title="What kind of owner sits at the top">${esc(own.guoType)}</span>` : ''}${own.guoName && !own.joint && !own.shared ? (own.guoNif && own.guoNif === (onlyDigits(c.nif) || nifFromAny('', c.bvdId))
@@ -5178,7 +5178,7 @@ function openPersonLink(linkId){
   const c = getCompany(); if (!c) return;
   editLinkId = linkId || null;
   const link = linkId ? (companyLinksCache.get(c.id) || []).find(l => l.id === linkId) : null;
-  document.getElementById('personLinkModalTitle').textContent = link ? 'Edit Person Link' : 'Add Person';
+  document.getElementById('personLinkModalTitle').textContent = link ? 'Edit owner or manager' : 'Add owner or manager';
   document.getElementById('plName').value = link ? (link.personName || '') : '';
   document.getElementById('plName').readOnly = !!link; // renaming would re-key the person doc — edit via a fresh add instead
   document.getElementById('plCountry').value = '';
@@ -5525,12 +5525,12 @@ function renderReachCard(p, links){
   const legacy = PERSON_CONTACT_FIELDS.filter(f => p[f.key]).map(f => `${f.label}: ${esc(p[f.key])}`);
   const ed = reachEditId ? own.find(e => e.id === reachEditId) : null;
   el.innerHTML = `<div class="sec-title">Contact</div>
-    <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">Add as many emails, phones, LinkedIn profiles, addresses and fax numbers as you need; the type follows what you type. Orbis's own values are listed with them; hide one that's wrong and it stays hidden after imports.</div>
+    <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">Add as many emails, phones, LinkedIn profiles, websites and social pages (Facebook, Instagram…), addresses and fax numbers as you need; the type follows what you type. Orbis's own values are listed with them; hide one that's wrong and it stays hidden after imports.</div>
     ${groups || '<div class="hint" style="margin-bottom:8px;">No emails or phones yet.</div>'}
     ${legacy.length ? `<div class="hint" style="margin-bottom:8px;">Typed before (moves into this list in the migration): ${legacy.join(' · ')}</div>` : ''}
     ${canEdit ? `<div class="form-row" style="align-items:end;gap:8px;margin-top:6px;">
       <div class="form-group" style="max-width:130px;"><label>Type</label><select class="field" id="reachType"${ed ? ' disabled' : ''}>${REACH_TYPES.map(([t, l]) => `<option value="${t}"${ed?.type === t ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
-      <div class="form-group"><label>${ed ? 'Change' : 'Add'}</label><input class="field" id="reachValue" value="${esc(ed?.value || '')}" placeholder="name@company.pt, +351 …, linkedin.com/in/…, Rua …"></div>
+      <div class="form-group"><label>${ed ? 'Change' : 'Add'}</label><input class="field" id="reachValue" value="${esc(ed?.value || '')}" placeholder="name@company.pt, +351 …, linkedin.com/in/…, facebook.com/…, Rua …"></div>
       <div class="form-group"><label>Note <span class="opt">(optional)</span></label><input class="field" id="reachNote" value="${esc(ed?.note || '')}" placeholder="e.g. mobile, from a call"></div>
       <div class="form-group" style="flex:0 0 auto;"><button class="btn btn--primary btn--sm" id="reachSaveBtn">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn btn--ghost btn--sm" id="reachCancelBtn">Cancel</button>' : ''}</div>
     </div><div class="modal-err" id="reachErr"></div>` : ''}`;
@@ -6005,20 +6005,21 @@ function orbisValues(person, field){
 // status ok|bounced|old, primary (one per type), addedBy, addedAt }. Orbis's
 // own lists stay where the importer writes them; one can be hidden
 // (hiddenOrbis) and stays hidden after imports.
-const REACH_TYPES = [['email', 'Email', '✉'], ['phone', 'Phone', '☎'], ['linkedin', 'LinkedIn', 'in'], ['address', 'Address', '⌂'], ['fax', 'Fax', '℻']];
-const REACH_ORBIS = { email: 'orbisEmails', phone: 'orbisPhones', address: 'orbisAddresses', fax: 'orbisFaxes' };
+const REACH_TYPES = [['email', 'Email', '✉'], ['phone', 'Phone', '☎'], ['linkedin', 'LinkedIn', 'in'], ['website', 'Website / social', '🌐'], ['address', 'Address', '⌂'], ['fax', 'Fax', '℻']];
+const REACH_ORBIS = { email: 'orbisEmails', phone: 'orbisPhones', website: 'orbisWebsites', address: 'orbisAddresses', fax: 'orbisFaxes' };
 function reachNorm(type, v){
   v = String(v || '').trim();
   if (type === 'email') return v.toLowerCase();
   if (type === 'phone' || type === 'fax') return v.replace(/[^\d+]/g, '');
   if (type === 'address') return v.toLowerCase().replace(/\s+/g, ' ');
-  if (type === 'linkedin') return v.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '').toLowerCase();
+  if (type === 'linkedin' || type === 'website') return v.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '').toLowerCase();
   return v;
 }
 function reachValid(type, v){
   if (type === 'email') return /^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/i.test(String(v || '').trim());
   if (type === 'phone' || type === 'fax') return reachNorm(type, v).replace(/\D/g, '').length >= 9;
   if (type === 'linkedin') return /linkedin\.com\//i.test(String(v || ''));
+  if (type === 'website') return /^(https?:\/\/)?[^\s@\/]+\.[a-z]{2,}(\/\S*)?$/i.test(String(v || '').trim());
   if (type === 'address') return String(v || '').trim().length >= 6 && /[a-zà-ú]/i.test(String(v || ''));
   return false;
 }
@@ -6031,11 +6032,12 @@ function reachGuessType(v){
   if (/linkedin\.com\//i.test(v)) return 'linkedin';
   if (v.includes('@')) return 'email';
   if (v.replace(/\D/g, '').length >= 9 && /^[\d\s+().\-\/]+$/.test(v)) return 'phone';
+  if (/^(https?:\/\/)?[^\s@\/]+\.[a-z]{2,}(\/\S*)?$/i.test(v)) return 'website'; // a site or a social page (facebook.com/…)
   if (/\b\d{4}-\d{3}\b/.test(v) || (/\d/.test(v) && /(^|[\s,])(rua|r\.|av\.|avenida|travessa|tv\.|largo|praça|praca|estrada|alameda|lugar|urbanização|urbanizacao|zona industrial|edifício|edificio|apartado|lote)(\s|$)/i.test(v))) return 'address';
   return '';
 }
-const REACH_LOOKS = { email: 'an email address', phone: 'a phone number', linkedin: 'a LinkedIn address', address: 'an address' };
-const REACH_INVALID = { email: 'That isn\'t a valid email address.', phone: 'A phone number needs at least 9 digits.', linkedin: 'Paste the linkedin.com/in/… address.', address: 'Write the street, postcode and city.', fax: 'A fax number needs at least 9 digits.' };
+const REACH_LOOKS = { email: 'an email address', phone: 'a phone number', linkedin: 'a LinkedIn address', website: 'a web address', address: 'an address' };
+const REACH_INVALID = { email: 'That isn\'t a valid email address.', phone: 'A phone number needs at least 9 digits.', linkedin: 'Paste the linkedin.com/in/… address.', website: 'Paste the web address, e.g. www.empresa.pt or facebook.com/….', address: 'Write the street, postcode and city.', fax: 'A fax number needs at least 9 digits.' };
 function followReachType(sel, value){
   if (!sel || sel.disabled || sel.dataset.touched) return;
   const g = reachGuessType(value);
@@ -6046,13 +6048,13 @@ function reachLinkHtml(type, v, style = ''){
   const st = style ? ` style="${style}"` : '';
   if (type === 'fax') return `<span${st}>${esc(v)}</span>`;
   const href = type === 'email' ? `mailto:${v}` : type === 'phone' ? `tel:${reachNorm('phone', v)}` : type === 'address' ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v)}` : (/^https?:/i.test(v) ? v : 'https://' + v);
-  const ext = type === 'linkedin' || type === 'address' ? ' target="_blank" rel="noopener noreferrer"' : '';
+  const ext = type === 'linkedin' || type === 'website' || type === 'address' ? ' target="_blank" rel="noopener noreferrer"' : '';
   return `<a href="${esc(href)}"${ext}${st}>${esc(v)}</a>`;
 }
 const reachNewId = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 function reachAdd(list, { type, value, note = '', source = 'manual', by = '', at = '' }){
   const v = String(value || '').trim();
-  if (!REACH_TYPES.some(t => t[0] === type)) return { error: 'Choose email, phone, LinkedIn, address or fax.' };
+  if (!REACH_TYPES.some(t => t[0] === type)) return { error: 'Choose a type.' };
   if (!reachValid(type, v)) {
     const g = reachGuessType(v); // 21 Oct (F5): it fits another type — say which
     if (g && g !== type && reachValid(g, v)) return { error: `This looks like ${REACH_LOOKS[g]}. Switch the type to ${REACH_TYPES.find(t => t[0] === g)[1]}.`, guess: g };

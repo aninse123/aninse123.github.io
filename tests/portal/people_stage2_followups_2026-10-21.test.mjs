@@ -43,7 +43,12 @@ ok('F4: too short to be an address', R.reachAdd([], { type: 'address', value: '1
 r = R.reachAdd(r.list, { type: 'fax', value: '+351 22 000 0000' });
 ok('F4: a fax (chosen by hand) is added; fewer than 9 digits refused', !r.error && r.entry.type === 'fax' && R.reachAdd([], { type: 'fax', value: '1234' }).error === 'A fax number needs at least 9 digits.');
 ok('F4: links — the address opens the map in a new tab, a fax stays text', /google\.com\/maps\/search\/\?api=1&amp;query=Rua%20de%20Cedofeita/.test(R.reachLinkHtml('address', 'Rua de Cedofeita 123')) && /target="_blank"/.test(R.reachLinkHtml('address', 'Rua X 1')) && R.reachLinkHtml('fax', '+351 22 000 0000') === '<span>+351 22 000 0000</span>');
-ok('F4: Orbis addresses and faxes are listed (and hideable) like emails and phones', page.includes("const REACH_ORBIS = { email: 'orbisEmails', phone: 'orbisPhones', address: 'orbisAddresses', fax: 'orbisFaxes' };"));
+ok('F4: Orbis websites, addresses and faxes are listed (and hideable) like emails and phones', page.includes("const REACH_ORBIS = { email: 'orbisEmails', phone: 'orbisPhones', website: 'orbisWebsites', address: 'orbisAddresses', fax: 'orbisFaxes' };"));
+ok('F4: Website / social — a site or a social page is guessed and added; it opens in a new tab', g('www.empresa.pt') === 'website' && g('https://facebook.com/empresa') === 'website' && g('instagram.com/joao.silva') === 'website'
+  && !R.reachAdd([], { type: 'website', value: 'facebook.com/empresa' }).error && R.reachAdd([], { type: 'website', value: 'empresa' }).error === 'Paste the web address, e.g. www.empresa.pt or facebook.com/….'
+  && /href="https:\/\/facebook\.com\/empresa" target="_blank"/.test(R.reachLinkHtml('website', 'facebook.com/empresa')));
+ok('F4: the same site with or without https:// / www. is a duplicate', R.reachAdd(R.reachAdd([], { type: 'website', value: 'https://www.empresa.pt/' }).list, { type: 'website', value: 'empresa.pt' }).error === 'Already in the list.');
+ok('F3 (kept small): "Add Person" is called "Add owner or manager"; contacts stay on both tabs', page.includes('＋ Add owner or manager</button>') && page.includes("textContent = link ? 'Edit owner or manager' : 'Add owner or manager';") && !page.includes('Add Person<'));
 
 // F7 — possible duplicate
 ok('F7: "Paulo Pinto" is a possible match for "Paulo Jorge Dias Gomes Pinto"; another name is not', R.personNameMatch('Paulo Pinto', 'PAULO JORGE DIAS GOMES PINTO') === 'similar' && !R.personNameMatch('Rita Sousa', 'PAULO JORGE DIAS GOMES PINTO'));
