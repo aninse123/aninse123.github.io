@@ -116,7 +116,10 @@ async function maybeRunWeekly(now, settings, { onlyTest = false, force = false }
   const to = at.getTime(), from = to - 7 * DAY;
   const fromKey = new Date(from + 12 * 3600000).toISOString().slice(0, 10);
   const ref = db().doc(`outreachReports/${fromKey}`);
-  if (!force && (await ref.get()).exists) return null;
+  // Done → nothing to do. Still "building" → another run is on it, unless that
+  // was over 30 minutes ago (it failed half-way): then this run tries again.
+  const ex = await ref.get();
+  if (!force && ex.exists && (ex.data().status === "done" || ms(ex.data().createdAt) > now.getTime() - 30 * 60000)) return null;
   await ref.set({ status: "building", weekFrom: fromKey, weekTo: thisMonday, createdAt: FieldValue.serverTimestamp() }, { merge: true });
   const [messages, threads, suppressions, activities, tasks, enrolments, liveSnap, draftSnap, campSnap] = await Promise.all([
     docsInRange("outreachMessages", "createdAt", from, to),

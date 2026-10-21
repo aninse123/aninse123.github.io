@@ -140,6 +140,11 @@ async function makeCampaign(campaign, ids, activate = true) {
   calls.length = 0;
   ok("a second run the same Monday does nothing", (await Report.maybeRunWeekly(new Date("2026-10-19T09:10:00+01:00"), {})) === null && !calls.length);
   seed(); calls.length = 0;
+  store.set("outreachReports/2026-10-12", { status: "building", createdAt: Timestamp.fromMillis(Date.parse("2026-10-19T08:00:00+01:00")) });
+  ok("a report left half-built over 30 minutes ago is built again", (await Report.maybeRunWeekly(new Date("2026-10-19T09:00:00+01:00"), {}))?.week === "2026-10-12" && get("outreachReports/2026-10-12").status === "done");
+  store.set("outreachReports/2026-10-12", { status: "building", createdAt: Timestamp.fromMillis(Date.parse("2026-10-19T08:50:00+01:00")) });
+  ok("…but not one another run started 10 minutes ago", (await Report.maybeRunWeekly(new Date("2026-10-19T09:00:00+01:00"), {})) === null);
+  seed(); calls.length = 0;
   await Report.maybeRunWeekly(new Date("2026-10-19T09:00:00+01:00"), { weeklyReportEmail: false });
   ok("Settings \"Email the Monday report\" off → saved, not emailed", get("outreachReports/2026-10-12")?.status === "done" && !calls.some((c) => c.url.endsWith("/emails")));
 
