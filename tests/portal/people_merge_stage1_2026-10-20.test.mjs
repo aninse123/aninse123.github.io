@@ -52,7 +52,7 @@ ok('import summary tells how many were kept and how many to review', page.includ
 ok('Add Person records who and when (new links only)', page.includes("...(editLinkId ? {} : { addedBy: currentUser, addedAt: serverTimestamp() })"));
 ok('Ownership card: chips and Mark previous / current only for hand links, switch on', page.includes('const handBtn = l => !peopleOn || !isHandLink(l) || (l.isContact && !canReach) ?') && page.includes('${handBtn(l)}') && page.includes('${handChips(l)}') && page.includes('async function toggleHandLink(linkId)'));
 ok('People view: Added by hand, Possible same people, Merge / Keep separate', page.includes('id="peopleHandBtn"') && page.includes('id="peopleReviewBtn"') && page.includes('data-rvmerge') && page.includes('data-rvkeep') && page.includes("status: merge ? 'merged' : 'kept'"));
-ok('merge is logged and never counts as a touch', page.includes("logAuto(r.companyId, 'person_merged'") && /AUTO_TYPES = \[[^\]]*'person_merged'\]/.test(page));
+ok('merge is logged and never counts as a touch', page.includes("logAuto(r.companyId, 'person_merged'") && /AUTO_TYPES = \[[^\]]*'person_merged'[,\]]/.test(page));
 ok('rules: peopleReview readable with search.view, never deleted', /match \/peopleReview\/\{id\} \{\n\s+allow read: if can\('search\.view'\);\n\s+allow create: if can\('search\.import'\) \|\| can\('search\.editall'\);\n\s+allow update: if can\('search\.editall'\);\n\s+\}/.test(rules));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }

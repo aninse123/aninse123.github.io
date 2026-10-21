@@ -11675,7 +11675,8 @@ async function recomputeActivityFields(c){
   // lastTouchAt = most recent non-future, non-auto activity
   // email_test: Outreach test-mode sends aren't real touches (they go to our own addresses).
   // task_test: campaign tasks done in test mode (rehearsals) — not real touches either.
-  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold','person_merged'];
+  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold','person_merged',
+    'person_linked','person_updated','person_unlinked']; // 21 Oct: adding, editing or removing a person isn't a touch either
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));
