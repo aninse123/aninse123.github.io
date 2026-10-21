@@ -15,7 +15,7 @@ ok('"＋ detail" saves through the same path as the person page and logs it', pa
 ok('main contact, Mark previous / current (hand-added) and ✕ (contacts) on each row', page.includes('data-mainct="${esc(l.personId)}" title="Make them the main contact"') && page.includes('${isHandLink(l) && (!l.isContact || canEdit) ? `<button class="btn btn--ghost btn--sm" data-handcur=') && page.includes('${l.isContact && canEdit ? `<button class="btn btn--icon btn--danger" data-rmlink='));
 ok('previous people folded behind "Show previous (N)"', page.includes('${companyPeopleShowPrev ? \'Hide\' : \'Show\'} previous (${prevN})'));
 ok('the old Contacts list stays visible, folded, until the migration', page.includes('Old Contacts list (${old.length}) — moves into People in the migration'));
-ok('a new contact appears on the People tab straight away', page.includes("if (isOn('search.people')) renderCompanyPeople(c); // 20 Oct (Stage 3)"));
+ok('a new contact appears on the People tab straight away', page.includes("    if (isOn('search.people')) renderCompanyPeople(c);\n  } catch(e){ fail(e.message); }"));
 ok('clicking a name opens the person page and Back returns to this tab', page.includes("openPerson(t.dataset.person, { type: 'company', id: c.id, tab: 'contacts' })"));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }

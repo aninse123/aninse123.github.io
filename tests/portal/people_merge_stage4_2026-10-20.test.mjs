@@ -33,10 +33,10 @@ ok('Search CRM: header shows the main contact (switch on)', search.includes("con
 ok('Search CRM: export has the main contact and its email / phone', search.includes("key: 'mainContactEmail', label: 'Main contact email'") && search.includes("key: 'mainContactPhone', label: 'Main contact phone'"));
 ok('Search CRM: "Contact involved" lists the company\'s people', search.includes('const contactOpts = peopleOpts +') && search.includes('${contactOpts?`<div class="form-group"><label>Contact involved'));
 ok('Search CRM: main contact saved with name / role / email / phone, refreshed when their details change', search.includes('async function mainContactSnapshot(personId, c, link)') && search.includes('if (co.primaryContact?.personId === p.id) patch.primaryContact ='));
-ok('Search CRM: people\'s emails added to their companies\' email search (never removed)', search.includes('if (add.length) patch.emailKeys = [...keys, ...add];') && search.includes('const newKeys = companyEmailKeys({ contacts: reach.filter('));
+ok('Search CRM: people\'s emails added to their companies\' email search (never removed)', search.includes('if (add.length) patch.emailKeys = [...keys, ...add];') && search.includes('companyEmailKeys({ contacts: emails }).filter(k => !(c.emailKeys || []).includes(k))'));
 ok('rules: reach-only users may update primaryContact and emailKeys on a company, nothing else', rules.includes("|| (can('search.reach') && onlyFields(['primaryContact', 'emailKeys'].concat(stampFields())))"));
 ok('a main contact removed or marked previous stops being the main contact', search.includes('if (!toCurrent && c.primaryContact?.personId === link.personId) await clearMainContactOf(c, link);') && search.includes('if (link && c.primaryContact?.personId === link.personId) await clearMainContactOf(c, link);'));
-ok('mobile: the main contact on top of Contacts (switch on)', mob.includes("const pc = isOn('search.people') ? c.primaryContact : null;") && mob.includes('const contacts = (mainRow + contactsList) ||'));
+ok('mobile: the main contact on top of Contacts (switch on)', mob.includes("const pc = isOn('search.people') ? c.primaryContact : null;") && mob.includes("const contacts = (mainRow + (isOn('search.people') ? ctLinks.map(ctRow).join('') + contactsList : contactsList)) ||"));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');

@@ -782,7 +782,7 @@
 <!-- Person link modal (Ownership tab: link a person/manager/shareholder to a company) -->
 <div class="overlay" id="personLinkModal" style="display:none;">
   <div class="modal">
-    <div class="modal-title" id="personLinkModalTitle">Add owner or manager</div>
+    <div class="modal-title" id="personLinkModalTitle">Add Person</div>
     <div class="form-row">
       <div class="form-group"><label>Full name *</label><input type="text" class="field" id="plName"></div>
       <div class="form-group"><label>Country <span class="opt">(optional)</span></label><input type="text" class="field" id="plCountry" placeholder="PT"></div>
@@ -807,24 +807,51 @@
   </div>
 </div>
 
-<!-- Contact person modal (20 Oct, people merge Stage 2, switch search.people) -->
-<div class="overlay" id="contactPersonModal" style="display:none;">
+<!-- One "Add person" window (21 Oct, people merge follow-ups, switch search.people):
+     owner / manager / other (a contact); ✎ uses it too and can change the kind -->
+<div class="overlay" id="personModal" style="display:none;">
   <div class="modal">
-    <div class="modal-title" id="cpTitle">Add contact</div>
-    <p id="cpIntro" style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px;">Someone Orbis doesn't list (a commercial director, an office manager…). They can be emailed and called, and are never counted as owner or manager.</p>
+    <div class="modal-title" id="pmTitle">Add person</div>
     <div class="form-row">
-      <div class="form-group"><label>Full name *</label><input type="text" class="field" id="cpName"></div>
-      <div class="form-group"><label>Role <span class="opt">(optional)</span></label><input type="text" class="field" id="cpRole" placeholder="Diretor comercial"></div>
+      <div class="form-group"><label>Full name *</label><input type="text" class="field" id="pmName"></div>
+      <div class="form-group" id="pmCountryWrap"><label>Country <span class="opt">(optional)</span></label><input type="text" class="field" id="pmCountry" placeholder="PT"></div>
     </div>
-    <div class="form-row" id="cpReachRow">
-      <div class="form-group"><label>Email <span class="opt">(optional)</span></label><input type="email" class="field" id="cpEmail" placeholder="name@company.pt"></div>
-      <div class="form-group"><label>Phone <span class="opt">(optional)</span></label><input type="tel" class="field" id="cpPhone" placeholder="+351 …"></div>
+    <div class="form-group"><label>Who are they?</label>
+      <div id="pmKinds" style="display:flex;gap:18px;flex-wrap:wrap;">
+        <label class="check-item"><input type="checkbox" id="pmOwner"> Owner</label>
+        <label class="check-item"><input type="checkbox" id="pmManager"> Manager</label>
+        <label class="check-item"><input type="checkbox" id="pmOther"> Other (a contact)</label>
+      </div>
+      <div class="hint" id="pmKindHint" style="margin-top:4px;"></div>
     </div>
-    <div class="modal-err" id="cpErr"></div>
-    <div id="cpMatch" style="display:none;margin-top:10px;font-size:0.85rem;"></div>
+    <div id="pmOwnerSec">
+      <div class="modal-section-title">Shareholding</div>
+      <div class="form-row-3">
+        <div class="form-group"><label>Direct %</label><input type="number" step="0.01" class="field" id="pmDirectPct"></div>
+        <div class="form-group"><label>Total %</label><input type="number" step="0.01" class="field" id="pmTotalPct"></div>
+        <div class="form-group"><label>As of <span class="opt">(MM/YYYY)</span></label><input type="text" class="field" id="pmDate" placeholder="06/2026"></div>
+      </div>
+      <div class="form-group"><label class="check-item"><input type="checkbox" id="pmShCurrent" checked> Current shareholder</label></div>
+    </div>
+    <div id="pmManagerSec">
+      <div class="modal-section-title">Management</div>
+      <div class="form-row">
+        <div class="form-group"><label>Role(s) <span class="opt">(comma-separated)</span></label><input type="text" class="field" id="pmRoles" placeholder="Sócio Gerente, Administrador"></div>
+        <div class="form-group" style="align-self:end;"><label class="check-item"><input type="checkbox" id="pmMgmtCurrent" checked> Current manager</label></div>
+      </div>
+    </div>
+    <div id="pmOtherSec">
+      <div class="form-group"><label>Role <span class="opt">(optional)</span></label><input type="text" class="field" id="pmRole" placeholder="Diretor comercial"></div>
+    </div>
+    <div class="form-row" id="pmReachSec">
+      <div class="form-group"><label>Email <span class="opt">(optional)</span></label><input type="email" class="field" id="pmEmail" placeholder="name@company.pt"></div>
+      <div class="form-group"><label>Phone <span class="opt">(optional)</span></label><input type="tel" class="field" id="pmPhone" placeholder="+351 …"></div>
+    </div>
+    <div class="modal-err" id="pmErr"></div>
+    <div id="pmMatch" style="display:none;margin-top:10px;font-size:0.85rem;"></div>
     <div class="modal-actions">
-      <button class="btn btn--ghost" id="cpCancelBtn">Cancel</button>
-      <button class="btn btn--primary" id="cpSaveBtn">Add contact</button>
+      <button class="btn btn--ghost" id="pmCancelBtn">Cancel</button>
+      <button class="btn btn--primary" id="pmSaveBtn">Add</button>
     </div>
   </div>
 </div>
@@ -2811,7 +2838,21 @@ async function fetchTotalCount(){
 // panel already answers for a file about to be imported, asked here about
 // the CRM as it stands today. Kept separate from renderSummary()'s pipeline
 // pills, which answer a different question (funnel by stage).
-function computeStats(companies){
+// 21 Oct (people merge follow-ups): with the switch on, "contacts" means a
+// current person (owner, manager or contact) with an email or phone of their own.
+let reachCompanyIds = null;
+async function fetchReachCompanyIds(){
+  const snap = await getDocs(query(collection(db,'searchPeople'), where('reach', '!=', [])));
+  const ids = snap.docs.filter(d => (d.data().reach || []).some(e => ['email', 'phone'].includes(e.type) && (e.status || 'ok') === 'ok')).map(d => d.id);
+  const out = new Set();
+  for (let i = 0; i < ids.length; i += 30) {
+    const ls = await getDocs(query(collection(db,'searchPersonLinks'), where('personId', 'in', ids.slice(i, i + 30))));
+    ls.docs.forEach(d => { const l = d.data(); if (linkCurrentAny(l)) out.add(l.companyId); });
+  }
+  reachCompanyIds = out;
+  return out;
+}
+function computeStats(companies, reachIds = null){
   const total = companies.length;
   const pct = n => total ? Math.round((n / total) * 1000) / 10 : 0;
   const byStage = {}; STAGE_ORDER.forEach(k => byStage[k] = 0);
@@ -2827,7 +2868,7 @@ function computeStats(companies){
     if (c.nif) withNif++;
     if (c.website) withWebsite++;
     if (c.financials?.Y1?.revenue) withFinancials++;
-    if ((c.contacts || []).length) withContacts++;
+    if ((c.contacts || []).length || reachIds?.has(c.id)) withContacts++;
     if (c.postcode) withPostcode++;
     if (c.sector) withSector++;
     if (c.fitScore != null){ withFit++; fitSum += c.fitScore; fitCount++; }
@@ -2897,7 +2938,7 @@ const COMPANY_STAT_GROUPS = [
     { key: 'sourceType', label: 'Source',    test: c => !!c.sourceType },
   ]},
   { title: 'Outreach & Ownership', fields: [
-    { key: 'contacts',  label: 'Contacts',       test: c => (c.contacts || []).length > 0 },
+    { key: 'contacts',  get label(){ return reachCompanyIds ? 'People with an email or phone' : 'Contacts'; }, test: c => (c.contacts || []).length > 0 || !!reachCompanyIds?.has(c.id) },
     { key: 'ownership', label: 'Ownership data', test: c => c.peopleCounts && ((c.peopleCounts.sh || 0) + (c.peopleCounts.mgmt || 0)) > 0 },
   ]},
 ];
@@ -2930,7 +2971,10 @@ const PEOPLE_STAT_GROUPS = [
     return PERSON_CONTACT_FIELDS.filter(f => f.orbis).map(f => ({ key: f.orbis, label: f.label, test: p => (p[f.orbis] || []).length > 0 }))
       .concat([{ key: 'orbisWebsites', label: 'Website', test: p => (p.orbisWebsites || []).length > 0 }]);
   }},
-  { title: 'Contact \u2014 hand-entered', get fields(){
+  { title: 'Contact \u2014 People list', get fields(){ // 21 Oct: their own emails, phones… (people merge)
+    return REACH_TYPES.map(([t, label]) => ({ key: 'reach_' + t, label, test: p => (p.reach || []).some(e => e.type === t) }));
+  }},
+  { title: 'Contact \u2014 old typed fields', get fields(){
     return PERSON_CONTACT_FIELDS.map(f => ({ key: f.key, label: f.label, test: p => !!p[f.key] }));
   }},
   { title: 'Network', fields: [
@@ -3051,7 +3095,9 @@ async function openCompanyStatistics(){
   showEl('statisticsModal', true);
   document.getElementById('statisticsBody').innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);">Loading\u2026</div>';
   renderStatsSubsetBanner();
-  const stats = computeStats(companies);
+  reachCompanyIds = null;
+  if (isOn('search.people')) { try { await fetchReachCompanyIds(); } catch(e){ console.warn('people with an email or phone', e); } }
+  const stats = computeStats(companies, reachCompanyIds);
   // Two reports, not one: COMPANY_STAT_GROUPS covers pipeline/CRM-native
   // fields (fitScore, owner, ownership counts, ...) that never came from an
   // Orbis import and have no equivalent in COMPANY_FIELD_GROUPS;
@@ -4356,7 +4402,7 @@ async function renderCompanyPeople(c){
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;">
           ${canEdit && cur && companyPeopleAddFor !== l.personId ? `<button class="btn btn--ghost btn--sm" data-cpadd="${esc(l.personId)}" title="Add an email, phone, LinkedIn, website, address or fax">＋ detail</button>` : ''}
-          ${canEdit && l.isContact ? `<button class="btn btn--icon btn--ghost" data-ctedit="${esc(l.id)}" title="Edit the name and role">✎</button>` : ''}
+          ${(canEdit && l.isContact) || (!l.isContact && isHandLink(l) && canEditCompany(c)) ? `<button class="btn btn--icon btn--ghost" data-ctedit="${esc(l.id)}" title="Edit: name, role, or what they are (owner, manager, contact)">✎</button>` : ''}
           ${canEdit && cur ? (l.personId === mainId ? `<button class="btn btn--ghost btn--sm" data-mainct="" title="Clear the main contact">★</button>` : `<button class="btn btn--ghost btn--sm" data-mainct="${esc(l.personId)}" title="Make them the main contact">☆</button>`) : ''}
           ${isHandLink(l) && (!l.isContact || canEdit) ? `<button class="btn btn--ghost btn--sm" data-handcur="${esc(l.id)}"${l.isContact ? '' : ' data-perm="search.edit" data-coedit'}>${cur ? 'Mark previous' : 'Mark current'}</button>` : ''}
           ${l.isContact && canEdit ? `<button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove this contact from the company">✕</button>` : ''}
@@ -4371,7 +4417,7 @@ async function renderCompanyPeople(c){
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           ${prevN ? `<button class="btn btn--ghost btn--sm" data-cpprev>${companyPeopleShowPrev ? 'Hide' : 'Show'} previous (${prevN})</button>` : ''}
           <button class="btn btn--ghost btn--sm" id="emailCompanyBtn" data-perm="out.send" data-feature="outreach"${c.companyEmail ? '' : ' disabled title="No company email on file"'}>✉ Email company</button>
-          ${canEdit ? '<button class="btn btn--primary btn--sm" data-cpnewcontact title="Someone Orbis doesn\'t list: never counted as owner or manager">＋ Add contact</button>' : ''}
+          ${canEdit || canEditCompany(c) ? '<button class="btn btn--primary btn--sm" data-cpnewcontact title="An owner, a manager or someone else to talk to">＋ Add person</button>' : ''}
         </div>
       </div>
       <div class="hint" style="margin-bottom:10px;">Owners and managers come from Orbis; contacts are added by hand. Click a name for all their details. Company shareholders are on the Ownership tab.</div>
@@ -4384,9 +4430,9 @@ async function renderCompanyPeople(c){
   el.onclick = async (ev) => {
     const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink],[data-ctedit]'); if (!t) return;
     if (t.dataset.person) { openPerson(t.dataset.person, { type: 'company', id: c.id, tab: 'contacts' }); return; }
-    if (t.dataset.ctedit) { openContactPerson(t.dataset.ctedit); return; }
+    if (t.dataset.ctedit) { openPersonModal(t.dataset.ctedit); return; }
     if (t.dataset.cpprev != null) { companyPeopleShowPrev = !companyPeopleShowPrev; renderCompanyPeople(c); return; }
-    if (t.dataset.cpnewcontact != null) { openContactPerson(); return; }
+    if (t.dataset.cpnewcontact != null) { openPersonModal(); return; }
     if (t.dataset.cpadd) { companyPeopleAddFor = t.dataset.cpadd; await renderCompanyPeople(c); document.getElementById('cpAddValue')?.focus(); return; }
     if (t.dataset.cpaddcancel != null) { companyPeopleAddFor = null; renderCompanyPeople(c); return; }
     if (t.dataset.mainct != null) { await setMainContact(t.dataset.mainct || null); renderCompanyPeople(c); return; }
@@ -4809,7 +4855,7 @@ async function renderOwnership(c){
           ${ownOn && !allPrev ? `<div class="also-cos" data-also="${esc(l.personId)}"></div>` : ''}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          ${mainBtn(l)}${handBtn(l)}${!peopleOn && !allPrev && !l.isContact ? contactBtn(l, roleForContact) : ''}${l.isContact ? (canReach ? `<button class="btn btn--icon btn--ghost" data-ctedit="${esc(l.id)}" title="Edit the name and role">✎</button><button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove this contact from the company">✕</button>` : '') : rowActions(l)}
+          ${mainBtn(l)}${handBtn(l)}${!peopleOn && !allPrev && !l.isContact ? contactBtn(l, roleForContact) : ''}${l.isContact ? (canReach ? `<button class="btn btn--icon btn--ghost" data-ctedit="${esc(l.id)}" title="Edit: name, role, or what they are (owner, manager, contact)">✎</button><button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove this contact from the company">✕</button>` : '') : rowActions(l)}
         </div>
       </div>
     </div>`;
@@ -4819,8 +4865,7 @@ async function renderOwnership(c){
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <div class="sec-title" style="margin-bottom:0;">People</div>
-        <span style="display:inline-flex;gap:6px;">${canReach ? `<button class="btn btn--ghost btn--sm" id="addContactPersonBtn" data-feature="search.people" title="Someone Orbis doesn't list: a commercial director, an office manager… Never counted as owner or manager">＋ Add contact</button>` : ''}
-        <button class="btn btn--ghost btn--sm" id="addPersonBtn" data-perm="search.edit" data-coedit title="Someone who owns or runs the company: a share % or a management role">＋ Add owner or manager</button></span>
+        <span style="display:inline-flex;gap:6px;">${peopleOn ? (canReach || canEditCompany(c) ? '<button class="btn btn--ghost btn--sm" id="addPersonBtn" title="An owner, a manager or someone else to talk to">＋ Add person</button>' : '') : '<button class="btn btn--ghost btn--sm" id="addPersonBtn" data-perm="search.edit" data-coedit>＋ Add Person</button>'}</span>
       </div>
       ${(own.note || own.treasuryPct != null) ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
         ${own.joint || own.shared ? '🤝' : own.independent ? '🏛' : (own.ownerIds.size ? '👑' : 'ℹ️')} ${esc(own.note)}${own.treasuryPct != null ? ` · <strong>${own.treasuryPct}%</strong> held by the company in itself (treasury)` : ''}${own.guoType ? ` · <span class="badge ${/individual|families/i.test(own.guoType) ? 'badge-green' : 'badge-grey'}" title="What kind of owner sits at the top">${esc(own.guoType)}</span>` : ''}${own.guoName && !own.joint && !own.shared ? (own.guoNif && own.guoNif === (onlyDigits(c.nif) || nifFromAny('', c.bvdId))
@@ -5178,7 +5223,7 @@ function openPersonLink(linkId){
   const c = getCompany(); if (!c) return;
   editLinkId = linkId || null;
   const link = linkId ? (companyLinksCache.get(c.id) || []).find(l => l.id === linkId) : null;
-  document.getElementById('personLinkModalTitle').textContent = link ? 'Edit owner or manager' : 'Add owner or manager';
+  document.getElementById('personLinkModalTitle').textContent = link ? 'Edit Person Link' : 'Add Person';
   document.getElementById('plName').value = link ? (link.personName || '') : '';
   document.getElementById('plName').readOnly = !!link; // renaming would re-key the person doc — edit via a fresh add instead
   document.getElementById('plCountry').value = '';
@@ -5268,113 +5313,210 @@ async function toggleHandLink(linkId){
     renderOwnership(c); renderOverview(c);
   } catch(e){ alert('Error: ' + e.message); }
 }
-// 20 Oct (people merge, Stage 2): a contact person — someone Orbis doesn't
-// list. Stored as a person (own id, never an Orbis-style name id) with a
-// "contact" link: no shareholding or management, so groups, filters and the
-// names in emails never count them.
-// 21 Oct (Stage 2 follow-ups): with a link id it edits that contact's name and
-// role (F6; a name only for people added by hand — Orbis keeps its own). Adding
-// checks the names already on the company with the import's rule and asks
-// before adding a possible duplicate, never blocks (F7).
-let cpEditLinkId = null, cpMatchAck = null;
-function openContactPerson(linkId = null){
-  const c = getCompany();
-  const link = linkId && c ? (companyLinksCache.get(c.id) || []).find(l => l.id === linkId) : null;
-  cpEditLinkId = link ? link.id : null; cpMatchAck = null;
-  ['cpName', 'cpRole', 'cpEmail', 'cpPhone'].forEach(id => { document.getElementById(id).value = ''; });
-  if (link) { document.getElementById('cpName').value = link.personName || ''; document.getElementById('cpRole').value = link.contactRole || ''; }
-  document.getElementById('cpTitle').textContent = link ? 'Edit contact' : 'Add contact';
-  document.getElementById('cpIntro').style.display = link ? 'none' : '';
-  document.getElementById('cpReachRow').style.display = link ? 'none' : '';
-  document.getElementById('cpSaveBtn').textContent = link ? 'Save' : 'Add contact';
-  document.getElementById('cpErr').style.display = 'none';
-  document.getElementById('cpMatch').style.display = 'none';
-  showEl('contactPersonModal', true);
-  document.getElementById('cpName').focus();
-}
+// 21 Oct (people merge follow-ups, switch search.people): one "Add person"
+// window for everyone at a company. Owner and Manager (together when both)
+// save a hand-added owner / manager as "Add Person" does (name-based id, one
+// person across companies); Other saves a contact person (own id, a contact
+// link: never counted as owner or manager). ✎ opens the same window and can
+// change the kind — hand-added people only, Orbis keeps its own. Adding asks
+// before a possible duplicate (the import's name rule), never blocks. Owner /
+// Manager need edit rights on the company; the people's details permission is
+// enough for Other.
+let pmLinkId = null, pmMatchAck = null;
+const pmCanReach = () => window.pageAccess ? (window.pageAccess.can('search.reach') || window.pageAccess.can('search.editall')) : true;
 const cpRoleOf = (l) => l.isContact ? (l.contactRole || 'Contact') : ((l.mgmtRoles || [])[0] || (linkIsShareholder(l) ? 'Shareholder' : ''));
-async function saveContactPerson(){
-  const c = getCompany(); if (!c) return;
-  if (cpEditLinkId) return saveContactEdit(c);
-  const v = id => document.getElementById(id).value.trim();
-  const err = document.getElementById('cpErr'); err.style.display = 'none';
-  const fail = (m) => { err.textContent = m; err.style.display = 'block'; };
-  const name = v('cpName'); if (!name) return fail('Name is required.');
-  const nameKey = personNameKey(name);
-  const similar = (companyLinksCache.get(c.id) || []).filter(l => l.personEntityType !== 'entity' && personNameMatch(name, l.personName || ''));
-  const box = document.getElementById('cpMatch');
-  if (similar.length && cpMatchAck !== nameKey) {
-    box.innerHTML = `<div class="hint" style="margin-bottom:6px;">Possibly someone already on this company:</div>${similar.map(l => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;"><b>${esc(l.personName || '—')}</b>${cpRoleOf(l) ? ` <span class="hint">${esc(cpRoleOf(l))}</span>` : ''} <button type="button" class="btn btn--ghost btn--sm" data-cpmatchopen="${esc(l.personId)}">Yes, open their page</button></div>`).join('')}<button type="button" class="btn btn--ghost btn--sm" data-cpmatchnew>No, add a new contact</button>`;
-    box.style.display = 'block';
-    return;
-  }
-  box.style.display = 'none';
-  let reach = [];
-  for (const [type, val] of [['email', v('cpEmail')], ['phone', v('cpPhone')]]) {
-    if (!val) continue;
-    const r = reachAdd(reach, { type, value: val, by: currentUser, at: new Date().toISOString() });
-    if (r.error) return fail(r.error);
-    reach = r.list;
-  }
-  const btn = document.getElementById('cpSaveBtn'); btn.disabled = true;
-  try {
-    const pid = 'm_' + doc(collection(db,'searchPeople')).id;
-    await setDoc(doc(db,'searchPeople', pid), {
-      name: personDisplayName(name), nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey),
-      entityType: 'person', source: 'manual', reach, reachEmails: reachEmailsOf(reach), hiddenOrbis: [],
-      notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: 0,
-      createdAt: serverTimestamp(), createdBy: currentUser, updatedAt: serverTimestamp(), updatedBy: currentUser,
-    });
-    await setDoc(doc(db,'searchPersonLinks', `${pid}__${c.id}`), {
-      personId: pid, companyId: c.id, personName: personDisplayName(name), companyName: c.name || '', personEntityType: 'person',
-      isContact: true, contactRole: v('cpRole').slice(0, 80) || null, contactCurrent: true,
-      source: 'manual', addedBy: currentUser, addedAt: serverTimestamp(), updatedAt: serverTimestamp(),
-    });
-    invalidatePeopleCaches({ companyId: c.id, personId: pid });
-    const newKeys = companyEmailKeys({ contacts: reach.filter(e => e.type === 'email').map(e => ({ email: e.value })) }).filter(k => !(c.emailKeys || []).includes(k));
-    if (newKeys.length) { const emailKeys = [...(c.emailKeys || []), ...newKeys]; await updateDoc(doc(db,'searchCompanies', c.id), { emailKeys, updatedAt: serverTimestamp(), updatedBy: currentUser }); c.emailKeys = emailKeys; } // People merge (Stage 4)
-    await logAuto(c.id, 'person_linked', `Added contact: ${personDisplayName(name)}${v('cpRole') ? ' (' + v('cpRole') + ')' : ''}${similar.length ? ` — added although the name is similar to ${similar.map(l => l.personName).join(', ')}` : ''}`);
-    showEl('contactPersonModal', false);
-    renderOwnership(c);
-    if (isOn('search.people')) renderCompanyPeople(c); // 20 Oct (Stage 3): the People tab lists them too
-  } catch(e){ fail(e.message); }
-  finally { btn.disabled = false; }
+const pmKind = (f) => f.other ? 'contact' : [f.owner && 'owner', f.manager && 'manager'].filter(Boolean).join(' and ');
+const pmKindOfLink = (l) => l.isContact ? 'contact' : ([linkIsShareholder(l) && 'owner', linkIsManager(l) && 'manager'].filter(Boolean).join(' and ') || 'person');
+function pmSections(){
+  const $ = (id) => document.getElementById(id);
+  $('pmOwnerSec').style.display = $('pmOwner').checked ? '' : 'none';
+  $('pmManagerSec').style.display = $('pmManager').checked ? '' : 'none';
+  $('pmOtherSec').style.display = $('pmOther').checked ? '' : 'none';
 }
-async function saveContactEdit(c){
-  const link = (companyLinksCache.get(c.id) || []).find(l => l.id === cpEditLinkId);
-  const err = document.getElementById('cpErr'); err.style.display = 'none';
+function openPersonModal(linkId = null){
+  const c = getCompany(); if (!c) return;
+  const $ = (id) => document.getElementById(id);
+  const link = linkId ? (companyLinksCache.get(c.id) || []).find(l => l.id === linkId) : null;
+  pmLinkId = link ? link.id : null; pmMatchAck = null;
+  const owners = canEditCompany(c), reach = pmCanReach(), orbis = !!link && !isHandLink(link);
+  $('pmTitle').textContent = link ? 'Edit person' : 'Add person';
+  $('pmName').value = link ? (link.personName || '') : '';
+  $('pmName').readOnly = !!link && !String(link.personId || '').startsWith('m_'); // Orbis and shared names stay as they are
+  $('pmCountryWrap').style.display = link ? 'none' : '';
+  $('pmCountry').value = '';
+  $('pmOwner').checked = !!link && !link.isContact && linkIsShareholder(link);
+  $('pmManager').checked = !!link && !link.isContact && linkIsManager(link);
+  $('pmOther').checked = link ? !!link.isContact : !owners;
+  $('pmOwner').disabled = $('pmManager').disabled = !owners;
+  $('pmOther').disabled = !reach || orbis;
+  $('pmKindHint').textContent = orbis ? 'Orbis lists them as owner or manager; the next import keeps that.' : !owners ? 'Adding an owner or manager needs edit rights on this company.' : 'Owner and Manager can go together. A contact is never counted as owner or manager.';
+  $('pmDirectPct').value = link?.shDirectPct ?? ''; $('pmTotalPct').value = link?.shTotalPct ?? ''; $('pmDate').value = link?.shDate || '';
+  $('pmShCurrent').checked = link ? link.shCurrent !== false : true;
+  $('pmRoles').value = (link?.mgmtRoles || []).join(', ');
+  $('pmMgmtCurrent').checked = link ? link.mgmtCurrent !== false : true;
+  $('pmRole').value = link?.contactRole || '';
+  $('pmEmail').value = ''; $('pmPhone').value = '';
+  $('pmReachSec').style.display = link ? 'none' : '';
+  $('pmSaveBtn').textContent = link ? 'Save' : 'Add';
+  $('pmErr').style.display = 'none'; $('pmMatch').style.display = 'none';
+  pmSections();
+  showEl('personModal', true);
+  if (!$('pmName').readOnly) $('pmName').focus();
+}
+function pmForm(){
+  const $ = (id) => document.getElementById(id), v = (id) => $(id).value.trim();
+  return {
+    name: personDisplayName(v('pmName')), country: v('pmCountry') || null,
+    owner: $('pmOwner').checked, manager: $('pmManager').checked, other: $('pmOther').checked,
+    directPct: pnum(v('pmDirectPct')), totalPct: pnum(v('pmTotalPct')), shDate: v('pmDate') || null, shCurrent: $('pmShCurrent').checked,
+    roles: v('pmRoles').split(',').map(x => x.trim()).filter(Boolean), mgmtCurrent: $('pmMgmtCurrent').checked,
+    role: v('pmRole').slice(0, 80) || null, email: v('pmEmail'), phone: v('pmPhone'),
+  };
+}
+// A link's fields for the kind chosen: a contact, or owner / manager facets as
+// "Add Person" writes them. The contact fields are cleared only on a link that had them.
+function pmLinkFields(f, link){
+  if (f.other) return {
+    isContact: true, contactRole: f.role ?? null, contactCurrent: link ? (link.isContact ? link.contactCurrent !== false : linkCurrentAny(link)) : true,
+    mgmtRoles: [], mgmtCurrent: null, shDirectPct: null, shTotalPct: null, shCurrent: null, shDate: null, shType: null, alsoManager: false,
+  };
+  return {
+    ...(link?.isContact ? { isContact: false, contactRole: null, contactCurrent: null } : {}),
+    mgmtRoles: f.manager ? (f.roles || []) : [], mgmtCurrent: f.manager ? f.mgmtCurrent !== false : null,
+    shDirectPct: f.owner ? (f.directPct ?? null) : null, shTotalPct: f.owner ? (f.totalPct ?? null) : null,
+    shCurrent: f.owner ? f.shCurrent !== false : null, shDate: f.owner ? (f.shDate || null) : null, shType: f.owner ? 'I' : null,
+    alsoManager: !!f.manager,
+  };
+}
+async function savePersonModal(){
+  const c = getCompany(); if (!c) return;
+  const $ = (id) => document.getElementById(id);
+  const err = $('pmErr'); err.style.display = 'none';
   const fail = (m) => { err.textContent = m; err.style.display = 'block'; };
-  if (!link) return fail('This contact is no longer on the company.');
-  const name = personDisplayName(document.getElementById('cpName').value.trim());
-  if (!name) return fail('Name is required.');
-  const role = document.getElementById('cpRole').value.trim().slice(0, 80) || null;
-  const oldName = link.personName || '', oldRole = link.contactRole || null;
-  const renamed = name !== oldName;
-  if (!renamed && role === oldRole) { showEl('contactPersonModal', false); return; }
-  const btn = document.getElementById('cpSaveBtn'); btn.disabled = true;
+  const link = pmLinkId ? (companyLinksCache.get(c.id) || []).find(l => l.id === pmLinkId) : null;
+  if (pmLinkId && !link) return fail('This person is no longer on the company.');
+  const f = pmForm();
+  if (!f.name) return fail('Name is required.');
+  if (!f.owner && !f.manager && !f.other) return fail('Tick Owner, Manager or Other.');
+  if ((f.owner || f.manager) && !canEditCompany(c)) return fail('Adding an owner or manager needs edit rights on this company.');
+  if (f.other && link && !isHandLink(link)) return fail('Orbis lists them as owner or manager; the next import keeps that.');
+  let similar = [];
+  if (!link) {
+    const nameKey = personNameKey(f.name);
+    similar = (companyLinksCache.get(c.id) || []).filter(l => l.personEntityType !== 'entity' && personNameMatch(f.name, l.personName || ''));
+    const box = $('pmMatch');
+    if (similar.length && pmMatchAck !== nameKey) {
+      box.innerHTML = `<div class="hint" style="margin-bottom:6px;">Possibly someone already on this company:</div>${similar.map(l => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;"><b>${esc(l.personName || '—')}</b>${cpRoleOf(l) ? ` <span class="hint">${esc(cpRoleOf(l))}</span>` : ''} <button type="button" class="btn btn--ghost btn--sm" data-pmmatchopen="${esc(l.personId)}">Yes, open their page</button></div>`).join('')}<button type="button" class="btn btn--ghost btn--sm" data-pmmatchnew>No, add a new person</button>`;
+      box.style.display = 'block';
+      return;
+    }
+    box.style.display = 'none';
+  }
+  const btn = $('pmSaveBtn'); btn.disabled = true;
   try {
-    if (renamed) {
-      const pp = await fetchPerson(link.personId).catch(() => null);
-      if (pp?.source !== 'manual') return fail('Orbis keeps this name: the next import would change it back.');
-      const nameKey = personNameKey(name);
-      await updateDoc(doc(db,'searchPeople', link.personId), { name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), updatedAt: serverTimestamp(), updatedBy: currentUser });
-      const all = await getDocs(query(collection(db,'searchPersonLinks'), where('personId', '==', link.personId)));
-      await Promise.all(all.docs.map(d => updateDoc(d.ref, { personName: name, updatedAt: serverTimestamp() })));
-    }
-    if (role !== oldRole) await updateDoc(doc(db,'searchPersonLinks', link.id), { contactRole: role, updatedAt: serverTimestamp() });
-    invalidatePeopleCaches({ companyId: c.id, personId: link.personId });
-    if (c.primaryContact?.personId === link.personId) { // the main contact's saved name and role follow
-      const snap = await mainContactSnapshot(link.personId, c, { ...link, personName: name, contactRole: role });
-      const primaryContact = { ...c.primaryContact, name: snap.name, role: snap.role };
-      await updateDoc(doc(db,'searchCompanies', c.id), { primaryContact, updatedAt: serverTimestamp(), updatedBy: currentUser });
-      c.primaryContact = primaryContact; cacheCompanies();
-    }
-    await logAuto(c.id, 'person_updated', `Contact edited: ${[renamed ? `${oldName} → ${name}` : name, role !== oldRole ? `role ${oldRole || '—'} → ${role || '—'}` : ''].filter(Boolean).join(' · ')}`);
-    showEl('contactPersonModal', false);
-    renderOwnership(c);
+    if (link) await pmEdit(c, link, f);
+    else await pmAdd(c, f, similar);
+    showEl('personModal', false);
+    renderOwnership(c); renderOverview(c);
     if (isOn('search.people')) renderCompanyPeople(c);
   } catch(e){ fail(e.message); }
   finally { btn.disabled = false; }
+}
+async function pmAdd(c, f, similar){
+  let reach = [];
+  for (const [type, val] of [['email', f.email], ['phone', f.phone]]) {
+    if (!val) continue;
+    const r = reachAdd(reach, { type, value: val, by: currentUser, at: new Date().toISOString() });
+    if (r.error) throw new Error(r.error);
+    reach = r.list;
+  }
+  const nameKey = personNameKey(f.name);
+  let pid;
+  if (f.other) {
+    pid = 'm_' + doc(collection(db,'searchPeople')).id;
+    await setDoc(doc(db,'searchPeople', pid), {
+      name: f.name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey),
+      entityType: 'person', source: 'manual', reach, reachEmails: reachEmailsOf(reach), hiddenOrbis: [], ...(f.country ? { country: f.country } : {}),
+      notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: 0,
+      createdAt: serverTimestamp(), createdBy: currentUser, updatedAt: serverTimestamp(), updatedBy: currentUser,
+    });
+  } else {
+    pid = personDocId(nameKey);
+    const existing = await fetchPerson(pid);
+    let list = existing?.reach || [];
+    for (const e of reach) { const r = reachAdd(list, { type: e.type, value: e.value, by: currentUser, at: e.addedAt }); if (!r.error) list = r.list; }
+    const personData = { name: f.name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), entityType: 'person', updatedAt: serverTimestamp(),
+      ...(f.country ? { country: f.country } : {}), ...(reach.length ? { reach: list, reachEmails: reachEmailsOf(list) } : {}) };
+    if (!existing) Object.assign(personData, { createdAt: serverTimestamp(), linkCount: 0, currentLinkCount: 0, notes: null, uci: null, matchedCompanyId: null });
+    await setDoc(doc(db,'searchPeople', pid), personData, { merge: true });
+  }
+  personDocCache.delete(pid);
+  const person = await fetchPerson(pid);
+  await setDoc(doc(db,'searchPersonLinks', `${pid}__${c.id}`), {
+    personId: pid, companyId: c.id, personName: person?.name || f.name, companyName: c.name || '',
+    personEntityType: person?.entityType || 'person', personMatchedCompanyId: person?.matchedCompanyId || null,
+    ...pmLinkFields(f, null), source: 'manual', addedBy: currentUser, addedAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  }, { merge: true });
+  invalidatePeopleCaches({ companyId: c.id, personId: pid });
+  if (!f.other) { await recountCompanyPeople(c.id); await recountPerson(pid); }
+  const emails = reach.filter(e => e.type === 'email').map(e => ({ email: e.value }));
+  const newKeys = emails.length ? companyEmailKeys({ contacts: emails }).filter(k => !(c.emailKeys || []).includes(k)) : [];
+  if (newKeys.length) { const emailKeys = [...(c.emailKeys || []), ...newKeys]; await updateDoc(doc(db,'searchCompanies', c.id), { emailKeys, updatedAt: serverTimestamp(), updatedBy: currentUser }); c.emailKeys = emailKeys; }
+  const role = f.other ? f.role : (f.manager ? f.roles.join(', ') : '');
+  await logAuto(c.id, 'person_linked', `${f.other ? 'Added contact' : 'Linked person'}: ${f.name} (${pmKind(f)}${role ? ' · ' + role : ''})${similar.length ? ` — added although the name is similar to ${similar.map(l => l.personName).join(', ')}` : ''}`);
+}
+async function pmEdit(c, link, f){
+  const oldName = link.personName || '', renamed = f.name !== oldName;
+  const wasKind = pmKindOfLink(link), nowKind = pmKind(f);
+  if (renamed) {
+    const pp = await fetchPerson(link.personId).catch(() => null);
+    if (!String(link.personId).startsWith('m_') || pp?.source !== 'manual') throw new Error('This name comes from Orbis or is shared with other companies, so it can\'t be changed here.');
+    const nameKey = personNameKey(f.name);
+    await updateDoc(doc(db,'searchPeople', link.personId), { name: f.name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), updatedAt: serverTimestamp(), updatedBy: currentUser });
+    const all = await getDocs(query(collection(db,'searchPersonLinks'), where('personId', '==', link.personId)));
+    await Promise.all(all.docs.map(d => updateDoc(d.ref, { personName: f.name, updatedAt: serverTimestamp() })));
+  }
+  const fields = pmLinkFields(f, link);
+  await updateDoc(doc(db,'searchPersonLinks', link.id), { ...fields, updatedAt: serverTimestamp() });
+  invalidatePeopleCaches({ companyId: c.id, personId: link.personId });
+  if (!(link.isContact && f.other)) await recountCompanyPeople(c.id); // owners / managers changed: the counts follow
+  await recountPerson(link.personId);
+  if (c.primaryContact?.personId === link.personId) { // the main contact's saved name and role follow
+    const snap = await mainContactSnapshot(link.personId, c, { ...link, ...fields, personName: f.name });
+    const primaryContact = { ...c.primaryContact, name: snap.name, role: snap.role };
+    await updateDoc(doc(db,'searchCompanies', c.id), { primaryContact, updatedAt: serverTimestamp(), updatedBy: currentUser });
+    c.primaryContact = primaryContact; cacheCompanies();
+  }
+  const parts = [renamed ? `${oldName} → ${f.name}` : f.name];
+  if (wasKind !== nowKind) parts.push(`${wasKind} → ${nowKind}`);
+  if (f.other && (link.contactRole || null) !== f.role) parts.push(`role ${link.contactRole || '—'} → ${f.role || '—'}`);
+  await logAuto(c.id, 'person_updated', `Person edited: ${parts.join(' · ')}`);
+}
+// 21 Oct (people merge follow-ups): the file's contact or director as a person
+// on each new company (company import) — a contact person, or a hand-added
+// manager for a "director" column — with their email and phone in their list
+// and as the company's main contact. Own ids, so an Orbis import later offers
+// "possible same person" instead of mixing them up.
+async function bulkAddPeople(rows, onProgress){
+  const at = new Date().toISOString();
+  return commitInChunks(rows, 120, (batch, r) => {
+    const pp = r.person, name = personDisplayName(pp.name), nameKey = personNameKey(pp.name);
+    let reach = [];
+    for (const [type, val] of [['email', pp.email], ['phone', pp.phone]]) { if (!val) continue; const x = reachAdd(reach, { type, value: val, source: 'import', by: currentUser, at }); if (!x.error) reach = x.list; }
+    const pid = 'm_' + doc(collection(db,'searchPeople')).id;
+    const role = pp.role || (pp.manager ? 'Director' : '');
+    batch.set(doc(db,'searchPeople', pid), { name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), entityType: 'person', source: 'manual',
+      reach, reachEmails: reachEmailsOf(reach), hiddenOrbis: [], notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: pp.manager ? 1 : 0,
+      createdAt: serverTimestamp(), createdBy: currentUser, updatedAt: serverTimestamp(), updatedBy: currentUser });
+    const f = pp.manager ? { manager: true, roles: [role], mgmtCurrent: true } : { other: true, role: role || null };
+    batch.set(doc(db,'searchPersonLinks', `${pid}__${r.newId}`), { personId: pid, companyId: r.newId, personName: name, companyName: r.co.name || '', personEntityType: 'person',
+      ...pmLinkFields(f, null), source: 'manual', addedBy: currentUser, addedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    batch.update(doc(db,'searchCompanies', r.newId), {
+      primaryContact: { personId: pid, name, role: role || 'Contact', email: reach.find(e => e.type === 'email')?.value || null, phone: reach.find(e => e.type === 'phone')?.value || null, by: currentUser, at },
+      ...(pp.manager ? { peopleCounts: { sh: 0, mgmt: 1, prevSh: 0, prevMgmt: 0 } } : {}),
+    });
+    return true;
+  }, { onProgress });
 }
 async function mainContactSnapshot(personId, c, link){
   const pp = await fetchPerson(personId).catch(() => null);
@@ -5575,6 +5717,18 @@ function renderReachCard(p, links){
     await save(list, [...(p.hiddenOrbis || [])], `${e.value} marked ${sel.value === 'ok' ? 'OK' : sel.value}`);
   };
 }
+// 21 Oct (people merge follow-ups): activities logged with this person as the
+// contact involved, newest first, on any company.
+async function renderPersonActivities(p){
+  const el = document.getElementById('personActs'); if (!el) return;
+  let acts = [];
+  try { acts = (await getDocs(query(collection(db,'searchActivities'), where('contactPersonId', '==', p.id), limit(50)))).docs.map(d => ({ id: d.id, ...d.data() })); }
+  catch(e){ console.warn('person activities', e); return; }
+  if (currentPersonId !== p.id || !acts.length) return;
+  acts.sort((a, b) => (tsToDate(b.date)?.getTime() || 0) - (tsToDate(a.date)?.getTime() || 0));
+  el.innerHTML = `<div class="sec-title">Activities with them</div>${acts.map(a => `<div class="contact-item"><span class="hint">${esc(fmtDate(a.date))}</span> · ${esc(ACT[a.type]?.label || a.type)} · <span class="person-link" data-gotoco="${esc(a.companyId)}">${esc(companies.find(x => x.id === a.companyId)?.name || 'Company')}</span>${a.title ? ` — ${esc(a.title)}` : ''}${a.content ? `<div class="contact-detail">${esc(String(a.content).slice(0, 200))}</div>` : ''}</div>`).join('')}`;
+  el.hidden = false;
+}
 function renderPersonView(p, links){
   document.getElementById('pName').textContent = p.name || '—';
   const current = links.filter(l => l.shCurrent === true || l.mgmtCurrent === true).length;
@@ -5621,6 +5775,7 @@ function renderPersonView(p, links){
       ${links.length ? rows : '<div style="font-size:0.85rem;color:var(--text-light);">No known positions.</div>'}
       ${links.length ? `<div class="own-legend"><span class="cur">currently</span><span class="prv">previously</span></div>` : ''}
     </div>
+    ${isOn('search.people') ? '<div class="card" id="personActs" data-feature="search.people" hidden></div>' : ''}
     ${isOn('search.people') ? '<div class="card" id="reachCard" data-feature="search.people"></div>' : `<div class="card">
       <div class="sec-title">Contact</div>
       <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
@@ -5647,7 +5802,7 @@ function renderPersonView(p, links){
       <div style="margin-top:8px;"><button class="btn btn--ghost btn--sm" id="savePersonNotesBtn" data-perm="search.editall">Save Notes</button></div>
     </div>
     <div class="card"><div class="sec-title">Network</div><div id="personGraph"></div></div>`;
-  if (isOn('search.people')) renderReachCard(p, links);
+  if (isOn('search.people')) { renderReachCard(p, links); renderPersonActivities(p); }
   document.getElementById('savePersonContactBtn')?.addEventListener('click', async () => {
     const btn = document.getElementById('savePersonContactBtn'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
@@ -11462,7 +11617,7 @@ function renderActFields(){
   const isAnyDate = ['call_attempted','call_connected','email','letter','linkedin'].includes(activityType);
   const needTitle = ['meeting_scheduled','meeting_done','other'].includes(activityType);
   // People merge (Stage 4): the company's current people (owners, managers, contacts) come first.
-  const peopleOpts = isOn('search.people') ? (companyLinksCache.get(c.id) || []).filter(l => l.personId && l.personEntityType !== 'entity' && linkCurrentAny(l)).map(l => { const role = l.isContact ? (l.contactRole || 'Contact') : ((l.mgmtRoles || [])[0] || (linkIsShareholder(l) ? 'Shareholder' : '')); return `<option value="${esc(l.personName || '')}|${esc(role)}">${esc(l.personName || '')}${role ? ' (' + esc(role) + ')' : ''}</option>`; }).join('') : '';
+  const peopleOpts = isOn('search.people') ? (companyLinksCache.get(c.id) || []).filter(l => l.personId && l.personEntityType !== 'entity' && linkCurrentAny(l)).map(l => { const role = l.isContact ? (l.contactRole || 'Contact') : ((l.mgmtRoles || [])[0] || (linkIsShareholder(l) ? 'Shareholder' : '')); return `<option value="${esc(l.personName || '')}|${esc(role)}" data-pid="${esc(l.personId)}">${esc(l.personName || '')}${role ? ' (' + esc(role) + ')' : ''}</option>`; }).join('') : '';
   const contactOpts = peopleOpts + (c.contacts||[]).map(ct=>`<option value="${esc(ct.name)}|${esc(ct.role||'')}">${esc(ct.name)}${ct.role?' ('+esc(ct.role)+')':''}</option>`).join('');
   const viaOpts = ['letter','email','call','linkedin','warm_intro','in_person','other'];
   document.getElementById('actFields').innerHTML = `
@@ -11493,12 +11648,13 @@ async function saveActivity(){
   const dateObj = timeStr ? new Date(`${dateStr}T${timeStr}`) : new Date(dateStr);
   const contactVal = document.getElementById('actContact')?.value || '';
   const [cName, cRole] = contactVal ? contactVal.split('|') : ['',''];
+  const contactPersonId = document.getElementById('actContact')?.selectedOptions?.[0]?.dataset.pid || null; // 21 Oct: shown on their person page
   const btn = document.getElementById('actSaveBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
   const actData = {
     companyId: c.id, type: activityType, date: Timestamp.fromDate(dateObj),
     title: title||null, content: document.getElementById('actContent')?.value.trim()||null,
     via: document.getElementById('actVia')?.value||null,
-    contactName: cName||null, contactRole: cRole||null,
+    contactName: cName||null, contactRole: cRole||null, contactPersonId,
     responseCategory: document.getElementById('actResponse')?.value||null,
     time: timeStr, timezone: isMeeting?(document.getElementById('actTimezone')?.value||'CET'):null,
     duration: isMeeting?num(document.getElementById('actDuration')?.value):null,
@@ -12375,6 +12531,11 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, dedup){
   const contacts = [];
   const cName = g('contact name','director (primary)','director');
   if (cName) contacts.push({ name:cName, role:g('contact role')||'', email:g('contact email')||'', phone:g('contact phone')||'', linkedin:'', source:'', notes:'', isPrimary:true });
+  // 21 Oct (people merge follow-ups): with the switch on, that person goes into
+  // People (confirmBulk → bulkAddPeople), not the old Contacts list: a "director"
+  // column makes a manager, "contact name" a contact.
+  const peopleOn = typeof isOn === 'function' && isOn('search.people');
+  const person = peopleOn && cName ? { name: cName, role: g('contact role') || '', email: g('contact email') || '', phone: g('contact phone') || '', manager: !g('contact name') } : null;
 
   const co = {
     name, bvdId: bvd||null, nif: nif||null, legalForm:g('legal form')||null,
@@ -12392,7 +12553,7 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, dedup){
     ownershipType: OWNERSHIP_LABELS[g('ownership type').toLowerCase()]?g('ownership type').toLowerCase():null,
     successionSit: SUCCESSION_LABELS[g('succession').toLowerCase()]?g('succession').toLowerCase():null,
     sourceType: mapSource(g('source type','source')), owner, priority:prio, stage,
-    financials:fin, contacts, addOnTo:[], addOns:[],
+    financials:fin, contacts: peopleOn ? [] : contacts, addOnTo:[], addOns:[],
   };
   // Derive Sector / Sub-sector from NACE (or CAE) when not supplied in the file.
   if (!co.sector && (co.naceCode || co.caeCode)) {
@@ -12402,7 +12563,7 @@ function processBulkRow(headerMap, finColMap, lastYear, vals, dedup){
   }
   if (dup) errors.push(`duplicate — ${dupReason} already in CRM`);
   else if (dedup.existingName.has(normName(name))) errors.push('similar name exists');
-  return { co, errors, name, dup, matchId };
+  return { co, errors, name, dup, matchId, person };
 }
 function parseBulkFile(text){
   const rows = parseCSV(text);
@@ -12496,10 +12657,12 @@ async function confirmBulk(){
     // 1) Create new companies. Always-new docs — nothing to diff against, so
     //    every one is written — but parallel commits (commitInChunks) still
     //    cut wall-clock time when there are many.
-    await commitInChunks(newRows, CHUNK, (batch, { co }) => {
+    await commitInChunks(newRows, CHUNK, (batch, r) => {
+      const { co } = r;
       const local = computeFields({ ...co });
-      batch.set(doc(col), { ...co,
-        ...companyIndexFields(co),
+      const ref = doc(col); r.newId = ref.id; // 21 Oct: the file's person is added to it afterwards
+      batch.set(ref, { ...co,
+        ...companyIndexFields(r.person?.email ? { ...co, contacts: [{ email: r.person.email }] } : co),
         computedRevenue:local.computedRevenue, computedEBITDA:local.computedEBITDA, computedEBITDAMargin:local.computedEBITDAMargin,
         computedEBITDAWeighted:local.computedEBITDAWeighted, computedEBITDAMarginWeighted:local.computedEBITDAMarginWeighted,
         computedGrowthRecent:local.computedGrowthRecent, computedGrowthSustained:local.computedGrowthSustained, computedEBITDAStability:local.computedEBITDAStability,
@@ -12508,6 +12671,8 @@ async function confirmBulk(){
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(), createdBy: currentUser });
       return true;
     }, { onProgress: done => { btn.innerHTML = `<span class="spin-sm"></span>Adding… ${done}/${newRows.length}`; } });
+    const withPerson = newRows.filter(r => r.person && r.newId);
+    if (withPerson.length) await bulkAddPeople(withPerson, done => { btn.innerHTML = `<span class="spin-sm"></span>Adding people… ${done}/${withPerson.length}`; });
     // 2) Update existing: auto-refresh financials (skipped when nothing
     //    changed — mergeFinancials already reports that), collect
     //    non-financial diffs for the report regardless of the write decision.
@@ -12614,25 +12779,30 @@ document.getElementById('peopleHandPanel').addEventListener('click', e => {
 });
 document.getElementById('personLinkCancelBtn').addEventListener('click', () => showEl('personLinkModal', false));
 document.getElementById('personLinkSaveBtn').addEventListener('click', savePersonLink);
-document.getElementById('cpCancelBtn').addEventListener('click', () => showEl('contactPersonModal', false));
-document.getElementById('cpSaveBtn').addEventListener('click', saveContactPerson);
-document.getElementById('cpMatch').addEventListener('click', e => { // 21 Oct (F7): a possible duplicate
-  const t = e.target.closest('[data-cpmatchopen],[data-cpmatchnew]'); if (!t) return;
-  if (t.dataset.cpmatchnew != null) { cpMatchAck = personNameKey(document.getElementById('cpName').value.trim()); saveContactPerson(); return; }
-  showEl('contactPersonModal', false);
-  openPerson(t.dataset.cpmatchopen, { type: 'company', id: currentCoId, tab: isOn('search.people') ? 'contacts' : 'ownership' });
+document.getElementById('pmCancelBtn').addEventListener('click', () => showEl('personModal', false));
+document.getElementById('pmSaveBtn').addEventListener('click', savePersonModal);
+document.getElementById('pmKinds').addEventListener('change', e => { // Other (a contact) never goes with Owner / Manager
+  const $ = (id) => document.getElementById(id);
+  if (e.target.id === 'pmOther' && e.target.checked) { $('pmOwner').checked = false; $('pmManager').checked = false; }
+  if ((e.target.id === 'pmOwner' || e.target.id === 'pmManager') && e.target.checked) $('pmOther').checked = false;
+  pmSections();
+});
+document.getElementById('pmMatch').addEventListener('click', e => { // a possible duplicate
+  const t = e.target.closest('[data-pmmatchopen],[data-pmmatchnew]'); if (!t) return;
+  if (t.dataset.pmmatchnew != null) { pmMatchAck = personNameKey(document.getElementById('pmName').value.trim()); savePersonModal(); return; }
+  showEl('personModal', false);
+  openPerson(t.dataset.pmmatchopen, { type: 'company', id: currentCoId, tab: isOn('search.people') ? 'contacts' : 'ownership' });
 });
 document.getElementById('panel-ownership').addEventListener('click', e => {
-  const t = e.target.closest('[data-person],[data-gotoco],[data-editlink],[data-rmlink],[data-tocontact],[data-handcur],[data-mainct],[data-ctedit],#addPersonBtn,#addContactPersonBtn');
+  const t = e.target.closest('[data-person],[data-gotoco],[data-editlink],[data-rmlink],[data-tocontact],[data-handcur],[data-mainct],[data-ctedit],#addPersonBtn');
   if (!t) return;
-  if (t.dataset.ctedit) { openContactPerson(t.dataset.ctedit); return; }
+  if (t.dataset.ctedit) { openPersonModal(t.dataset.ctedit); return; }
   if (t.dataset.handcur) { toggleHandLink(t.dataset.handcur); return; }
   if (t.dataset.mainct != null) { setMainContact(t.dataset.mainct || null); return; }
-  if (t.id === 'addContactPersonBtn') { openContactPerson(); return; }
-  if (t.id === 'addPersonBtn') openPersonLink(null);
+  if (t.id === 'addPersonBtn') { if (isOn('search.people')) openPersonModal(); else openPersonLink(null); return; }
   else if (t.dataset.person) openPerson(t.dataset.person, { type:'company', id: currentCoId, tab:'ownership' });
   else if (t.dataset.gotoco) openDetail(t.dataset.gotoco);
-  else if (t.dataset.editlink) openPersonLink(t.dataset.editlink);
+  else if (t.dataset.editlink) { if (isOn('search.people')) openPersonModal(t.dataset.editlink); else openPersonLink(t.dataset.editlink); }
   else if (t.dataset.rmlink) removePersonLink(t.dataset.rmlink);
   else if (t.dataset.tocontact) copyLinkToContacts(t.dataset.tocontact, t.dataset.crole);
 });
@@ -13028,7 +13198,7 @@ document.getElementById('cNaceCode').addEventListener('blur', () => {
 });
 
 // Overlay click-to-close
-['companyModal','contactModal','personLinkModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','statisticsModal','bulkModal','peopleImportModal','companiesImportModal','reportModal','mapListsModal','miniMapModal','exportFieldsModal'].forEach(id => {
+['companyModal','contactModal','personLinkModal','personModal','activityModal','closeMtgModal','addonModal','deleteModal','settingsModal','statisticsModal','bulkModal','peopleImportModal','companiesImportModal','reportModal','mapListsModal','miniMapModal','exportFieldsModal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => { if (e.target.id===id) showEl(id, false); });
 });
 </script>

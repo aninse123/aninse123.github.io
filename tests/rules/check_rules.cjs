@@ -52,6 +52,8 @@ const cases = [
   C('Reach: link a contact person to a company', REACH, 'create', 'searchPersonLinks/m_1__c1', 'ALLOW', { companyId: 'c1', personId: 'm_1', isContact: true, contactCurrent: true }),
   C('Reach: cannot add an owner or manager', REACH, 'create', 'searchPersonLinks/m_1__c1', 'DENY', { companyId: 'c1', personId: 'm_1', isContact: true, mgmtCurrent: true }),
   C('Reach: mark a contact previous', REACH, 'update', 'searchPersonLinks/m_1__c1', 'ALLOW', { companyId: 'c1', isContact: true, contactCurrent: false }, { companyId: 'c1', isContact: true, contactCurrent: true }),
+  C('Reach: cannot turn a contact into a manager (21 Oct, change kind)', REACH, 'update', 'searchPersonLinks/m_1__c1', 'DENY', { companyId: 'c1', isContact: false, mgmtRoles: ['Gerente'], mgmtCurrent: true }, { companyId: 'c1', isContact: true, contactCurrent: true }),
+  C('Partner: turn a contact into a manager', PARTNER, 'update', 'searchPersonLinks/m_1__c1', 'ALLOW', { companyId: 'c1', isContact: false, mgmtRoles: ['Gerente'], mgmtCurrent: true }, { companyId: 'c1', isContact: true, contactCurrent: true }),
   C('Reach: cannot turn an Orbis link into a contact', REACH, 'update', 'searchPersonLinks/u_1__c1', 'DENY', { companyId: 'c1', isContact: true }, { companyId: 'c1', shCurrent: true }),
   C('Reach: remove a contact person from a company', REACH, 'delete', 'searchPersonLinks/m_1__c1', 'ALLOW', null, { companyId: 'c1', isContact: true }),
   C('Reach: cannot remove an Orbis owner', REACH, 'delete', 'searchPersonLinks/u_1__c1', 'DENY', null, { companyId: 'c1', shCurrent: true }),

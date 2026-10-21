@@ -179,6 +179,11 @@ async function showCompany(id) {
   } catch (e) { $('detail').innerHTML = `<p class="hint err">Could not load: ${esc(e.message)}</p>`; return; }
   if (!snap.exists()) { $('detail').innerHTML = '<p class="hint">Company not found.</p>'; return; }
   const c = { id: snap.id, ...snap.data() };
+  // 21 Oct (people merge, switch search.people): the contact people's own emails and phones.
+  if (isOn('search.people')) {
+    const ids = [...new Set(links.filter((l) => l.isContact && l.contactCurrent !== false).map((l) => l.personId))];
+    c._people = new Map(await Promise.all(ids.map((pid) => getDoc(doc(db, 'searchPeople', pid)).then((x) => [pid, x.exists() ? x.data() : null]).catch(() => [pid, null]))));
+  }
   addRecent({ t: 'c', id: c.id, name: c.name || 'Company' });
   $('barTitle').textContent = c.name || 'Company';
   // Ultimate owner in the pipeline → link to it.
@@ -240,7 +245,14 @@ export function companyHtml(c, links, acts, guoCo) {
   // People merge (Stage 4, switch search.people): the company's main contact first.
   const pc = isOn('search.people') ? c.primaryContact : null;
   const mainRow = pc?.name ? `<div class="contact"><div class="row__title">${esc(pc.name)} <span class="pill info">Main contact</span></div>${pc.role ? `<div class="row__sub">${esc(pc.role)}</div>` : ''}<div class="acts">${pc.phone ? `<a href="${esc(tel(pc.phone))}">${esc(pc.phone)}</a>` : ''}${pc.email ? `<a href="mailto:${esc(pc.email)}">${esc(pc.email)}</a>` : ''}</div></div>` : '';
-  const contacts = (mainRow + contactsList) || '<p class="hint">No contacts yet.</p>';
+  // 21 Oct: with the People merge on, the contacts are people (as on the desktop) — the
+  // main contact first, then each contact with their own phone and email.
+  const ctLinks = isOn('search.people') ? links.filter((l) => l.isContact && l.contactCurrent !== false && l.personId !== pc?.personId) : [];
+  const ctRow = (l) => { const pp = c._people?.get(l.personId) || {}; const first = (t) => ((pp.reach || []).filter((e) => e.type === t && (e.status || 'ok') === 'ok').sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0))[0] || {}).value;
+    const ph = first('phone'), em = first('email');
+    return `<div class="contact"><div class="row__title"><a href="#p/${encodeURIComponent(l.personId)}">${esc(l.personName || 'Contact')}</a></div>${l.contactRole ? `<div class="row__sub">${esc(l.contactRole)}</div>` : ''}<div class="acts">${ph ? `<a href="${esc(tel(ph))}">${esc(ph)}</a>` : ''}${em ? `<a href="mailto:${esc(em)}">${esc(em)}</a>` : ''}</div></div>`; };
+  const contacts = (mainRow + (isOn('search.people') ? ctLinks.map(ctRow).join('') + contactsList : contactsList)) || '<p class="hint">No contacts yet.</p>';
+  const contactCount = isOn('search.people') ? ctLinks.length + (pc?.name ? 1 : 0) + (c.contacts || []).length : (c.contacts || []).length;
 
   const mgs = links.filter(H.linkIsManager);
   const curMg = mgs.filter((l) => l.mgmtCurrent !== false), prevMg = mgs.filter((l) => l.mgmtCurrent === false);
@@ -255,7 +267,7 @@ export function companyHtml(c, links, acts, guoCo) {
     + section('Overview', overview)
     + section('Key financials', financials)
     + section(`Shareholders <span class="n">${curSh.length}</span>`, shareholders)
-    + section(`Contacts <span class="n">${(c.contacts || []).length}</span>`, contacts)
+    + section(`Contacts <span class="n">${contactCount}</span>`, contacts)
     + section(`Management <span class="n">${curMg.length}</span>`, management)
     + section(`Activities <span class="n">${acts.length}</span>`, activities, false)
     + `<p class="foot"><a href="/portal/search.html?company=${encodeURIComponent(c.id)}">Open in the full Search CRM</a></p>`;
@@ -278,10 +290,32 @@ async function showPerson(id) {
   $('detail').innerHTML = personHtml(p, links);
 }
 
+// 21 Oct (people merge, switch search.people): a person's own emails, phones,
+// LinkedIn, websites, addresses and faxes (bounced / old ones struck through),
+// then Orbis's values they haven't hidden — as on the desktop's Contact card.
+const REACH_M = [['email', 'Email', 'orbisEmails'], ['phone', 'Phone', 'orbisPhones'], ['linkedin', 'LinkedIn', ''], ['website', 'Website / social', 'orbisWebsites'], ['address', 'Address', 'orbisAddresses'], ['fax', 'Fax', 'orbisFaxes']];
+function reachLinkM(t, v, bad) {
+  const st = bad ? ' style="text-decoration:line-through"' : '';
+  if (t === 'phone') return `<a href="${esc(tel(v))}"${st}>${esc(v)}</a>`;
+  if (t === 'email') return `<a href="mailto:${esc(v)}"${st}>${esc(v)}</a>`;
+  if (t === 'linkedin' || t === 'website') return `<a href="${esc(extUrl(v))}" target="_blank" rel="noopener"${st}>${esc(v)}</a>`;
+  if (t === 'address') return `<a href="https://maps.apple.com/?q=${encodeURIComponent(v)}" target="_blank" rel="noopener">${esc(v)}</a>`;
+  return `<span${st}>${esc(v)}</span>`;
+}
+export function reachHtml(p) {
+  const hidden = new Set((p.hiddenOrbis || []).map(String));
+  return REACH_M.map(([t, label, orbis]) => {
+    const own = (p.reach || []).filter((e) => e.type === t).sort((a, b) => (((a.status || 'ok') !== 'ok') - ((b.status || 'ok') !== 'ok')) || ((b.primary ? 1 : 0) - (a.primary ? 1 : 0)));
+    const orb = (orbis ? H.orbisValues(p, orbis) : []).filter((v) => !hidden.has(String(v)) && !own.some((e) => String(e.value).trim().toLowerCase() === String(v).trim().toLowerCase()));
+    const rows = [...own.map((e) => reachLinkM(t, e.value, (e.status || 'ok') !== 'ok') + (e.note ? ` <span class="muted">${esc(e.note)}</span>` : '')), ...orb.map((v) => reachLinkM(t, v, false) + ' <span class="muted">Orbis</span>')];
+    return rows.length ? kv(label, rows.join('<br>')) : '';
+  }).join('');
+}
 const CONTACT_FIELDS = [['phone', 'orbisPhones', 'Phone'], ['email', 'orbisEmails', 'Email'], ['linkedin', '', 'LinkedIn'], ['address', 'orbisAddresses', 'Address']];
 export function personHtml(p, links) {
   const entity = p.entityType === 'entity';
-  const cur = links.filter(H.linkIsCurrent), prev = links.filter((l) => !H.linkIsCurrent(l));
+  const isCur = (l) => (l.isContact ? l.contactCurrent !== false : H.linkIsCurrent(l)); // 21 Oct: contacts too
+  const cur = links.filter(isCur), prev = links.filter((l) => !isCur(l));
   const age = H.personAge(p);
   const nat = p.nationality && p.nationality !== p.country ? String(p.nationality).split(';').map((x) => x.trim()).filter(Boolean).join(' · ') : '';
   const header = `<header class="head"><h1>${esc(p.name || '—')}</h1>
@@ -289,7 +323,7 @@ export function personHtml(p, links) {
     <div class="pills"><span class="pill muted">${cur.length} current · ${links.length} position${links.length === 1 ? '' : 's'}</span>${age ? `<span class="pill ${age.age >= 60 ? 'warn' : 'muted'}">${age.age}${age.exact ? '' : '~'} years</span>` : ''}</div>
     ${entity && p.matchedCompanyId ? `<a class="btn" href="#c/${encodeURIComponent(p.matchedCompanyId)}">Open company</a>` : ''}
   </header>`;
-  const contact = CONTACT_FIELDS.map(([k, orbis, label]) => {
+  const contact = isOn('search.people') ? reachHtml(p) : CONTACT_FIELDS.map(([k, orbis, label]) => {
     const vals = [...new Set([p[k], ...H.orbisValues(p, orbis)].filter(Boolean))];
     if (!vals.length) return '';
     const link = (v) => (k === 'phone' ? `<a href="${esc(tel(v))}">${esc(v)}</a>` : k === 'email' ? `<a href="mailto:${esc(v)}">${esc(v)}</a>` : k === 'linkedin' ? `<a href="${esc(extUrl(v))}" target="_blank" rel="noopener">${esc(v)}</a>` : `${esc(v)}<br><a href="https://maps.apple.com/?q=${encodeURIComponent(v)}" target="_blank" rel="noopener">Open in Maps</a>`);
@@ -297,9 +331,10 @@ export function personHtml(p, links) {
   }).join('');
   const posRow = (l) => {
     const bits = [];
+    if (l.isContact) bits.push('Contact' + (l.contactRole ? ' · ' + l.contactRole : ''));
     if (H.linkIsManager(l)) bits.push((l.mgmtRoles || []).join(' · ') || 'Manager');
     if (H.linkIsShareholder(l)) bits.push('Shareholder ' + H.fmtPctOwn(l.shDirectPct));
-    const t = H.linkIsCurrent(l) ? H.controlTier(l.shDirectPct) : null;
+    const t = isCur(l) ? H.controlTier(l.shDirectPct) : null;
     return `<a class="row" href="#c/${encodeURIComponent(l.companyId)}"><span class="row__main"><span class="row__title">${esc(l.companyName || '—')}</span><span class="row__sub">${esc(bits.join(' · ') || '—')}</span></span><span class="row__side">${t ? `<span class="pill muted">${esc(t.label)}</span>` : '<span class="chev" aria-hidden="true">›</span>'}</span></a>`;
   };
   const sortPos = (a, b) => (b.shDirectPct || 0) - (a.shDirectPct || 0) || String(a.companyName || '').localeCompare(String(b.companyName || ''));
