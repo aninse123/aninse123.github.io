@@ -8,6 +8,7 @@ const out = read('../../portal/outreach.html'), hook = read('../../functions/out
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 
 ok('switch on + a company: the header shows who each address is', out.includes("if (isOn('search.people') && t.companyId) return addrWho(t);") && out.includes("esc(w || 'not in the CRM')"));
+ok('older conversations: the addresses come from the messages on screen too', out.includes('...(t.addresses || []), ...fromMsgs]'));
 ok('who: the company address, then a person (their emails), then an old contact', out.includes("return 'company address';") && out.includes('(peopleCache.get(t.companyId) || []).find(x => (x.emails || []).includes(a))') && out.includes('`contact: ${ct.name}`'));
 ok('"Add to company" only for unknown addresses, with the permission, never on test conversations', out.includes('${ready && !w && canAdd && !t.isTest ?') && out.includes("window.pageAccess.can('search.reach') || window.pageAccess.can('search.editall')"));
 ok('the form guesses the person from the From name; "Someone new" adds a contact person', out.includes('const guess = (fromName && people.find(p => key(p.name) === key(fromName))?.personId) ||') && out.includes('Someone new — add a contact person'));

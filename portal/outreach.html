@@ -1741,7 +1741,9 @@
       }
       const canAdd = window.pageAccess ? (window.pageAccess.can('search.reach') || window.pageAccess.can('search.editall')) : true;
       const ready = peopleCache.has(t.companyId);
-      const all = [...new Set([t.contactEmail, ...(t.addresses || [])].map(a => String(a || '').trim().toLowerCase()).filter(a => a && !isOurAddr(a)))];
+      // Older conversations (before 19 Oct) don't record their addresses: the messages on screen fill them in.
+      const fromMsgs = selectedId === t.id ? (threadMessages || []).filter(m => !NOT_SENT_STATUSES.includes(m.status)).flatMap(m => m.direction === 'in' ? addrList(m.from).map(x => x.email) : [...msgTo(m), ...msgCc(m)].map(x => x.email)) : [];
+      const all = [...new Set([t.contactEmail, ...(t.addresses || []), ...fromMsgs].map(a => String(a || '').trim().toLowerCase()).filter(a => a && !isOurAddr(a)))];
       return `<span>${all.map(a => { const w = ready ? whoIsAddress(a, t) : ''; return `${esc(a)} <span class="hint">· ${ready ? esc(w || 'not in the CRM') : '…'}</span>${ready && !w && canAdd && !t.isTest ? ` <button type="button" class="camp-link" data-addaddr="${esc(a)}" style="font-size:0.76rem;">Add to company</button>` : ''}`; }).join(' → ')}</span>`;
     }
     async function openAddToCompany(t, addr) {
