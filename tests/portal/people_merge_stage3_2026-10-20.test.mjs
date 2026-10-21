@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 const page = readFileSync(new URL('../../portal/search.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 
-ok('switch on: the tab is renamed "People" and renders the people list instead of the contacts', page.includes("if (tabBtn) tabBtn.textContent = isOn('search.people') ? 'People' : 'Contacts';") && page.includes("if (isOn('search.people')) { renderCompanyPeople(c); return; }"));
+ok('switch on: the tab stays "Contacts" (21 Oct) and renders the people list instead of the old contacts', page.includes("if (tabBtn) tabBtn.textContent = 'Contacts';") && page.includes('<div class="sec-title" style="margin:0;">Contacts</div>') && page.includes("if (isOn('search.people')) { renderCompanyPeople(c); return; }"));
 ok('people = links that are people (company shareholders stay on Ownership)', page.includes("const persons = links.filter(l => l.personId && l.personEntityType !== 'entity');"));
 ok('current first, then the main contact, then Orbis before contacts, then by %', page.includes('(linkCurrentAny(b) - linkCurrentAny(a)) || ((b.personId === mainId) - (a.personId === mainId)) || ((!!a.isContact) - (!!b.isContact))'));
 ok('details: own first (bounced last), then typed-before, then Orbis not hidden', page.includes('const all = [...own, ...legacy, ...orb];') && page.includes('reachOrbis(pp, t).filter(o => !o.hidden'));

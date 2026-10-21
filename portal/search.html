@@ -4283,7 +4283,7 @@ function renderOrbisFinancials(c){
 function renderContacts(c){
   // 20 Oct (people merge, Stage 3, switch search.people): the tab becomes "People".
   const tabBtn = document.querySelector('.tab[data-tab="contacts"]');
-  if (tabBtn) tabBtn.textContent = isOn('search.people') ? 'People' : 'Contacts';
+  if (tabBtn) tabBtn.textContent = 'Contacts'; // 21 Oct (André): "Contacts" inside the company, also with the People merge on
   if (isOn('search.people')) { renderCompanyPeople(c); return; }
   const contacts = c.contacts || [];
   const list = contacts.length ? contacts.map((ct,i) => {
@@ -4414,7 +4414,7 @@ async function renderCompanyPeople(c){
   const old = c.contacts || [];
   el.innerHTML = `<div class="card" data-people-tab>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-        <div class="sec-title" style="margin:0;">People</div>
+        <div class="sec-title" style="margin:0;">Contacts</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           ${prevN ? `<button class="btn btn--ghost btn--sm" data-cpprev>${companyPeopleShowPrev ? 'Hide' : 'Show'} previous (${prevN})</button>` : ''}
           <button class="btn btn--ghost btn--sm" id="emailCompanyBtn" data-perm="out.send" data-feature="outreach"${c.companyEmail ? '' : ' disabled title="No company email on file"'}>✉ Email company</button>
