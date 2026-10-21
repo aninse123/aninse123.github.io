@@ -4372,7 +4372,7 @@ async function renderCompanyPeople(c){
     const legacy = PERSON_CONTACT_FIELDS.filter(f => REACH_TYPES.some(t => t[0] === f.key) && pp?.[f.key] && !own.some(e => e.type === f.key && reachNorm(f.key, e.value) === reachNorm(f.key, pp[f.key]))).map(f => ({ type: f.key, value: pp[f.key], legacy: true }));
     const all = [...own, ...legacy, ...orb];
     if (!all.length) return '<div class="contact-detail hint">No email or phone yet.</div>';
-    return all.map(e => `<div class="contact-detail">${ICON[e.type] || ''} ${reachLinkHtml(e.type, e.value, e.status === 'bounced' ? 'text-decoration:line-through;' : '')}${e.primary ? ' <span class="badge badge-blue">★</span>' : ''}${e.status === 'bounced' ? ' <span class="badge badge-red">Bounced</span>' : e.status === 'old' ? ' <span class="badge badge-grey">Old</span>' : ''}${e.orbis ? ' <span class="badge badge-grey">Orbis</span>' : ''}${e.legacy ? ' <span class="hint">(typed before)</span>' : ''}${e.note ? ` <span class="hint">${esc(e.note)}</span>` : ''}</div>`).join('');
+    return all.map(e => `<div class="contact-detail">${ICON[e.type] || ''} ${reachLinkHtml(e.type, e.value, e.status === 'bounced' ? 'text-decoration:line-through;' : '')}${e.primary ? ' <span class="badge badge-blue" title="The main one: used first">★</span>' : (canEdit && e.id && !e.orbis && !e.legacy ? ` <button class="btn btn--ghost btn--sm" data-cpprimary="${esc(pp.id)}" data-entry="${esc(e.id)}" title="Make this the main ${esc((REACH_TYPES.find(x => x[0] === e.type) || [, 'entry'])[1].toLowerCase())}" style="padding:0 6px;line-height:1.4;">☆</button>` : '')}${e.status === 'bounced' ? ' <span class="badge badge-red">Bounced</span>' : e.status === 'old' ? ' <span class="badge badge-grey">Old</span>' : ''}${e.orbis ? ' <span class="badge badge-grey">Orbis</span>' : ''}${e.legacy ? ' <span class="hint">(typed before)</span>' : ''}${e.note ? ` <span class="hint">${esc(e.note)}</span>` : ''}</div>`).join('');
   };
   const roleLine = (l) => {
     if (l.isContact) return `Contact${l.contactRole ? ' · ' + esc(l.contactRole) : ''}`;
@@ -4381,11 +4381,12 @@ async function renderCompanyPeople(c){
     if (linkIsShareholder(l)) bits.push(l.shDirectPct != null ? `${fmtPctOwn(l.shDirectPct)} shareholder` : 'Shareholder');
     return bits.join(' · ') || '—';
   };
-  const addForm = (pid) => `<div class="form-row" style="align-items:end;gap:6px;margin-top:6px;">
-      <div class="form-group" style="max-width:120px;"><select class="field" id="cpAddType">${REACH_TYPES.map(([t, l]) => `<option value="${t}">${l}</option>`).join('')}</select></div>
-      <div class="form-group"><input class="field" id="cpAddValue" placeholder="name@company.pt, +351 …, linkedin.com/in/…, facebook.com/…, Rua …"></div>
-      <div class="form-group"><input class="field" id="cpAddNote" placeholder="Note (optional)"></div>
-      <div class="form-group" style="flex:0 0 auto;"><button class="btn btn--primary btn--sm" data-cpaddsave="${esc(pid)}">Add</button> <button class="btn btn--ghost btn--sm" data-cpaddcancel>Cancel</button></div>
+  // 21 Oct: one item per line — type, value, note, then Add.
+  const addForm = (pid) => `<div class="reach-add" style="display:grid;gap:6px;margin-top:6px;max-width:520px;">
+      <div class="form-group" style="margin:0;max-width:240px;"><label>Type</label><select class="field" id="cpAddType">${REACH_TYPES.map(([t, l]) => `<option value="${t}">${l}</option>`).join('')}</select></div>
+      <div class="form-group" style="margin:0;"><label>Add</label><input class="field" id="cpAddValue" placeholder="name@company.pt, +351 …, linkedin.com/in/…, facebook.com/…, Rua …"></div>
+      <div class="form-group" style="margin:0;"><label>Note <span class="opt">(optional)</span></label><input class="field" id="cpAddNote" placeholder="e.g. mobile, from a call"></div>
+      <div><button class="btn btn--primary btn--sm" data-cpaddsave="${esc(pid)}">Add</button> <button class="btn btn--ghost btn--sm" data-cpaddcancel>Cancel</button></div>
     </div><div class="modal-err" id="cpAddErr"></div>`;
   const card = (l) => {
     const pp = people.get(l.personId), cur = linkCurrentAny(l);
@@ -4428,9 +4429,16 @@ async function renderCompanyPeople(c){
   el.oninput = (ev) => { if (ev.target.id === 'cpAddValue') followReachType(document.getElementById('cpAddType'), ev.target.value); };
   el.onchange = (ev) => { if (ev.target.id === 'cpAddType') ev.target.dataset.touched = '1'; };
   el.onclick = async (ev) => {
-    const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink],[data-ctedit]'); if (!t) return;
+    const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink],[data-ctedit],[data-cpprimary]'); if (!t) return;
     if (t.dataset.person) { openPerson(t.dataset.person, { type: 'company', id: c.id, tab: 'contacts' }); return; }
     if (t.dataset.ctedit) { openPersonModal(t.dataset.ctedit); return; }
+    if (t.dataset.cpprimary) { // 21 Oct: ☆ makes this the person's main email / phone / … (as on their page)
+      const pp = people.get(t.dataset.cpprimary), e = (pp?.reach || []).find(x => x.id === t.dataset.entry); if (!e) return;
+      t.disabled = true;
+      try { await savePersonReach(pp, reachSetPrimary(pp.reach, e.id), pp.hiddenOrbis || [], `${e.value} is now the primary ${e.type}`); renderCompanyPeople(c); }
+      catch(err){ alert('Error: ' + err.message); t.disabled = false; }
+      return;
+    }
     if (t.dataset.cpprev != null) { companyPeopleShowPrev = !companyPeopleShowPrev; renderCompanyPeople(c); return; }
     if (t.dataset.cpnewcontact != null) { openPersonModal(); return; }
     if (t.dataset.cpadd) { companyPeopleAddFor = t.dataset.cpadd; await renderCompanyPeople(c); document.getElementById('cpAddValue')?.focus(); return; }
@@ -5670,11 +5678,11 @@ function renderReachCard(p, links){
     <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">Add as many emails, phones, LinkedIn profiles, websites and social pages (Facebook, Instagram…), addresses and fax numbers as you need; the type follows what you type. Orbis's own values are listed with them; hide one that's wrong and it stays hidden after imports.</div>
     ${groups || '<div class="hint" style="margin-bottom:8px;">No emails or phones yet.</div>'}
     ${legacy.length ? `<div class="hint" style="margin-bottom:8px;">Typed before (moves into this list in the migration): ${legacy.join(' · ')}</div>` : ''}
-    ${canEdit ? `<div class="form-row" style="align-items:end;gap:8px;margin-top:6px;">
-      <div class="form-group" style="max-width:130px;"><label>Type</label><select class="field" id="reachType"${ed ? ' disabled' : ''}>${REACH_TYPES.map(([t, l]) => `<option value="${t}"${ed?.type === t ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
-      <div class="form-group"><label>${ed ? 'Change' : 'Add'}</label><input class="field" id="reachValue" value="${esc(ed?.value || '')}" placeholder="name@company.pt, +351 …, linkedin.com/in/…, facebook.com/…, Rua …"></div>
-      <div class="form-group"><label>Note <span class="opt">(optional)</span></label><input class="field" id="reachNote" value="${esc(ed?.note || '')}" placeholder="e.g. mobile, from a call"></div>
-      <div class="form-group" style="flex:0 0 auto;"><button class="btn btn--primary btn--sm" id="reachSaveBtn">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn btn--ghost btn--sm" id="reachCancelBtn">Cancel</button>' : ''}</div>
+    ${canEdit ? `<div class="reach-add" style="display:grid;gap:8px;margin-top:6px;max-width:560px;">
+      <div class="form-group" style="margin:0;max-width:240px;"><label>Type</label><select class="field" id="reachType"${ed ? ' disabled' : ''}>${REACH_TYPES.map(([t, l]) => `<option value="${t}"${ed?.type === t ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="form-group" style="margin:0;"><label>${ed ? 'Change' : 'Add'}</label><input class="field" id="reachValue" value="${esc(ed?.value || '')}" placeholder="name@company.pt, +351 …, linkedin.com/in/…, facebook.com/…, Rua …"></div>
+      <div class="form-group" style="margin:0;"><label>Note <span class="opt">(optional)</span></label><input class="field" id="reachNote" value="${esc(ed?.note || '')}" placeholder="e.g. mobile, from a call"></div>
+      <div><button class="btn btn--primary btn--sm" id="reachSaveBtn">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn btn--ghost btn--sm" id="reachCancelBtn">Cancel</button>' : ''}</div>
     </div><div class="modal-err" id="reachErr"></div>` : ''}`;
   const save = async (reach, hiddenOrbis, change) => {
     const btn = document.getElementById('reachSaveBtn'); if (btn) btn.disabled = true;
