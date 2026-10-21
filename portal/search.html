@@ -4348,7 +4348,7 @@ function renderContacts(c){
 // LinkedIn (their own, then Orbis's not hidden). "＋ detail" adds one in place;
 // the person page edits the rest. Corporate shareholders stay on Ownership.
 // The old Contacts list is shown folded until the migration (Stage 5).
-let companyPeopleShowPrev = false, companyPeopleAddFor = null;
+let companyPeopleShowPrev = false, companyPeopleAddFor = null, companyPeopleEditId = null;
 async function renderCompanyPeople(c){
   const el = document.getElementById('panel-contacts');
   if (!el.querySelector('[data-people-tab]')) el.innerHTML = '<div class="card" data-people-tab><div class="hint">Loading people…</div></div>';
@@ -4367,12 +4367,15 @@ async function renderCompanyPeople(c){
     || (Number(b.shDirectPct) || 0) - (Number(a.shDirectPct) || 0) || String(a.personName || '').localeCompare(String(b.personName || '')));
   const ICON = Object.fromEntries(REACH_TYPES.map(([t, , i]) => [t, i]));
   const reachLines = (pp) => {
-    const own = (pp?.reach || []).slice().sort((a, b) => (a.status === 'bounced') - (b.status === 'bounced') || (b.primary - a.primary));
-    const orb = REACH_TYPES.flatMap(([t]) => reachOrbis(pp, t).filter(o => !o.hidden && !own.some(e => e.type === t && reachNorm(t, e.value) === reachNorm(t, o.value))).map(o => ({ type: t, value: o.value, orbis: true })));
-    const legacy = PERSON_CONTACT_FIELDS.filter(f => REACH_TYPES.some(t => t[0] === f.key) && pp?.[f.key] && !own.some(e => e.type === f.key && reachNorm(f.key, e.value) === reachNorm(f.key, pp[f.key]))).map(f => ({ type: f.key, value: pp[f.key], legacy: true }));
-    const all = [...own, ...legacy, ...orb];
-    if (!all.length) return '<div class="contact-detail hint">No email or phone yet.</div>';
-    return all.map(e => `<div class="contact-detail">${ICON[e.type] || ''} ${reachLinkHtml(e.type, e.value, e.status === 'bounced' ? 'text-decoration:line-through;' : '')}${e.primary ? ' <span class="badge badge-blue" title="The main one: used first">★</span>' : (canEdit && e.id && !e.orbis && !e.legacy ? ` <button class="btn btn--ghost btn--sm" data-cpprimary="${esc(pp.id)}" data-entry="${esc(e.id)}" title="Make this the main ${esc((REACH_TYPES.find(x => x[0] === e.type) || [, 'entry'])[1].toLowerCase())}" style="padding:0 6px;line-height:1.4;">☆</button>` : '')}${e.status === 'bounced' ? ' <span class="badge badge-red">Bounced</span>' : e.status === 'old' ? ' <span class="badge badge-grey">Old</span>' : ''}${e.orbis ? ' <span class="badge badge-grey">Orbis</span>' : ''}${e.legacy ? ' <span class="hint">(typed before)</span>' : ''}${e.note ? ` <span class="hint">${esc(e.note)}</span>` : ''}</div>`).join('');
+    const order = (t) => REACH_TYPES.findIndex(x => x[0] === t);
+    const own = (pp?.reach || []).slice().sort((a, b) => order(a.type) - order(b.type) || ((a.status === 'bounced') - (b.status === 'bounced')) || ((b.primary ? 1 : 0) - (a.primary ? 1 : 0)));
+    const orb = REACH_TYPES.flatMap(([t]) => reachOrbis(pp, t).filter(o => !o.hidden && !own.some(e => e.type === t && reachNorm(t, e.value) === reachNorm(t, o.value))).map(o => ({ type: t, value: o.value })));
+    const legacy = PERSON_CONTACT_FIELDS.filter(f => REACH_TYPES.some(t => t[0] === f.key) && pp?.[f.key] && !own.some(e => e.type === f.key && reachNorm(f.key, e.value) === reachNorm(f.key, pp[f.key]))).map(f => ({ type: f.key, value: pp[f.key] }));
+    if (!own.length && !orb.length && !legacy.length) return '<div class="contact-detail hint">No email or phone yet.</div>';
+    // 21 Oct (André): the same rows and controls as on the person page.
+    return own.filter(e => !(companyPeopleEditId && e.id === companyPeopleEditId)).map(e => reachRowHtml(e, canEdit, pp.id, ICON[e.type] || '')).join('')
+      + orb.map(o => reachOrbisRowHtml(o.type, { value: o.value, hidden: false }, canEdit, pp.id, ICON[o.type] || '')).join('')
+      + legacy.map(e => `<div class="contact-detail">${ICON[e.type] || ''} ${reachLinkHtml(e.type, e.value)} <span class="hint">(typed before)</span></div>`).join('');
   };
   const roleLine = (l) => {
     if (l.isContact) return `Contact${l.contactRole ? ' · ' + esc(l.contactRole) : ''}`;
@@ -4382,12 +4385,12 @@ async function renderCompanyPeople(c){
     return bits.join(' · ') || '—';
   };
   // 21 Oct: one item per line — type, value, note, then Add.
-  const addForm = (pid) => `<div class="reach-add" style="display:grid;gap:6px;margin-top:6px;max-width:520px;">
-      <div class="form-group" style="margin:0;max-width:240px;"><label>Type</label><select class="field" id="cpAddType">${REACH_TYPES.map(([t, l]) => `<option value="${t}">${l}</option>`).join('')}</select></div>
-      <div class="form-group" style="margin:0;"><label>Add</label><input class="field" id="cpAddValue" placeholder="name@company.pt, +351 …, linkedin.com/in/…, facebook.com/…, Rua …"></div>
-      <div class="form-group" style="margin:0;"><label>Note <span class="opt">(optional)</span></label><input class="field" id="cpAddNote" placeholder="e.g. mobile, from a call"></div>
-      <div><button class="btn btn--primary btn--sm" data-cpaddsave="${esc(pid)}">Add</button> <button class="btn btn--ghost btn--sm" data-cpaddcancel>Cancel</button></div>
-    </div><div class="modal-err" id="cpAddErr"></div>`;
+  const addForm = (pid) => { const ed = companyPeopleEditId ? (people.get(pid)?.reach || []).find(x => x.id === companyPeopleEditId) : null; return `<div class="reach-add" style="display:grid;gap:6px;margin-top:6px;max-width:520px;">
+      <div class="form-group" style="margin:0;max-width:240px;"><label>Type</label><select class="field" id="cpAddType"${ed ? ' disabled' : ''}>${REACH_TYPES.map(([t, l]) => `<option value="${t}"${ed?.type === t ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="form-group" style="margin:0;"><label>${ed ? 'Change' : 'Add'}</label><input class="field" id="cpAddValue" value="${esc(ed?.value || '')}" placeholder="name@company.pt, +351 …, linkedin.com/in/…, facebook.com/…, Rua …"></div>
+      <div class="form-group" style="margin:0;"><label>Note <span class="opt">(optional)</span></label><input class="field" id="cpAddNote" value="${esc(ed?.note || '')}" placeholder="e.g. mobile, from a call"></div>
+      <div><button class="btn btn--primary btn--sm" data-cpaddsave="${esc(pid)}">${ed ? 'Save' : 'Add'}</button> <button class="btn btn--ghost btn--sm" data-cpaddcancel>Cancel</button></div>
+    </div><div class="modal-err" id="cpAddErr"></div>`; };
   const card = (l) => {
     const pp = people.get(l.personId), cur = linkCurrentAny(l);
     return `<div class="contact-item${cur ? '' : ' prev'}">
@@ -4427,28 +4430,54 @@ async function renderCompanyPeople(c){
     </div>`;
   document.getElementById('emailCompanyBtn')?.addEventListener('click', () => openSendEmail('company'));
   el.oninput = (ev) => { if (ev.target.id === 'cpAddValue') followReachType(document.getElementById('cpAddType'), ev.target.value); };
-  el.onchange = (ev) => { if (ev.target.id === 'cpAddType') ev.target.dataset.touched = '1'; };
+  el.onchange = async (ev) => {
+    if (ev.target.id === 'cpAddType') { ev.target.dataset.touched = '1'; return; }
+    const sel = ev.target.closest('[data-reachstatus][data-pid]'); if (!sel) return; // a status, as on the person page
+    const pp = people.get(sel.dataset.pid), e = (pp?.reach || []).find(x => x.id === sel.dataset.reachstatus); if (!e) return;
+    let list = reachUpdate(pp.reach, e.id, { status: sel.value });
+    if (sel.value === 'bounced' && e.primary){ const next = list.find(x => x.type === e.type && x.id !== e.id && x.status !== 'bounced'); if (next) list = reachSetPrimary(list, next.id); }
+    try { await savePersonReach(pp, list, pp.hiddenOrbis || [], `${e.value} marked ${sel.value === 'ok' ? 'OK' : sel.value}`); renderCompanyPeople(c); }
+    catch(err){ alert('Error: ' + err.message); }
+  };
   el.onclick = async (ev) => {
-    const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink],[data-ctedit],[data-cpprimary]'); if (!t) return;
+    const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink],[data-ctedit],[data-reachprimary],[data-reachedit],[data-reachdel],[data-orbhide]'); if (!t) return;
     if (t.dataset.person) { openPerson(t.dataset.person, { type: 'company', id: c.id, tab: 'contacts' }); return; }
     if (t.dataset.ctedit) { openPersonModal(t.dataset.ctedit); return; }
-    if (t.dataset.cpprimary) { // 21 Oct: ☆ makes this the person's main email / phone / … (as on their page)
-      const pp = people.get(t.dataset.cpprimary), e = (pp?.reach || []).find(x => x.id === t.dataset.entry); if (!e) return;
+    if (t.dataset.pid && (t.dataset.reachprimary || t.dataset.reachedit || t.dataset.reachdel || t.dataset.orbhide != null)) { // the person-page controls
+      const pp = people.get(t.dataset.pid); if (!pp) return;
+      const own = pp.reach || [], hidden = [...(pp.hiddenOrbis || [])];
+      if (t.dataset.reachedit) { companyPeopleAddFor = pp.id; companyPeopleEditId = t.dataset.reachedit; await renderCompanyPeople(c); document.getElementById('cpAddValue')?.focus(); return; }
+      const e = own.find(x => x.id === (t.dataset.reachprimary || t.dataset.reachdel));
+      if (t.dataset.reachdel && !confirm(`Delete ${e.value}?`)) return;
       t.disabled = true;
-      try { await savePersonReach(pp, reachSetPrimary(pp.reach, e.id), pp.hiddenOrbis || [], `${e.value} is now the primary ${e.type}`); renderCompanyPeople(c); }
-      catch(err){ alert('Error: ' + err.message); t.disabled = false; }
+      try {
+        if (t.dataset.reachprimary) await savePersonReach(pp, reachSetPrimary(own, e.id), hidden, `${e.value} is now the primary ${e.type}`);
+        else if (t.dataset.reachdel) await savePersonReach(pp, reachRemove(own, e.id), hidden, `removed ${e.value}`);
+        else { const v = t.dataset.orbhide, isH = hidden.includes(v); await savePersonReach(pp, own, isH ? hidden.filter(x => x !== v) : [...hidden, v], `${isH ? 'showed' : 'hid'} the Orbis value ${v}`); }
+        renderCompanyPeople(c);
+      } catch(err){ alert('Error: ' + err.message); t.disabled = false; }
       return;
     }
     if (t.dataset.cpprev != null) { companyPeopleShowPrev = !companyPeopleShowPrev; renderCompanyPeople(c); return; }
     if (t.dataset.cpnewcontact != null) { openPersonModal(); return; }
-    if (t.dataset.cpadd) { companyPeopleAddFor = t.dataset.cpadd; await renderCompanyPeople(c); document.getElementById('cpAddValue')?.focus(); return; }
-    if (t.dataset.cpaddcancel != null) { companyPeopleAddFor = null; renderCompanyPeople(c); return; }
+    if (t.dataset.cpadd) { companyPeopleAddFor = t.dataset.cpadd; companyPeopleEditId = null; await renderCompanyPeople(c); document.getElementById('cpAddValue')?.focus(); return; }
+    if (t.dataset.cpaddcancel != null) { companyPeopleAddFor = null; companyPeopleEditId = null; renderCompanyPeople(c); return; }
     if (t.dataset.mainct != null) { await setMainContact(t.dataset.mainct || null); renderCompanyPeople(c); return; }
     if (t.dataset.handcur) { await toggleHandLink(t.dataset.handcur); renderCompanyPeople(c); return; }
     if (t.dataset.rmlink) { await removePersonLink(t.dataset.rmlink); renderCompanyPeople(c); return; }
     if (t.dataset.cpaddsave) {
       const pp = people.get(t.dataset.cpaddsave); const er = document.getElementById('cpAddErr'); er.style.display = 'none';
       if (!pp) return;
+      const edE = companyPeopleEditId ? (pp.reach || []).find(x => x.id === companyPeopleEditId) : null;
+      if (edE) { // ✎: change the value or the note, as on the person page
+        const value = document.getElementById('cpAddValue').value.trim(), note = document.getElementById('cpAddNote').value.trim();
+        if (!reachValid(edE.type, value)) { er.textContent = 'Check the value.'; er.style.display = 'block'; return; }
+        if ((pp.reach || []).some(x => x.id !== edE.id && x.type === edE.type && reachNorm(edE.type, x.value) === reachNorm(edE.type, value))) { er.textContent = 'Already in the list.'; er.style.display = 'block'; return; }
+        t.disabled = true;
+        try { await savePersonReach(pp, reachUpdate(pp.reach, edE.id, { value, note: note.slice(0, 200) }), pp.hiddenOrbis || [], value === edE.value ? `note on ${value}: ${note || '(cleared)'}` : `changed ${edE.value} → ${value}`); companyPeopleAddFor = null; companyPeopleEditId = null; renderCompanyPeople(c); }
+        catch(e){ er.textContent = e.message; er.style.display = 'block'; t.disabled = false; }
+        return;
+      }
       const r = reachAdd(pp.reach || [], { type: document.getElementById('cpAddType').value, value: document.getElementById('cpAddValue').value, note: document.getElementById('cpAddNote').value, by: currentUser, at: new Date().toISOString() });
       if (r.error) { er.textContent = r.error; er.style.display = 'block'; return; }
       t.disabled = true;
@@ -5645,27 +5674,38 @@ async function savePersonReach(p, reach, hiddenOrbis, change, links){
 }
 // 20 Oct (people merge, Stage 2): a person's emails, phones and LinkedIn.
 let reachEditId = null;
+// 21 Oct (André): one row of a person's own list — the same on their page and on
+// the company's Contacts tab: ★ primary, status, note, who / when, then ★ ✎ ✕ — and
+// an Orbis value with Hide / Show. `pid` names the person on the Contacts tab.
+const REACH_STATUS = { ok: ['OK', ''], bounced: ['Bounced', 'badge-red'], old: ['Old', 'badge-grey'] };
+const reachDay = (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
+function reachRowHtml(e, canEdit, pid = '', icon = ''){
+  const P = pid ? ` data-pid="${esc(pid)}"` : '';
+  return `<div class="contact-detail reach-row${e.status === 'bounced' ? ' prev' : ''}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      ${icon ? `<span aria-hidden="true">${icon}</span>` : ''}${reachLinkHtml(e.type, e.value, e.status === 'bounced' ? 'text-decoration:line-through;' : '')}
+      ${e.primary ? '<span class="badge badge-blue" title="Used first">★ primary</span>' : ''}
+      ${e.status && e.status !== 'ok' ? `<span class="badge ${REACH_STATUS[e.status][1]}">${REACH_STATUS[e.status][0]}</span>` : ''}
+      ${e.note ? `<span class="hint">${esc(e.note)}</span>` : ''}
+      <span class="hint">· ${esc(e.source === 'manual' ? 'you' : e.source)}${e.addedBy ? ', ' + esc(String(e.addedBy).split('@')[0]) : ''}${e.addedAt ? ', ' + esc(reachDay(e.addedAt)) : ''}</span>
+      ${canEdit ? `<span style="margin-left:auto;display:inline-flex;gap:4px;">
+        ${e.primary ? '' : `<button class="btn btn--ghost btn--sm" data-reachprimary="${esc(e.id)}"${P} title="Use this one first">★</button>`}
+        <select class="field" data-reachstatus="${esc(e.id)}"${P} style="width:auto;padding:2px 6px;font-size:0.75rem;" aria-label="Status">${Object.entries(REACH_STATUS).map(([k, [l]]) => `<option value="${k}"${(e.status || 'ok') === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
+        <button class="btn btn--icon btn--ghost" data-reachedit="${esc(e.id)}"${P} title="Edit">✎</button>
+        <button class="btn btn--icon btn--danger" data-reachdel="${esc(e.id)}"${P} title="Delete">✕</button></span>` : ''}
+    </div>`;
+}
+function reachOrbisRowHtml(t, o, canEdit, pid = '', icon = ''){
+  const P = pid ? ` data-pid="${esc(pid)}"` : '';
+  return `<div class="contact-detail" style="display:flex;gap:8px;align-items:center;${o.hidden ? 'opacity:0.55;' : ''}">
+      ${icon ? `<span aria-hidden="true">${icon}</span>` : ''}${o.hidden ? `<s>${esc(o.value)}</s>` : reachLinkHtml(t, o.value)} <span class="badge badge-grey">Orbis</span>${o.hidden ? ' <span class="hint">hidden</span>' : ''}
+      ${canEdit ? `<button class="btn btn--ghost btn--sm" data-orbhide="${esc(o.value)}"${P} style="margin-left:auto;">${o.hidden ? 'Show' : 'Hide'}</button>` : ''}</div>`;
+}
 function renderReachCard(p, links){
   const el = document.getElementById('reachCard'); if (!el) return;
   const canEdit = window.pageAccess ? (window.pageAccess.can('search.reach') || window.pageAccess.can('search.editall')) : true;
   const own = p.reach || [];
-  const day = (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
-  const STATUS = { ok: ['OK', ''], bounced: ['Bounced', 'badge-red'], old: ['Old', 'badge-grey'] };
-  const row = (e) => `<div class="contact-detail reach-row${e.status === 'bounced' ? ' prev' : ''}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      ${reachLinkHtml(e.type, e.value, e.status === 'bounced' ? 'text-decoration:line-through;' : '')}
-      ${e.primary ? '<span class="badge badge-blue" title="Used first">★ primary</span>' : ''}
-      ${e.status && e.status !== 'ok' ? `<span class="badge ${STATUS[e.status][1]}">${STATUS[e.status][0]}</span>` : ''}
-      ${e.note ? `<span class="hint">${esc(e.note)}</span>` : ''}
-      <span class="hint">· ${esc(e.source === 'manual' ? 'you' : e.source)}${e.addedBy ? ', ' + esc(String(e.addedBy).split('@')[0]) : ''}${e.addedAt ? ', ' + esc(day(e.addedAt)) : ''}</span>
-      ${canEdit ? `<span style="margin-left:auto;display:inline-flex;gap:4px;">
-        ${e.primary ? '' : `<button class="btn btn--ghost btn--sm" data-reachprimary="${esc(e.id)}" title="Use this one first">★</button>`}
-        <select class="field" data-reachstatus="${esc(e.id)}" style="width:auto;padding:2px 6px;font-size:0.75rem;" aria-label="Status">${Object.entries(STATUS).map(([k, [l]]) => `<option value="${k}"${(e.status || 'ok') === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
-        <button class="btn btn--icon btn--ghost" data-reachedit="${esc(e.id)}" title="Edit">✎</button>
-        <button class="btn btn--icon btn--danger" data-reachdel="${esc(e.id)}" title="Delete">✕</button></span>` : ''}
-    </div>`;
-  const orbRow = (t, o) => `<div class="contact-detail" style="display:flex;gap:8px;align-items:center;${o.hidden ? 'opacity:0.55;' : ''}">
-      ${o.hidden ? `<s>${esc(o.value)}</s>` : reachLinkHtml(t, o.value)} <span class="badge badge-grey">Orbis</span>${o.hidden ? ' <span class="hint">hidden</span>' : ''}
-      ${canEdit ? `<button class="btn btn--ghost btn--sm" data-orbhide="${esc(o.value)}" style="margin-left:auto;">${o.hidden ? 'Show' : 'Hide'}</button>` : ''}</div>`;
+  const row = (e) => reachRowHtml(e, canEdit);
+  const orbRow = (t, o) => reachOrbisRowHtml(t, o, canEdit);
   const groups = REACH_TYPES.map(([t, label]) => {
     const mine = own.filter(e => e.type === t);
     const orb = reachOrbis(p, t).filter(o => !mine.some(e => reachNorm(t, e.value) === reachNorm(t, o.value)));
