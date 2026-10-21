@@ -44,6 +44,9 @@ const cases = [
   // ── People merge, Stage 2: "search.reach" (details and contact people only) ──
   C('Reach: add an email to any person', REACH, 'update', 'searchPeople/p1', 'ALLOW', { name: 'X', reach: [{ type: 'email', value: 'x@y.pt' }], reachEmails: ['x@y.pt'], updatedBy: REACH.email }, { name: 'X' }),
   C('Reach: cannot rename a person', REACH, 'update', 'searchPeople/p1', 'DENY', { name: 'Y' }, { name: 'X' }),
+  C('Reach: rename a contact added by hand (21 Oct, F6)', REACH, 'update', 'searchPeople/m_1', 'ALLOW', { name: 'Rita Sousa', nameKey: 'RITA SOUSA', source: 'manual', updatedBy: REACH.email }, { name: 'Rita', nameKey: 'RITA', source: 'manual' }),
+  C('Reach: cannot rename an Orbis person', REACH, 'update', 'searchPeople/u_1', 'DENY', { name: 'Y', source: 'orbis' }, { name: 'X', source: 'orbis' }),
+  C('Reach: cannot change a hand-added person beyond name and details', REACH, 'update', 'searchPeople/m_1', 'DENY', { name: 'Rita', source: 'manual', notes: 'x' }, { name: 'Rita', source: 'manual' }),
   C('Reach: add a contact person', REACH, 'create', 'searchPeople/m_1', 'ALLOW', { name: 'Rita', source: 'manual' }),
   C('Reach: cannot create an Orbis person', REACH, 'create', 'searchPeople/u_1', 'DENY', { name: 'X', source: 'orbis' }),
   C('Reach: link a contact person to a company', REACH, 'create', 'searchPersonLinks/m_1__c1', 'ALLOW', { companyId: 'c1', personId: 'm_1', isContact: true, contactCurrent: true }),

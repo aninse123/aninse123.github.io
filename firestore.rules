@@ -119,7 +119,9 @@ service cloud.firestore {
       allow create: if canAny(['search.edit', 'search.editall'])
         || (can('search.reach') && request.resource.data.get('source', '') == 'manual');
       allow update: if canAny(['search.edit', 'search.editall'])
-        || (can('search.reach') && onlyFields(reachFields()));
+        || (can('search.reach') && onlyFields(reachFields()))
+        // 21 Oct (Stage 2 follow-ups, F6): rename a contact added by hand (Orbis keeps its own names).
+        || (can('search.reach') && resource.data.get('source', '') == 'manual' && onlyFields(reachFields().concat(['name', 'nameKey', 'nameTokens', 'namePrefixes'])));
       allow delete: if can('search.delete');
     }
     // A person ↔ company link follows the company: any company (editall) or

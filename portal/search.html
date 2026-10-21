@@ -810,17 +810,18 @@
 <!-- Contact person modal (20 Oct, people merge Stage 2, switch search.people) -->
 <div class="overlay" id="contactPersonModal" style="display:none;">
   <div class="modal">
-    <div class="modal-title">Add contact</div>
-    <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px;">Someone Orbis doesn't list (a commercial director, an office manager…). They can be emailed and called, and are never counted as owner or manager.</p>
+    <div class="modal-title" id="cpTitle">Add contact</div>
+    <p id="cpIntro" style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px;">Someone Orbis doesn't list (a commercial director, an office manager…). They can be emailed and called, and are never counted as owner or manager.</p>
     <div class="form-row">
       <div class="form-group"><label>Full name *</label><input type="text" class="field" id="cpName"></div>
       <div class="form-group"><label>Role <span class="opt">(optional)</span></label><input type="text" class="field" id="cpRole" placeholder="Diretor comercial"></div>
     </div>
-    <div class="form-row">
+    <div class="form-row" id="cpReachRow">
       <div class="form-group"><label>Email <span class="opt">(optional)</span></label><input type="email" class="field" id="cpEmail" placeholder="name@company.pt"></div>
       <div class="form-group"><label>Phone <span class="opt">(optional)</span></label><input type="tel" class="field" id="cpPhone" placeholder="+351 …"></div>
     </div>
     <div class="modal-err" id="cpErr"></div>
+    <div id="cpMatch" style="display:none;margin-top:10px;font-size:0.85rem;"></div>
     <div class="modal-actions">
       <button class="btn btn--ghost" id="cpCancelBtn">Cancel</button>
       <button class="btn btn--primary" id="cpSaveBtn">Add contact</button>
@@ -4318,15 +4319,14 @@ async function renderCompanyPeople(c){
   const rows = persons.filter(l => companyPeopleShowPrev || linkCurrentAny(l)).sort((a, b) =>
     (linkCurrentAny(b) - linkCurrentAny(a)) || ((b.personId === mainId) - (a.personId === mainId)) || ((!!a.isContact) - (!!b.isContact))
     || (Number(b.shDirectPct) || 0) - (Number(a.shDirectPct) || 0) || String(a.personName || '').localeCompare(String(b.personName || '')));
-  const href = (t, v) => t === 'email' ? `mailto:${v}` : t === 'phone' ? `tel:${reachNorm('phone', v)}` : (/^https?:/i.test(v) ? v : 'https://' + v);
   const ICON = Object.fromEntries(REACH_TYPES.map(([t, , i]) => [t, i]));
   const reachLines = (pp) => {
     const own = (pp?.reach || []).slice().sort((a, b) => (a.status === 'bounced') - (b.status === 'bounced') || (b.primary - a.primary));
     const orb = REACH_TYPES.flatMap(([t]) => reachOrbis(pp, t).filter(o => !o.hidden && !own.some(e => e.type === t && reachNorm(t, e.value) === reachNorm(t, o.value))).map(o => ({ type: t, value: o.value, orbis: true })));
-    const legacy = PERSON_CONTACT_FIELDS.filter(f => ['email', 'phone', 'linkedin'].includes(f.key) && pp?.[f.key] && !own.some(e => e.type === f.key && reachNorm(f.key, e.value) === reachNorm(f.key, pp[f.key]))).map(f => ({ type: f.key, value: pp[f.key], legacy: true }));
+    const legacy = PERSON_CONTACT_FIELDS.filter(f => REACH_TYPES.some(t => t[0] === f.key) && pp?.[f.key] && !own.some(e => e.type === f.key && reachNorm(f.key, e.value) === reachNorm(f.key, pp[f.key]))).map(f => ({ type: f.key, value: pp[f.key], legacy: true }));
     const all = [...own, ...legacy, ...orb];
     if (!all.length) return '<div class="contact-detail hint">No email or phone yet.</div>';
-    return all.map(e => `<div class="contact-detail">${ICON[e.type] || ''} <a href="${esc(href(e.type, e.value))}"${e.type === 'linkedin' ? ' target="_blank" rel="noopener noreferrer"' : ''} style="${e.status === 'bounced' ? 'text-decoration:line-through;' : ''}">${esc(e.value)}</a>${e.primary ? ' <span class="badge badge-blue">★</span>' : ''}${e.status === 'bounced' ? ' <span class="badge badge-red">Bounced</span>' : e.status === 'old' ? ' <span class="badge badge-grey">Old</span>' : ''}${e.orbis ? ' <span class="badge badge-grey">Orbis</span>' : ''}${e.legacy ? ' <span class="hint">(typed before)</span>' : ''}${e.note ? ` <span class="hint">${esc(e.note)}</span>` : ''}</div>`).join('');
+    return all.map(e => `<div class="contact-detail">${ICON[e.type] || ''} ${reachLinkHtml(e.type, e.value, e.status === 'bounced' ? 'text-decoration:line-through;' : '')}${e.primary ? ' <span class="badge badge-blue">★</span>' : ''}${e.status === 'bounced' ? ' <span class="badge badge-red">Bounced</span>' : e.status === 'old' ? ' <span class="badge badge-grey">Old</span>' : ''}${e.orbis ? ' <span class="badge badge-grey">Orbis</span>' : ''}${e.legacy ? ' <span class="hint">(typed before)</span>' : ''}${e.note ? ` <span class="hint">${esc(e.note)}</span>` : ''}</div>`).join('');
   };
   const roleLine = (l) => {
     if (l.isContact) return `Contact${l.contactRole ? ' · ' + esc(l.contactRole) : ''}`;
@@ -4337,7 +4337,7 @@ async function renderCompanyPeople(c){
   };
   const addForm = (pid) => `<div class="form-row" style="align-items:end;gap:6px;margin-top:6px;">
       <div class="form-group" style="max-width:120px;"><select class="field" id="cpAddType">${REACH_TYPES.map(([t, l]) => `<option value="${t}">${l}</option>`).join('')}</select></div>
-      <div class="form-group"><input class="field" id="cpAddValue" placeholder="name@company.pt, +351 …, linkedin.com/in/…"></div>
+      <div class="form-group"><input class="field" id="cpAddValue" placeholder="name@company.pt, +351 …, linkedin.com/in/…, Rua …"></div>
       <div class="form-group"><input class="field" id="cpAddNote" placeholder="Note (optional)"></div>
       <div class="form-group" style="flex:0 0 auto;"><button class="btn btn--primary btn--sm" data-cpaddsave="${esc(pid)}">Add</button> <button class="btn btn--ghost btn--sm" data-cpaddcancel>Cancel</button></div>
     </div><div class="modal-err" id="cpAddErr"></div>`;
@@ -4355,10 +4355,11 @@ async function renderCompanyPeople(c){
           ${companyPeopleAddFor === l.personId ? addForm(l.personId) : ''}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;">
-          ${canEdit && cur && companyPeopleAddFor !== l.personId ? `<button class="btn btn--ghost btn--sm" data-cpadd="${esc(l.personId)}" title="Add an email, phone or LinkedIn">＋ detail</button>` : ''}
-          ${cur ? (l.personId === mainId ? `<button class="btn btn--ghost btn--sm" data-mainct="" title="Clear the main contact">★</button>` : `<button class="btn btn--ghost btn--sm" data-mainct="${esc(l.personId)}" title="Make them the main contact">☆</button>`) : ''}
-          ${isHandLink(l) ? `<button class="btn btn--ghost btn--sm" data-handcur="${esc(l.id)}">${cur ? 'Mark previous' : 'Mark current'}</button>` : ''}
-          ${l.isContact ? `<button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove this contact from the company">✕</button>` : ''}
+          ${canEdit && cur && companyPeopleAddFor !== l.personId ? `<button class="btn btn--ghost btn--sm" data-cpadd="${esc(l.personId)}" title="Add an email, phone, LinkedIn, address or fax">＋ detail</button>` : ''}
+          ${canEdit && l.isContact ? `<button class="btn btn--icon btn--ghost" data-ctedit="${esc(l.id)}" title="Edit the name and role">✎</button>` : ''}
+          ${canEdit && cur ? (l.personId === mainId ? `<button class="btn btn--ghost btn--sm" data-mainct="" title="Clear the main contact">★</button>` : `<button class="btn btn--ghost btn--sm" data-mainct="${esc(l.personId)}" title="Make them the main contact">☆</button>`) : ''}
+          ${isHandLink(l) && (!l.isContact || canEdit) ? `<button class="btn btn--ghost btn--sm" data-handcur="${esc(l.id)}"${l.isContact ? '' : ' data-perm="search.edit" data-coedit'}>${cur ? 'Mark previous' : 'Mark current'}</button>` : ''}
+          ${l.isContact && canEdit ? `<button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove this contact from the company">✕</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -4378,9 +4379,12 @@ async function renderCompanyPeople(c){
       ${old.length ? `<details style="margin-top:14px;"><summary class="hint" style="cursor:pointer;">Old Contacts list (${old.length}) — moves into People in the migration</summary>${old.map(ct => `<div class="contact-detail" style="margin-top:4px;">${esc(ct.name || '—')}${ct.role ? ' · ' + esc(ct.role) : ''}${ct.email ? ' · ✉ ' + esc(ct.email) : ''}${ct.phone ? ' · 📞 ' + esc(ct.phone) : ''}</div>`).join('')}</details>` : ''}
     </div>`;
   document.getElementById('emailCompanyBtn')?.addEventListener('click', () => openSendEmail('company'));
+  el.oninput = (ev) => { if (ev.target.id === 'cpAddValue') followReachType(document.getElementById('cpAddType'), ev.target.value); };
+  el.onchange = (ev) => { if (ev.target.id === 'cpAddType') ev.target.dataset.touched = '1'; };
   el.onclick = async (ev) => {
-    const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink]'); if (!t) return;
+    const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink],[data-ctedit]'); if (!t) return;
     if (t.dataset.person) { openPerson(t.dataset.person, { type: 'company', id: c.id, tab: 'contacts' }); return; }
+    if (t.dataset.ctedit) { openContactPerson(t.dataset.ctedit); return; }
     if (t.dataset.cpprev != null) { companyPeopleShowPrev = !companyPeopleShowPrev; renderCompanyPeople(c); return; }
     if (t.dataset.cpnewcontact != null) { openContactPerson(); return; }
     if (t.dataset.cpadd) { companyPeopleAddFor = t.dataset.cpadd; await renderCompanyPeople(c); document.getElementById('cpAddValue')?.focus(); return; }
@@ -4764,12 +4768,13 @@ async function renderOwnership(c){
   // 20 Oct (people merge, switch search.people): who added a person by hand,
   // whether the latest Orbis import listed them, and Mark previous / current.
   const peopleOn = isOn('search.people');
+  const canReach = window.pageAccess ? (window.pageAccess.can('search.reach') || window.pageAccess.can('search.editall')) : true; // 21 Oct (F2): contact controls follow the permission
   const shortDay = t => { const d = tsToDate(t); return d ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
   const handChips = l => !peopleOn || !l.addedBy ? '' : `<div class="contact-detail" data-feature="search.people"><span class="badge badge-grey" title="Added on the Ownership tab, not from Orbis">✋ added by hand · ${esc(String(l.addedBy).split('@')[0])}${l.addedAt ? ', ' + esc(shortDay(l.addedAt)) : ''}</span>${isHandLink(l) && l.orbisMissingAt ? ` <span class="badge badge-warn" title="The last Orbis import covering this company didn't list them. Kept as it is — Mark previous if they left.">not in the Orbis import of ${esc(shortDay(l.orbisMissingAt))}</span>` : ''}${!isHandLink(l) ? ' <span class="badge badge-green" title="A later Orbis import lists them; Orbis keeps their roles and % up to date">now in Orbis</span>' : ''}</div>`;
-  const handBtn = l => !peopleOn || !isHandLink(l) ? '' : `<button class="btn btn--ghost btn--sm" data-handcur="${esc(l.id)}" data-feature="search.people" title="Only for people added by hand: imports never change them">${linkCurrentAny(l) ? 'Mark previous' : 'Mark current'}</button>`;
+  const handBtn = l => !peopleOn || !isHandLink(l) || (l.isContact && !canReach) ? '' : `<button class="btn btn--ghost btn--sm" data-handcur="${esc(l.id)}" data-feature="search.people"${l.isContact ? '' : ' data-perm="search.edit" data-coedit'} title="Only for people added by hand: imports never change them">${linkCurrentAny(l) ? 'Mark previous' : 'Mark current'}</button>`;
   // 20 Oct (people merge, Stage 2): the company's main contact (one person).
   const mainId = c.primaryContact?.personId || null;
-  const mainBtn = l => !peopleOn || l.personEntityType === 'entity' || !linkCurrentAny(l) ? '' : (l.personId === mainId
+  const mainBtn = l => !peopleOn || !canReach || l.personEntityType === 'entity' || !linkCurrentAny(l) ? '' : (l.personId === mainId
     ? `<button class="btn btn--ghost btn--sm" data-mainct="" data-feature="search.people" title="The main contact: Send to “primary contact” uses them. Click to clear.">★ Main contact</button>`
     : `<button class="btn btn--ghost btn--sm" data-mainct="${esc(l.personId)}" data-feature="search.people" title="Make them the company's main contact">☆</button>`);
 
@@ -4804,7 +4809,7 @@ async function renderOwnership(c){
           ${ownOn && !allPrev ? `<div class="also-cos" data-also="${esc(l.personId)}"></div>` : ''}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          ${mainBtn(l)}${handBtn(l)}${!allPrev && !l.isContact ? contactBtn(l, roleForContact) : ''}${l.isContact ? `<button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove this contact from the company">✕</button>` : rowActions(l)}
+          ${mainBtn(l)}${handBtn(l)}${!peopleOn && !allPrev && !l.isContact ? contactBtn(l, roleForContact) : ''}${l.isContact ? (canReach ? `<button class="btn btn--icon btn--ghost" data-ctedit="${esc(l.id)}" title="Edit the name and role">✎</button><button class="btn btn--icon btn--danger" data-rmlink="${esc(l.id)}" title="Remove this contact from the company">✕</button>` : '') : rowActions(l)}
         </div>
       </div>
     </div>`;
@@ -4814,7 +4819,7 @@ async function renderOwnership(c){
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <div class="sec-title" style="margin-bottom:0;">People</div>
-        <span style="display:inline-flex;gap:6px;"><button class="btn btn--ghost btn--sm" id="addContactPersonBtn" data-feature="search.people" title="Someone Orbis doesn't list: a commercial director, an office manager… Never counted as owner or manager">＋ Add contact</button>
+        <span style="display:inline-flex;gap:6px;">${canReach ? `<button class="btn btn--ghost btn--sm" id="addContactPersonBtn" data-feature="search.people" title="Someone Orbis doesn't list: a commercial director, an office manager… Never counted as owner or manager">＋ Add contact</button>` : ''}
         <button class="btn btn--ghost btn--sm" id="addPersonBtn" data-perm="search.edit" data-coedit>＋ Add Person</button></span>
       </div>
       ${(own.note || own.treasuryPct != null) ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
@@ -5267,20 +5272,43 @@ async function toggleHandLink(linkId){
 // list. Stored as a person (own id, never an Orbis-style name id) with a
 // "contact" link: no shareholding or management, so groups, filters and the
 // names in emails never count them.
-function openContactPerson(){
+// 21 Oct (Stage 2 follow-ups): with a link id it edits that contact's name and
+// role (F6; a name only for people added by hand — Orbis keeps its own). Adding
+// checks the names already on the company with the import's rule and asks
+// before adding a possible duplicate, never blocks (F7).
+let cpEditLinkId = null, cpMatchAck = null;
+function openContactPerson(linkId = null){
+  const c = getCompany();
+  const link = linkId && c ? (companyLinksCache.get(c.id) || []).find(l => l.id === linkId) : null;
+  cpEditLinkId = link ? link.id : null; cpMatchAck = null;
   ['cpName', 'cpRole', 'cpEmail', 'cpPhone'].forEach(id => { document.getElementById(id).value = ''; });
+  if (link) { document.getElementById('cpName').value = link.personName || ''; document.getElementById('cpRole').value = link.contactRole || ''; }
+  document.getElementById('cpTitle').textContent = link ? 'Edit contact' : 'Add contact';
+  document.getElementById('cpIntro').style.display = link ? 'none' : '';
+  document.getElementById('cpReachRow').style.display = link ? 'none' : '';
+  document.getElementById('cpSaveBtn').textContent = link ? 'Save' : 'Add contact';
   document.getElementById('cpErr').style.display = 'none';
+  document.getElementById('cpMatch').style.display = 'none';
   showEl('contactPersonModal', true);
   document.getElementById('cpName').focus();
 }
+const cpRoleOf = (l) => l.isContact ? (l.contactRole || 'Contact') : ((l.mgmtRoles || [])[0] || (linkIsShareholder(l) ? 'Shareholder' : ''));
 async function saveContactPerson(){
   const c = getCompany(); if (!c) return;
+  if (cpEditLinkId) return saveContactEdit(c);
   const v = id => document.getElementById(id).value.trim();
   const err = document.getElementById('cpErr'); err.style.display = 'none';
   const fail = (m) => { err.textContent = m; err.style.display = 'block'; };
   const name = v('cpName'); if (!name) return fail('Name is required.');
   const nameKey = personNameKey(name);
-  if ((companyLinksCache.get(c.id) || []).some(l => personNameKey(l.personName) === nameKey)) return fail(`${personDisplayName(name)} is already on this company — add the email or phone on their person page.`);
+  const similar = (companyLinksCache.get(c.id) || []).filter(l => l.personEntityType !== 'entity' && personNameMatch(name, l.personName || ''));
+  const box = document.getElementById('cpMatch');
+  if (similar.length && cpMatchAck !== nameKey) {
+    box.innerHTML = `<div class="hint" style="margin-bottom:6px;">Possibly someone already on this company:</div>${similar.map(l => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;"><b>${esc(l.personName || '—')}</b>${cpRoleOf(l) ? ` <span class="hint">${esc(cpRoleOf(l))}</span>` : ''} <button type="button" class="btn btn--ghost btn--sm" data-cpmatchopen="${esc(l.personId)}">Yes, open their page</button></div>`).join('')}<button type="button" class="btn btn--ghost btn--sm" data-cpmatchnew>No, add a new contact</button>`;
+    box.style.display = 'block';
+    return;
+  }
+  box.style.display = 'none';
   let reach = [];
   for (const [type, val] of [['email', v('cpEmail')], ['phone', v('cpPhone')]]) {
     if (!val) continue;
@@ -5305,10 +5333,46 @@ async function saveContactPerson(){
     invalidatePeopleCaches({ companyId: c.id, personId: pid });
     const newKeys = companyEmailKeys({ contacts: reach.filter(e => e.type === 'email').map(e => ({ email: e.value })) }).filter(k => !(c.emailKeys || []).includes(k));
     if (newKeys.length) { const emailKeys = [...(c.emailKeys || []), ...newKeys]; await updateDoc(doc(db,'searchCompanies', c.id), { emailKeys, updatedAt: serverTimestamp(), updatedBy: currentUser }); c.emailKeys = emailKeys; } // People merge (Stage 4)
-    await logAuto(c.id, 'person_linked', `Added contact: ${personDisplayName(name)}${v('cpRole') ? ' (' + v('cpRole') + ')' : ''}`);
+    await logAuto(c.id, 'person_linked', `Added contact: ${personDisplayName(name)}${v('cpRole') ? ' (' + v('cpRole') + ')' : ''}${similar.length ? ` — added although the name is similar to ${similar.map(l => l.personName).join(', ')}` : ''}`);
     showEl('contactPersonModal', false);
     renderOwnership(c);
     if (isOn('search.people')) renderCompanyPeople(c); // 20 Oct (Stage 3): the People tab lists them too
+  } catch(e){ fail(e.message); }
+  finally { btn.disabled = false; }
+}
+async function saveContactEdit(c){
+  const link = (companyLinksCache.get(c.id) || []).find(l => l.id === cpEditLinkId);
+  const err = document.getElementById('cpErr'); err.style.display = 'none';
+  const fail = (m) => { err.textContent = m; err.style.display = 'block'; };
+  if (!link) return fail('This contact is no longer on the company.');
+  const name = personDisplayName(document.getElementById('cpName').value.trim());
+  if (!name) return fail('Name is required.');
+  const role = document.getElementById('cpRole').value.trim().slice(0, 80) || null;
+  const oldName = link.personName || '', oldRole = link.contactRole || null;
+  const renamed = name !== oldName;
+  if (!renamed && role === oldRole) { showEl('contactPersonModal', false); return; }
+  const btn = document.getElementById('cpSaveBtn'); btn.disabled = true;
+  try {
+    if (renamed) {
+      const pp = await fetchPerson(link.personId).catch(() => null);
+      if (pp?.source !== 'manual') return fail('Orbis keeps this name: the next import would change it back.');
+      const nameKey = personNameKey(name);
+      await updateDoc(doc(db,'searchPeople', link.personId), { name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), updatedAt: serverTimestamp(), updatedBy: currentUser });
+      const all = await getDocs(query(collection(db,'searchPersonLinks'), where('personId', '==', link.personId)));
+      await Promise.all(all.docs.map(d => updateDoc(d.ref, { personName: name, updatedAt: serverTimestamp() })));
+    }
+    if (role !== oldRole) await updateDoc(doc(db,'searchPersonLinks', link.id), { contactRole: role, updatedAt: serverTimestamp() });
+    invalidatePeopleCaches({ companyId: c.id, personId: link.personId });
+    if (c.primaryContact?.personId === link.personId) { // the main contact's saved name and role follow
+      const snap = await mainContactSnapshot(link.personId, c, { ...link, personName: name, contactRole: role });
+      const primaryContact = { ...c.primaryContact, name: snap.name, role: snap.role };
+      await updateDoc(doc(db,'searchCompanies', c.id), { primaryContact, updatedAt: serverTimestamp(), updatedBy: currentUser });
+      c.primaryContact = primaryContact; cacheCompanies();
+    }
+    await logAuto(c.id, 'person_updated', `Contact edited: ${[renamed ? `${oldName} → ${name}` : name, role !== oldRole ? `role ${oldRole || '—'} → ${role || '—'}` : ''].filter(Boolean).join(' · ')}`);
+    showEl('contactPersonModal', false);
+    renderOwnership(c);
+    if (isOn('search.people')) renderCompanyPeople(c);
   } catch(e){ fail(e.message); }
   finally { btn.disabled = false; }
 }
@@ -5436,10 +5500,9 @@ function renderReachCard(p, links){
   const canEdit = window.pageAccess ? (window.pageAccess.can('search.reach') || window.pageAccess.can('search.editall')) : true;
   const own = p.reach || [];
   const day = (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
-  const href = (t, v) => t === 'email' ? `mailto:${v}` : t === 'phone' ? `tel:${reachNorm('phone', v)}` : (/^https?:/i.test(v) ? v : 'https://' + v);
   const STATUS = { ok: ['OK', ''], bounced: ['Bounced', 'badge-red'], old: ['Old', 'badge-grey'] };
   const row = (e) => `<div class="contact-detail reach-row${e.status === 'bounced' ? ' prev' : ''}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <a href="${esc(href(e.type, e.value))}"${e.type === 'linkedin' ? ' target="_blank" rel="noopener noreferrer"' : ''} style="${e.status === 'bounced' ? 'text-decoration:line-through;' : ''}">${esc(e.value)}</a>
+      ${reachLinkHtml(e.type, e.value, e.status === 'bounced' ? 'text-decoration:line-through;' : '')}
       ${e.primary ? '<span class="badge badge-blue" title="Used first">★ primary</span>' : ''}
       ${e.status && e.status !== 'ok' ? `<span class="badge ${STATUS[e.status][1]}">${STATUS[e.status][0]}</span>` : ''}
       ${e.note ? `<span class="hint">${esc(e.note)}</span>` : ''}
@@ -5451,7 +5514,7 @@ function renderReachCard(p, links){
         <button class="btn btn--icon btn--danger" data-reachdel="${esc(e.id)}" title="Delete">✕</button></span>` : ''}
     </div>`;
   const orbRow = (t, o) => `<div class="contact-detail" style="display:flex;gap:8px;align-items:center;${o.hidden ? 'opacity:0.55;' : ''}">
-      ${o.hidden ? `<s>${esc(o.value)}</s>` : `<a href="${esc(href(t, o.value))}">${esc(o.value)}</a>`} <span class="badge badge-grey">Orbis</span>${o.hidden ? ' <span class="hint">hidden</span>' : ''}
+      ${o.hidden ? `<s>${esc(o.value)}</s>` : reachLinkHtml(t, o.value)} <span class="badge badge-grey">Orbis</span>${o.hidden ? ' <span class="hint">hidden</span>' : ''}
       ${canEdit ? `<button class="btn btn--ghost btn--sm" data-orbhide="${esc(o.value)}" style="margin-left:auto;">${o.hidden ? 'Show' : 'Hide'}</button>` : ''}</div>`;
   const groups = REACH_TYPES.map(([t, label]) => {
     const mine = own.filter(e => e.type === t);
@@ -5462,12 +5525,12 @@ function renderReachCard(p, links){
   const legacy = PERSON_CONTACT_FIELDS.filter(f => p[f.key]).map(f => `${f.label}: ${esc(p[f.key])}`);
   const ed = reachEditId ? own.find(e => e.id === reachEditId) : null;
   el.innerHTML = `<div class="sec-title">Contact</div>
-    <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">Add as many emails, phones and LinkedIn profiles as you need. Orbis's own values are listed with them; hide one that's wrong and it stays hidden after imports.</div>
+    <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">Add as many emails, phones, LinkedIn profiles, addresses and fax numbers as you need; the type follows what you type. Orbis's own values are listed with them; hide one that's wrong and it stays hidden after imports.</div>
     ${groups || '<div class="hint" style="margin-bottom:8px;">No emails or phones yet.</div>'}
     ${legacy.length ? `<div class="hint" style="margin-bottom:8px;">Typed before (moves into this list in the migration): ${legacy.join(' · ')}</div>` : ''}
     ${canEdit ? `<div class="form-row" style="align-items:end;gap:8px;margin-top:6px;">
       <div class="form-group" style="max-width:130px;"><label>Type</label><select class="field" id="reachType"${ed ? ' disabled' : ''}>${REACH_TYPES.map(([t, l]) => `<option value="${t}"${ed?.type === t ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
-      <div class="form-group"><label>${ed ? 'Change' : 'Add'}</label><input class="field" id="reachValue" value="${esc(ed?.value || '')}" placeholder="name@company.pt, +351 …, linkedin.com/in/…"></div>
+      <div class="form-group"><label>${ed ? 'Change' : 'Add'}</label><input class="field" id="reachValue" value="${esc(ed?.value || '')}" placeholder="name@company.pt, +351 …, linkedin.com/in/…, Rua …"></div>
       <div class="form-group"><label>Note <span class="opt">(optional)</span></label><input class="field" id="reachNote" value="${esc(ed?.note || '')}" placeholder="e.g. mobile, from a call"></div>
       <div class="form-group" style="flex:0 0 auto;"><button class="btn btn--primary btn--sm" id="reachSaveBtn">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn btn--ghost btn--sm" id="reachCancelBtn">Cancel</button>' : ''}</div>
     </div><div class="modal-err" id="reachErr"></div>` : ''}`;
@@ -5502,7 +5565,9 @@ function renderReachCard(p, links){
       await save(r.list, hidden, `added ${r.entry.value}`);
     }
   };
+  el.oninput = (ev) => { if (ev.target.id === 'reachValue' && !ed) followReachType(document.getElementById('reachType'), ev.target.value); };
   el.onchange = async (ev) => {
+    if (ev.target.id === 'reachType') { ev.target.dataset.touched = '1'; return; }
     const sel = ev.target.closest('[data-reachstatus]'); if (!sel) return;
     const e = own.find(x => x.id === sel.dataset.reachstatus);
     let list = reachUpdate(own, e.id, { status: sel.value });
@@ -5940,26 +6005,59 @@ function orbisValues(person, field){
 // status ok|bounced|old, primary (one per type), addedBy, addedAt }. Orbis's
 // own lists stay where the importer writes them; one can be hidden
 // (hiddenOrbis) and stays hidden after imports.
-const REACH_TYPES = [['email', 'Email', '✉'], ['phone', 'Phone', '☎'], ['linkedin', 'LinkedIn', 'in']];
-const REACH_ORBIS = { email: 'orbisEmails', phone: 'orbisPhones' };
+const REACH_TYPES = [['email', 'Email', '✉'], ['phone', 'Phone', '☎'], ['linkedin', 'LinkedIn', 'in'], ['address', 'Address', '⌂'], ['fax', 'Fax', '℻']];
+const REACH_ORBIS = { email: 'orbisEmails', phone: 'orbisPhones', address: 'orbisAddresses', fax: 'orbisFaxes' };
 function reachNorm(type, v){
   v = String(v || '').trim();
   if (type === 'email') return v.toLowerCase();
-  if (type === 'phone') return v.replace(/[^\d+]/g, '');
+  if (type === 'phone' || type === 'fax') return v.replace(/[^\d+]/g, '');
+  if (type === 'address') return v.toLowerCase().replace(/\s+/g, ' ');
   if (type === 'linkedin') return v.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '').toLowerCase();
   return v;
 }
 function reachValid(type, v){
   if (type === 'email') return /^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/i.test(String(v || '').trim());
-  if (type === 'phone') return reachNorm('phone', v).replace(/\D/g, '').length >= 9;
+  if (type === 'phone' || type === 'fax') return reachNorm(type, v).replace(/\D/g, '').length >= 9;
   if (type === 'linkedin') return /linkedin\.com\//i.test(String(v || ''));
+  if (type === 'address') return String(v || '').trim().length >= 6 && /[a-zà-ú]/i.test(String(v || ''));
   return false;
+}
+// 21 Oct (Stage 2 follow-ups, F5): the type a value looks like, or '' — the
+// Type list follows it while you type (until you pick a type yourself). A fax
+// looks like a phone, so it is only ever chosen by hand.
+function reachGuessType(v){
+  v = String(v || '').trim();
+  if (!v) return '';
+  if (/linkedin\.com\//i.test(v)) return 'linkedin';
+  if (v.includes('@')) return 'email';
+  if (v.replace(/\D/g, '').length >= 9 && /^[\d\s+().\-\/]+$/.test(v)) return 'phone';
+  if (/\b\d{4}-\d{3}\b/.test(v) || (/\d/.test(v) && /(^|[\s,])(rua|r\.|av\.|avenida|travessa|tv\.|largo|praça|praca|estrada|alameda|lugar|urbanização|urbanizacao|zona industrial|edifício|edificio|apartado|lote)(\s|$)/i.test(v))) return 'address';
+  return '';
+}
+const REACH_LOOKS = { email: 'an email address', phone: 'a phone number', linkedin: 'a LinkedIn address', address: 'an address' };
+const REACH_INVALID = { email: 'That isn\'t a valid email address.', phone: 'A phone number needs at least 9 digits.', linkedin: 'Paste the linkedin.com/in/… address.', address: 'Write the street, postcode and city.', fax: 'A fax number needs at least 9 digits.' };
+function followReachType(sel, value){
+  if (!sel || sel.disabled || sel.dataset.touched) return;
+  const g = reachGuessType(value);
+  if (g) sel.value = g;
+}
+// The value as a link: write, call, LinkedIn or the map; a fax stays text.
+function reachLinkHtml(type, v, style = ''){
+  const st = style ? ` style="${style}"` : '';
+  if (type === 'fax') return `<span${st}>${esc(v)}</span>`;
+  const href = type === 'email' ? `mailto:${v}` : type === 'phone' ? `tel:${reachNorm('phone', v)}` : type === 'address' ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v)}` : (/^https?:/i.test(v) ? v : 'https://' + v);
+  const ext = type === 'linkedin' || type === 'address' ? ' target="_blank" rel="noopener noreferrer"' : '';
+  return `<a href="${esc(href)}"${ext}${st}>${esc(v)}</a>`;
 }
 const reachNewId = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 function reachAdd(list, { type, value, note = '', source = 'manual', by = '', at = '' }){
   const v = String(value || '').trim();
-  if (!REACH_TYPES.some(t => t[0] === type)) return { error: 'Choose email, phone or LinkedIn.' };
-  if (!reachValid(type, v)) return { error: type === 'email' ? 'That isn\'t a valid email address.' : type === 'phone' ? 'A phone number needs at least 9 digits.' : 'Paste the linkedin.com/in/… address.' };
+  if (!REACH_TYPES.some(t => t[0] === type)) return { error: 'Choose email, phone, LinkedIn, address or fax.' };
+  if (!reachValid(type, v)) {
+    const g = reachGuessType(v); // 21 Oct (F5): it fits another type — say which
+    if (g && g !== type && reachValid(g, v)) return { error: `This looks like ${REACH_LOOKS[g]}. Switch the type to ${REACH_TYPES.find(t => t[0] === g)[1]}.`, guess: g };
+    return { error: REACH_INVALID[type] };
+  }
   if ((list || []).some(e => e.type === type && reachNorm(type, e.value) === reachNorm(type, v))) return { error: 'Already in the list.' };
   const entry = { id: reachNewId(), type, value: v, note: String(note || '').trim().slice(0, 200), source, status: 'ok', primary: !(list || []).some(e => e.type === type), addedBy: by, addedAt: at };
   return { list: [...(list || []), entry], entry };
@@ -12516,9 +12614,16 @@ document.getElementById('personLinkCancelBtn').addEventListener('click', () => s
 document.getElementById('personLinkSaveBtn').addEventListener('click', savePersonLink);
 document.getElementById('cpCancelBtn').addEventListener('click', () => showEl('contactPersonModal', false));
 document.getElementById('cpSaveBtn').addEventListener('click', saveContactPerson);
+document.getElementById('cpMatch').addEventListener('click', e => { // 21 Oct (F7): a possible duplicate
+  const t = e.target.closest('[data-cpmatchopen],[data-cpmatchnew]'); if (!t) return;
+  if (t.dataset.cpmatchnew != null) { cpMatchAck = personNameKey(document.getElementById('cpName').value.trim()); saveContactPerson(); return; }
+  showEl('contactPersonModal', false);
+  openPerson(t.dataset.cpmatchopen, { type: 'company', id: currentCoId, tab: isOn('search.people') ? 'contacts' : 'ownership' });
+});
 document.getElementById('panel-ownership').addEventListener('click', e => {
-  const t = e.target.closest('[data-person],[data-gotoco],[data-editlink],[data-rmlink],[data-tocontact],[data-handcur],[data-mainct],#addPersonBtn,#addContactPersonBtn');
+  const t = e.target.closest('[data-person],[data-gotoco],[data-editlink],[data-rmlink],[data-tocontact],[data-handcur],[data-mainct],[data-ctedit],#addPersonBtn,#addContactPersonBtn');
   if (!t) return;
+  if (t.dataset.ctedit) { openContactPerson(t.dataset.ctedit); return; }
   if (t.dataset.handcur) { toggleHandLink(t.dataset.handcur); return; }
   if (t.dataset.mainct != null) { setMainContact(t.dataset.mainct || null); return; }
   if (t.id === 'addContactPersonBtn') { openContactPerson(); return; }

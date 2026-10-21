@@ -13,7 +13,7 @@ const ctx = {};
 vm.createContext(ctx);
 vm.runInContext([
   line('const LEGACY_ORBIS_FIELD') ? grab('const LEGACY_ORBIS_FIELD', '\n};\n') : '', grab('function orbisValues('),
-  line('const REACH_TYPES'), line('const REACH_ORBIS'), grab('function reachNorm('), grab('function reachValid('), line('const reachNewId'),
+  line('const REACH_TYPES'), line('const REACH_ORBIS'), grab('function reachNorm('), grab('function reachValid('), grab('function reachGuessType('), line('const REACH_LOOKS'), line('const REACH_INVALID'), line('const reachNewId'),
   grab('function reachAdd('), line('const reachUpdate'), line('function reachSetPrimary('), grab('function reachRemove('), line('const reachEmailsOf'), grab('function reachOrbis('),
   'function linkIsCurrent(l){ return l.shCurrent === true || l.mgmtCurrent === true; }', line('const linkCurrentAny'),
   'globalThis.R = { reachAdd, reachUpdate, reachSetPrimary, reachRemove, reachEmailsOf, reachOrbis, reachValid, linkCurrentAny };',
