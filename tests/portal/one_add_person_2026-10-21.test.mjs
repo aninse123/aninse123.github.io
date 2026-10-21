@@ -64,5 +64,9 @@ ok('activity: the person you spoke to is saved and listed on their person page',
 ok('phone: Contacts lists the main contact, then each contact person with their own phone and email', mob.includes("const ctLinks = isOn('search.people') ? links.filter((l) => l.isContact && l.contactCurrent !== false && l.personId !== pc?.personId) : [];") && mob.includes('section(`Contacts <span class="n">${contactCount}</span>`, contacts)'));
 ok('phone: a person\'s page shows their own list (all types, Orbis not hidden), contacts count as positions', mob.includes("const contact = isOn('search.people') ? reachHtml(p) : CONTACT_FIELDS") && mob.includes("['website', 'Website / social', 'orbisWebsites']") && mob.includes("if (l.isContact) bits.push('Contact'"));
 
+// 21 Oct (André): add forms one item per line; ☆ on the People tab picks the main entry
+ok('add forms: type, value, note and the button each on their own line (person page and People tab)', (page.match(/<div class="reach-add" style="display:grid;/g) || []).length === 2 && page.includes('<label>Type</label><select class="field" id="cpAddType">'));
+ok('People tab: ☆ on a person\'s own entry that isn\'t the main one makes it the main one (any type), with the permission', page.includes('data-cpprimary="${esc(pp.id)}" data-entry="${esc(e.id)}"') && page.includes('canEdit && e.id && !e.orbis && !e.legacy ?') && page.includes('await savePersonReach(pp, reachSetPrimary(pp.reach, e.id), pp.hiddenOrbis || [], `${e.value} is now the primary ${e.type}`);'));
+
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');
