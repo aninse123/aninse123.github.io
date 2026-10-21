@@ -1721,7 +1721,97 @@
     }
 
     // 19 Oct (one inbox): every address used in the conversation, the first one first.
+    // 21 Oct (people merge, Stage 6, switch search.people): each address of the
+    // conversation says who it is — the company address, a person and their role,
+    // or "not in the CRM" with "Add to company" (an email of someone already there,
+    // or a new contact person; you always choose).
+    const threadPeopleLoaded = new Set();
+    function whoIsAddress(a, t) {
+      const c = coCache.get(t.companyId);
+      if (c && String(c.companyEmail || '').trim().toLowerCase() === a) return 'company address';
+      const p = (peopleCache.get(t.companyId) || []).find(x => (x.emails || []).includes(a));
+      if (p) return `${p.name}${p.role ? ' (' + p.role + ')' : ''}`;
+      const ct = (c?.contacts || []).find(x => String(x.email || '').trim().toLowerCase() === a);
+      return ct ? `contact: ${ct.name}` : '';
+    }
+    function addrWho(t) {
+      if (!threadPeopleLoaded.has(t.companyId)) {
+        threadPeopleLoaded.add(t.companyId);
+        Promise.all([loadCompaniesFor([t.companyId]), loadPeopleFor([t.companyId])]).then(() => { if (selectedId === t.id) renderThreadHead(); }).catch(() => {});
+      }
+      const canAdd = window.pageAccess ? (window.pageAccess.can('search.reach') || window.pageAccess.can('search.editall')) : true;
+      const ready = peopleCache.has(t.companyId);
+      const all = [...new Set([t.contactEmail, ...(t.addresses || [])].map(a => String(a || '').trim().toLowerCase()).filter(a => a && !isOurAddr(a)))];
+      return `<span>${all.map(a => { const w = ready ? whoIsAddress(a, t) : ''; return `${esc(a)} <span class="hint">· ${ready ? esc(w || 'not in the CRM') : '…'}</span>${ready && !w && canAdd && !t.isTest ? ` <button type="button" class="camp-link" data-addaddr="${esc(a)}" style="font-size:0.76rem;">Add to company</button>` : ''}`; }).join(' → ')}</span>`;
+    }
+    async function openAddToCompany(t, addr) {
+      const people = peopleCache.get(t.companyId) || [];
+      const last = [...threadMessages].reverse().find(m => m.direction === 'in' && addrList(m.from).some(x => x.email === addr));
+      const fromName = last ? (addrList(last.from).find(x => x.email === addr)?.name || '') : '';
+      const key = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/^(mr|mrs|ms|dr|dra|eng|sr|sra)\.?\s+/, '').replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+      const guess = (fromName && people.find(p => key(p.name) === key(fromName))?.personId) || '';
+      openModal('Add to company', `
+        <p class="hint" style="margin-bottom:10px;"><b>${esc(addr)}</b> · ${esc(t.companyName || 'this company')}. It becomes one of the person's emails; nothing is merged without your choice.</p>
+        <div class="field"><label for="aacWho">Whose address is it?</label><select id="aacWho">
+          ${people.map(p => `<option value="${esc(p.personId)}"${p.personId === guess ? ' selected' : ''}>${esc(p.name)}${p.role ? ' (' + esc(p.role) + ')' : ''}</option>`).join('')}
+          <option value=""${guess ? '' : ' selected'}>Someone new — add a contact person</option></select></div>
+        <div id="aacNew"${guess ? ' hidden' : ''}>
+          <div class="field"><label for="aacName">Name</label><input id="aacName" value="${esc(fromName)}"></div>
+          <div class="field"><label for="aacRole">Role (optional)</label><input id="aacRole" placeholder="Diretor comercial"></div></div>`,
+        async () => saveAddToCompany(t, addr), 'Add');
+      $('aacWho').addEventListener('change', () => { $('aacNew').hidden = !!$('aacWho').value; });
+    }
+    function emailKeysFor(emails) { // same as search.html companyEmailKeys
+      const keys = new Set();
+      for (const e of emails) {
+        for (let i = 3; i <= Math.min(e.length, 60); i++) keys.add(e.slice(0, i));
+        const d = '@' + e.split('@')[1];
+        for (let i = 3; i <= Math.min(d.length, 60); i++) keys.add(d.slice(0, i));
+      }
+      return [...keys];
+    }
+    async function saveAddToCompany(t, addr) {
+      const pid = $('aacWho').value, at = new Date().toISOString();
+      const entry = (list) => ({ id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type: 'email', value: addr, note: 'From the inbox', source: 'outreach', status: 'ok', primary: !(list || []).some(e => e.type === 'email' && (e.status || 'ok') === 'ok'), addedBy: me, addedAt: at });
+      const emailsOf = (list) => [...new Set(list.filter(e => e.type === 'email').map(e => String(e.value).trim().toLowerCase()))];
+      let who;
+      if (pid) {
+        const snap = await getDoc(doc(db, 'searchPeople', pid)); addReads(1);
+        if (!snap.exists()) throw new Error('That person is no longer in the CRM.');
+        const reach = snap.data().reach || [];
+        if (reach.some(e => e.type === 'email' && String(e.value).trim().toLowerCase() === addr)) throw new Error('It is already one of their emails.');
+        const next = [...reach, entry(reach)];
+        await updateDoc(doc(db, 'searchPeople', pid), { reach: next, reachEmails: emailsOf(next), updatedAt: serverTimestamp(), updatedBy: me });
+        who = snap.data().name || '';
+      } else {
+        const name = $('aacName').value.trim().replace(/\s+/g, ' ');
+        if (!name) throw new Error('Write their name.');
+        const role = $('aacRole').value.trim().slice(0, 80) || null;
+        const nameKey = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.,\-–—&/()']/g, ' ').replace(/\s+/g, ' ').trim().replace(/^(mr|mrs|ms|miss|dr|dra|eng|prof|sr|sra)\s+/i, '').toUpperCase();
+        const tokens = [...new Set(nameKey.split(' ').filter(w => w.length > 1 && !['DE', 'DA', 'DO', 'DOS', 'DAS', 'E'].includes(w)))];
+        const prefixes = [...new Set(tokens.flatMap(w => Array.from({ length: w.length - 1 }, (_, i) => w.slice(0, i + 2))))];
+        if ((peopleCache.get(t.companyId) || []).some(p => p.name && p.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim() === nameKey)) throw new Error(`${name} is already on this company — choose them in the list.`);
+        const reach = [entry([])];
+        const newPid = 'm_' + doc(collection(db, 'searchPeople')).id;
+        await setDoc(doc(db, 'searchPeople', newPid), { name, nameKey, nameTokens: tokens, namePrefixes: prefixes, entityType: 'person', source: 'manual', reach, reachEmails: emailsOf(reach), hiddenOrbis: [], notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: 0, createdAt: serverTimestamp(), createdBy: me, updatedAt: serverTimestamp(), updatedBy: me });
+        await setDoc(doc(db, 'searchPersonLinks', `${newPid}__${t.companyId}`), { personId: newPid, companyId: t.companyId, personName: name, companyName: t.companyName || '', personEntityType: 'person', isContact: true, contactRole: role, contactCurrent: true, source: 'manual', addedBy: me, addedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        who = name;
+      }
+      // The company finds them by this email (Compose, assigning a conversation), as in the Search CRM.
+      try {
+        const cs = await getDoc(doc(db, 'searchCompanies', t.companyId)); addReads(1);
+        const keys = new Set(cs.data()?.emailKeys || []);
+        const add = emailKeysFor([addr]).filter(k => !keys.has(k));
+        if (add.length) await updateDoc(doc(db, 'searchCompanies', t.companyId), { emailKeys: [...keys, ...add], updatedAt: serverTimestamp(), updatedBy: me });
+      } catch (e) { console.warn('email search', e); }
+      await addDoc(collection(db, 'searchActivities'), { companyId: t.companyId, type: pid ? 'person_contact_edited' : 'person_linked', date: serverTimestamp(), title: null, content: pid ? `Contact details — ${who}: added ${addr} (from the inbox)` : `Added contact: ${who} — ${addr} (from the inbox)`, status: null, createdAt: serverTimestamp(), createdBy: me });
+      peopleCache.delete(t.companyId); threadPeopleLoaded.delete(t.companyId);
+      if (selectedId === t.id) renderThreadHead();
+      toast(pid ? `Added to ${who}'s emails.` : `${who} added as a contact of ${t.companyName || 'the company'}.`);
+      return true;
+    }
     function addrTrail(t) {
+      if (isOn('search.people') && t.companyId) return addrWho(t);
       const more = isOn('outreach.oneInbox') ? (t.addresses || []).filter(a => a && a !== t.contactEmail) : [];
       return more.length ? `<span title="Every address used in this conversation, the first one first">${esc([t.contactEmail, ...more].filter(Boolean).join(' → '))}</span>` : `<span>${esc(t.contactEmail || '')}</span>`;
     }
@@ -1742,6 +1832,7 @@
           `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}" data-perm="out.write">${esc(l)}</button>`).join('')}</div>`;
       $('viewHead').querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => classify(t, b.dataset.cat)));
       $('assignBtn')?.addEventListener('click', () => assignCompany(t));
+      $('viewHead').querySelectorAll('[data-addaddr]').forEach(b => b.addEventListener('click', () => openAddToCompany(t, b.dataset.addaddr)));
       $('fwdBtn')?.addEventListener('click', () => openForward(t));
       $('campInfoBtn')?.addEventListener('click', () => openCampaignInfo(t));
       $('taskBtn')?.addEventListener('click', () => {

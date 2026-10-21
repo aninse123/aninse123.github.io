@@ -14,7 +14,16 @@ const { handleReceived } = require("./inbound");
 const store = require("./store");
 const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
+const Feat = require("../features"); // People merge (Stage 6): bounces mark people's addresses
 // People conversations (Phase 5) have no company: stop the conversation's own enrolment.
+// People merge, Stage 6 (21 Oct): the bounced address is marked on people's own lists
+// (production setting: On = always; Test = test emails only). Best effort.
+async function markPeopleBounced(email, isTest, why) {
+  try {
+    const st = await Feat.jobState("search.people");
+    if (st === "on" || (st === "test" && isTest)) await store.markReachBounced(email, { why });
+  } catch (e) { logger.warn("outreach: marking a bounced address on people failed", { message: e.message }); }
+}
 const stopFor = (companyId, thread, reason) => (companyId ? stopCompanyEnrolments(companyId, reason) : stopEnrolmentById(thread?.enrolmentId, reason));
 
 const { db, FieldValue, Timestamp } = store;
@@ -163,6 +172,7 @@ async function handleDeliveryEvent(type, data) {
     if (threadRef) await threadRef.update({ status: "bounced" });
     await store.setCompanyOutreachStatus(companyId, "bounced", isTest);
     await stopFor(companyId, thread, "Email bounced");
+    await markPeopleBounced(recipient, isTest, "bounced");
   } else if (type === "email.complained") {
     await store.addSuppression(recipient, { reason: "complaint", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "closed", closedReason: "complaint" });
@@ -171,6 +181,7 @@ async function handleDeliveryEvent(type, data) {
   } else if (type === "email.suppressed") {
     await store.addSuppression(recipient, { reason: "provider_suppressed", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });
+    await markPeopleBounced(recipient, isTest, "blocked by the provider");
     await stopFor(companyId, thread, "Email suppressed by the provider");
   }
   return true;

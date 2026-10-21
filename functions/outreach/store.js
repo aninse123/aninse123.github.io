@@ -142,6 +142,35 @@ async function touchCompany(companyId, { direction, isAutoReply = false, isTest,
   });
 }
 
+// People merge, Stage 6 (21 Oct, switch "search.people"): a hard bounce marks
+// that address "bounced" on every person who has it in their own list (it
+// stays, with the date, and is never offered again); if it was their primary
+// email, the next OK one becomes primary. Returns how many people changed.
+async function markReachBounced(email, { why = "bounced" } = {}) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return 0;
+  const snap = await db().collection("searchPeople").where("reachEmails", "array-contains", e).get();
+  const day = new Date().toISOString().slice(0, 10);
+  let changed = 0;
+  for (const d of snap.docs) {
+    const reach = (d.data().reach || []).map((x) => ({ ...x }));
+    let hit = false;
+    for (const x of reach) {
+      if (x.type !== "email" || String(x.value || "").trim().toLowerCase() !== e || x.status === "bounced") continue;
+      x.status = "bounced"; x.note = [x.note, `${why} ${day}`].filter(Boolean).join(" · ").slice(0, 200); hit = true;
+      if (x.primary) {
+        x.primary = false;
+        const next = reach.find((y) => y.type === "email" && y.status !== "bounced" && y !== x);
+        if (next) next.primary = true;
+      }
+    }
+    if (!hit) continue;
+    await d.ref.update({ reach, updatedAt: FieldValue.serverTimestamp(), updatedBy: "resend-webhook" });
+    changed++;
+  }
+  return changed;
+}
+
 // Bounce / complaint / unsubscribe mark the company without counting as a touch.
 async function setCompanyOutreachStatus(companyId, status, isTest) {
   if (!companyId || isTest) return;
@@ -194,6 +223,7 @@ async function logPersonTask({ refs = [], channel, type = "other", title, conten
 }
 
 module.exports = {
+  markReachBounced,
   logPersonSend, logPersonTask,
   db, FieldValue, Timestamp,
   getSettings, recordQuota, getTodayUsage, getTodayDaily, senderKey, bumpDaily,
