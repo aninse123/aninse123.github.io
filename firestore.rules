@@ -98,6 +98,8 @@ service cloud.firestore {
         || (can('search.activity') && activityTouch())
         || (can('search.deal') && onlyFields(dealFields().concat(stampFields())))
         || (can('search.reach') && onlyFields(['primaryContact', 'emailKeys'].concat(stampFields())))
+        // 22 Oct (search.sameEmail): confirming / dismissing a same-email link touches both companies.
+        || (canAny(['search.edit', 'search.editall']) && onlyFields(['sameEmailLinks', 'sameEmailDismissed'].concat(stampFields())))
         || (can('search.flags') && onlyFields(flagFields().concat(stampFields())))
         || (can('search.import') && can('search.editall')));
       allow delete: if can('search.delete');
@@ -189,6 +191,10 @@ service cloud.firestore {
       allow read: if isStaff();
     }
     match /outreachCompliance/{id} {
+      allow read: if can('out.view');
+    }
+    // 22 Oct (owner-aware outreach, Stage 5): the Monday reports, written by the scheduler.
+    match /outreachReports/{id} {
       allow read: if can('out.view');
     }
     match /outreachSuppression/{id} {

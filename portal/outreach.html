@@ -561,6 +561,7 @@
         </div>
         <div id="mHealth"></div>
         <div class="kpis" id="mKpis"></div>
+        <div id="mOwner" data-feature="outreach.ownerAware"></div>
 
         <div class="card" style="margin-top:16px;">
           <div class="toolbar" style="border-radius:var(--radius) var(--radius) 0 0;">
@@ -636,6 +637,7 @@
                 <input type="text" inputmode="decimal" id="gMinGap" style="width:64px;"> <span>hours</span>
                 <span class="hint" style="flex-basis:100%;">A wait in sending days ends when the window opens on that day — at least this long after the company's previous email (e.g. sent at 17:50 with a 1-day wait: the next morning only if 12 hours have passed). Calendar days keep the time of day.</span>
               </div>
+              <label class="checkline" style="margin-top:8px;" data-feature="outreach.ownerAware"><input type="checkbox" id="gWeeklyReport"> <span>Email the Monday report to the partners <span class="hint">(last week overall and by owner, from noreply@douropartners.pt to André and António; always kept in Metrics)</span></span></label>
               <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gHolidays"> <span>Skip national holidays <span class="hint">(no campaign emails, drafts or task dates on them; a campaign can choose otherwise)</span></span></label>
               <details style="margin-top:4px;"><summary class="hint" style="cursor:pointer;">The national holidays</summary><div id="gHolList" class="hint" style="margin-top:6px;"></div></details>
               <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gMunHol"> <span>Skip each company's municipal holiday <span class="hint">(on its municipality's holiday a company's email waits for the next sending day — e.g. Lisboa 13 June, Porto 24 June, Maia the Monday after the 2nd Sunday of July; all 308 municipalities; a campaign can choose otherwise)</span></span></label>
@@ -771,6 +773,7 @@
     import { auth, db, storage, addReads, updateDoc, setDoc, addDoc, deleteDoc } from './firebase-config.js';
     import { guardPage } from './access.js';
     import { isOn } from './features.js';
+    import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, relatedLine } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { applyDirectory } from './team-dir.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -2799,6 +2802,37 @@
       return { started: list.length, replied, positive, bounced, unsub };
     }
 
+    // 22 Oct (owner-aware outreach, Stage 5): the latest Monday report and the
+    // replies counted by owner next to the count by company (a company with no
+    // ultimate owner in Orbis is its own owner). Company counts stay the main ones.
+    let ownerReport = null, ownerReportLoaded = false, ownerCoLoading = false;
+    function renderOwnerMetrics(threads) {
+      const el = $('mOwner'); if (!el) return;
+      if (!isOn('outreach.ownerAware')) { el.innerHTML = ''; return; }
+      if (!ownerReportLoaded) {
+        ownerReportLoaded = true;
+        getDocs(query(collection(db, 'outreachReports'), orderBy('weekFrom', 'desc'), limit(1)))
+          .then(snap => { addReads(snap.size || 1); refreshReads(); ownerReport = snap.docs[0] ? { id: snap.docs[0].id, ...snap.docs[0].data() } : null; renderOwnerMetrics(threads); })
+          .catch(() => {});
+      }
+      const ids = [...new Set(threads.map(t => t.companyId).filter(Boolean))];
+      const need = ids.filter(id => !coCache.has(id));
+      if (need.length && !ownerCoLoading) { ownerCoLoading = true; loadCompaniesFor(need.slice(0, 600)).catch(() => {}).finally(() => { ownerCoLoading = false; renderOwnerMetrics(threads); }); }
+      const ownerOf = (id) => coCache.get(id)?.ownGroupKey || 'co:' + id;
+      const started = new Set(threads.filter(t => t.companyId).map(t => ownerOf(t.companyId)));
+      const replied = new Set(threads.filter(t => t.companyId && t.repliedAt).map(t => ownerOf(t.companyId)));
+      const coStarted = new Set(threads.filter(t => t.companyId).map(t => t.companyId)).size, coReplied = new Set(threads.filter(t => t.companyId && t.repliedAt).map(t => t.companyId)).size;
+      const r = ownerReport, w = r?.week, o = r?.owners;
+      el.innerHTML = `<div class="card" style="margin-top:16px;">
+        <h3 style="margin:0 0 6px;font-size:0.95rem;">By owner</h3>
+        <p style="margin:0 0 8px;">Replied: <b>${num(coReplied)}</b> of ${num(coStarted)} companies · <b>${num(replied.size)}</b> of ${num(started.size)} owners <span class="hint">(companies of the same ultimate owner count once)</span></p>
+        ${r && r.status === 'done' ? `<details${o && (o.multiCampaign?.length || o.openFlags?.length) ? ' open' : ''}><summary style="cursor:pointer;"><b>Week of ${esc(r.weekFrom)}</b> — ${num(w.sent)} sent, ${num(w.replies)} replies, ${num(w.meetings)} meetings, ${num(w.tasksDone)} tasks${r.onlyTest ? ' <span class="pill pill--test">TEST</span>' : ''}</summary>
+            <pre style="white-space:pre-wrap;font:inherit;font-size:0.8rem;margin:8px 0 0;">${esc(r.text || '')}</pre>
+            <div class="hint">${(r.emailedTo || []).length ? 'Emailed to ' + r.emailedTo.map(esc).join(', ') + ' on Monday.' : 'Not emailed (Settings → General).'}</div></details>`
+          : '<p class="hint" style="margin:0;">The first Monday report appears here after the scheduler\'s first run on a Monday (from 08:00).</p>'}
+      </div>`;
+    }
+
     function renderMetrics() {
       if (!metricsData) return;
       const { threads, messages, withTest } = metricsScope();
@@ -2806,6 +2840,7 @@
       $('mNote').textContent = testOnly ? 'Only test emails so far — tick "Include test emails" to see them.' : '';
 
       const st = threadStats(threads);
+      renderOwnerMetrics(threads); // 22 Oct (outreach.ownerAware)
       const sent = messages.filter(m => m.status !== 'queued' && m.status !== 'failed' && !NOT_SENT.includes(m.status));
       const delivered = sent.filter(m => ['delivered', 'complained'].includes(m.status)).length;
       const bounced = sent.filter(m => m.status === 'bounced').length;
@@ -3002,7 +3037,7 @@
       $('setNav').addEventListener('click', (e) => { const b = e.target.closest('[data-sec]'); if (b) showSec(b.dataset.sec); });
       $('modalCancel').addEventListener('click', closeModal);
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
-      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gHolidays', 'gMunHol', 'gMinGap', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
+      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gHolidays', 'gMunHol', 'gMinGap', 'gWeeklyReport', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
       $('gSave').addEventListener('click', async () => { const unbusy = busyBtn($('gSave'), 'Saving…'); try { await saveGeneral(); } finally { unbusy(); } });
       $('rdRun').addEventListener('click', () => renderReadiness(true));
       $('gTrack').addEventListener('change', async (e) => {
@@ -3066,6 +3101,7 @@
       $('gFrom').value = win.from || '09:00'; $('gTo').value = win.to || '18:00';
       $('gHolidays').checked = s.skipNationalHolidays !== false;
       $('gMunHol').checked = s.skipMunicipalHolidays !== false;
+      $('gWeeklyReport').checked = s.weeklyReportEmail !== false;
       $('gMinGap').value = s.minGapHours ?? 12;
       const yNow = new Date().getFullYear();
       renderMunList();
@@ -3125,7 +3161,7 @@
       if (campTest && !list.includes(campTest)) { err.textContent = `The campaign test address (${campTest}) must be on the approved list.`; err.hidden = false; return; }
       await setDoc(doc(db, 'outreachSettings', 'global'), {
         dailyTarget: target, automationBudget: auto, blockPersonalDomains: $('gPersonal').checked,
-        testRecipients: list, sendWindow: { days, from: wFrom, to: wTo, tz: 'Europe/Lisbon' }, skipNationalHolidays: $('gHolidays').checked, skipMunicipalHolidays: $('gMunHol').checked, minGapHours: minGap,
+        testRecipients: list, sendWindow: { days, from: wFrom, to: wTo, tz: 'Europe/Lisbon' }, skipNationalHolidays: $('gHolidays').checked, skipMunicipalHolidays: $('gMunHol').checked, minGapHours: minGap, weeklyReportEmail: $('gWeeklyReport').checked,
         ...(campTest ? { campaignTestRecipient: campTest } : {}),
         aiEnabled: $('gAiOn').checked, aiModel: $('gAiModel').value, aiDailyCap: aiCap,
         updatedAt: serverTimestamp(), updatedBy: me,
@@ -3494,6 +3530,7 @@
       unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
       stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
       personal_domain: 'personal email domain', same_inbox: 'same email address as another company, emailed recently',
+      owner_skip: 'skipped for now (related companies)',
     };
     // 19 Oct (one inbox): who else has the address, and when it was last emailed.
     const inboxDetail = (x) => x.inbox ? ` (${esc(x.inbox.email)} — also ${esc(x.inbox.companyName || 'another company')}${x.inbox.at ? ', last email ' + esc(dayFmt.format(new Date(x.inbox.at))) : ''})` : '';
@@ -4553,6 +4590,7 @@ Optional note for them:`, '');
             ${p.contacted?.count ? `<dt>Contacted before</dt><dd><b>${num(p.contacted.count)}</b></dd>` : ''}
           </dl>
           ${contactedHtml(p.contacted, 'acLeaveOut')}
+          ${ownerPanelHtml(p.owner)}
           ${p.conflictCount ? `<div class="field"><label>Companies already in another campaign</label>
             <label class="checkline"><input type="radio" name="acConflict" value="skip" checked> <span>Leave them where they are (recommended)</span></label>
             <label class="checkline"><input type="radio" name="acConflict" value="move"> <span>Move them here — their other campaign stops for them</span></label></div>` : ''}
@@ -4562,6 +4600,7 @@ Optional note for them:`, '');
 
       const render = () => {
         $('modalBody').innerHTML = stage === 'pick' ? pickBody() : previewBody();
+        if (stage !== 'pick') wireOwnerPanel($('modalBody')); // 22 Oct (outreach.ownerAware)
         $('modalSave').textContent = stage === 'pick' ? 'Check companies' : (preview.eligible || preview.conflictCount ? `Add companies` : 'Close');
         $('modalSave').disabled = stage === 'pick' && (mode === 'crm' || !selected().length);
         if (stage !== 'pick') return;
@@ -4615,7 +4654,7 @@ Optional note for them:`, '');
         const leaveOut = $('acLeaveOut')?.checked ? new Set(preview.contacted?.ids || []) : null;
         const ids = leaveOut ? preview.ids.filter(id => !leaveOut.has(id)) : preview.ids;
         if (!ids.length) throw new Error('Every company was left out.');
-        const r = (await callCampaign({ action: 'enrol', campaignId: c.id, companyIds: ids, source, onConflict })).data;
+        const r = (await callCampaign({ action: 'enrol', campaignId: c.id, companyIds: ids, source, onConflict, ownerChoices: readOwnerChoices($('modalBody')) })).data;
         toast(`${num(r.enrolled)} companies added${r.moved ? ` (${num(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${num(r.skippedTotal)} skipped` : ''}.`);
         loadCampaignData();
         return true;
@@ -4905,7 +4944,13 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       bits.push(c.lastTouchAt ? `last touch ${esc(dayFmt.format(new Date(tsMs(c.lastTouchAt))))}` : 'never touched');
       if (c.activeCampaignId && c.activeCampaignId !== d.campaignId) bits.push(`also in "${esc(c.activeCampaignName || 'another campaign')}"`);
       if (c.stage) bits.push(`stage ${esc(c.stage)}`);
-      return `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
+      // 22 Oct (owner-aware): the related companies worked out when the draft was made.
+      const op = isOn('outreach.ownerAware') ? d.ownerPanel : null;
+      const opHtml = op?.related?.length ? `<details class="owner-card" style="margin:0 0 6px;font-size:0.8rem;"${(op.flags || []).length ? ' open' : ''}><summary style="cursor:pointer;"><b>Related companies (${op.related.length})</b>${(op.flags || []).length ? ` — ${op.flags.slice(0, 2).map(f => esc(f.text)).join(' · ')}` : ''}</summary>
+          <ul style="margin:4px 0 0;padding-left:18px;">${op.related.map(r => `<li>${relatedLine(r)}${r.email ? ` · <span class="mono">${esc(r.email)}</span> <button type="button" class="camp-link" data-copyemail="${esc(r.email)}" style="font-size:0.74rem;">copy</button>` : ''}</li>`).join('')}</ul>
+          ${op.lead ? `<div class="hint">Suggested lead company: ${esc(op.lead.name)}${op.lead.why === 'parent' ? ' (the parent)' : ''}</div>` : ''}</details>` : '';
+      const mentionHtml = isOn('outreach.ownerAware') && d.checkMention ? '<div style="margin:0 0 6px;"><span class="pill pill--warn" title="The email names the related companies chosen when this company was added ({{owner.otherCompanies}})">Check the mention of the related companies</span></div>' : '';
+      return mentionHtml + opHtml + `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
     }
     let approveCtxLoading = false;
     // 19 Oct (one inbox): companies whose first email waits because their address
@@ -4989,6 +5034,10 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
         ${list.length > shown.length ? `<p class="hint" style="margin-top:10px;">Showing the oldest ${num(shown.length)} of ${num(list.length)}.</p>` : ''}`;
 
       $('apFilter').addEventListener('change', (e) => { approveFilter = e.target.value; renderApprove(); });
+      $('approveView').querySelectorAll('[data-copyemail]').forEach(b => b.addEventListener('click', async (ev) => { // 22 Oct: copy a related company's address (no automatic Cc)
+        ev.preventDefault();
+        try { await navigator.clipboard.writeText(b.dataset.copyemail); toast('Copied ' + b.dataset.copyemail); } catch (e) { prompt('Copy the address:', b.dataset.copyemail); }
+      }));
       $('approveView').querySelectorAll('[data-sstart]').forEach(b => b.addEventListener('click', async () => {
         const c = campaigns.find(x => x.id === b.dataset.sstart); if (!c) return;
         if (!confirm(`Start "${c.name}"?

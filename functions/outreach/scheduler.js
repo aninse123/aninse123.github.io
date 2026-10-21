@@ -34,6 +34,8 @@ const Feat = require("../features"); // kill switches (Team & access → Feature
 const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, skipHolidaysOf, skipMunicipalOf, waitOptsOf, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 const { isMunicipalHoliday } = require("./places");
 const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
+const Related = require("./related"); // owner-aware outreach (22 Oct, switch outreach.ownerAware)
+const Report = require("./report"); // owner-aware outreach, Stage 5: the Monday report
 const { normEmail } = require("./util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -114,6 +116,33 @@ const unlock = (ref, extra = {}) => ref.update({ lockUntil: null, ...extra });
 
 // P4: each campaign's own daily email limit (Lisbon day).
 const campaignSentToday = (campaign, day) => (campaign.sentToday?.day === day ? campaign.sentToday.count || 0 : 0);
+
+// Owner-aware outreach, Stage 3 (22 Oct, switch "outreach.ownerAware"): the
+// approval card's panel — the related companies and their status, worked out
+// when the draft is made — and "check the mention" when the template names the
+// related companies ({{owner.otherCompanies}}) and some were chosen. Best effort.
+async function ownerPanelOnDraft(messageRef, e, campaign, variantBody) {
+  try {
+    const entry = (await Related.relatedFor([e.companyId])).get(e.companyId);
+    const flags = Related.flagsFor(entry, { campaignId: campaign.id, windowDays: campaign.exclusions?.contactedWithinDays || 30 });
+    const related = entry.related.slice(0, 6).map((r) => ({ companyId: r.companyId, name: r.name, why: r.why, campaignName: r.campaignName, lastOutreachAt: r.lastOutreachAt, lastReplyAt: r.lastReplyAt, saidNo: r.saidNo, doNotContact: r.doNotContact, email: r.email }));
+    const checkMention = !!(e.mention || []).length && /\{\{\s*\??owner\.otherCompan/.test(variantBody || "");
+    if (related.length || checkMention) await messageRef.update({ ownerPanel: { related, flags, lead: entry.lead }, ...(checkMention ? { checkMention: true } : {}) });
+  } catch (err) { logger.warn("outreachScheduler: owner panel", { message: err.message }); }
+}
+// Owner-aware outreach, Stage 4: when a company gets its first email, its related
+// companies (up to 9) get "Group contacted via X" in their history — an automatic
+// entry, never a touch. Real emails only.
+async function groupContacted(e, campaign, step) {
+  try {
+    const entry = (await Related.relatedFor([e.companyId])).get(e.companyId);
+    for (const r of entry.related.slice(0, 9)) {
+      await db().collection("searchActivities").add({ companyId: r.companyId, type: "outreach_group", date: Timestamp.now(), title: null,
+        content: `Group contacted via ${e.companyName || "a related company"} (${step.name || "Email 1"}, campaign "${campaign.name}") — ${r.why.join("; ")}`,
+        relatedCompanyId: e.companyId, campaignId: campaign.id, status: null, createdAt: FieldValue.serverTimestamp(), createdBy: "scheduler" });
+    }
+  } catch (err) { logger.warn("outreachScheduler: group contacted", { message: err.message }); }
+}
 
 async function recordSent(ref, e, campaign, step, res, { senderId, variantKey, now }) {
   const nextIndex = e.currentStep + 1;
@@ -200,10 +229,12 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [schedState, sendState, aiState, inboxState, peopleState, waitState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart")]);
+  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
+  // Owner-aware outreach, Stage 5 (22 Oct): the Monday report, once a week.
+  if (ownerState !== "off") { try { const wr = await Report.maybeRunWeekly(now, settings, { onlyTest: ownerState === "test" }); if (wr) report.weeklyReport = wr; } catch (e) { logger.error("outreachScheduler: weekly report failed", { message: e.message }); } }
   // Recurring emails (5b): write the issue drafts whose date has come.
   try { const rr = await runRecurring(now); report.issues = rr.created; if (rr.launched) report.issuesLaunched = rr.launched; } catch (e) { logger.error("outreachScheduler: recurring failed", { message: e.message }); }
   const campSnapAll = await db().collection("outreachCampaigns").where("status", "==", "active").get();
@@ -450,6 +481,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         templateId: step.templateId, variantKey,
         footer: campaign.footer, // CCSL: the campaign's choice, else the conversation's / Settings
         campaignFields: { sector: campaign.sector || "" }, // {{campaign.sector}}
+        // 22 Oct (owner-aware): the related companies chosen to be mentioned ({{owner.otherCompanies}}).
+        otherCompanies: allowed(ownerState, campaign) ? (e.mention || []).map((x) => x.name) : [],
         // Approved drafts go out as approved (edited subject/body included);
         // every check still runs again now.
         ...(approved ? { subject: approved.isReply ? null : approved.subject, body: approved.draftBody } : {}),
@@ -462,6 +495,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       const campaignRef = { campaignId: campaign.id, enrolmentId, stepId: step.id, approvedBy: approved?.approvedBy || null, kind: campaign.issueId ? "recurring" : "campaign" };
       if (wantsDraft) {
         await saveDraft(p, { campaign: campaignRef });
+        if (allowed(ownerState, campaign) && e.companyId) await ownerPanelOnDraft(messageRef, e, campaign, variantBody);
         await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id, senderId, [`variants.${step.id}`]: p.variantKey, lastError: null, ...(e.holdKind ? { holdKind: null, holdReason: null } : {}) });
         report.drafts++;
         continue;
@@ -469,6 +503,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       if (sendsThisRun > 0 && gap) await sleep(gap());
       const res = await deliverEmail(p, { campaign: campaignRef });
       await recordSent(doc.ref, e, campaign, step, res, { senderId, variantKey: p.variantKey, now });
+      if (allowed(ownerState, campaign) && e.currentStep === 0 && e.companyId && !e.isTest && !settings.testMode) await groupContacted(e, campaign, step);
       if (e.holdKind) await doc.ref.update({ holdKind: null, holdReason: null });
       sendsThisRun++; campaignSent++; report.sent++;
       sentToday[senderId] = (sentToday[senderId] || 0) + 1;

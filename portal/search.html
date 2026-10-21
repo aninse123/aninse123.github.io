@@ -1361,6 +1361,7 @@
 import { auth, db, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES, FIRESTORE_PROJECT_ID } from './firebase-config.js';
 import { guardPage, logExport, editedBadge } from './access.js';
 import { isOn, onFeaturesChange } from './features.js';
+import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, relatedLine } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
 import { applyDirectory } from './team-dir.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -1450,6 +1451,8 @@ const ACT = {
   // 19 Oct (one inbox): a first email held because the address was just emailed
   // through another company. Not a touch.
   outreach_hold:    { label:'Held: same email address', icon:'⏸', outreach:false },
+  outreach_owner:   { label:'Owner-aware choice', icon:'🧭', outreach:false }, // 22 Oct: Skip for now / Proceed / mention
+  outreach_group:   { label:'Group contacted', icon:'🔗', outreach:false },    // 22 Oct: a related company got its first email
 };
 // Set on searchCompanies by the Outreach Cloud Functions (spec §5).
 const OUTREACH_BADGE = {
@@ -3778,6 +3781,7 @@ async function fillMunHoliday(c){
 }
 function renderOverview(c){
   fillMunHoliday(c);
+  if (isOn('search.sameEmail')) fillOverviewSameEmail(c);
   const regions = (c.regions||[]).map(r=>REGION_LABELS[r]||r).join(', ') || '—';
   // Reused for the "Based on Orbis financial data" caption below -- fitBreakdown(c)
   // already computes this internally too; a cheap pure lookup, not worth threading
@@ -3830,7 +3834,7 @@ function renderOverview(c){
         <div class="info-row"><span class="k">Multinational</span><span class="v">${c.isMultinational?'Yes — '+esc((c.countries||[]).join(', ')):'No'}</span></div>
         <div class="info-row"><span class="k">Website</span><span class="v">${c.website?`<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">${esc(c.website)}</a>`:'—'}</span></div>
         <div class="info-row"><span class="k">LinkedIn</span><span class="v">${c.linkedinUrl?`<a href="${esc(extUrl(c.linkedinUrl))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Profile</a>`:'—'}</span></div>
-        <div class="info-row"><span class="k">Email</span><span class="v">${esc(c.companyEmail||'—')}</span></div>
+        <div class="info-row"><span class="k">Email</span><span class="v">${esc(c.companyEmail||'—')}<span id="ovSameEmail" data-feature="search.sameEmail"></span></span></div>
         <div class="info-row"><span class="k">Phone</span><span class="v">${esc(c.companyPhone||'—')}</span></div>
       </div>
     </div>
@@ -4926,10 +4930,121 @@ async function renderOwnership(c){
         <span>Minority &lt; 25%</span>
       </div>` : ''}
     </div>
+    ${isOn('outreach.ownerAware') ? '<div id="ownOutreachRel" data-feature="outreach.ownerAware"></div>' : ''}
+    ${isOn('search.sameEmail') ? '<div id="ownSameEmail" data-feature="search.sameEmail"></div>' : ''}
     ${ownOn ? '<div id="ownLadderWrap" data-feature="search.ownership"></div>' : ''}
     <div class="card" id="ownGraphCard"><div class="sec-title">Network</div><div id="ownGraph"></div></div>`;
   renderNetworkGraph(document.getElementById('ownGraph'), 'company', c.id);
   if (ownOn) renderOwnershipLadder(c, links);
+  if (isOn('search.sameEmail')) renderSameEmail(c, links).catch(e => console.warn('same email', e));
+  if (isOn('outreach.ownerAware')) renderOutreachRelated(c).catch(e => console.warn('related in outreach', e));
+}
+
+// ── Same email on two companies (22 Oct, switch search.sameEmail) ───────────
+// Other companies with exactly the same email address (stored lowercase). On the
+// Overview: "also the email of X" (a fact, whatever their ownership). On the
+// Ownership tab, only when Orbis doesn't already relate them (same ultimate
+// owner, a shared owner or manager, or one holds the other): "Possible link:
+// same email as X" with Confirm (stored on both companies; counts as related in
+// the owner panel and the Monday report, never in groups or filters) / Dismiss
+// (on this company, for good). Both leave an activity.
+const sameEmailCache = new Map(); // companyId → other companies (this page visit)
+async function sameEmailCompanies(c){
+  const e = String(c.companyEmail || '').trim().toLowerCase(); if (!e) return [];
+  if (sameEmailCache.has(c.id)) return sameEmailCache.get(c.id);
+  const snap = await getDocs(query(collection(db,'searchCompanies'), where('companyEmail', '==', e), limit(11)));
+  addReads(snap.size || 1);
+  const out = snap.docs.filter(d => d.id !== c.id).map(d => ({ id: d.id, ...d.data() }));
+  sameEmailCache.set(c.id, out);
+  return out;
+}
+const SAME_EMAIL_PERSONAL = /@(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me|mac|aol|sapo|iol|netcabo|clix|telepac|portugalmail|oninet|zonmail|vodafone|meo|netvisao|netmadeira|gmx|mail|protonmail|proton|zoho|yandex)\.[a-z.]+$/i;
+async function fillOverviewSameEmail(c){
+  let others = [];
+  try { others = await sameEmailCompanies(c); } catch(e){ console.warn('same email', e); return; }
+  const el = document.getElementById('ovSameEmail');
+  if (!el || currentCoId !== c.id || !others.length) return;
+  const personal = SAME_EMAIL_PERSONAL.test(String(c.companyEmail || '').trim()) || /@net\.sapo\.pt$/i.test(String(c.companyEmail || '').trim());
+  el.innerHTML = ` <span class="hint">· ${personal ? 'same personal email as' : 'also the email of'} ${others.slice(0, 5).map(o => `<span class="person-link" data-gotoco="${esc(o.id)}">${esc(o.name || o.id)}</span>`).join(', ')}${others.length > 5 ? ` and ${others.length - 5} more` : ''}</span>`;
+  el.onclick = (ev) => { const t = ev.target.closest('[data-gotoco]'); if (t) openDetail(t.dataset.gotoco); };
+}
+async function relatedByOrbis(c, links, o){
+  if (c.ownGroupKey && c.ownGroupKey === o.ownGroupKey) return true;
+  const oLinks = await fetchCompanyLinks(o.id).catch(() => []);
+  const deciders = (ls) => new Set(ls.filter(l => linkIsCurrent(l) && l.personEntityType !== 'entity').map(l => l.personId));
+  const mine = deciders(links);
+  if ([...deciders(oLinks)].some(p => mine.has(p))) return true;
+  return links.some(l => l.personMatchedCompanyId === o.id) || oLinks.some(l => l.personMatchedCompanyId === c.id);
+}
+async function renderSameEmail(c, links){
+  const el = document.getElementById('ownSameEmail'); if (!el) return;
+  const others = await sameEmailCompanies(c);
+  if (currentCoId !== c.id) return;
+  const confirmed = c.sameEmailLinks || [], dismissed = new Set(c.sameEmailDismissed || []);
+  const confirmedIds = new Set(confirmed.map(x => x.companyId));
+  const possible = [];
+  for (const o of others) { if (confirmedIds.has(o.id) || dismissed.has(o.id)) continue; if (!(await relatedByOrbis(c, links, o))) possible.push(o); }
+  const names = await ownCompaniesByIds([...confirmedIds]);
+  if (currentCoId !== c.id) return;
+  if (!possible.length && !confirmed.length) { el.innerHTML = ''; return; }
+  const canEdit = window.pageAccess ? (window.pageAccess.can('search.edit') || window.pageAccess.can('search.editall')) : true;
+  const when = (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
+  el.innerHTML = `<div class="card"><div class="sec-title">Same email</div>
+    ${confirmed.map(x => `<div class="contact-detail" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">🔗 Same owner (same email, confirmed): <span class="person-link" data-gotoco="${esc(x.companyId)}">${esc(names.get(x.companyId)?.name || x.companyId)}</span> <span class="hint">· ${esc(String(x.by || '').split('@')[0])}${x.at ? ', ' + esc(when(x.at)) : ''}</span>${canEdit ? ` <button class="btn btn--ghost btn--sm" data-seundo="${esc(x.companyId)}">Undo</button>` : ''}</div>`).join('')}
+    ${possible.map(o => `<div class="contact-detail" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">Possible link: same email as <span class="person-link" data-gotoco="${esc(o.id)}">${esc(o.name || o.id)}</span> <span class="hint">(${esc(c.companyEmail)})</span>${canEdit ? ` <button class="btn btn--ghost btn--sm" data-seconfirm="${esc(o.id)}">Confirm</button><button class="btn btn--ghost btn--sm" data-sedismiss="${esc(o.id)}">Dismiss</button>` : ''}</div>`).join('')}
+    <div class="hint" style="margin-top:6px;">Confirm when both belong to the same owner: both companies show the link, and it counts as related in the owner panel and the Monday report (never in groups or filters). Dismiss hides it on this company.</div></div>`;
+  el.onclick = async (ev) => {
+    const t = ev.target.closest('[data-gotoco],[data-seconfirm],[data-sedismiss],[data-seundo]'); if (!t) return;
+    if (t.dataset.gotoco) { openDetail(t.dataset.gotoco); return; }
+    t.disabled = true;
+    try {
+      const stamp = { updatedAt: serverTimestamp(), updatedBy: currentUser };
+      const at = new Date().toISOString();
+      if (t.dataset.seconfirm) {
+        const oid = t.dataset.seconfirm, o = others.find(x => x.id === oid);
+        await updateDoc(doc(db,'searchCompanies', c.id), { sameEmailLinks: arrayUnion({ companyId: oid, by: currentUser, at }), ...stamp });
+        await updateDoc(doc(db,'searchCompanies', oid), { sameEmailLinks: arrayUnion({ companyId: c.id, by: currentUser, at }), ...stamp });
+        c.sameEmailLinks = [...(c.sameEmailLinks || []), { companyId: oid, by: currentUser, at }];
+        await logAuto(c.id, 'company_edited', `Linked by the same email (${c.companyEmail}): ${o?.name || oid} — confirmed`);
+        await logAuto(oid, 'company_edited', `Linked by the same email (${c.companyEmail}): ${c.name || c.id} — confirmed`);
+      } else if (t.dataset.sedismiss) {
+        const oid = t.dataset.sedismiss, o = others.find(x => x.id === oid);
+        await updateDoc(doc(db,'searchCompanies', c.id), { sameEmailDismissed: arrayUnion(oid), ...stamp });
+        c.sameEmailDismissed = [...(c.sameEmailDismissed || []), oid];
+        await logAuto(c.id, 'company_edited', `Same email as ${o?.name || oid}: dismissed (not the same owner)`);
+      } else if (t.dataset.seundo) {
+        const oid = t.dataset.seundo;
+        const [a, b] = await Promise.all([getDoc(doc(db,'searchCompanies', c.id)), getDoc(doc(db,'searchCompanies', oid))]);
+        const keepA = (a.data()?.sameEmailLinks || []).filter(x => x.companyId !== oid), keepB = (b.data()?.sameEmailLinks || []).filter(x => x.companyId !== c.id);
+        await updateDoc(doc(db,'searchCompanies', c.id), { sameEmailLinks: keepA, ...stamp });
+        if (b.exists()) await updateDoc(doc(db,'searchCompanies', oid), { sameEmailLinks: keepB, ...stamp });
+        c.sameEmailLinks = keepA;
+        await logAuto(c.id, 'company_edited', `Same-email link with ${names.get(oid)?.name || oid} removed`);
+        if (b.exists()) await logAuto(oid, 'company_edited', `Same-email link with ${c.name || c.id} removed`);
+      }
+      cacheCompanies();
+      renderSameEmail(c, links);
+    } catch(e){ alert('Error: ' + e.message); t.disabled = false; }
+  };
+}
+
+// ── Related companies in outreach (22 Oct, switch outreach.ownerAware) ──────
+// The company's related companies (same owner at any %, parent / subsidiary, same
+// group, confirmed same email) and what is happening with them: "In conversation
+// via X", contacted, in a campaign, said no / do not contact. From the server's
+// lookup (the same one as the owner panel). Read only.
+async function renderOutreachRelated(c){
+  const el = document.getElementById('ownOutreachRel'); if (!el) return;
+  let r;
+  try { r = (await callOutreachCampaign({ action: 'related', companyId: c.id })).data; } catch(e){ console.warn('related', e); return; }
+  if (currentCoId !== c.id || r?.off || !r?.related?.length) { el.innerHTML = ''; return; }
+  const conv = r.related.filter(x => x.lastReplyAt);
+  el.innerHTML = `<div class="card"><div class="sec-title">Related companies in outreach</div>
+    ${conv.length ? `<div class="contact-detail" style="margin-bottom:6px;">💬 <b>In conversation via ${conv.map(x => esc(x.name)).join(', ')}</b></div>` : ''}
+    ${r.related.map(x => `<div class="contact-detail"><span class="person-link" data-gotoco="${esc(x.companyId)}">${esc(x.name)}</span> ${relatedLine({ ...x, name: '' }).replace(/^\s*/, '')}</div>`).join('')}
+    ${r.lead ? `<div class="hint" style="margin-top:6px;">Suggested lead company for the group: <b>${esc(r.lead.name)}</b>${r.lead.why === 'parent' ? ' (the parent)' : ' (the largest with an email)'}.</div>` : ''}
+    <div class="hint" style="margin-top:4px;">Same owner at any %, parent / subsidiary, same group or a confirmed same email. The add-on links don't count.</div></div>`;
+  el.onclick = (ev) => { const t = ev.target.closest('[data-gotoco]'); if (t) openDetail(t.dataset.gotoco); };
 }
 
 // ── Ownership ladder, subsidiaries, group, people's other companies ─────────
@@ -10949,6 +11064,7 @@ const CAMP_EXCL_LABELS = {
   unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
   stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
   personal_domain: 'personal email domain', same_inbox: 'same email address as another company, emailed recently',
+  owner_skip: 'skipped for now (related companies)',
 };
 // 19 Oct (one inbox): who else has the address, and when it was last emailed.
 const campInboxDetail = x => x.inbox ? ` (${esc(x.inbox.email)} — also ${esc(x.inbox.companyName || 'another company')}${x.inbox.at ? ', last email ' + new Date(x.inbox.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''})` : '';
@@ -11107,6 +11223,8 @@ async function openAddToCampaign(opts){
             <label class="camp-radio"><input type="radio" name="addCampConflict" value="move"> <span>Move them here — their other campaign stops for them</span></label>` : ''}
           ${preview.excludedSample.length ? `<details style="margin-top:8px;"><summary style="font-size:0.8rem;color:var(--text-light);cursor:pointer;">See excluded companies</summary><div style="font-size:0.78rem;color:var(--text-light);max-height:140px;overflow-y:auto;margin-top:6px;">${preview.excludedSample.map(x => `${esc(x.companyName || x.companyId)} — ${esc(CAMP_EXCL_LABELS[x.reason] || x.reason)}${campInboxDetail(x)}`).join('<br>')}</div></details>` : ''}
           ${preview.eligible || preview.conflictCount ? `<p style="font-size:0.8rem;color:var(--text-light);margin-top:10px;">At ${fmt(preview.newPerDay)} new companies a day, everyone starts within about ${fmt(Math.max(1, preview.eligible ? preview.daysToStart : preview.daysToStartIfMoved))} sending day(s)${camp?.status === 'draft' ? ', once the campaign is started' : ''}.</p>` : ''}`;
+        // 22 Oct (outreach.ownerAware): related companies, with Proceed / Skip for now / Proceed and mention.
+        if (preview.owner?.count) { body.insertAdjacentHTML('beforeend', ownerPanelHtml(preview.owner)); wireOwnerPanel(body); }
         if (!preview.eligible && !preview.conflictCount) { next.textContent = 'Close'; next.disabled = false; next.onclick = () => showEl('addCampModal', false); return; }
         next.textContent = 'Add companies'; next.disabled = false;
         return;
@@ -11117,7 +11235,7 @@ async function openAddToCampaign(opts){
       const leaveOut = document.getElementById('addCampLeaveOut')?.checked ? new Set(preview.contacted?.ids || []) : null;
       const toAdd = leaveOut ? ids.filter(id => !leaveOut.has(id)) : ids;
       if (!toAdd.length) throw new Error('Every company was left out.');
-      const r = (await callOutreachCampaign({ action: 'enrol', campaignId, companyIds: toAdd, source, onConflict })).data;
+      const r = (await callOutreachCampaign({ action: 'enrol', campaignId, companyIds: toAdd, source, onConflict, ownerChoices: readOwnerChoices(body) })).data;
       const camp = campList.find(c => c.id === campaignId);
       body.innerHTML = `<p style="font-size:0.9rem;"><b>${fmt(r.enrolled)}</b> compan${r.enrolled === 1 ? 'y' : 'ies'} added to "${esc(camp?.name || '')}"${r.moved ? ` (${fmt(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${fmt(r.skippedTotal)} skipped` : ''}.</p>
         <p style="font-size:0.82rem;color:var(--text-light);margin-top:8px;">${camp?.status === 'draft' ? 'The campaign is still a draft — start it in Outreach → Campaigns.' : 'The scheduler starts them at the campaign\'s daily pace, inside the sending window.'} <a href="/portal/outreach.html" style="color:var(--primary);">Open Outreach</a></p>`;
@@ -11724,7 +11842,8 @@ async function recomputeActivityFields(c){
   // email_test: Outreach test-mode sends aren't real touches (they go to our own addresses).
   // task_test: campaign tasks done in test mode (rehearsals) — not real touches either.
   const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold','person_merged',
-    'person_linked','person_updated','person_unlinked']; // 21 Oct: adding, editing or removing a person isn't a touch either
+    'person_linked','person_updated','person_unlinked', // 21 Oct: adding, editing or removing a person isn't a touch either
+    'outreach_owner','outreach_group']; // 22 Oct (owner-aware): notes about related companies, never a touch
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));

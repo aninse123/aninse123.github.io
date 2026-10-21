@@ -36,6 +36,7 @@ const { normEmail } = require("./util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const store = require("./store");
 const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
+const Related = require("./related"); // owner-aware outreach (22 Oct, switch outreach.ownerAware)
 const { addWait, sendingDaysOf, skipHolidaysOf, waitOptsOf, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
@@ -316,7 +317,9 @@ async function preview({ campaignId, companyIds }, caller, opts = {}) {
   // campaign. Shown as a warning; the person adding them decides.
   const addable = ids.filter((id) => { const { company, alreadyEnrolled } = data.get(id); const r = evaluateCompany(company, { ...ctx, alreadyEnrolled, companyId: id }); return r.ok || r.reason === "in_other_campaign"; });
   const contacted = await contactedBefore(addable, data, campaignId);
+  const owner = opts.ownerAware && addable.length ? await ownerPanel(addable, data, campaign, ctx) : null;
   return {
+    owner,
     contacted,
     requested: ids.length,
     eligible,
@@ -329,6 +332,33 @@ async function preview({ campaignId, companyIds }, caller, opts = {}) {
     daysToStart: Math.ceil(eligible / newPerDay),
     daysToStartIfMoved: Math.ceil((eligible + conflictCount) / newPerDay),
   };
+}
+
+// Owner-aware outreach, Stage 3 (22 Oct, switch "outreach.ownerAware"): the
+// companies being added that have related companies worth a look (another
+// campaign, contacted recently, in conversation, said no / do not contact, or
+// also in this batch), each with its flags, related companies, suggested lead,
+// default choice (Skip for now when a related company said no, else Proceed)
+// and the companies it would mention.
+const OWNER_PANEL_MAX = 200;
+const slimRelated = (r) => ({ companyId: r.companyId, name: r.name, why: r.why, campaignName: r.campaignName, lastOutreachAt: r.lastOutreachAt, lastReplyAt: r.lastReplyAt, saidNo: r.saidNo, doNotContact: r.doNotContact, email: r.email });
+async function ownerPanel(ids, data, campaign, ctx) {
+  const companies = new Map(ids.map((id) => [id, { id, ...(data.get(id)?.company || {}) }]));
+  const rel = await Related.relatedFor(ids, { companies });
+  const batch = new Set(ids);
+  const flagged = [];
+  for (const id of ids) {
+    const entry = rel.get(id);
+    const flags = Related.flagsFor(entry, { campaignId: campaign.id, windowDays: ctx.exclusions.contactedWithinDays || 30, batch, selfId: id, now: ctx.now });
+    if (!flags.length) continue;
+    flagged.push({ companyId: id, companyName: companies.get(id).name || "", flags, related: entry.related.slice(0, 6).map(slimRelated), lead: entry.lead, choice: Related.defaultChoice(flags), mention: Related.mentionFrom(entry, flags) });
+  }
+  return { count: flagged.length, flagged: flagged.slice(0, OWNER_PANEL_MAX) };
+}
+async function ownerActivity(companyId, content, caller, isTest) {
+  try {
+    await db().collection("searchActivities").add({ companyId, type: "outreach_owner", date: Timestamp.now(), title: null, content: (isTest ? "[TEST] " : "") + content, status: null, isTest: !!isTest, createdAt: FieldValue.serverTimestamp(), createdBy: caller || "system" });
+  } catch (e) { /* history is best effort */ }
 }
 
 // Which of these companies were contacted before, and how (I2+). Email
@@ -411,7 +441,7 @@ async function recipientsPreview({ campaignId }, caller, opts = {}) {
   return { counts, checked: todo.length, total: live.length, decided: live.filter((d) => d.data().recipient).length, personal, policy: campaign.recipientPolicy || "company" };
 }
 
-async function enrolOne(companyId, campaign, ctx, source, onConflict, caller) {
+async function enrolOne(companyId, campaign, ctx, source, onConflict, caller, extra = {}) {
   const companyRef = db().doc(`searchCompanies/${companyId}`);
   const enrolRef = db().doc(`outreachEnrolments/${enrolmentId(campaign.id, companyId)}`);
   return db().runTransaction(async (tx) => {
@@ -465,16 +495,17 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller) {
       enrolledAt: FieldValue.serverTimestamp(),
       enrolledBy: caller,
       endedAt: null,
+      ...extra, // owner-aware outreach (22 Oct): mention [{ companyId, name }]
     });
     tx.update(companyRef, { activeCampaignId: campaign.id, activeCampaignName: campaign.name, activeEnrolmentId: enrolRef.id });
     return { result: moveFrom ? "moved" : "enrolled" };
   });
 }
 
-async function enrol({ campaignId, companyIds, source, onConflict }, caller, opts = {}) {
+async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices }, caller, opts = {}) {
   const campaign = await getCampaign(campaignId);
   assertEnrollable(campaign); assertCompanies(campaign);
-  const ids = cleanCompanyIds(companyIds);
+  let ids = cleanCompanyIds(companyIds);
   const src = cleanSource(source);
   const mode = onConflict === "move" ? "move" : "skip";
   const ctx = await evalContext(campaign);
@@ -482,12 +513,40 @@ async function enrol({ campaignId, companyIds, source, onConflict }, caller, opt
   if (opts.oneInbox) await withInbox(ctx, await companyEmails(ids), true);
   let enrolled = 0, moved = 0;
   const skipped = {};
+  // Owner-aware outreach (22 Oct): what was chosen for each flagged company —
+  // Skip for now (not added), Proceed (added despite the flags) or Proceed and
+  // mention (added; {{owner.otherCompanies}} names the related companies). Each
+  // choice leaves an activity on the company. The flags are worked out again here.
+  const choices = opts.ownerAware && ownerChoices && typeof ownerChoices === "object" ? ownerChoices : {};
+  const chosen = ids.filter((id) => ["skip", "proceed", "mention"].includes(choices[id]));
+  const plan = new Map();
+  if (chosen.length) {
+    const companies = new Map((await readCompanies(chosen, campaignId)).entries());
+    const rel = await Related.relatedFor(chosen, { companies: new Map([...companies].map(([id, x]) => [id, { id, ...(x.company || {}) }])) });
+    const batch = new Set(ids);
+    for (const id of chosen) {
+      const entry = rel.get(id);
+      const flags = Related.flagsFor(entry, { campaignId, windowDays: ctx.exclusions.contactedWithinDays || 30, batch, selfId: id, now: ctx.now });
+      plan.set(id, { choice: choices[id], flags, mention: choices[id] === "mention" ? Related.mentionFrom(entry, flags) : [] });
+    }
+    for (const id of chosen.filter((x) => choices[x] === "skip")) {
+      skipped.owner_skip = (skipped.owner_skip || 0) + 1;
+      await ownerActivity(id, `Skipped for now (owner-aware), campaign "${campaign.name}": ${plan.get(id).flags.map((f) => f.text).join("; ") || "related companies"}`, caller, ctx.isTest);
+    }
+    ids = ids.filter((x) => choices[x] !== "skip");
+  }
   for (const group of chunks(ids, TX_PARALLEL)) {
-    const res = await Promise.all(group.map((id) => enrolOne(id, campaign, ctx, src, mode, caller)));
-    for (const r of res) {
+    const res = await Promise.all(group.map((id) => enrolOne(id, campaign, ctx, src, mode, caller, plan.get(id)?.mention?.length ? { mention: plan.get(id).mention } : {})));
+    for (let i = 0; i < res.length; i++) {
+      const r = res[i], id = group[i];
       if (r.result === "enrolled") enrolled++;
       else if (r.result === "moved") { enrolled++; moved++; }
       else skipped[r.reason] = (skipped[r.reason] || 0) + 1;
+      const pl = plan.get(id);
+      if (pl && (r.result === "enrolled" || r.result === "moved")) {
+        const what = pl.flags.map((f) => f.text).join("; ");
+        await ownerActivity(id, pl.mention.length ? `Added to "${campaign.name}", mentioning ${pl.mention.map((x) => x.name).join(" and ")} (owner-aware)${what ? ": " + what : ""}` : `Added to "${campaign.name}" despite (owner-aware): ${what || "related companies"}`, caller, ctx.isTest);
+      }
     }
   }
   const skippedTotal = Object.values(skipped).reduce((a, b) => a + b, 0);
@@ -503,6 +562,16 @@ async function enrol({ campaignId, companyIds, source, onConflict }, caller, opt
 
 // Move one company to another campaign (2c): the target campaign's rules
 // apply; the current enrolment ends as "moved" in the same transaction.
+// Owner-aware outreach, Stage 4 (22 Oct): a company's related companies and what
+// is happening with them, for the Search CRM's Ownership tab ("In conversation
+// via X"). Read only; nothing when the switch is off for this caller.
+async function relatedOf({ companyId }, opts = {}) {
+  if (!opts.ownerAware) return { off: true, related: [] };
+  if (!companyId || typeof companyId !== "string") fail("invalid-argument", "bad_company", "Choose a company.");
+  const entry = (await Related.relatedFor([companyId])).get(companyId);
+  return { related: entry.related, lead: entry.lead, flags: Related.flagsFor(entry, { windowDays: 30 }) };
+}
+
 async function moveEnrolment(id, targetCampaignId, caller) {
   const cur = await db().doc(`outreachEnrolments/${id}`).get();
   if (!cur.exists || !LIVE_ENROLMENT.includes(cur.data().status)) fail("failed-precondition", "not_live", "This company is no longer active in the campaign.");
@@ -1132,6 +1201,7 @@ const CAMPAIGN_ACTION_PERM = {
   requestStart: "out.campaigns", returnStart: "out.approve", runNow: "out.approve",
   approve: "out.approve", skipDraft: "out.approve", unapprove: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
   createTask: "out.tasks", logActivity: "out.tasks",
+  related: "search.view", // owner-aware outreach (22 Oct): the company page's "related companies in outreach"
 };
 function campaignActionPerm(data) {
   // Starting / resuming sends emails; finishing ends a live campaign.
@@ -1146,7 +1216,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   const canApprove = P.hasPerm(request, "out.approve");
   // Feature switches: Outreach, then company or people campaigns by audience.
   // "Do not contact" (Search CRM) is a safety control and never switched.
-  if (data.action !== "setDoNotContact") {
+  if (!["setDoNotContact", "related"].includes(data.action)) {
     let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
       let aud = data.campaign?.audienceType;
@@ -1175,6 +1245,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   const oneInbox = ["preview", "enrol"].includes(data.action) ? await Feat.isOnFor(request, "outreach.oneInbox") : false;
   // People merge (Stage 4): people's own details and the main contact, if the switch is on for this caller and site.
   const usePeople = ["preview", "enrol", "recipientsPreview"].includes(data.action) ? await Feat.isOnFor(request, "search.people") : false;
+  // Owner-aware outreach (22 Oct): the owner panel when adding companies, and the company page's related companies.
+  const ownerAware = ["preview", "enrol", "related"].includes(data.action) ? await Feat.isOnFor(request, "outreach.ownerAware") : false;
   try {
     switch (data.action) {
       case "save": return await save(data, caller, { canApprove });
@@ -1182,10 +1254,11 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "returnStart": return await returnStart(data, caller);
       case "duplicate": return await duplicate(data, caller);
       case "delete": return await remove(data, caller);
-      case "preview": return await preview(data, caller, { oneInbox, usePeople });
+      case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware });
+      case "related": return await relatedOf(data, { ownerAware });
       case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople });
       case "runNow": return await runNow(data, caller);
-      case "enrol": return await enrol(data, caller, { oneInbox, usePeople });
+      case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware });
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);
       case "previewPeople": return await previewPeople(data, caller);

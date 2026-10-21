@@ -100,7 +100,13 @@ function teamContext(members = [], senderKey = null) {
 
 // Variables a template may use, resolved from the company, contact and sender.
 // campaign: { sector } — "do trabalho temporário", typed per campaign ({{campaign.sector}}).
-function buildContext({ company = {}, contactName = "", sender = {}, unsubscribeUrl = "", aiOpener = "", team = [], senderKey = null, campaign = {} }) {
+// 22 Oct (owner-aware outreach, switch outreach.ownerAware): otherCompanies = the
+// related companies chosen to be mentioned when the company was added ("Proceed
+// and mention"), by their email name: {{owner.otherCompanies}} = "da X e da Y",
+// {{owner.otherCompanyNames}} = "X e Y". Empty when none were chosen — the
+// template's fallback is used ({{owner.otherCompanies|…}} or {{?owner.otherCompanies|…}}).
+function buildContext({ company = {}, contactName = "", sender = {}, unsubscribeUrl = "", aiOpener = "", team = [], senderKey = null, campaign = {}, otherCompanies = [] }) {
+  const others = (Array.isArray(otherCompanies) ? otherCompanies : []).map((n) => String(n || "").trim()).filter(Boolean).slice(0, 3);
   return {
     company: {
       name: company.name || "",
@@ -111,7 +117,7 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
       inCity: inCityOf(company), // "em Setúbal" / "no Porto" — 14 Oct: all 308 municipalities (concelho, any spelling; else city; Calheta / Lagoa by district)
       toCity: toCityOf(company), // 13 Oct: "a Setúbal" / "ao Porto" / "à Maia" — after "deslocar-nos"
     },
-    owner: ownerContext(company),
+    owner: { ...ownerContext(company), otherCompanies: joinPt(others.map((n) => `da ${n}`)), otherCompanyNames: joinPt(others) },
     campaign: { sector: String(campaign?.sector || "").trim() },
     contact: { firstName: firstName(contactName) },
     // T4: sender.email = the sending address; sender.phone = its owner's (Team).
