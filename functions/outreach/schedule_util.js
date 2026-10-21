@@ -18,6 +18,19 @@ function lisbonParts(date) {
   };
 }
 
+// The instant of Lisbon wall-clock time `hhmm` on Lisbon day `dayKey`
+// ("YYYY-MM-DD"), summer or winter time.
+function lisbonAt(dayKey, hhmm) {
+  const [y, m, d] = dayKey.split("-").map(Number), [h, mi] = String(hhmm).split(":").map(Number);
+  const want = Date.UTC(y, m - 1, d, h, mi);
+  let t = want;
+  for (let i = 0; i < 2; i++) {
+    const p = lisbonParts(new Date(t)), [ph, pm] = p.hhmm.split(":").map(Number);
+    t -= Date.UTC(p.y, p.m - 1, p.d, ph, pm) - want;
+  }
+  return new Date(t);
+}
+
 // Easter Sunday (Gregorian, anonymous algorithm) as "MM-DD".
 function easter(y) {
   const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
@@ -89,7 +102,11 @@ function isWindowOpen(date, window, skipHolidays = true) {
 // (`sendingDays` = its window's weekdays, else the global window's; Mon–Fri when
 // none is given), skipping national holidays — so a Thu–Sat campaign waiting 4
 // goes Fri, Sat, Thu, Fri instead of piling up for Thursday. "calendar" = exact days.
-function addWait(from, wait, sendingDays = null, skipHolidays = true) {
+// 21 Oct (switch outreach.waitFromWindowStart): with `opts.startAt` ("HH:MM", the
+// campaign's window start) a wait in sending days ends when the window opens on
+// that day, not at the same time of day — but never sooner than `opts.minGapMs`
+// after `from` (a late email and a 1-day wait). Calendar days stay exact.
+function addWait(from, wait, sendingDays = null, skipHolidays = true, opts = null) {
   const days = Math.max(0, Number(wait?.days) || 0);
   if (!days) return new Date(from.getTime());
   if (wait.unit === "calendar") return new Date(from.getTime() + days * DAY_MS);
@@ -100,7 +117,22 @@ function addWait(from, wait, sendingDays = null, skipHolidays = true) {
     t += DAY_MS;
     if (counts(lisbonParts(new Date(t)))) counted++;
   }
-  return new Date(t);
+  if (!opts?.startAt) return new Date(t);
+  const start = lisbonAt(lisbonParts(new Date(t)).dayKey, opts.startAt).getTime();
+  return new Date(Math.max(start, from.getTime() + (opts.minGapMs || 0)));
+}
+// 21 Oct: what addWait needs to end waits at the window's opening — the campaign's
+// own window start, else Settings → General's, else 09:00 — and the minimum gap
+// between a company's emails (Settings → General `minGapHours`, 0–72, default 12).
+// `gap: false` for waits that don't follow an email (a first step, "try again the
+// next sending day").
+const DEFAULT_MIN_GAP_HOURS = 12;
+function minGapHoursOf(settings) {
+  const h = settings?.minGapHours;
+  return typeof h === "number" && h >= 0 && h <= 72 ? h : DEFAULT_MIN_GAP_HOURS;
+}
+function waitOptsOf(campaign, settings, { gap = true } = {}) {
+  return { startAt: campaign?.sendWindow?.from || settings?.sendWindow?.from || "09:00", minGapMs: gap ? minGapHoursOf(settings) * 3600000 : 0 };
 }
 // The weekdays a campaign sends on: its own window, else Settings → General, else Mon–Fri.
 function sendingDaysOf(campaign, settings) {
@@ -140,4 +172,4 @@ function pickSender({ policy, owner, senders, sentToday, usedThisRun, defaultCap
 // still counts as "replied" and not "completed, no reply".
 const FINAL_GRACE = { days: 5, unit: "working" };
 
-module.exports = { FINAL_GRACE, TZ, lisbonParts, easter, nationalHolidays, holidayList, skipHolidaysOf, skipMunicipalOf, isHoliday, isWorkingDay, isWindowOpen, addWait, sendingDaysOf, pickVariant, pickSender };
+module.exports = { FINAL_GRACE, TZ, DEFAULT_MIN_GAP_HOURS, lisbonParts, lisbonAt, minGapHoursOf, waitOptsOf, easter, nationalHolidays, holidayList, skipHolidaysOf, skipMunicipalOf, isHoliday, isWorkingDay, isWindowOpen, addWait, sendingDaysOf, pickVariant, pickSender };

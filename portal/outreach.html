@@ -631,6 +631,11 @@
                 <span style="display:flex;gap:6px;align-items:center;"><input type="time" id="gFrom" style="width:auto;" aria-label="From"> – <input type="time" id="gTo" style="width:auto;" aria-label="To"></span>
               </div>
               <span class="hint">When campaigns send their emails (Phase 2). Emails you send by hand and replies go out immediately.</span>
+              <div data-feature="outreach.waitFromWindowStart" style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <label for="gMinGap" style="margin:0;">Minimum gap between a company's emails</label>
+                <input type="text" inputmode="decimal" id="gMinGap" style="width:64px;"> <span>hours</span>
+                <span class="hint" style="flex-basis:100%;">A wait in sending days ends when the window opens on that day — at least this long after the company's previous email (e.g. sent at 17:50 with a 1-day wait: the next morning only if 12 hours have passed). Calendar days keep the time of day.</span>
+              </div>
               <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gHolidays"> <span>Skip national holidays <span class="hint">(no campaign emails, drafts or task dates on them; a campaign can choose otherwise)</span></span></label>
               <details style="margin-top:4px;"><summary class="hint" style="cursor:pointer;">The national holidays</summary><div id="gHolList" class="hint" style="margin-top:6px;"></div></details>
               <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gMunHol"> <span>Skip each company's municipal holiday <span class="hint">(on its municipality's holiday a company's email waits for the next sending day — e.g. Lisboa 13 June, Porto 24 June, Maia the Monday after the 2nd Sunday of July; all 308 municipalities; a campaign can choose otherwise)</span></span></label>
@@ -1179,15 +1184,19 @@
     // drafts (they leave the Outbox for To approve), approved drafts go out.
     // Estimates: other people's actions and replies change the queue.
     const OB_MAX_SENDS = 4, OB_MAX_DRAFTS = 50, OB_CAP = 25;
-    function obAddWait(from, wait, c, isOpenDay) {
+    // 21 Oct (switch outreach.waitFromWindowStart): `opts` = { startAt, minGapMs } —
+    // a wait in sending days ends at the window's opening, at least the gap after `from`.
+    function obAddWait(from, wait, c, isOpenDay, opts = null) {
       const days = Math.max(0, Number(wait?.days) || 0);
       if (!days) return new Date(from.getTime());
       if (wait.unit === 'calendar') return new Date(from.getTime() + days * 86400000);
       const d = new Date(from.getTime()); let k = 0, guard = 0;
       while (k < days && guard++ < 3660) { d.setDate(d.getDate() + 1); if (isOpenDay(c, d)) k++; }
-      return d;
+      if (!opts?.startAt) return d;
+      const [h, m] = opts.startAt.split(':').map(Number); d.setHours(h, m, 0, 0);
+      return new Date(Math.max(d.getTime(), from.getTime() + (opts.minGapMs || 0)));
     }
-    function outboxPlan({ now, campaigns, enrols, approved, senders, settings, daily, days = 5, maxRows = 500 }) {
+    function outboxPlan({ now, campaigns, enrols, approved, senders, settings, daily, days = 5, maxRows = 500, waitFromStart = false }) {
       const D = 86400000;
       const camps = new Map((campaigns || []).filter(c => c.status === 'active' && (c.steps || []).length).map(c => [c.id, c]));
       const gWin = settings?.sendWindow || { days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
@@ -1198,6 +1207,8 @@
       const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const isOpenDay = (c, d) => (winOf(c).days || []).includes(d.getDay()) && !(skipOf(c) && isPtHoliday(d));
       const isOpen = (c, d) => isOpenDay(c, d) && hm(d) >= (winOf(c).from || '09:00') && hm(d) < (winOf(c).to || '18:00');
+      const waitOn = waitFromStart, gapMs = (typeof settings?.minGapHours === 'number' ? settings.minGapHours : 12) * 3600000;
+      const waitOpts = (c, gap) => (waitOn ? { startAt: winOf(c).from || '09:00', minGapMs: gap ? gapMs : 0 } : null);
       const needsApproval = (c, st) => ((st.approval === 'inherit' || !st.approval) ? c.approvalDefault : st.approval) === 'approval';
       const active = (senders || []).filter(x => x.status === 'active');
       const capOf = (id) => active.find(x => x.id === id)?.dailyCap || OB_CAP;
@@ -1232,7 +1243,7 @@
           const q = pendingOf.get(c.id) || [];
           while (q.length && (started[c.id] || 0) < perDay) {
             const it = q.shift(); it.pending = false; it.step = 0; it.startedAt = slot.getTime();
-            it.due = obAddWait(slot, c.steps[0].wait, c, isOpenDay).getTime(); started[c.id] = (started[c.id] || 0) + 1;
+            it.due = obAddWait(slot, c.steps[0].wait, c, isOpenDay, waitOpts(c, false)).getTime(); started[c.id] = (started[c.id] || 0) + 1;
           }
         }
         // 2. Due steps, campaign priority first, then the oldest due.
@@ -1260,7 +1271,7 @@
           push({ ...base, kind: 'send', senderId: sid, approvedMessageId: it.approved?.id || null });
           used.add(sid); sentBy[sid] = (sentBy[sid] || 0) + 1; sends++; autoSent++; campDay[it.c.id] = (campDay[it.c.id] || 0) + 1;
           it.sender = sid; it.approved = null; it.step++;
-          if (it.step >= it.c.steps.length) it.done = true; else it.due = obAddWait(slot, it.c.steps[it.step].wait, it.c, isOpenDay).getTime();
+          if (it.step >= it.c.steps.length) it.done = true; else it.due = obAddWait(slot, it.c.steps[it.step].wait, it.c, isOpenDay, waitOpts(it.c, true)).getTime();
         }
       }
       return { rows, awaiting: items.filter(it => it.e.status === 'awaiting_approval').length };
@@ -1281,7 +1292,7 @@
         addReads((es.size || 1) + (ms.size || 1)); refreshReads();
         const enrols = es.docs.map(d => ({ id: d.id, ...d.data() }));
         const approved = new Map(ms.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.enrolmentId).map(m => [m.enrolmentId, m]));
-        const plan = outboxPlan({ now: new Date(), campaigns, enrols, approved, senders, settings, daily: dailyDoc });
+        const plan = outboxPlan({ now: new Date(), campaigns, enrols, approved, senders, settings, daily: dailyDoc, waitFromStart: isOn('outreach.waitFromWindowStart') });
         const rows = plan.rows.filter(r => (obFilterCamp === 'all' || r.campaignId === obFilterCamp) && (obFilterAddr === 'all' || r.senderId === obFilterAddr));
         const usedAddr = [...new Set(plan.rows.map(r => r.senderId).filter(Boolean))].sort();
         const KIND = { send: ['Sends', 'pill--good'], draft: ['Becomes a draft', 'pill--info'], task: ['Becomes a task', ''] };
@@ -1305,7 +1316,7 @@
               <select id="obAddr" aria-label="Address"><option value="all">All addresses</option>${usedAddr.map(a => `<option value="${esc(a)}"${obFilterAddr === a ? ' selected' : ''}>${esc(localPart(a))}</option>`).join('')}</select>
               <button class="btn btn--ghost btn--sm" id="obRefresh" style="margin-left:auto;">↻ Refresh</button>
             </div>
-            <p class="hint" style="padding:10px 14px;">An estimate of the next sending days, following the scheduler's rules: a run every 10 minutes inside each campaign's sending window${settings?.skipNationalHolidays !== false ? ' (national holidays skipped)' : ''}${settings?.skipMunicipalHolidays !== false ? ' (a company on its own municipal holiday waits a day — not shown here)' : ''}, new companies at each campaign's daily pace, at most ${OB_MAX_SENDS} emails per run and one per address, each address's daily cap and the automations limit (${num(settings?.automationBudget ?? 80)}/day). Approval steps become drafts in To approve; their send time is set when you approve. Replies, pauses and approvals change it.${plan.awaiting ? ` <b>${num(plan.awaiting)}</b> draft${plan.awaiting === 1 ? '' : 's'} waiting in <button class="camp-link" id="obToApprove">To approve</button>.` : ''}</p>
+            <p class="hint" style="padding:10px 14px;">An estimate of the next sending days, following the scheduler's rules: a run every 10 minutes inside each campaign's sending window${isOn('outreach.waitFromWindowStart') ? ' (waits in sending days end when it opens)' : ''}${settings?.skipNationalHolidays !== false ? ' (national holidays skipped)' : ''}${settings?.skipMunicipalHolidays !== false ? ' (a company on its own municipal holiday waits a day — not shown here)' : ''}, new companies at each campaign's daily pace, at most ${OB_MAX_SENDS} emails per run and one per address, each address's daily cap and the automations limit (${num(settings?.automationBudget ?? 80)}/day). Approval steps become drafts in To approve; their send time is set when you approve. Replies, pauses and approvals change it.${plan.awaiting ? ` <b>${num(plan.awaiting)}</b> draft${plan.awaiting === 1 ? '' : 's'} waiting in <button class="camp-link" id="obToApprove">To approve</button>.` : ''}</p>
           </div>
           ${rows.length ? [...byDay.entries()].map(([d, rs]) => `<div class="day-head">${esc(d)} <span class="hint">· ${num(rs.filter(r => r.kind === 'send').length)} email${rs.filter(r => r.kind === 'send').length === 1 ? '' : 's'}${rs.some(r => r.kind === 'draft') ? ` · ${num(rs.filter(r => r.kind === 'draft').length)} draft${rs.filter(r => r.kind === 'draft').length === 1 ? '' : 's'}` : ''}</span></div>
             <div class="card" style="padding:0;margin-bottom:12px;"><div class="table-wrap"><table><thead><tr><th>Time</th><th>What</th><th>Company</th><th>Campaign · step</th><th>From</th><th></th></tr></thead><tbody>${rs.map(row).join('')}</tbody></table></div></div>`).join('')
@@ -2973,7 +2984,7 @@
       $('setNav').addEventListener('click', (e) => { const b = e.target.closest('[data-sec]'); if (b) showSec(b.dataset.sec); });
       $('modalCancel').addEventListener('click', closeModal);
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
-      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gHolidays', 'gMunHol', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
+      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gHolidays', 'gMunHol', 'gMinGap', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
       $('gSave').addEventListener('click', async () => { const unbusy = busyBtn($('gSave'), 'Saving…'); try { await saveGeneral(); } finally { unbusy(); } });
       $('rdRun').addEventListener('click', () => renderReadiness(true));
       $('gTrack').addEventListener('change', async (e) => {
@@ -3037,6 +3048,7 @@
       $('gFrom').value = win.from || '09:00'; $('gTo').value = win.to || '18:00';
       $('gHolidays').checked = s.skipNationalHolidays !== false;
       $('gMunHol').checked = s.skipMunicipalHolidays !== false;
+      $('gMinGap').value = s.minGapHours ?? 12;
       const yNow = new Date().getFullYear();
       renderMunList();
       $('gHolList').innerHTML = [yNow, yNow + 1].map(y => `<div style="margin-bottom:6px;"><b>${y}</b> · ${ptHolidays(y).map(h => `${esc(dayFmt.format(new Date(h.date + 'T12:00:00')))} ${esc(h.name)}`).join(' · ')}</div>`).join('');
@@ -3090,10 +3102,12 @@
       const campTest = $('gCampTest').value;
       const aiCap = parseInt($('gAiCap').value, 10);
       if (!(aiCap >= 0 && aiCap <= 2000)) { err.textContent = 'AI daily limit must be between 0 and 2,000.'; err.hidden = false; return; }
+      const minGap = Number(String($('gMinGap').value).replace(',', '.'));
+      if (!($('gMinGap').value !== '' && minGap >= 0 && minGap <= 72)) { err.textContent = 'The minimum gap between a company\'s emails must be between 0 and 72 hours.'; err.hidden = false; return; }
       if (campTest && !list.includes(campTest)) { err.textContent = `The campaign test address (${campTest}) must be on the approved list.`; err.hidden = false; return; }
       await setDoc(doc(db, 'outreachSettings', 'global'), {
         dailyTarget: target, automationBudget: auto, blockPersonalDomains: $('gPersonal').checked,
-        testRecipients: list, sendWindow: { days, from: wFrom, to: wTo, tz: 'Europe/Lisbon' }, skipNationalHolidays: $('gHolidays').checked, skipMunicipalHolidays: $('gMunHol').checked,
+        testRecipients: list, sendWindow: { days, from: wFrom, to: wTo, tz: 'Europe/Lisbon' }, skipNationalHolidays: $('gHolidays').checked, skipMunicipalHolidays: $('gMunHol').checked, minGapHours: minGap,
         ...(campTest ? { campaignTestRecipient: campTest } : {}),
         aiEnabled: $('gAiOn').checked, aiModel: $('gAiModel').value, aiDailyCap: aiCap,
         updatedAt: serverTimestamp(), updatedBy: me,
@@ -5430,6 +5444,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const doneAt = (sid) => curEnrols.reduce((a, e) => a + (e.history || []).filter(h => h.stepId === sid).length, 0);
       const campApproval = c.approvalDefault === 'auto' ? 'automatic' : 'needs approval';
       const lockedCount = seqDraft.filter(s => locked.has(s.id)).length;
+      const waitStartNote = isOn('outreach.waitFromWindowStart') ? ` Sending days end when this campaign's window opens that day (${(c.sendWindow || settings?.sendWindow)?.from || '09:00'}), at least ${typeof settings?.minGapHours === 'number' ? settings.minGapHours : 12} h after the previous email; calendar days keep the time of day.` : '';
 
       const card = (s, i) => {
         const ch = s.channel || 'email';
@@ -5453,7 +5468,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               <button class="btn btn--danger btn--sm" data-del ${isLocked ? 'disabled' : ''}>Delete</button></div>` : ''}
           </div>
           <div class="step__grid">
-            <div class="field"><label>When<span class="info" title="Wait after the previous step before this step comes due: in sending days (the days this campaign sends — Mon–Fri unless it has its own window — no national holidays) or in calendar days." aria-label="Wait after the previous step before this step comes due: in sending days (the days this campaign sends — Mon–Fri unless it has its own window — no national holidays) or in calendar days.">i</span></label>
+            <div class="field"><label>When<span class="info" title="Wait after the previous step before this step comes due: in sending days (the days this campaign sends — Mon–Fri unless it has its own window — no national holidays) or in calendar days.${waitStartNote}" aria-label="Wait after the previous step before this step comes due: in sending days (the days this campaign sends — Mon–Fri unless it has its own window — no national holidays) or in calendar days.${waitStartNote}">i</span></label>
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
                 <input type="text" inputmode="numeric" data-f="waitDays" value="${esc(s.wait?.days ?? (i === 0 ? 0 : 3))}" style="width:64px;"${dis}>
                 <select data-f="waitUnit" style="width:auto;"${dis}><option value="working"${s.wait?.unit !== 'calendar' ? ' selected' : ''}>sending days</option><option value="calendar"${s.wait?.unit === 'calendar' ? ' selected' : ''}>calendar days</option></select>

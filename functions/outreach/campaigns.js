@@ -36,7 +36,7 @@ const { normEmail } = require("./util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const store = require("./store");
 const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
-const { addWait, sendingDaysOf, skipHolidaysOf, FINAL_GRACE } = require("./schedule_util");
+const { addWait, sendingDaysOf, skipHolidaysOf, waitOptsOf, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const {
@@ -124,6 +124,9 @@ async function companyEmails(ids) {
   return out;
 }
 const inboxJobOn = async (campaign) => { const st = await Feat.jobState("outreach.oneInbox"); return st === "on" || (st === "test" && !!campaign.isTest); };
+// 21 Oct: waits end at the window's opening (switch "outreach.waitFromWindowStart",
+// production setting like the scheduler; Test = test campaigns).
+const waitJobOn = async (campaign) => { const st = await Feat.jobState("outreach.waitFromWindowStart"); return st === "on" || (st === "test" && !!campaign?.isTest); };
 const peopleJobOn = async (campaign) => { const st = await Feat.jobState("search.people"); return st === "on" || (st === "test" && !!campaign.isTest); };
 
 function assertCompanies(campaign) {
@@ -846,7 +849,7 @@ async function skipDraft({ messageId }, caller) {
     const enrolRef = db().doc(`outreachEnrolments/${m.data().enrolmentId}`);
     const e = await tx.get(enrolRef);
     const camp = m.data().campaignId ? (await tx.get(db().doc(`outreachCampaigns/${m.data().campaignId}`))).data() : null;
-    const next = addWait(new Date(), { days: 1, unit: "working" }, sendingDaysOf(camp, settings), skipHolidaysOf(camp, settings));
+    const next = addWait(new Date(), { days: 1, unit: "working" }, sendingDaysOf(camp, settings), skipHolidaysOf(camp, settings), (await waitJobOn(camp)) ? waitOptsOf(camp, settings, { gap: false }) : null);
     tx.update(msgRef, { status: "cancelled", cancelledReason: `Skipped by ${caller} — drafted again the next sending day` });
     if (e.exists && e.data().status === "awaiting_approval" && e.data().draftMessageId === messageId) {
       tx.update(enrolRef, { status: "active", nextActionAt: Timestamp.fromDate(next), draftMessageId: null });
@@ -922,6 +925,7 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   const campaign = t.campaignId ? ((await db().doc(`outreachCampaigns/${t.campaignId}`).get()).data() || {}) : {};
   const settingsNow = await store.getSettings();
   const campaignDays = sendingDaysOf(campaign, settingsNow), campaignHolidays = skipHolidaysOf(campaign, settingsNow);
+  const campaignWait = (await waitJobOn(campaign)) ? waitOptsOf(campaign, settingsNow) : null;
   const linkedinUrl = t.channel === "linkedin" ? cleanUrl(profileUrl) : null;
   // Phase 2c branch for this outcome (set on the step): go to a later step or end.
   const stepIdx = (campaign.steps || []).findIndex((x) => x.id === t.stepId);
@@ -999,7 +1003,7 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     const next = steps[nextIndex];
     tx.update(enrolRef, {
       status: "active", currentStep: nextIndex, taskId: null,
-      nextActionAt: Timestamp.fromDate(addWait(new Date(), next ? next.wait : FINAL_GRACE, campaignDays, campaignHolidays)),
+      nextActionAt: Timestamp.fromDate(addWait(new Date(), next ? next.wait : FINAL_GRACE, campaignDays, campaignHolidays, next ? campaignWait : null)),
       history: FieldValue.arrayUnion({ stepId: t.stepId, at: Timestamp.now(), result: o.key, taskId, activityId }),
       lastError: null,
     });

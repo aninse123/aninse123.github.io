@@ -31,7 +31,7 @@ const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
 const Feat = require("../features"); // kill switches (Team & access → Features)
-const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, skipHolidaysOf, skipMunicipalOf, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
+const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, skipHolidaysOf, skipMunicipalOf, waitOptsOf, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 const { isMunicipalHoliday } = require("./places");
 const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
 const { normEmail } = require("./util");
@@ -80,7 +80,7 @@ async function startPending(campaign, now, report) {
     .where("campaignId", "==", campaign.id).where("status", "==", "pending")
     .orderBy("enrolledAt", "asc").limit(room).get();
   let n = 0;
-  const firstDue = ts(addWait(now, campaign.steps[0].wait, campaign._sendingDays, campaign._skipHolidays !== false));
+  const firstDue = ts(addWait(now, campaign.steps[0].wait, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart));
   for (const d of snap.docs) {
     const started = await db().runTransaction(async (tx) => {
       const cur = await tx.get(d.ref);
@@ -120,7 +120,7 @@ async function recordSent(ref, e, campaign, step, res, { senderId, variantKey, n
   const next = campaign.steps[nextIndex];
   await ref.update({
     currentStep: nextIndex,
-    nextActionAt: ts(addWait(now, next ? next.wait : FINAL_GRACE, campaign._sendingDays, campaign._skipHolidays !== false)),
+    nextActionAt: ts(addWait(now, next ? next.wait : FINAL_GRACE, campaign._sendingDays, campaign._skipHolidays !== false, next ? campaign._waitOpts : null)),
     threadId: e.threadId || res.threadId,
     senderId,
     [`variants.${step.id}`]: variantKey,
@@ -200,7 +200,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [schedState, sendState, aiState, inboxState, peopleState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people")]);
+  const [schedState, sendState, aiState, inboxState, peopleState, waitState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
@@ -234,6 +234,10 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     c._sendingDays = sendingDaysOf(c, settings); // waits count this campaign's sending days
     c._skipHolidays = skipHolidaysOf(c, settings); // 13 Oct: national holidays skipped unless switched off
     c._skipMunicipal = skipMunicipalOf(c, settings); // 14 Oct: each company's own municipal holiday
+    // 21 Oct (switch outreach.waitFromWindowStart): waits end at the window's opening;
+    // _waitOpts after an email (with the minimum gap), _waitStart for the rest.
+    c._waitOpts = allowed(waitState, c) ? waitOptsOf(c, settings) : null;
+    c._waitStart = c._waitOpts ? waitOptsOf(c, settings, { gap: false }) : null;
     if (ignoreWindow || isWindowOpen(now, c.sendWindow || globalWindow, c._skipHolidays)) open.set(c.id, c);
   }
   report.open = open.size;
@@ -304,7 +308,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         const target = (campaign.steps || []).findIndex((x) => x.id === clickRule.stepId);
         if (target > e.currentStep) {
           const from = e.lastSentAt ? e.lastSentAt.toDate() : now;
-          await unlock(doc.ref, { currentStep: target, nextActionAt: ts(addWait(from, campaign.steps[target].wait, campaign._sendingDays, campaign._skipHolidays !== false)), [`rulesApplied.${prevStep.id}`]: "clicked" });
+          await unlock(doc.ref, { currentStep: target, nextActionAt: ts(addWait(from, campaign.steps[target].wait, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitOpts)), [`rulesApplied.${prevStep.id}`]: "clicked" });
           report.jumped = (report.jumped || 0) + 1;
           continue;
         }
@@ -357,7 +361,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         companyPlace.set(e.companyId, { concelho: d.concelho || "", distrito: d.distrito || "", city: d.city || "" });
       }
       if (isMunicipalHoliday(companyPlace.get(e.companyId), todayParts)) {
-        await unlock(doc.ref, { nextActionAt: ts(addWait(now, { days: 1, unit: "working" }, campaign._sendingDays, campaign._skipHolidays !== false)) });
+        await unlock(doc.ref, { nextActionAt: ts(addWait(now, { days: 1, unit: "working" }, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart)) });
         report.municipalHoliday = (report.municipalHoliday || 0) + 1;
         continue;
       }
@@ -412,7 +416,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         const windowDays = campaign.exclusions?.contactedWithinDays ?? 30;
         const c = addr ? await Inbox.clash({ email: addr, companyId: e.companyId, isTest: !!settings.testMode, windowDays, now, thisRun: inboxRun }) : null;
         if (c) {
-          const nextDay = addWait(now, { days: 1, unit: "working" }, campaign._sendingDays, campaign._skipHolidays !== false);
+          const nextDay = addWait(now, { days: 1, unit: "working" }, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart);
           const until = c.untilMs && c.untilMs > nextDay.getTime() ? new Date(c.untilMs) : nextDay;
           const text = Inbox.holdText(c, until.getTime(), addr);
           const again = e.holdKind === "same_inbox" && e.holdReason?.companyId === c.companyId;
