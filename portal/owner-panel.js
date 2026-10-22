@@ -11,6 +11,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':
 const day = (t) => (t ? new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
 const KIND_ICON = { said_no: '🚫', in_conversation: '💬', group_contacted: '✉', other_campaign: '📣', same_batch: '➕' };
 export const MAX_MENTION = 3;
+const PLAIN = 'text-transform:none;letter-spacing:normal;font-weight:400;color:inherit;'; // the pages' label style is uppercase
 
 // D3 (22 Oct): a person relates two companies when they rank as an owner or a
 // manager on the best-person ladder; auditors, fiscal, assembly and secretary
@@ -60,12 +61,12 @@ export function relatedLine(r) {
 export function ownerPanelHtml(owner) {
   if (!owner?.count) return '';
   const rows = owner.flagged.map((f) => {
-    const ch = (v, label) => `<label style="display:inline-flex;gap:5px;align-items:center;margin-right:12px;font-size:0.8rem;cursor:pointer;"><input type="radio" name="op_${esc(f.companyId)}" value="${v}"${f.choice === v ? ' checked' : ''}> <span>${label}</span></label>`;
+    const ch = (v, label) => `<label style="display:inline-flex;gap:5px;align-items:center;margin-right:12px;font-size:0.8rem;cursor:pointer;${PLAIN}"><input type="radio" name="op_${esc(f.companyId)}" value="${v}"${f.choice === v ? ' checked' : ''}> <span>${label}</span></label>`;
     const suggested = new Set((f.mention || []).map((m) => m.companyId));
     const related = f.related || [];
     const picks = related.length ? `<div class="op-mention" style="margin:4px 0 0 20px;font-size:0.8rem;"${f.choice === 'mention' ? '' : ' hidden'}>
         <div style="color:#64748B;margin-bottom:2px;">Which companies may the email name? Tick up to ${MAX_MENTION} — none ticked = Proceed.</div>
-        ${related.map((r) => `<label style="display:flex;gap:6px;align-items:baseline;cursor:pointer;padding:1px 0;"><input type="checkbox" data-opmention="${esc(r.companyId)}"> <span>${relatedLine(r)}${suggested.has(r.companyId) ? ' <span style="font-size:0.72rem;color:#1D4ED8;">suggested</span>' : ''}</span></label>`).join('')}
+        ${related.map((r) => `<label style="display:flex;gap:6px;align-items:baseline;cursor:pointer;padding:1px 0;${PLAIN}"><input type="checkbox" data-opmention="${esc(r.companyId)}"> <span>${relatedLine(r)}${suggested.has(r.companyId) ? ' <span style="font-size:0.72rem;color:#1D4ED8;">suggested</span>' : ''}</span></label>`).join('')}
       </div>` : '';
     return `<div class="op-row" data-opid="${esc(f.companyId)}" style="padding:8px 0;border-top:1px solid #E2E8F0;">
       <div style="font-size:0.85rem;"><b>${esc(f.companyName || f.companyId)}</b></div>

@@ -3245,7 +3245,9 @@ function renderResultsCount(n){
   const suffix = (!fullyLoaded && cachedTotalCount)
     ? ` loaded · ${cachedTotalCount.toLocaleString('en')} total`
     : '';
-  document.getElementById('resultsCount').textContent = `${n.toLocaleString('en')} of ${companies.length.toLocaleString('en')}${suffix}`;
+  // 22 Oct: "Same email" needs every company to find the other one of a pair.
+  const seHint = (!fullyLoaded && isOn('search.sameEmail') && document.getElementById('sameEmailFilter')?.value) ? ' · Same email: load all companies to see every pair' : '';
+  document.getElementById('resultsCount').textContent = `${n.toLocaleString('en')} of ${companies.length.toLocaleString('en')}${suffix}${seHint}`;
 }
 function getFiltered(){
   // deburr() (not plain toLowerCase()) so "texteis" matches "Têxteis" — company
