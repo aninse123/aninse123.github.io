@@ -512,7 +512,8 @@
       <select class="filter-sel" id="contactableFilter" data-feature="search.tier" title="Contactable = passes the screening (contactable rules). Not contactable = not a target; left out of campaigns unless a campaign includes them. Not the same as Do not contact (stop)."><option value="">Contactable: Any</option><option value="yes">Contactable</option><option value="no">Not contactable (screening)</option></select><span class="info-icon" data-feature="search.tier" role="img" aria-label="What is the difference?" id="ctHelpIcon" style="align-self:center;">i</span>
       <select class="filter-sel" id="groupFilter" data-feature="search.ownership" title="Group = companies in the CRM with the same ultimate owner (Orbis)"><option value="">Group: Any</option><option value="2">In a group (2+ companies)</option><option value="5">Group of 5+</option><option value="10">Group of 10+</option></select>
       <select class="filter-sel" id="subsFilter" data-feature="search.ownership" title="Current shareholdings between companies that are both in the CRM"><option value="">Subsidiaries: Any</option><option value="subs">Has subsidiaries in the CRM</option><option value="parent">Has a parent in the CRM</option></select>
-      <select class="filter-sel" id="ownerOtherFilter" data-feature="search.ownership" title="Its owners (5%+) and managers are owners or managers of other CRM companies too. Auditors and assembly roles left out."><option value="">Owner's other companies: Any</option><option value="yes">Owner has other companies</option><option value="no">Owner has no other company</option></select>
+      <select class="filter-sel" id="ownerOtherFilter" data-feature="search.ownership" title="Its owners (any %, since 22 Oct) and managers are owners or managers of other CRM companies too. Auditors and assembly roles left out."><option value="">Owner's other companies: Any</option><option value="yes">Owner has other companies</option><option value="no">Owner has no other company</option></select>
+      <select class="filter-sel" id="sameEmailFilter" data-feature="search.sameEmail" title="Same company email address as another CRM company (the full address). Possible link = not the same group and not yet confirmed or dismissed; the company's Ownership tab also checks the people in Orbis."><option value="">Same email: Any</option><option value="possible">Possible same-email link</option><option value="confirmed">Same email, confirmed</option></select>
       <input type="hidden" id="groupKeyFilter"><span class="badge badge-blue" id="groupKeyChip" data-feature="search.ownership" style="display:none;align-self:center;"></span>
       <button class="btn btn--ghost btn--sm" id="clearFiltersBtn">Clear all</button>
     </div>
@@ -1361,7 +1362,7 @@
 import { auth, db, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES, FIRESTORE_PROJECT_ID } from './firebase-config.js';
 import { guardPage, logExport, editedBadge } from './access.js';
 import { isOn, onFeaturesChange } from './features.js';
-import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, relatedLine } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
+import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText, isRelatedDecider } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
 import { applyDirectory } from './team-dir.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -3234,7 +3235,7 @@ function renderSummary(){
 // Shared with the filter-input listeners near the bottom of the file and with
 // the subset-of-loaded disclaimer banner below — one list, so a filter added
 // in one place is never silently missing from the other two.
-const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter','tierFilter','contactableFilter','groupFilter','subsFilter','ownerOtherFilter','groupKeyFilter'];
+const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter','tierFilter','contactableFilter','groupFilter','subsFilter','ownerOtherFilter','groupKeyFilter','sameEmailFilter'];
 // Always states the true total (not just what's loaded) whenever the two
 // differ, right where people are actually looking — the results count next
 // to the table — rather than a separate banner that's easy to scan past.
@@ -3282,6 +3283,8 @@ function getFiltered(){
   const subsF = ownF ? document.getElementById('subsFilter')?.value || '' : '';
   const ooF   = ownF ? document.getElementById('ownerOtherFilter')?.value || '' : '';
   const gkF   = ownF ? document.getElementById('groupKeyFilter')?.value || '' : '';
+  const seF   = isOn('search.sameEmail') ? document.getElementById('sameEmailFilter')?.value || '' : ''; // 22 Oct (D1)
+  const seMap = seF === 'possible' ? sameEmailIndex(companies) : null;
 
   return companies.filter(c => {
     if (search) {
@@ -3331,6 +3334,8 @@ function getFiltered(){
     if (ooF === 'yes' && !(c.ownOwnerOther > 0)) return false;
     if (ooF === 'no' && c.ownOwnerOther !== 0) return false;
     if (gkF && ownGroupKey(c)?.value !== gkF) return false;
+    if (seF === 'confirmed' && !(c.sameEmailLinks || []).length) return false;
+    if (seF === 'possible' && !hasPossibleSameEmail(c, seMap)) return false;
     return true;
   });
 }
@@ -4968,10 +4973,23 @@ async function fillOverviewSameEmail(c){
   el.innerHTML = ` <span class="hint">· ${personal ? 'same personal email as' : 'also the email of'} ${others.slice(0, 5).map(o => `<span class="person-link" data-gotoco="${esc(o.id)}">${esc(o.name || o.id)}</span>`).join(', ')}${others.length > 5 ? ` and ${others.length - 5} more` : ''}</span>`;
   el.onclick = (ev) => { const t = ev.target.closest('[data-gotoco]'); if (t) openDetail(t.dataset.gotoco); };
 }
+// "Same email" list filter (search.sameEmail, 22 Oct — D1): the full address, as on
+// the company page. Possible = another company with it, not the same group, not yet
+// confirmed or dismissed (the Ownership tab also checks the people in Orbis).
+const sameEmailKey = (x) => String(x.companyEmail || '').trim().toLowerCase();
+function sameEmailIndex(list){
+  const m = new Map();
+  for (const x of list) { const e = sameEmailKey(x); if (e.includes('@')) { if (!m.has(e)) m.set(e, []); m.get(e).push(x); } }
+  return m;
+}
+function hasPossibleSameEmail(c, index){
+  const conf = new Set((c.sameEmailLinks || []).map(x => x.companyId)), dis = new Set(c.sameEmailDismissed || []);
+  return (index.get(sameEmailKey(c)) || []).some(o => o.id !== c.id && !conf.has(o.id) && !dis.has(o.id) && !(c.ownGroupKey && c.ownGroupKey === o.ownGroupKey));
+}
 async function relatedByOrbis(c, links, o){
   if (c.ownGroupKey && c.ownGroupKey === o.ownGroupKey) return true;
   const oLinks = await fetchCompanyLinks(o.id).catch(() => []);
-  const deciders = (ls) => new Set(ls.filter(l => linkIsCurrent(l) && l.personEntityType !== 'entity').map(l => l.personId));
+  const deciders = (ls) => new Set(ls.filter(isRelatedDecider).map(l => l.personId)); // 22 Oct (D3): owners and managers only — a shared auditor (ROC) doesn't relate two companies
   const mine = deciders(links);
   if ([...deciders(oLinks)].some(p => mine.has(p))) return true;
   return links.some(l => l.personMatchedCompanyId === o.id) || oLinks.some(l => l.personMatchedCompanyId === c.id);
@@ -5042,7 +5060,7 @@ async function renderOutreachRelated(c){
   el.innerHTML = `<div class="card"><div class="sec-title">Related companies in outreach</div>
     ${conv.length ? `<div class="contact-detail" style="margin-bottom:6px;">💬 <b>In conversation via ${conv.map(x => esc(x.name)).join(', ')}</b></div>` : ''}
     ${r.related.map(x => `<div class="contact-detail"><span class="person-link" data-gotoco="${esc(x.companyId)}">${esc(x.name)}</span> ${relatedLine({ ...x, name: '' }).replace(/^\s*/, '')}</div>`).join('')}
-    ${r.lead ? `<div class="hint" style="margin-top:6px;">Suggested lead company for the group: <b>${esc(r.lead.name)}</b>${r.lead.why === 'parent' ? ' (the parent)' : ' (the largest with an email)'}.</div>` : ''}
+    ${r.lead ? `<div class="hint" style="margin-top:6px;">Suggested lead company for the group: <b>${leadText(r.lead)}</b>.</div>` : ''}
     <div class="hint" style="margin-top:4px;">Same owner at any %, parent / subsidiary, same group or a confirmed same email. The add-on links don't count.</div></div>`;
   el.onclick = (ev) => { const t = ev.target.closest('[data-gotoco]'); if (t) openDetail(t.dataset.gotoco); };
 }
@@ -11065,6 +11083,7 @@ const CAMP_EXCL_LABELS = {
   stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
   personal_domain: 'personal email domain', same_inbox: 'same email address as another company, emailed recently',
   owner_skip: 'skipped for now (related companies)',
+  in_other_campaign: 'in another campaign', contacted_recently: 'contacted recently', not_ready: 'not ready',
 };
 // 19 Oct (one inbox): who else has the address, and when it was last emailed.
 const campInboxDetail = x => x.inbox ? ` (${esc(x.inbox.email)} — also ${esc(x.inbox.companyName || 'another company')}${x.inbox.at ? ', last email ' + new Date(x.inbox.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''})` : '';
@@ -11107,6 +11126,8 @@ function buildFilterSpec(){
     if (v('ownerOtherFilter')) add('ownOwnerOther', v('ownerOtherFilter') === 'yes' ? 'gte' : 'lte', v('ownerOtherFilter') === 'yes' ? 1 : 0, v('ownerOtherFilter') === 'yes' ? 'owner has other companies' : 'owner has no other company');
     if (v('groupKeyFilter')) add('ownGroupKey', 'eq', v('groupKeyFilter'), `same group as ${ownGroupKeyLabel || v('groupKeyFilter')}`);
   }
+  // Same email isn't a stored field, so it is named but not kept for new matches.
+  if (v('sameEmailFilter')) label.push(v('sameEmailFilter') === 'confirmed' ? 'same email, confirmed (not kept for new matches)' : 'possible same-email link (not kept for new matches)');
   return { spec, label: label.join(' · ') };
 }
 
@@ -11167,7 +11188,7 @@ async function openAddToCampaign(opts){
   let intro;
   if (opts.mode === 'filters') {
     const { spec, label } = buildFilterSpec();
-    if (!spec.length) {
+    if (!spec.length && !label.length) {
       body.innerHTML = '<p style="font-size:0.88rem;">No filter is set — this would add every company. Filter the list first (sector, CAE, region, revenue, stage…), then use <b>Add to campaign</b> again. To add a few companies, tick them in the list instead.</p>';
       return;
     }
@@ -11235,9 +11256,9 @@ async function openAddToCampaign(opts){
       const leaveOut = document.getElementById('addCampLeaveOut')?.checked ? new Set(preview.contacted?.ids || []) : null;
       const toAdd = leaveOut ? ids.filter(id => !leaveOut.has(id)) : ids;
       if (!toAdd.length) throw new Error('Every company was left out.');
-      const r = (await callOutreachCampaign({ action: 'enrol', campaignId, companyIds: toAdd, source, onConflict, ownerChoices: readOwnerChoices(body) })).data;
+      const r = (await callOutreachCampaign({ action: 'enrol', campaignId, companyIds: toAdd, source, onConflict, ownerChoices: readOwnerChoices(body), ownerMentions: readOwnerMentions(body) })).data;
       const camp = campList.find(c => c.id === campaignId);
-      body.innerHTML = `<p style="font-size:0.9rem;"><b>${fmt(r.enrolled)}</b> compan${r.enrolled === 1 ? 'y' : 'ies'} added to "${esc(camp?.name || '')}"${r.moved ? ` (${fmt(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${fmt(r.skippedTotal)} skipped` : ''}.</p>
+      body.innerHTML = `<p style="font-size:0.9rem;"><b>${fmt(r.enrolled)}</b> compan${r.enrolled === 1 ? 'y' : 'ies'} added to "${esc(camp?.name || '')}"${r.moved ? ` (${fmt(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${fmt(r.skippedTotal)} skipped: ${Object.entries(r.skipped || {}).map(([k, x]) => `${fmt(x)} ${esc(CAMP_EXCL_LABELS[k] || k)}`).join(', ')}` : ''}.</p>
         <p style="font-size:0.82rem;color:var(--text-light);margin-top:8px;">${camp?.status === 'draft' ? 'The campaign is still a draft — start it in Outreach → Campaigns.' : 'The scheduler starts them at the campaign\'s daily pace, inside the sending window.'} <a href="/portal/outreach.html" style="color:var(--primary);">Open Outreach</a></p>`;
       next.textContent = 'Close'; next.disabled = false; next.onclick = () => showEl('addCampModal', false);
       if (opts.mode === 'selected') { selectedCo.clear(); document.querySelectorAll('.rowSel').forEach(b => { b.checked = false; }); updateSelUi(); }

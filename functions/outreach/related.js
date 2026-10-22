@@ -3,21 +3,49 @@
 // the owner panel (adding companies, the approval card), the "In conversation
 // via X" lines, the "Group contacted via X" history and the weekly report.
 //
-// Related = a shared decision-maker (a current shareholder at any %, or a current
-// manager; auditors and assembly roles left out), a parent or a subsidiary (a CRM
+// Related = a shared decision-maker, a parent or a subsidiary (a CRM
 // company holding shares in the other), the same ultimate owner (ownGroupKey), or
 // a same-email link confirmed by hand (sameEmailLinks, Stage 2). The add-on links
 // never count. People in more than MAX_PERSON_LINKS companies (a bank, a big
 // group's manager) are not followed: they relate everything to everything.
+//
+// Shared decision-maker (André, 22 Oct — D3): someone who ranks as an owner or a
+// manager on the best-person ladder (recipients.rankPerson, 10 Oct): ultimate
+// owner, majority shareholder (managing or not), sócio-gerente, any other current
+// shareholder (any %), hired gerente / CEO / administrador, other managers. "Any
+// other current role" doesn't count, nor auditors, fiscal, assembly or secretary
+// roles: an auditor firm checks many unrelated companies. The same ladder orders
+// the related companies and picks the suggested lead.
 //
 // Cost: the ownership summary fields (own*) skip companies with nothing related
 // (most of them); the rest cost a few IN queries per 30 companies.
 
 const { db } = require("./store");
 const { emailNameOf } = require("./render");
+const { rankPerson } = require("./recipients");
 
-const EXCLUDED_ROLE = /fiscal|auditor|revisor|\bROC\b|statutory|assembl|secret[aá]ri|no specific function|sem fun[cç][aã]o/i;
-const isDecider = (l) => l.shCurrent === true || (l.mgmtCurrent === true && (l.mgmtRoles || []).some((r) => !EXCLUDED_ROLE.test(r)));
+const EXCLUDED_ROLE = /fiscal|auditor|revisor|\bROC\b|statutory|assembl|secret[aá]ri|secretary|no specific function|sem fun[cç][aã]o/i;
+const RELATED_MIN_RANK = 60; // "other managers" and above
+// A person's level in one company (current data only; same as portal/owner-panel.js relatedRank).
+function deciderRank(l) {
+  if (!l || l.personEntityType === "entity") return 0;
+  const roles = l.mgmtCurrent === true ? (l.mgmtRoles || []).filter((r) => !EXCLUDED_ROLE.test(r)) : [];
+  const r = rankPerson({ ...l, shCurrent: l.shCurrent === true, mgmtCurrent: l.mgmtCurrent === true, mgmtRoles: roles });
+  return l.shCurrent === true ? Math.max(r, 120) : r; // a current shareholder with no % given is still a shareholder
+}
+const isDecider = (l) => deciderRank(l) >= RELATED_MIN_RANK;
+// The words for a level, for the suggested lead ("majority owner, manages").
+function levelText(rank) {
+  if (rank >= 200) return "ultimate owner";
+  if (rank >= 180) return "majority owner, manages";
+  if (rank >= 160) return "majority owner";
+  if (rank >= 140) return "owner-manager";
+  if (rank >= 120) return "shareholder";
+  if (rank >= 100) return "gerente / CEO";
+  if (rank >= 60) return "manager";
+  return "";
+}
+const MAX_MENTION = 3;
 const MAX_PERSON_LINKS = 40;
 const MAX_GROUP = 25;
 const MAX_RELATED = 12;
@@ -60,12 +88,14 @@ async function relatedFor(companyIds, opts = {}) {
   const ids = [...new Set(companyIds)].filter(Boolean);
   const base = opts.companies || await getCompanies(ids);
   const cand = ids.filter((id) => mayHaveRelated(base.get(id)));
-  const rel = new Map(ids.map((id) => [id, new Map()])); // id → relatedId → { why: Set }
-  const add = (id, other, why) => {
+  const rel = new Map(ids.map((id) => [id, new Map()])); // id → relatedId → { why: Set, rank, person }
+  const selfTop = new Map(); // id → { rank, person } — the shared person's best level in this company
+  const add = (id, other, why, rank = 0, person = "") => {
     if (!other || other === id) return;
     const m = rel.get(id); if (!m) return;
-    if (!m.has(other)) m.set(other, new Set());
-    m.get(other).add(why);
+    if (!m.has(other)) m.set(other, { why: new Set(), rank: 0, person: "" });
+    const x = m.get(other); x.why.add(why);
+    if (rank > x.rank) { x.rank = rank; x.person = person; }
   };
   if (cand.length) {
     // Shared decision-makers, and parents (a CRM company among the shareholders).
@@ -79,8 +109,10 @@ async function relatedFor(companyIds, opts = {}) {
     for (const d of deciders) {
       const all = (byPerson.get(d.personId) || []).filter(isDecider);
       if (all.length > MAX_PERSON_LINKS) continue;
-      const role = (l) => [l.shCurrent === true && l.shDirectPct != null ? pctTxt(l.shDirectPct) : "", l.mgmtCurrent === true ? (l.mgmtRoles || [])[0] || "" : ""].filter(Boolean).join(", ");
-      for (const o of all) if (o.companyId !== d.companyId) add(d.companyId, o.companyId, `same owner: ${d.personName || "a person"}${role(o) ? ` (${role(o)} there)` : ""}`);
+      const role = (l) => [l.shCurrent === true && l.shDirectPct != null ? pctTxt(l.shDirectPct) : "", l.mgmtCurrent === true ? (l.mgmtRoles || []).filter((r) => !EXCLUDED_ROLE.test(r))[0] || "" : ""].filter(Boolean).join(", ");
+      const others = all.filter((o) => o.companyId !== d.companyId);
+      for (const o of others) add(d.companyId, o.companyId, `same owner: ${d.personName || "a person"}${role(o) ? ` (${role(o)} there)` : ""}`, deciderRank(o), d.personName || "");
+      if (others.length) { const r = deciderRank(d), t = selfTop.get(d.companyId); if (!t || r > t.rank) selfTop.set(d.companyId, { rank: r, person: d.personName || "" }); }
     }
     // Subsidiaries: links where one of these companies is the shareholder.
     for (const l of await linksWhereIn("personMatchedCompanyId", cand)) if (l.shCurrent === true) add(l.personMatchedCompanyId, l.companyId, `subsidiary${l.shDirectPct != null ? " " + pctTxt(l.shDirectPct) : ""}`);
@@ -105,11 +137,11 @@ async function relatedFor(companyIds, opts = {}) {
   }
   const out = new Map();
   for (const id of ids) {
-    const list = [...rel.get(id)].map(([oid, why]) => {
-      const o = others.get(oid);
+    const list = [...rel.get(id)].map(([oid, x]) => {
+      const o = others.get(oid), why = x.why;
       if (!o) return null;
       return {
-        companyId: oid, name: o.name || "", emailName: emailNameOf(o), why: [...why],
+        companyId: oid, name: o.name || "", emailName: emailNameOf(o), why: [...why], rank: x.rank, person: x.person,
         cae: o.caeCode || null, revenue: o.computedRevenue ?? null, stage: o.stage || null,
         campaignId: o.activeCampaignId || null, campaignName: o.activeCampaignName || null,
         lastOutreachAt: ms(o.lastOutreachAt) || null, lastReplyAt: ms(o.lastReplyAt) || null,
@@ -118,21 +150,25 @@ async function relatedFor(companyIds, opts = {}) {
         parent: [...why].some((w) => w.startsWith("parent")), // it holds shares in this company
       };
     }).filter(Boolean)
-      .sort((a, b) => (Number(b.parent) - Number(a.parent)) || ((b.revenue || 0) - (a.revenue || 0)))
+      .sort((a, b) => (Number(b.parent) - Number(a.parent)) || (b.rank - a.rank) || ((b.revenue || 0) - (a.revenue || 0)))
       .slice(0, MAX_RELATED);
-    out.set(id, { related: list, lead: leadOf(base.get(id), list) });
+    out.set(id, { related: list, lead: leadOf(base.get(id), list, selfTop.get(id)) });
   }
   return out;
 }
-// The suggested lead company of a group: the parent (a related company that
-// holds this one), else the largest by revenue with an email — maybe this one.
-function leadOf(self, list) {
+// The suggested lead company of a group (D3, 22 Oct): the parent (a related
+// company that holds this one); else the company where the shared person ranks
+// highest on the best-person ladder (a company they own and manage before one
+// they only manage); then the largest by revenue — with an email, maybe this one.
+function leadOf(self, list, selfTop = null) {
   if (!list.length) return null;
   const holders = list.filter((r) => r.why.some((w) => w.startsWith("parent")));
   if (holders.length) return { companyId: holders[0].companyId, name: holders[0].name, why: "parent" };
-  const pool = [{ companyId: self?.id, name: self?.name || "", revenue: self?.computedRevenue ?? null, email: self?.companyEmail }, ...list].filter((x) => x.email);
-  const top = pool.sort((a, b) => (b.revenue || 0) - (a.revenue || 0))[0];
-  return top ? { companyId: top.companyId, name: top.name, why: "largest" } : null;
+  const pool = [{ companyId: self?.id, name: self?.name || "", revenue: self?.computedRevenue ?? null, email: self?.companyEmail, rank: selfTop?.rank || 0, person: selfTop?.person || "" }, ...list].filter((x) => x.email);
+  const top = pool.sort((a, b) => ((b.rank || 0) - (a.rank || 0)) || ((b.revenue || 0) - (a.revenue || 0)))[0];
+  if (!top) return null;
+  const levels = new Set(pool.map((x) => Math.floor((x.rank || 0) / 20)));
+  return top.rank && levels.size > 1 ? { companyId: top.companyId, name: top.name, why: "owner", person: top.person, level: levelText(top.rank) } : { companyId: top.companyId, name: top.name, why: "largest" };
 }
 
 // The flags for a company about to be contacted, from its related companies:
@@ -155,9 +191,15 @@ function flagsFor(entry, { campaignId = null, windowDays = 30, batch = null, now
 // related company said no or is "do not contact", else Proceed.
 const defaultChoice = (flags) => (flags.some((f) => f.kind === "said_no") ? "skip" : "proceed");
 
-// Mentioned companies for {{owner.otherCompanies}}: the related ones the
-// conversation can lean on (in conversation, contacted, in a campaign), else
-// the parent; at most two, by their email name.
+// The companies chosen by hand to be mentioned (D5, 22 Oct: "I should select
+// from the related ones"): only related ones, at most MAX_MENTION, by their email name.
+function mentionPicked(entry, pickedIds) {
+  const want = new Set((Array.isArray(pickedIds) ? pickedIds : []).map(String));
+  return (entry?.related || []).filter((r) => want.has(r.companyId)).slice(0, MAX_MENTION).map((r) => ({ companyId: r.companyId, name: r.emailName || r.name }));
+}
+// The suggested companies to mention (marked "suggested" in the panel, never
+// ticked for you): the related ones the conversation can lean on (in
+// conversation, contacted, in a campaign), else the parent; at most two.
 function mentionFrom(entry, flags) {
   const pick = new Set(flags.filter((f) => ["in_conversation", "group_contacted", "other_campaign"].includes(f.kind)).map((f) => f.companyId));
   let list = (entry?.related || []).filter((r) => pick.has(r.companyId));
@@ -165,4 +207,4 @@ function mentionFrom(entry, flags) {
   return list.slice(0, 2).map((r) => ({ companyId: r.companyId, name: r.emailName || r.name }));
 }
 
-module.exports = { relatedFor, flagsFor, defaultChoice, mentionFrom, leadOf, isDecider, mayHaveRelated, MAX_PERSON_LINKS, SAID_NO };
+module.exports = { relatedFor, flagsFor, defaultChoice, mentionFrom, mentionPicked, leadOf, isDecider, deciderRank, levelText, mayHaveRelated, MAX_PERSON_LINKS, MAX_MENTION, SAID_NO };

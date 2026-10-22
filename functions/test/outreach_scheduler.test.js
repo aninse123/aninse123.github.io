@@ -322,6 +322,7 @@ const TUE = "2026-09-29T10:30:00+01:00";
   const b3rn = await camp({ action: "runNow", campaignId: b3T });
   ok("I22: Run now sends the next step at once, to the campaign's test address", b3rn.ok === true && sends().length === 1 && sends()[0].body.to[0] === "amobnc92@gmail.com" && sends()[0].body.subject.startsWith("Re:"));
   store.set("outreachSettings/global", { testMode: false, complianceBlockId: "cb1" });
+  store.set(`outreachCampaigns/${b3T}`, { ...get(`outreachCampaigns/${b3T}`), isTest: false }); // 22 Oct: a test campaign may Run now while live; a real one may not
   ok("I22: Run now is refused outside test mode", (await camp({ action: "runNow", campaignId: b3T })).err?.details?.reason === "test_only");
   // I5: a draft is archived (not deleted) and can be restored.
   const b3D = (await camp({ action: "save", campaign: { name: "Rascunho", steps: [{ templateId: "t1" }] } })).campaignId;

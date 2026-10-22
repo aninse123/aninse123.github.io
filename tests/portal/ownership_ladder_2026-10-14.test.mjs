@@ -74,7 +74,7 @@ ok('the section is behind the switch (isOn + data-feature)', /const ownOn = isOn
 ok('people\'s other companies leave auditors out', /OWN_AUDITOR_RE = \/fiscal\|auditor\|revisor/.test(page));
 
 // Search CRM filters, columns, export and the campaign spec (flat fields from the ownership-graph tool).
-ok('filters: group size, subsidiaries / parent, owner has other companies, same group (all behind the switch)', ['groupFilter', 'subsFilter', 'ownerOtherFilter', 'groupKeyChip'].every((id) => new RegExp('id="' + id + '" data-feature="search\.ownership"').test(page)) && /'groupFilter','subsFilter','ownerOtherFilter','groupKeyFilter'\]/.test(page));
+ok('filters: group size, subsidiaries / parent, owner has other companies, same group (all behind the switch)', ['groupFilter', 'subsFilter', 'ownerOtherFilter', 'groupKeyChip'].every((id) => new RegExp('id="' + id + '" data-feature="search\.ownership"').test(page)) && /'groupFilter','subsFilter','ownerOtherFilter','groupKeyFilter'[\],]/.test(page));
 ok('list filter reads the stored fields; same group reads the ultimate owner itself', /c\.ownGroupSize >= Number\(grpF\)/.test(page) && /c\.ownSubs > 0/.test(page) && /c\.ownParents > 0/.test(page) && /ownGroupKey\(c\)\?\.value !== gkF/.test(page));
 ok('campaign spec carries the same filters (the server matches flat fields)', /add\('ownGroupSize', 'gte'/.test(page) && /add\('ownOwnerOther'/.test(page) && /add\('ownGroupKey', 'eq'/.test(page));
 ok('Group and Group revenue columns + export group', /data-col="ownGroupSize"/.test(page) && /data-col="ownGroupRevenue"/.test(page) && /title: 'Ownership \(groups\)'/.test(page));

@@ -99,6 +99,13 @@
     .pill--warn { background: #FDF3DC; color: #8A5A00; }
     .pill--bad  { background: #FBEDED; color: var(--danger); }
     .pill--test { background: #FDF3DC; color: #8A5A00; letter-spacing: 0.04em; }
+    /* 22 Oct (owner-aware, D6): the related companies on a draft, its own box so it isn't missed */
+    .owner-box { border: 1px solid var(--border); border-left-width: 4px; border-radius: var(--radius); padding: 8px 10px; margin: 0 0 8px; font-size: 0.8rem; background: var(--tint); }
+    .owner-box--red { border-color: #E8B4B4; border-left-color: var(--danger); background: #FDF6F6; }
+    .owner-box--amber { border-color: #F0D9A8; border-left-color: var(--amber); background: #FFFBF2; }
+    .owner-box__head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .owner-box__mention { margin-top: 6px; padding: 4px 8px; border-radius: 6px; background: #E8F0F8; color: var(--primary-dark); }
+    .owner-box ul { margin: 4px 0 0; padding-left: 18px; }
 
     .card { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); }
     .note { font-size: 0.8rem; color: var(--text-light); line-height: 1.5; }
@@ -773,7 +780,7 @@
     import { auth, db, storage, addReads, updateDoc, setDoc, addDoc, deleteDoc } from './firebase-config.js';
     import { guardPage } from './access.js';
     import { isOn } from './features.js';
-    import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, relatedLine } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
+    import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { applyDirectory } from './team-dir.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -3531,7 +3538,15 @@
       stage: 'stage not allowed', owner: 'other owner', recent_touch: 'contacted recently', no_email: 'no email address',
       personal_domain: 'personal email domain', same_inbox: 'same email address as another company, emailed recently',
       owner_skip: 'skipped for now (related companies)',
+      in_other_campaign: 'in another campaign', contacted_recently: 'contacted recently', not_ready: 'not ready',
     };
+    // 22 Oct (owner-aware, D6): how careful to be before approving a draft — red when a
+    // related company said no / is "do not contact", amber when one is in conversation.
+    const ownerRisk = (d) => {
+      const fl = isOn('outreach.ownerAware') ? (d?.ownerPanel?.flags || []) : [];
+      return fl.some(f => f.kind === 'said_no') ? 'red' : fl.some(f => f.kind === 'in_conversation') ? 'amber' : '';
+    };
+    const ownerRiskText = (d) => (d?.ownerPanel?.flags || []).filter(f => f.kind === 'said_no' || f.kind === 'in_conversation').map(f => '• ' + f.text).join('\n');
     // 19 Oct (one inbox): who else has the address, and when it was last emailed.
     const inboxDetail = (x) => x.inbox ? ` (${esc(x.inbox.email)} — also ${esc(x.inbox.companyName || 'another company')}${x.inbox.at ? ', last email ' + esc(dayFmt.format(new Date(x.inbox.at))) : ''})` : '';
     const DAY_NAMES = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
@@ -3657,10 +3672,12 @@
           <span class="hint">Can't be changed once people or companies are added.</span></div>
         <div class="field"><label for="ncAppr">Before emails go out</label>
           <select id="ncAppr"><option value="approval">Each email waits for approval (recommended to start)</option><option value="auto">Emails go out automatically</option></select>
-          <span class="hint">You can change this per step later — e.g. approve the first email, send follow-ups automatically.</span></div>`,
+          <span class="hint">You can change this per step later — e.g. approve the first email, send follow-ups automatically.</span></div>
+        ${settings?.testMode === false ? `<div class="field" data-feature="outreach.testCampaigns"><label class="checkline"><input type="checkbox" id="ncTest"> <span><b>Test campaign</b> — every email goes to ${esc(settings.campaignTestRecipient || (settings.testRecipients || [])[0] || 'the campaign test address (set it in Settings → General first)')}, marked TEST and left out of metrics. The companies stay free for real campaigns. Can't be changed later.</span></label></div>` : ''}`,
         async () => {
           const aud = document.querySelector('input[name="ncAud"]:checked')?.value || 'companies';
-          const r = (await callCampaign({ action: 'save', campaign: { name: $('ncName').value, description: $('ncDesc').value, approvalDefault: $('ncAppr').value, audienceType: aud, steps: [] } })).data;
+          const isTest = !!$('ncTest')?.checked && isOn('outreach.testCampaigns'); // 22 Oct
+          const r = (await callCampaign({ action: 'save', campaign: { name: $('ncName').value, description: $('ncDesc').value, approvalDefault: $('ncAppr').value, audienceType: aud, steps: [], ...(isTest ? { isTest: true } : {}) } })).data;
           toast(aud === 'people' ? 'Campaign created — write its sequence, then choose who sends it (Settings) and add people.' : 'Campaign created — now write its sequence.');
           openCampaign(r.campaignId, 'sequence');
           return true;
@@ -3771,7 +3788,7 @@
       if (c.status === 'paused' && canApprove && c.startRequest) acts.push(['returnstart', 'Return with a note', 'ghost']);
       if (c.status === 'active') acts.push(['pause', 'Pause', 'ghost'], ['finish', 'Finish', 'ghost']);
       if (c.status === 'paused') acts.push(['resume', 'Resume', 'primary'], ['finish', 'Finish', 'ghost']);
-      if (c.status === 'active' && canApprove && (!settings || settings.testMode !== false)) acts.unshift(['runnow', '▶ Run now (test)', 'primary']);
+      if (c.status === 'active' && canApprove && (!settings || settings.testMode !== false || c.isTest)) acts.unshift(['runnow', '▶ Run now (test)', 'primary']);
       if (c.status === 'finished') acts.push(['archive', 'Archive', 'ghost']);
       if (c.status === 'archived') acts.push(['restore', 'Restore', 'ghost']);
       acts.push(['duplicate', 'Duplicate', 'ghost']);
@@ -4654,8 +4671,8 @@ Optional note for them:`, '');
         const leaveOut = $('acLeaveOut')?.checked ? new Set(preview.contacted?.ids || []) : null;
         const ids = leaveOut ? preview.ids.filter(id => !leaveOut.has(id)) : preview.ids;
         if (!ids.length) throw new Error('Every company was left out.');
-        const r = (await callCampaign({ action: 'enrol', campaignId: c.id, companyIds: ids, source, onConflict, ownerChoices: readOwnerChoices($('modalBody')) })).data;
-        toast(`${num(r.enrolled)} companies added${r.moved ? ` (${num(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${num(r.skippedTotal)} skipped` : ''}.`);
+        const r = (await callCampaign({ action: 'enrol', campaignId: c.id, companyIds: ids, source, onConflict, ownerChoices: readOwnerChoices($('modalBody')), ownerMentions: readOwnerMentions($('modalBody')) })).data;
+        toast(`${num(r.enrolled)} companies added${r.moved ? ` (${num(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${num(r.skippedTotal)} skipped: ${Object.entries(r.skipped || {}).map(([k, x]) => `${num(x)} ${EXCL_LABELS[k] || k}`).join(', ')}` : ''}.`);
         loadCampaignData();
         return true;
       }, 'Check companies');
@@ -4945,11 +4962,20 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       if (c.activeCampaignId && c.activeCampaignId !== d.campaignId) bits.push(`also in "${esc(c.activeCampaignName || 'another campaign')}"`);
       if (c.stage) bits.push(`stage ${esc(c.stage)}`);
       // 22 Oct (owner-aware): the related companies worked out when the draft was made.
+      // D6: its own box on top — red / amber when a related company said no / is in
+      // conversation (approving then asks to confirm), what the email mentions, and
+      // each related company's address to copy (never an automatic Cc).
       const op = isOn('outreach.ownerAware') ? d.ownerPanel : null;
-      const opHtml = op?.related?.length ? `<details class="owner-card" style="margin:0 0 6px;font-size:0.8rem;"${(op.flags || []).length ? ' open' : ''}><summary style="cursor:pointer;"><b>Related companies (${op.related.length})</b>${(op.flags || []).length ? ` — ${op.flags.slice(0, 2).map(f => esc(f.text)).join(' · ')}` : ''}</summary>
-          <ul style="margin:4px 0 0;padding-left:18px;">${op.related.map(r => `<li>${relatedLine(r)}${r.email ? ` · <span class="mono">${esc(r.email)}</span> <button type="button" class="camp-link" data-copyemail="${esc(r.email)}" style="font-size:0.74rem;">copy</button>` : ''}</li>`).join('')}</ul>
-          ${op.lead ? `<div class="hint">Suggested lead company: ${esc(op.lead.name)}${op.lead.why === 'parent' ? ' (the parent)' : ''}</div>` : ''}</details>` : '';
-      const mentionHtml = isOn('outreach.ownerAware') && d.checkMention ? '<div style="margin:0 0 6px;"><span class="pill pill--warn" title="The email names the related companies chosen when this company was added ({{owner.otherCompanies}})">Check the mention of the related companies</span></div>' : '';
+      const risk = ownerRisk(d);
+      const FLAG_PILL = { said_no: 'pill--bad', in_conversation: 'pill--warn' };
+      const mentioned = op?.mention || [];
+      const opHtml = op?.related?.length ? `<div class="owner-box${risk ? ' owner-box--' + risk : ''}">
+          <div class="owner-box__head"><b>${risk === 'red' ? '🚫 Same owner said no — check before approving' : risk === 'amber' ? '💬 Same owner already in conversation — check before approving' : 'Related companies'} (${op.related.length})</b>${(op.flags || []).map(f => `<span class="pill ${FLAG_PILL[f.kind] || 'pill--info'}">${esc(f.text)}</span>`).join('')}</div>
+          ${mentioned.length ? `<div class="owner-box__mention">This email mentions: <b>${mentioned.map(esc).join(' and ')}</b>${d.checkMention ? ' — read the sentence before approving' : ' (chosen when added; this template doesn\'t use it)'}</div>` : ''}
+          <details${risk ? ' open' : ''} style="margin-top:6px;"><summary style="cursor:pointer;">Related companies and their addresses</summary>
+          <ul>${op.related.map(r => `<li>${relatedLine(r)}${r.email ? ` · <span class="mono">${esc(r.email)}</span> <button type="button" class="camp-link" data-copyemail="${esc(r.email)}" style="font-size:0.74rem;">Copy address</button>` : ''}</li>`).join('')}</ul></details>
+          ${op.lead ? `<div class="hint" style="margin-top:4px;">Suggested lead company: ${leadText(op.lead)}</div>` : ''}</div>` : '';
+      const mentionHtml = isOn('outreach.ownerAware') && d.checkMention && !op?.related?.length ? '<div style="margin:0 0 6px;"><span class="pill pill--warn" title="The email names the related companies chosen when this company was added ({{owner.otherCompanies}})">Check the mention of the related companies</span></div>' : '';
       return mentionHtml + opHtml + `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
     }
     let approveCtxLoading = false;
@@ -5056,7 +5082,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       $('apAll')?.addEventListener('click', async () => {
         const ids = list.filter(d => d.source !== 'manual').slice(0, 300).map(d => d.id);
         if (draftEdits.size && !confirm('Some drafts have unsaved edits — "Approve all" sends the original text for those. Continue?')) return;
-        if (!confirm(`Approve ${num(ids.length)} emails? They go out with the next scheduler runs, within the sending window and daily limits.`)) return;
+        const risky = list.filter(d => ids.includes(d.id) && ownerRisk(d)).length; // 22 Oct (D6)
+        if (!confirm(`Approve ${num(ids.length)} emails? They go out with the next scheduler runs, within the sending window and daily limits.${risky ? `\n\n⚠ ${num(risky)} of them have a related company that said no or is in conversation (red / amber box). Approve those one by one if unsure.` : ''}`)) return;
         const b = $('apAll'); b.disabled = true;
         const r = await campCall({ action: 'approve', messageIds: ids }, (x) => `${num(x.approved)} approved${Object.keys(x.skipped || {}).length ? ` · ${num(Object.values(x.skipped).reduce((a, n) => a + n, 0))} no longer waiting` : ''}.`);
         if (r) ids.forEach(id => draftEdits.delete(id)); else b.disabled = false;
@@ -5078,6 +5105,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           const goBusy = () => { unbusy = busyBtn(b, { approve: 'Approving…', skip: 'Skipping…', send: 'Sending…', return: 'Returning…', remove: 'Removing…' }[act]); };
           document.activeElement?.blur();
           let r;
+          // 22 Oct (owner-aware, D6): a related company said no / is in conversation — ask first.
+          if ((act === 'approve' || act === 'send') && ownerRisk(d) && !confirm(`${ownerRisk(d) === 'red' ? 'A company of the same owner said no or is "do not contact":' : 'A company of the same owner is already in conversation with us:'}\n${ownerRiskText(d)}\n\n${act === 'send' ? 'Send' : 'Approve'} this email anyway?`)) return;
           if (act === 'approve' || act === 'skip') goBusy();
           if (act === 'approve') {
             const ed = draftEdits.get(id);

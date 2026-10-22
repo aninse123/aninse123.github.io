@@ -127,7 +127,8 @@ async function ownerPanelOnDraft(messageRef, e, campaign, variantBody) {
     const flags = Related.flagsFor(entry, { campaignId: campaign.id, windowDays: campaign.exclusions?.contactedWithinDays || 30 });
     const related = entry.related.slice(0, 6).map((r) => ({ companyId: r.companyId, name: r.name, why: r.why, campaignName: r.campaignName, lastOutreachAt: r.lastOutreachAt, lastReplyAt: r.lastReplyAt, saidNo: r.saidNo, doNotContact: r.doNotContact, email: r.email }));
     const checkMention = !!(e.mention || []).length && /\{\{\s*\??owner\.otherCompan/.test(variantBody || "");
-    if (related.length || checkMention) await messageRef.update({ ownerPanel: { related, flags, lead: entry.lead }, ...(checkMention ? { checkMention: true } : {}) });
+    const mention = (e.mention || []).map((x) => x.name).filter(Boolean); // D6: "This email mentions: X"
+    if (related.length || checkMention) await messageRef.update({ ownerPanel: { related, flags, lead: entry.lead, mention }, ...(checkMention ? { checkMention: true } : {}) });
   } catch (err) { logger.warn("outreachScheduler: owner panel", { message: err.message }); }
 }
 // Owner-aware outreach, Stage 4: when a company gets its first email, its related
@@ -307,7 +308,10 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   // keep it, so they left one per run and all follow-ups piled on one address.
   const draftLoad = {};
   const templates = new Map();
-  const redirectTo = settings.testMode ? (settings.campaignTestRecipient || (settings.testRecipients || [])[0]) : null;
+  const testAddress = settings.campaignTestRecipient || (settings.testRecipients || [])[0] || null;
+  const redirectTo = settings.testMode ? testAddress : null;
+  // 22 Oct (outreach.testCampaigns): a test campaign after go-live sends only to the test address.
+  const testRun = (campaign) => !!settings.testMode || !!campaign.isTest;
   let sendsThisRun = 0;
   const companyPlace = new Map(); // 14 Oct: companyId → { concelho, distrito, city }, read once per run
   const inboxRun = new Map(); // one inbox (19 Oct): address → the company that got a first draft / email in this run
@@ -445,7 +449,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         if (!addr) { const co = await db().doc(`searchCompanies/${e.companyId}`).get(); addr = co.exists ? co.data().companyEmail : e.contactEmail; }
         addr = normEmail(addr);
         const windowDays = campaign.exclusions?.contactedWithinDays ?? 30;
-        const c = addr ? await Inbox.clash({ email: addr, companyId: e.companyId, isTest: !!settings.testMode, windowDays, now, thisRun: inboxRun }) : null;
+        const c = addr ? await Inbox.clash({ email: addr, companyId: e.companyId, isTest: testRun(campaign), windowDays, now, thisRun: inboxRun }) : null;
         if (c) {
           const nextDay = addWait(now, { days: 1, unit: "working" }, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart);
           const until = c.untilMs && c.untilMs > nextDay.getTime() ? new Date(c.untilMs) : nextDay;
@@ -453,7 +457,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
           const again = e.holdKind === "same_inbox" && e.holdReason?.companyId === c.companyId;
           if (pickedNow && wantsDraft) draftLoad[senderId] = Math.max(0, (draftLoad[senderId] || 1) - 1);
           await unlock(doc.ref, { nextActionAt: ts(until), holdKind: "same_inbox", holdReason: { why: c.kind, email: addr, companyId: c.companyId, companyName: c.companyName || "", at: c.at ? ts(new Date(c.at)) : null, until: ts(until) }, lastError: text });
-          if (!again) await Inbox.logHold({ companyId: e.companyId, text, isTest: !!settings.testMode, campaignId: campaign.id, enrolmentId });
+          if (!again) await Inbox.logHold({ companyId: e.companyId, text, isTest: testRun(campaign), campaignId: campaign.id, enrolmentId });
           report.inboxHeld = (report.inboxHeld || 0) + 1;
           continue;
         }
@@ -488,7 +492,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         ...(approved ? { subject: approved.isReply ? null : approved.subject, body: approved.draftBody } : {}),
         // I21: a campaign started by someone with an approved test address
         // sends its test emails there; otherwise the general test address.
-        countsAsOutreach: true, redirectTo: redirectTo ? (campaign.testRecipient || redirectTo) : null,
+        countsAsOutreach: true, redirectTo: testRun(campaign) && testAddress ? (campaign.testRecipient || testAddress) : null,
+        testCampaign: !!campaign.isTest, // marks it test and redirects it even when Outreach is live
         // A draft costs no quota; the target is checked again when it's approved.
         confirmOverTarget: wantsDraft,
       });
@@ -503,7 +508,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       if (sendsThisRun > 0 && gap) await sleep(gap());
       const res = await deliverEmail(p, { campaign: campaignRef });
       await recordSent(doc.ref, e, campaign, step, res, { senderId, variantKey: p.variantKey, now });
-      if (allowed(ownerState, campaign) && e.currentStep === 0 && e.companyId && !e.isTest && !settings.testMode) await groupContacted(e, campaign, step);
+      if (allowed(ownerState, campaign) && e.currentStep === 0 && e.companyId && !e.isTest && !testRun(campaign)) await groupContacted(e, campaign, step);
       if (e.holdKind) await doc.ref.update({ holdKind: null, holdReason: null });
       sendsThisRun++; campaignSent++; report.sent++;
       sentToday[senderId] = (sentToday[senderId] || 0) + 1;

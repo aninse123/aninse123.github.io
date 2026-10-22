@@ -11,12 +11,18 @@
 // the same owner in running campaigns, open flags on drafts, companies held now.
 // Test traffic is left out (onlyTest: the switch is on Test — then only test
 // campaigns are counted, so the report can be tried on staging).
+// Part 3 (D1, 22 Oct; switch search.sameEmail): new possible same-email links —
+// company addresses that arrived or changed last week (an Orbis upload, an edit)
+// and are also another company's address, when Orbis doesn't relate the two and
+// nobody confirmed or dismissed it yet. Same check as the company's Ownership tab.
 
 const { logger } = require("firebase-functions");
 const { db, FieldValue, Timestamp } = require("./store");
 const { lisbonParts, lisbonAt } = require("./schedule_util");
 const resend = require("./resend");
 const { RESEND_READ_KEY, RELATIONSHIP_SENDERS } = require("./config");
+const Related = require("./related");
+const Feat = require("../features"); // feature switches (Team & access → Features)
 
 const DAY = 86400000;
 const NOT_SENT = ["draft", "approved", "approving", "cancelled", "returned", "draftSent", "queued", "failed"];
@@ -35,7 +41,7 @@ function weekStart(now) {
 }
 
 // Pure: the report from the week's documents (tested on synthetic data).
-function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions = [], activities = [], tasks = [], enrolments = [], liveEnrolments = [], companies = new Map(), drafts = [], campaigns = new Map(), onlyTest = false }) {
+function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions = [], activities = [], tasks = [], enrolments = [], liveEnrolments = [], companies = new Map(), drafts = [], campaigns = new Map(), onlyTest = false, sameEmail = null }) {
   const inWeek = (t) => { const x = ms(t); return x >= from && x < to; };
   const keep = (x) => (onlyTest ? !!x.isTest : !x.isTest);
   const sent = messages.filter((m) => m.direction === "out" && keep(m) && inWeek(m.createdAt) && !NOT_SENT.includes(m.status) && m.via !== "gmail");
@@ -78,7 +84,35 @@ function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions
   const openFlags = drafts.filter((d) => keep(d) && d.status === "draft" && (d.ownerPanel?.flags || []).length)
     .map((d) => ({ company: d.companyName || "", flags: d.ownerPanel.flags.map((f) => f.text).slice(0, 3) }));
   const heldNow = live.filter((e) => e.holdKind === "same_inbox").map((e) => ({ company: e.companyName || "", until: e.holdReason?.until ? new Date(ms(e.holdReason.until)).toISOString().slice(0, 10) : null, email: e.holdReason?.email || null }));
-  return { week, owners: { multiCampaign, sameOwner, emailLinks, openFlags, heldNow } };
+  return { week, owners: { multiCampaign, sameOwner, emailLinks, openFlags, heldNow }, ...(sameEmail ? { sameEmail } : {}) };
+}
+
+// Part 3: { pairs: [{ a, b, aId, bId, email }], total, truncated } — see the header.
+const SAME_EMAIL_CHANGED_CAP = 3000, SAME_EMAIL_GROUP_MAX = 10, SAME_EMAIL_LIST = 25;
+async function newSameEmailPairs(from, to) {
+  const snap = await db().collection("searchCompanies").where("updatedAt", ">=", Timestamp.fromMillis(from)).where("updatedAt", "<", Timestamp.fromMillis(to)).select("companyEmail").limit(SAME_EMAIL_CHANGED_CAP).get();
+  const emails = [...new Set(snap.docs.map((d) => String(d.data().companyEmail || "").trim().toLowerCase()).filter((e) => e.includes("@")))];
+  const byEmail = new Map();
+  for (let i = 0; i < emails.length; i += 30) {
+    const s = await db().collection("searchCompanies").where("companyEmail", "in", emails.slice(i, i + 30)).select("name", "companyEmail", "ownGroupKey", "sameEmailLinks", "sameEmailDismissed").get();
+    s.docs.forEach((d) => { const e = d.data().companyEmail; if (!byEmail.has(e)) byEmail.set(e, []); byEmail.get(e).push({ id: d.id, ...d.data() }); });
+  }
+  const cand = [];
+  for (const [email, list] of byEmail) {
+    if (list.length < 2 || list.length > SAME_EMAIL_GROUP_MAX) continue; // a shared accountant's address is not a link
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const a = list[i], b = list[j];
+      if (a.ownGroupKey && a.ownGroupKey === b.ownGroupKey) continue;
+      if ((a.sameEmailLinks || []).some((x) => x.companyId === b.id) || (a.sameEmailDismissed || []).includes(b.id) || (b.sameEmailDismissed || []).includes(a.id)) continue;
+      cand.push({ a: a.name || a.id, b: b.name || b.id, aId: a.id, bId: b.id, email });
+    }
+  }
+  // Orbis already relates them (shared owner or manager, parent / subsidiary) → not a question.
+  const ids = [...new Set(cand.slice(0, 200).flatMap((p) => [p.aId, p.bId]))];
+  const rel = ids.length ? await Related.relatedFor(ids) : new Map();
+  const related = (x, y) => (rel.get(x)?.related || []).some((r) => r.companyId === y && r.why.some((w) => !w.startsWith("same email")));
+  const pairs = cand.slice(0, 200).filter((p) => !related(p.aId, p.bId));
+  return { pairs: pairs.slice(0, SAME_EMAIL_LIST), total: pairs.length, truncated: snap.size >= SAME_EMAIL_CHANGED_CAP || cand.length > 200 };
 }
 
 function reportText(r, { weekKey, toKey }) {
@@ -98,6 +132,11 @@ function reportText(r, { weekKey, toKey }) {
     ...(o.emailLinks.length ? [`Ligadas pelo mesmo email (confirmado): ${o.emailLinks.length}`, ...o.emailLinks.map(([a, b]) => `  · ${a} ↔ ${b}`), ""] : []),
     `Rascunhos por aprovar com empresas relacionadas: ${o.openFlags.length}`, ...o.openFlags.map((x) => `  · ${x.company}: ${x.flags.join("; ")}`), "",
     `Empresas em espera agora (mesmo endereço): ${o.heldNow.length}`, ...o.heldNow.map((x) => `  · ${x.company}${x.until ? ` até ${x.until}` : ""}${x.email ? ` (${x.email})` : ""}`), "",
+    ...(r.sameEmail ? ["3. Possíveis ligações pelo mesmo email (novas esta semana)", "",
+      `Empresas com o mesmo endereço de email que outra, sem ligação no Orbis: ${r.sameEmail.total}${r.sameEmail.truncated ? " (muitas empresas mudaram — ver o filtro)" : ""}`,
+      ...r.sameEmail.pairs.map((p) => `  · ${p.a} ↔ ${p.b} (${p.email})`),
+      ...(r.sameEmail.total > r.sameEmail.pairs.length ? [`  · … e mais ${r.sameEmail.total - r.sameEmail.pairs.length}`] : []),
+      "Confirmar ou dispensar no separador Ownership da empresa; lista completa na Search CRM, filtro \"Possible same-email link\".", ""] : []),
     "Ver no portal: Outreach → Metrics.",
   ];
   return lines.join("\n");
@@ -140,8 +179,10 @@ async function maybeRunWeekly(now, settings, { onlyTest = false, force = false }
     snaps.forEach((s) => { if (s.exists) companies.set(s.id, s.data()); });
   }
   const campaigns = new Map(campSnap.docs.map((d) => [d.id, d.data()]));
+  let sameEmail = null;
+  if ((await Feat.jobState("search.sameEmail")) !== "off") { try { sameEmail = await newSameEmailPairs(from, to); } catch (e) { logger.warn("weekly report: same email", { message: e.message }); } }
   const seen = new Set();
-  const r = buildWeeklyReport({ from, to, messages, threads: threads.filter((t) => (seen.has(t.id) ? false : seen.add(t.id))), suppressions, activities, tasks, enrolments, liveEnrolments, companies, drafts: draftSnap.docs.map((d) => d.data()), campaigns, onlyTest });
+  const r = buildWeeklyReport({ from, to, messages, threads: threads.filter((t) => (seen.has(t.id) ? false : seen.add(t.id))), suppressions, activities, tasks, enrolments, liveEnrolments, companies, drafts: draftSnap.docs.map((d) => d.data()), campaigns, onlyTest, sameEmail });
   const text = reportText(r, { weekKey: fromKey, toKey: new Date(to - 12 * 3600000).toISOString().slice(0, 10) });
   let emailed = [];
   if (settings?.weeklyReportEmail !== false) {
@@ -156,4 +197,4 @@ async function maybeRunWeekly(now, settings, { onlyTest = false, force = false }
   return { week: fromKey, emailed: emailed.length };
 }
 
-module.exports = { maybeRunWeekly, buildWeeklyReport, reportText, weekStart };
+module.exports = { maybeRunWeekly, buildWeeklyReport, reportText, weekStart, newSameEmailPairs };

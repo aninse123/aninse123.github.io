@@ -53,6 +53,8 @@ const isOurAddress = (e) => { const d = domainOf(e); return d === SENDER_DOMAIN 
 //                              campaign follow-ups set it although they are replies
 //   redirectTo               → test mode only: campaign emails go to this approved
 //                              address instead of the company (C10 rehearsal)
+//   testCampaign             → 22 Oct: a test campaign — treated as test mode for this
+//                              email (test address only, marked test) even when live
 //   person                   → Phase 5: { email, name, org, refs } — a person, not a company
 //                              (investor, broker, journalist…). No company; {{company.*}} uses
 //                              the organisation; logged on the person's CRM / Network record.
@@ -67,7 +69,7 @@ const TEST_SAMPLE_COMPANY = { name: "[Empresa]", emailName: "[Empresa]", city: "
 async function prepareEmail(opts) {
   const { callerEmail, settings, messageRef } = opts;
   const isReply = !!opts.threadId;
-  const isTest = !!settings.testMode;
+  const isTest = !!settings.testMode || !!opts.testCampaign;
   const messageId = messageRef.id;
   const countsAsOutreach = opts.countsAsOutreach ?? !isReply;
 

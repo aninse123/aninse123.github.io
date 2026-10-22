@@ -63,11 +63,11 @@ async function makeCampaign(campaign, ids, activate = true) {
   ok("…with what it would mention (X2, by its email name)", f1.mention.length === 1 && f1.mention[0].companyId === "x2");
 
   // ── The choices ──
-  let en = await camp({ action: "enrol", campaignId: k1, companyIds: ["x1", "x3", "x5"], ownerChoices: { x1: "mention", x3: "skip" } });
+  let en = await camp({ action: "enrol", campaignId: k1, companyIds: ["x1", "x3", "x5"], ownerChoices: { x1: "mention", x3: "skip" }, ownerMentions: { x1: ["x2"] } });
   const acts = (id) => docs("searchActivities").filter((a) => a.companyId === id && a.type === "outreach_owner");
   ok("enrol: X3 skipped for now (owner_skip), X1 and X5 added", en.enrolled === 2 && en.skipped.owner_skip === 1 && !get(`outreachEnrolments/${k1}_x3`));
-  ok("…X3's history says why", acts("x3").length === 1 && /Skipped for now \(owner-aware\)/.test(acts("x3")[0].content) && /said no/.test(acts("x3")[0].content));
-  ok("…X1 keeps the companies to mention and its history says so", JSON.stringify(get(`outreachEnrolments/${k1}_x1`).mention.map((x) => x.companyId)) === '["x2"]' && /mentioning/.test(acts("x1")[0].content));
+  ok("…X3's history says why", acts("x3").length === 1 && /Skipped for now — not added to "Grupo" because of related companies/.test(acts("x3")[0].content) && /said no/.test(acts("x3")[0].content));
+  ok("…X1 keeps the companies to mention and its history says so", JSON.stringify(get(`outreachEnrolments/${k1}_x1`).mention.map((x) => x.companyId)) === '["x2"]' && /the email mentions/.test(acts("x1")[0].content));
   ok("…X5 (not flagged) gets no history entry", acts("x5").length === 0);
 
   // ── The template field and the approval card ──

@@ -204,12 +204,15 @@ async function stopCompanyEnrolments(companyId, reason, status = "stopped") {
 async function save({ campaignId, campaign }, caller, opts = {}) {
   if (!campaignId) {
     const settings = await store.getSettings();
+    // 22 Oct (switch outreach.testCampaigns): a test campaign after go-live — fixed at creation.
+    const wantsTest = !!campaign?.isTest && !!opts.testCampaigns;
+    if (wantsTest && !(settings.campaignTestRecipient || (settings.testRecipients || [])[0])) fail("failed-precondition", "no_test_address", "Set the campaign test address first (Outreach → Settings → General).");
     const fields = normalizeCampaign(campaign);
     const ref = db().collection("outreachCampaigns").doc();
     await ref.set({
       ...DEFAULT_CAMPAIGN, ...fields,
       status: "draft", lockedStepIds: [], stats: { enrolled: 0 },
-      isTest: !!settings.testMode,
+      isTest: !!settings.testMode || wantsTest,
       createdAt: FieldValue.serverTimestamp(), createdBy: caller,
       updatedAt: FieldValue.serverTimestamp(), updatedBy: caller,
       startedAt: null, finishedAt: null,
@@ -497,12 +500,14 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller, ex
       endedAt: null,
       ...extra, // owner-aware outreach (22 Oct): mention [{ companyId, name }]
     });
-    tx.update(companyRef, { activeCampaignId: campaign.id, activeCampaignName: campaign.name, activeEnrolmentId: enrolRef.id });
+    // A test campaign after go-live (22 Oct) doesn't take the company's campaign slot:
+    // real campaigns can still add it, and the related-company flags ignore it.
+    if (!(campaign.isTest && !ctx.testMode)) tx.update(companyRef, { activeCampaignId: campaign.id, activeCampaignName: campaign.name, activeEnrolmentId: enrolRef.id });
     return { result: moveFrom ? "moved" : "enrolled" };
   });
 }
 
-async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices }, caller, opts = {}) {
+async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices, ownerMentions }, caller, opts = {}) {
   const campaign = await getCampaign(campaignId);
   assertEnrollable(campaign); assertCompanies(campaign);
   let ids = cleanCompanyIds(companyIds);
@@ -515,8 +520,9 @@ async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices 
   const skipped = {};
   // Owner-aware outreach (22 Oct): what was chosen for each flagged company —
   // Skip for now (not added), Proceed (added despite the flags) or Proceed and
-  // mention (added; {{owner.otherCompanies}} names the related companies). Each
-  // choice leaves an activity on the company. The flags are worked out again here.
+  // mention (added; {{owner.otherCompanies}} names the related companies ticked
+  // by hand — D5, 22 Oct; none ticked = Proceed). Each choice leaves an activity on
+  // the company. The flags are worked out again here.
   const choices = opts.ownerAware && ownerChoices && typeof ownerChoices === "object" ? ownerChoices : {};
   const chosen = ids.filter((id) => ["skip", "proceed", "mention"].includes(choices[id]));
   const plan = new Map();
@@ -527,11 +533,12 @@ async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices 
     for (const id of chosen) {
       const entry = rel.get(id);
       const flags = Related.flagsFor(entry, { campaignId, windowDays: ctx.exclusions.contactedWithinDays || 30, batch, selfId: id, now: ctx.now });
-      plan.set(id, { choice: choices[id], flags, mention: choices[id] === "mention" ? Related.mentionFrom(entry, flags) : [] });
+      const picked = ownerMentions && typeof ownerMentions === "object" ? Related.mentionPicked(entry, ownerMentions[id]) : Related.mentionFrom(entry, flags); // no ticks sent (older page) = the suggestion
+      plan.set(id, { choice: choices[id], flags, mention: choices[id] === "mention" ? picked : [] });
     }
     for (const id of chosen.filter((x) => choices[x] === "skip")) {
       skipped.owner_skip = (skipped.owner_skip || 0) + 1;
-      await ownerActivity(id, `Skipped for now (owner-aware), campaign "${campaign.name}": ${plan.get(id).flags.map((f) => f.text).join("; ") || "related companies"}`, caller, ctx.isTest);
+      await ownerActivity(id, `Skipped for now — not added to "${campaign.name}" because of related companies: ${plan.get(id).flags.map((f) => f.text).join("; ") || "related companies in outreach"}`, caller, ctx.isTest);
     }
     ids = ids.filter((x) => choices[x] !== "skip");
   }
@@ -545,7 +552,7 @@ async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices 
       const pl = plan.get(id);
       if (pl && (r.result === "enrolled" || r.result === "moved")) {
         const what = pl.flags.map((f) => f.text).join("; ");
-        await ownerActivity(id, pl.mention.length ? `Added to "${campaign.name}", mentioning ${pl.mention.map((x) => x.name).join(" and ")} (owner-aware)${what ? ": " + what : ""}` : `Added to "${campaign.name}" despite (owner-aware): ${what || "related companies"}`, caller, ctx.isTest);
+        await ownerActivity(id, pl.mention.length ? `Added to "${campaign.name}", the email mentions ${pl.mention.map((x) => x.name).join(" and ")} — related companies: ${what || "none flagged"}` : `Added to "${campaign.name}" knowing about the related companies: ${what || "related companies in outreach"}`, caller, ctx.isTest);
       }
     }
   }
@@ -821,13 +828,13 @@ async function restore(campaignId, caller) {
   return { status };
 }
 
-// I22 (8 Oct): "Run now" — test mode only. Every waiting step of this
+// I22 (8 Oct): "Run now" — test mode or a test campaign (22 Oct). Every waiting step of this
 // campaign is brought forward to now and the scheduler runs for this campaign
 // alone, ignoring the sending window (approval steps still wait for approval).
 async function runNow({ campaignId }, caller) {
   const settings = await store.getSettings();
-  if (!settings.testMode) fail("failed-precondition", "test_only", "Run now only works in test mode.");
   const campaign = await getCampaign(campaignId);
+  if (!settings.testMode && !campaign.isTest) fail("failed-precondition", "test_only", "Run now only works in test mode or on a test campaign.");
   if (campaign.status !== "active") fail("failed-precondition", "not_active", "Start the campaign first.");
   const now = new Date();
   const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).where("status", "==", "active").limit(200).get();
@@ -1249,7 +1256,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   const ownerAware = ["preview", "enrol", "related"].includes(data.action) ? await Feat.isOnFor(request, "outreach.ownerAware") : false;
   try {
     switch (data.action) {
-      case "save": return await save(data, caller, { canApprove });
+      case "save": return await save(data, caller, { canApprove, testCampaigns: !data.campaignId && !!data.campaign?.isTest && await Feat.isOnFor(request, "outreach.testCampaigns") });
       case "requestStart": return await requestStart(data, caller);
       case "returnStart": return await returnStart(data, caller);
       case "duplicate": return await duplicate(data, caller);
