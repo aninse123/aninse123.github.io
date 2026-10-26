@@ -786,7 +786,7 @@
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
-      collection, doc, query, where, orderBy, limit, onSnapshot, getDocs, getDoc, serverTimestamp, documentId, getCountFromServer
+      collection, doc, query, where, orderBy, limit, onSnapshot, getDocs, getDoc, serverTimestamp, documentId, getCountFromServer, startAfter
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import { ref, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
     import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
@@ -1587,6 +1587,8 @@
         const wasFirst = first;
         countSnap(snap, first); first = false;
         threads = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        liveCursor = snap.docs[snap.docs.length - 1] || null;
+        mergeOlder(); // 26 Oct (outreach.inboxSearchAll): older conversations found or loaded stay in the list
         if (wasFirst && deepThread) {
           if (!threads.some(t => t.id === deepThread)) {
             // Older than the 150 most recent — fetch just that one.
@@ -1665,13 +1667,62 @@
             try { const s = await getDocs(query(collection(db, 'searchCompanies'), where('nif', '==', q), limit(5))); addReads(s.size || 1); refreshReads(); if (nifSearch.nif === q) nifSearch.ids = new Set(s.docs.map(d => d.id)); } catch (e) { /* name search still works */ }
           }
           renderThreads();
-        }, 200);
+          // 26 Oct: nothing among the loaded conversations → search all of them.
+          if (isOn('outreach.inboxSearchAll') && q.length >= 3 && q !== allSearch.q && !filteredThreads('all').length) searchAllConversations(q);
+          else if (q !== allSearch.q) { allSearch.q = ''; allSearch.state = ''; allSearch.ids = null; }
+        }, 400);
       });
       $('stateChips').addEventListener('click', (e) => { const b = e.target.closest('[data-state]'); if (!b) return; stateFilter = b.dataset.state; $('stateChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
       $('inboxCat').addEventListener('change', (e) => { catFilter = e.target.value; renderThreads(); });
     }
 
     const nifSearch = { nif: null, ids: null };
+    // 26 Oct (switch outreach.inboxSearchAll): the Inbox loads the 150 most recent
+    // conversations; a search that finds nothing there looks the company up in the
+    // whole database (name, NIF, email or @domain, like Compose) and loads its
+    // conversations; "Load older conversations" pages back 150 at a time.
+    let liveCursor = null, olderCursor = null, olderDone = false;
+    const olderThreads = new Map();
+    const allSearch = { q: '', state: '', ids: null, found: 0 };
+    function mergeOlder() {
+      const have = new Set(threads.map(t => t.id));
+      for (const [id, t] of olderThreads) if (!have.has(id)) threads.push(t);
+    }
+    function addOlder(docs) {
+      docs.forEach(d => olderThreads.set(d.id, { id: d.id, ...d.data() }));
+      mergeOlder();
+    }
+    async function loadOlderThreads() {
+      const cur = olderCursor || liveCursor; if (!cur || olderDone) return;
+      const snap = await getDocs(query(collection(db, 'outreachThreads'), orderBy('lastMessageAt', 'desc'), startAfter(cur), limit(150)));
+      addReads(snap.size || 1); refreshReads();
+      if (snap.docs.length) olderCursor = snap.docs[snap.docs.length - 1];
+      if (snap.docs.length < 150) olderDone = true;
+      addOlder(snap.docs);
+      renderThreads();
+    }
+    async function searchAllConversations(raw) {
+      const q = raw.trim();
+      allSearch.q = q; allSearch.state = 'searching'; allSearch.ids = null; allSearch.found = 0; renderThreads();
+      try {
+        const cos = await findCompanies(q, 10);
+        const ids = cos.map(c => c.id);
+        const found = [];
+        for (let i = 0; i < ids.length; i += 10) {
+          const s = await getDocs(query(collection(db, 'outreachThreads'), where('companyId', 'in', ids.slice(i, i + 10)), limit(100)));
+          addReads(s.size || 1); found.push(...s.docs);
+        }
+        if (q.includes('@') && !q.startsWith('@')) {
+          const s = await getDocs(query(collection(db, 'outreachThreads'), where('contactEmail', '==', q.toLowerCase()), limit(50)));
+          addReads(s.size || 1); found.push(...s.docs);
+        }
+        refreshReads();
+        if (allSearch.q !== q) return; // a newer search started
+        addOlder(found);
+        allSearch.ids = new Set(ids); allSearch.found = new Set(found.map(d => d.id)).size; allSearch.state = 'done';
+      } catch (e) { if (allSearch.q === q) allSearch.state = 'error'; }
+      renderThreads();
+    }
     // 12 Oct: classification filter (dropdown) — "not classified" = they answered, nobody classified it yet.
     let catFilter = 'all';
     const catMatch = (t, k) => k === 'all' || (k === '__none' ? (!t.responseCategory && t.repliedAt) : t.responseCategory === k);
@@ -1679,7 +1730,7 @@
       const own = owner || ownerFilter;
       const q = norm($('inboxSearch')?.value || '').trim();
       return threads.filter(t => {
-        if (q && !(nifSearch.ids && /^\d{9}$/.test(q) && nifSearch.ids.has(t.companyId)) && ![t.companyName, t.contactEmail, t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
+        if (q && !(nifSearch.ids && /^\d{9}$/.test(q) && nifSearch.ids.has(t.companyId)) && !(allSearch.ids && norm(allSearch.q) === q && allSearch.ids.has(t.companyId)) && ![t.companyName, t.contactEmail, t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
         if (stateFilter === 'closed' && t.status !== 'closed') return false;
         if (stateFilter === 'bounced' && !['bounced', 'failed'].includes(t.status)) return false;
         if (stateFilter === 'replied' && t.status !== 'replied') return false;
@@ -1697,6 +1748,16 @@
     function renderThreads() {
       renderCatOptions();
       const list = filteredThreads();
+      const qNow = $('inboxSearch')?.value.trim() || '';
+      const wide = isOn('outreach.inboxSearchAll') && allSearch.q && allSearch.q === qNow
+        ? `<div class="hint" style="padding:6px 10px;">${allSearch.state === 'searching' ? '<span class="spin-sm"></span>Not in the latest 150 — searching all conversations…' : allSearch.state === 'error' ? 'Couldn\u2019t search all conversations — try again.' : `Searched all conversations: ${num(allSearch.found)} found${allSearch.found ? '' : ' (no company or address matches)'}.`}</div>` : '';
+      const hiddenByOwner = isOn('outreach.inboxSearchAll') && qNow && ownerFilter !== 'all' && list.length ? filteredThreads('all').length - list.length : 0;
+      const ownerHint = hiddenByOwner > 0 ? `<div class="hint" style="padding:6px 10px;">${num(hiddenByOwner)} more match under All. <button type="button" class="camp-link" id="threadShowAllMore">Show all</button></div>` : '';
+      const older = isOn('outreach.inboxSearchAll') && !olderDone && (liveCursor || olderCursor) ? `<div style="padding:10px;text-align:center;"><button type="button" class="btn btn--ghost btn--sm" id="threadLoadOlder">Load older conversations</button></div>` : '';
+      const wireExtra = () => {
+        $('threadShowAllMore')?.addEventListener('click', () => { $('ownerChips').querySelector('[data-owner="all"]')?.click(); });
+        $('threadLoadOlder')?.addEventListener('click', async (e) => { e.target.disabled = true; e.target.textContent = 'Loading…'; try { await loadOlderThreads(); } catch (err) { e.target.disabled = false; e.target.textContent = 'Load older conversations'; toast(errText(err)); } });
+      };
       if (!list.length) {
         // U5: nothing of yours here, but other people have some — say so.
         const inAll = ownerFilter !== 'all' && threads.length ? filteredThreads('all').length : 0;
@@ -1704,6 +1765,7 @@
           ? `<div class="empty">None ${ownerFilter === 'mine' ? 'of yours' : 'for this person'} — ${num(inAll)} in all conversations.<br><button type="button" class="btn btn--ghost btn--sm" id="threadShowAll" style="margin-top:8px;">Show all</button></div>`
           : `<div class="empty">${threads.length ? 'No conversations match these filters.' : 'No conversations yet. Send the first email from Compose.'}</div>`;
         $('threadShowAll')?.addEventListener('click', () => { $('ownerChips').querySelector('[data-owner="all"]')?.click(); });
+        if (wide || older) { $('threadList').insertAdjacentHTML('afterbegin', wide); $('threadList').insertAdjacentHTML('beforeend', allSearch.state === 'searching' ? '' : older); wireExtra(); }
         return;
       }
       $('threadList').innerHTML = list.map(t => {
@@ -1715,6 +1777,7 @@
         </button>`;
       }).join('');
       $('threadList').querySelectorAll('.thread').forEach(b => b.addEventListener('click', () => openThread(b.dataset.id)));
+      if (wide || ownerHint || older) { $('threadList').insertAdjacentHTML('afterbegin', wide + ownerHint); $('threadList').insertAdjacentHTML('beforeend', older); wireExtra(); }
     }
     const catLabel = (k) => (CATEGORIES.find(c => c[0] === k) || [k, k])[1];
     // The dropdown's counts follow the other filters (person, state, search).
