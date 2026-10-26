@@ -1,0 +1,123 @@
+// Email name check (26 Oct 2026, switch "search.emailNameCheck"): flags the
+// name used inside emails ({{company.shortName}}) when it looks wrong, so it is
+// caught before Email 1 — in "Add companies", on the draft to approve, on the
+// company's Overview and in a Search CRM filter.
+//
+// Warnings: an Orbis trade name naming another activity than the company's CAE
+// ("Café Tony" for a fuel station, "Restaurante o Beleza" for animal feed),
+// legal-form words left in ("SGPS", "S.A.U"), a short name that isn't in the
+// legal name ("Pv" for Portugal Capital Ventures), all capitals, extra spaces.
+// Note only: names over 45 characters (usually correct formal names). Never
+// flagged: an acronym that starts the legal name (the brand), or a name someone
+// confirmed with "Keep this name" (emailNameChecked.name).
+//
+// GENERATED from functions/outreach/email_name_check.js (+ render.js short-name helpers and
+// accents_pt.json) — edit the server file, then run Tools/email-name-check/gen_page_check.cjs (Douro Partners documents); a test checks both agree.
+
+
+// 26 Oct: each suffix needs a space or comma before it ("SOUSA, LDA" kept "Sou" before).
+const LEGAL_SUFFIX_RE = /(?:[\s,]+(?:(?:sociedade\s+)?unipessoal[\s,]+)?(?:lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i;
+const PT_SMALL_WORDS = new Set(["de", "da", "do", "das", "dos", "e", "a", "o", "em", "para", "com"]);
+function titleCasePt(s) {
+  return s.toLowerCase().split(/(\s+)/).map((w, i) => {
+    if (!w.trim()) return w;
+    if (i > 0 && PT_SMALL_WORDS.has(w)) return w;
+    return w.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("-");
+  }).join("");
+}
+function shortCompanyName(name) {
+  const n = String(name || "").trim();
+  let s = n.replace(LEGAL_SUFFIX_RE, "").replace(/[\s,-]+$/, "").trim() || n;
+  const brand = s.split(/\s+[-–—]\s+/)[0].trim();
+  if (brand.length >= 2) s = brand;
+  if (s === s.toUpperCase() && /\p{Lu}/u.test(s) && !(/^\S+$/.test(s) && s.replace(/[^\p{L}]/gu, "").length <= 4)) s = titleCasePt(s);
+  return s;
+}
+function emailNameOf(company = {}) {
+  const typed = String(company.emailName || "").trim();
+  if (typed) return typed;
+  const aka = String(company.akaName || "").split(/[;\n|]/)[0].trim();
+  if (aka && aka !== "-" && !/^n\.?a\.?$/i.test(aka)) return shortCompanyName(aka);
+  return shortCompanyName(company.name);
+}
+
+const ACCENTS = {"abacao":"abação","abegao":"abegão","abilio":"abílio","aboutshoes":"aboutshões","abraao":"abraão","abrangexcelencia":"abrangexcelência","abundancia":"abundância","academico":"académico","acafrao":"acafrão","acao":"ação","accao":"accão","aceleracao":"aceleração","acessorios":"acessórios","aclimacao":"aclimação","aco":"aço","acores":"açores","acos":"aços","acucar":"açúcar","adao":"adão","administracao":"administração","aerea":"aérea","aereos":"aéreos","africa":"áfrica","agarrinvencao":"agarrinvencão","agencia":"agência","agricola":"agrícola","agricolas":"agrícolas","agridistribuicao":"agridistribuição","agrobrejao":"agrobrejão","agropecuaria":"agropecuária","agua":"água","aguas":"águas","agueda":"águeda","albersolucoes":"albersoluções","alcobaca":"alcobaça","aldao":"aldão","algueirao":"algueirão","alimentacao":"alimentação","alipio":"alípio","aliracoes":"alirações","aluminios":"alumínios","alvao":"alvão","alvaraes":"alvarães","alvarroes":"alvarrões","amancio":"amâncio","ambiolhao":"ambiolhão","ambulancia":"ambulância","ambulancias":"ambulâncias","amelia":"amélia","america":"américa","amishoes":"amishões","analises":"análises","andre":"andré","angela":"ângela","angelica":"angélica","angelo":"ângelo","anibal":"aníbal","antao":"antão","anteiluminacao":"anteiluminação","antobetao":"antobetão","antonia":"antónia","antonio":"antónio","aplicacao":"aplicação","apolinario":"apolinário","apresentacoes":"apresentações","aptidao":"aptidão","aragao":"aragão","araujo":"araújo","armacao":"armação","armazem":"armazém","armazens":"armazéns","arrabaes":"arrabães","artshoes":"artshões","ascensao":"ascensão","asia":"ásia","assistencia":"assistência","associacao":"associação","assuncao":"assunção","ataes":"atães","atlantica":"atlântica","atlantico":"atlântico","audicao":"audição","aurelio":"aurélio","automacao":"automação","automoveis":"automóveis","autosolucoes":"autosoluções","aveloes":"avelões","avicola":"avícola","azeitao":"azeitão","azemeis":"azeméis","baiao":"baião","balao":"balão","balcao":"balcão","barao":"barão","barbara":"bárbara","beirao":"beirão","beltrao":"beltrão","betao":"betão","biologica":"biológica","bodegao":"bodegão","bolhao":"bolhão","botao":"botão","botoes":"botões","braganca":"bragança","brandao":"brandão","bras":"brás","brasao":"brasão","brazao":"brazão","brazoes":"brazões","bricoassuncao":"bricoassuncão","bricofundao":"bricofundão","bricomoncao":"bricomoncão","brincalhoes":"brincalhões","cacoes":"cações","cafe":"café","cafes":"cafés","calcado":"calçado","calcados":"calçados","camioes":"camiões","camoes":"camões","canalizacoes":"canalizações","candida":"cândida","candido":"cândido","canhoes":"canhões","cantao":"cantão","cao":"cão","capitao":"capitão","cartao":"cartão","carvao":"carvão","casao":"casão","cascao":"cascão","casteloes":"castelões","catao":"catão","celao":"celão","celia":"célia","ceramica":"cerâmica","ceramicas":"cerâmicas","cerfundao":"cerfundão","certificacao":"certificação","cesar":"césar","cestao":"cestão","ceu":"céu","chimarrao":"chimarrão","churrascao":"churrascão","cibrao":"cibrão","cinfaes":"cinfães","cintrao":"cintrão","circunstancia":"circunstância","circunvalacao":"circunvalação","classico":"clássico","claudia":"cláudia","climatizacao":"climatização","clinica":"clínica","clinicas":"clínicas","coentrao":"coentrão","coimbroes":"coimbrões","colchao":"colchão","colchoes":"colchões","colecao":"coleção","colegio":"colégio","combustiveis":"combustíveis","comercializacao":"comercialização","comercio":"comércio","compactacao":"compactação","comparacao":"comparação","comtradicao":"comtradição","comunicacao":"comunicação","comunicacoes":"comunicações","comunitario":"comunitário","conceicao":"conceição","concessao":"concessão","concessoes":"concessões","conducao":"condução","confeccoes":"confecções","confecoes":"confeções","congregacao":"congregação","conquistapadrao":"conquistapadrão","conservacao":"conservação","constelacao":"constelação","construcao":"construção","construcoes":"construções","contornopadrao":"contornopadrão","contrucoes":"contruções","conveniencia":"conveniência","convergencia":"convergência","convergencias":"convergências","coracao":"coração","coracoes":"corações","cortica":"cortiça","corticas":"cortiças","covao":"covão","covilha":"covilhã","credisolucao":"credisolução","credito":"crédito","criacao":"criação","criacoes":"criações","cristao":"cristão","cristovao":"cristóvão","cruzatendencia":"cruzatendência","cucujaes":"cucujães","cultifusao":"cultifusão","curacao":"curação","curvao":"curvão","custodio":"custódio","damiao":"damião","dao":"dão","decisao":"decisão","decisoes":"decisões","decoracao":"decoração","decoracoes":"decorações","demolicoes":"demolições","dentaria":"dentária","dentarios":"dentários","descontao":"descontão","descricao":"descrição","despornacao":"despornação","destilacao":"destilação","diagnostico":"diagnóstico","difusao":"difusão","dimensao":"dimensão","dinoracoes":"dinorações","distancia":"distância","distancias":"distâncias","distribuicao":"distribuição","dizconstrucao":"dizconstrução","dobrao":"dobrão","douroansiaes":"douroansiães","dragao":"dragão","dragoes":"dragões","dupao":"dupão","duraes":"durães","durao":"durão","durraes":"durrães","ecobeirao":"ecobeirão","economica":"económica","edicoes":"edições","edificacoes":"edificações","educacao":"educação","electrao":"electrão","electrica":"eléctrica","electrodomesticos":"electrodomésticos","electronica":"electrónica","elegancia":"elegância","eletrica":"elétrica","eletrodomesticos":"eletrodomésticos","eletronica":"eletrónica","elevacao":"elevação","embarcacoes":"embarcações","emilia":"emília","emilio":"emílio","emocao":"emoção","emocoes":"emoções","encarnacao":"encarnação","energetica":"energética","equacao":"equação","equitacao":"equitação","ergovisao":"ergovisão","escapaes":"escapães","espaco":"espaço","espacos":"espaços","espigao":"espigão","esporao":"esporão","essencia":"essência","estacao":"estação","estacoes":"estações","estancia":"estância","estetica":"estética","estevao":"estêvão","estrategia":"estratégia","eugenio":"eugénio","eurocolchao":"eurocolchão","eurocompetencia":"eurocompetência","eurodao":"eurodão","eurodemolicoes":"eurodemolições","euroracoes":"eurorações","evasao":"evasão","evidencia":"evidência","evidencias":"evidências","evolucao":"evolução","evora":"évora","excelencia":"excelência","expansao":"expansão","experiencia":"experiência","exploracao":"exploração","exportacao":"exportação","exposalao":"exposalão","expressao":"expressão","fabio":"fábio","fabrica":"fábrica","fabricas":"fábricas","fachadapadrao":"fachadapadrão","falcao":"falcão","famalicao":"famalicão","familia":"família","famoes":"famões","farmaceutica":"farmacêutica","farmacia":"farmácia","fatima":"fátima","federacao":"federação","feijao":"feijão","fermentopao":"fermentopão","fernao":"fernão","ferrao":"ferrão","fiaes":"fiães","fisica":"física","fjmourao":"fjmourão","flavio":"flávio","fontao":"fontão","formacao":"formação","fraccao":"fraccão","fracoes":"frações","fragrancia":"fragrância","frayao":"frayão","frazao":"frazão","frigorificos":"frigoríficos","fruticola":"frutícola","fundacao":"fundação","fundacoes":"fundações","fundao":"fundão","fundicao":"fundição","furacao":"furação","furao":"furão","galrao":"galrão","galvao":"galvão","garcao":"garcão","gas":"gás","genese":"génese","genetica":"genética","geracao":"geração","geracoes":"gerações","gesleiloes":"gesleilões","gestao":"gestão","gigatensao":"gigatensão","girao":"girão","gloria":"glória","goncalo":"gonçalo","goncalves":"gonçalves","graca":"graça","grafica":"gráfica","graficas":"gráficas","granicervaes":"granicervães","grao":"grão","grilobetao":"grilobetão","grossao":"grossão","guifoes":"guifões","guimaraes":"guimarães","habitacao":"habitação","hidraulica":"hidráulica","hidromarao":"hidromarão","hipolito":"hipólito","historia":"história","honorio":"honório","horacio":"horácio","hortencia":"hortência","horticolas":"hortícolas","hortofruticolas":"hortofrutícolas","hortomelao":"hortomelão","hoteis":"hotéis","iberica":"ibérica","iberico":"ibérico","ibershoes":"ibershões","icone":"ícone","ignicao":"ignição","ilhavo":"ílhavo","iluminacoes":"iluminações","ilusoes":"ilusões","imobiliaria":"imobiliária","imobiliarias":"imobiliárias","imobiliario":"imobiliário","imobiliarios":"imobiliários","imoedicoes":"imoedições","imoveis":"imóveis","importacao":"importação","impressao":"impressão","inacio":"inácio","industria":"indústria","industrias":"indústrias","ines":"inês","infancia":"infância","informacao":"informação","informatica":"informática","informaticos":"informáticos","inforpreparacao":"inforpreparação","infusao":"infusão","inovacao":"inovação","inovbetao":"inovbetão","inoxaroes":"inoxarões","inspiracao":"inspiração","instituicao":"instituição","interessantequacao":"interessantequação","intermacao":"intermação","intermediacao":"intermediação","intersatao":"intersatão","intuicao":"intuição","investigacao":"investigação","irmao":"irmão","irmaos":"irmãos","janeirobetao":"janeirobetão","jaquisao":"jaquisão","jeronimo":"jerónimo","jlimao":"jlimão","joao":"joão","jordao":"jordão","jose":"josé","julia":"júlia","juliao":"julião","julio":"júlio","laboratorio":"laboratório","laboratorios":"laboratórios","lactoguifoes":"lactoguifões","lafoes":"lafões","lamacaes":"lamacães","lazaro":"lázaro","leiloes":"leilões","leitao":"leitão","leitoes":"leitões","leixoes":"leixões","lenobetao":"lenobetão","leziria":"lezíria","lidia":"lídia","ligacao":"ligação","litocartao":"litocartão","lobao":"lobão","logistica":"logística","logistico":"logístico","louca":"louça","loucao":"loução","loucas":"louças","loule":"loulé","lourenco":"lourenço","lousa":"lousã","lubriolhao":"lubriolhão","lucia":"lúcia","lucio":"lúcio","lucrofusao":"lucrofusão","luis":"luís","luisa":"luísa","lusitania":"lusitânia","lusocolchao":"lusocolchão","macario":"macário","magalhaes":"magalhães","makereferencia":"makereferência","mansao":"mansão","manutencao":"manutenção","mapapadrao":"mapapadrão","maquinas":"máquinas","maranhao":"maranhão","marao":"marão","marcia":"márcia","marcio":"márcio","margempadrao":"margempadrão","maricartao":"maricartão","mario":"mário","maritima":"marítima","maritimos":"marítimos","marmores":"mármores","marolhao":"marolhão","materias":"matérias","mecanica":"mecânica","mecanico":"mecânico","mediacao":"mediação","medica":"médica","megamissao":"megamissão","melancia":"melância","memoria":"memória","mendonca":"mendonça","mesao":"mesão","mesquitashoes":"mesquitashões","metalao":"metalão","metalicas":"metálicas","metalizacao":"metalização","metaloadaes":"metaloadães","metalomarao":"metalomarão","metalomecanica":"metalomecânica","metalurgica":"metalúrgica","metodo":"método","militao":"militão","misericordia":"misericórdia","mjmourao":"mjmourão","mobiliario":"mobiliário","modernacao":"modernação","modulo":"módulo","moises":"moisés","momentopadrao":"momentopadrão","moncao":"moncão","monica":"mónica","montalvao":"montalvão","mouchao":"mouchão","mourao":"mourão","moveis":"móveis","movel":"móvel","mudancas":"mudanças","multifrequencia":"multifrequência","multimedia":"multimédia","multipublicacoes":"multipublicações","murtigao":"murtigão","musica":"música","mutuo":"mútuo","nabao":"nabão","nacoes":"nações","nao":"não","natalia":"natália","nautica":"náutica","navegacao":"navegação","nazare":"nazaré","ncamioes":"ncamiões","nevao":"nevão","numero":"número","nutripao":"nutripão","obidos":"óbidos","octavio":"octávio","olhao":"olhão","olisbetao":"olisbetão","olivofalcoes":"olivofalcões","opcao":"opcão","opcoes":"opcões","operfraccao":"operfraccão","opinioes":"opiniões","optica":"óptica","optivisao":"optivisão","orfao":"orfão","organica":"orgânica","organizacao":"organização","organizacoes":"organizações","ortigao":"ortigão","otica":"ótica","outeirao":"outeirão","pacos":"paços","padrao":"padrão","padroes":"padrões","paixao":"paixão","panificacao":"panificação","pao":"pão","papeis":"papéis","papelao":"papelão","participacoes":"participações","particulas":"partículas","patrao":"patrão","patricia":"patrícia","patricio":"patrício","patrimonio":"património","pavao":"pavão","pavilhao":"pavilhão","pavilhoes":"pavilhões","pavimentacoes":"pavimentações","pecas":"peças","pecuaria":"pecuária","pecuarios":"pecuários","pedrivaloes":"pedrivalões","pedrogao":"pedrogão","pegoes":"pegões","pelotao":"pelotão","penitencia":"penitência","pensao":"pensão","pensoes":"pensões","peoes":"peões","perdigao":"perdigão","perfigestao":"perfigestão","persistencia":"persistência","petroleitao":"petroleitão","petrosatao":"petrosatão","pimpao":"pimpão","pinhao":"pinhão","pinhoes":"pinhões","pizao":"pizão","pizoes":"pizões","placido":"plácido","plasticos":"plásticos","policedencias":"policedências","pontuacao":"pontuação","porfirio":"porfírio","portimao":"portimão","portugues":"português","posicao":"posição","povoas":"póvoas","pratica":"prática","praticas":"práticas","precisao":"precisão","preferencia":"preferência","prestacao":"prestação","previsao":"previsão","previsoes":"previsões","prodigipadrao":"prodigipadrão","producao":"produção","producoes":"produções","promocao":"promoção","promocoes":"promoções","prontadimensao":"prontadimensão","proteccao":"proteccão","provadistancia":"provadistância","psproducao":"psprodução","publica":"pública","publicacoes":"publicações","publicas":"públicas","publico":"público","pulsacao":"pulsação","purainstalacao":"purainstalação","puraracao":"puraração","queiros":"queirós","questao":"questão","questoes":"questões","quimica":"química","quimicos":"químicos","quinhao":"quinhão","racoes":"rações","ramalhao":"ramalhão","rapida":"rápida","rapido":"rápido","razao":"razão","razoes":"razões","reabilitacao":"reabilitação","realizacoes":"realizações","recardaes":"recardães","recuperacao":"recuperação","refeicoes":"refeições","referencia":"referência","referencias":"referências","reflexao":"reflexão","remodelacoes":"remodelações","renovaveis":"renováveis","reparacao":"reparação","reparacoes":"reparações","repeticao":"repetição","representacao":"representação","representacoes":"representações","reproducao":"reprodução","residencia":"residência","residencias":"residências","residuos":"resíduos","ressonancia":"ressonância","restauracao":"restauração","restguimaraes":"restguimarães","reticencias":"reticências","revelacao":"revelação","ribadao":"ribadão","ribapao":"ribapão","robotica":"robótica","rodao":"rodão","rodoviaria":"rodoviária","rodoviarios":"rodoviários","rogerio":"rogério","roldao":"roldão","romao":"romão","rosario":"rosário","rotacao":"rotação","rxmshoes":"rxmshões","sabichao":"sabichão","saformacao":"saformação","salao":"salão","salvacao":"salvação","sandiaes":"sandiães","sanfao":"sanfão","santarem":"santarém","sao":"são","sardao":"sardão","satao":"satão","satisfacao":"satisfação","saude":"saúde","sebastiao":"sebastião","seducoes":"seduções","seguranca":"segurança","seleccao":"seleccão","sequencia":"sequência","sequencias":"sequências","sergio":"sérgio","serracao":"serração","serrao":"serrão","servico":"serviço","servicos":"serviços","setubal":"setúbal","silverio":"silvério","simao":"simão","simbolo":"símbolo","simoes":"simões","simultaneo":"simultâneo","sincaes":"sincães","sodiportimao":"sodiportimão","solucoes":"soluções","sonia":"sónia","sotao":"sotão","souziconstrucoes":"souziconstruções","specificopcao":"specificopcão","substancia":"substância","subtraccao":"subtraccão","sugestao":"sugestão","sugestoes":"sugestões","supercombadao":"supercombadão","superfajoes":"superfajões","superguimaraes":"superguimarães","superolhao":"superolhão","supervisao":"supervisão","sustentatendencia":"sustentatendência","tania":"tânia","tbetao":"tbetão","tclafoes":"tclafões","tecnica":"técnica","tecnicas":"técnicas","tecnico":"técnico","tecnicos":"técnicos","telecomunicacoes":"telecomunicações","televisao":"televisão","temasadistancia":"temasadistância","temporao":"temporão","tendencia":"tendência","tendencias":"tendências","tensao":"tensão","tentacao":"tentação","tentilhao":"tentilhão","teofilo":"teófilo","termica":"térmica","texteis":"têxteis","textil":"têxtil","tiffamao":"tiffamão","tolerancia":"tolerância","tomas":"tomás","tome":"tomé","torrefaccao":"torrefaccão","totalpreferencia":"totalpreferência","traccao":"traccão","tradicao":"tradição","transbarracao":"transbarração","transbeirao":"transbeirão","transformacao":"transformação","transformacoes":"transformações","transitarios":"transitários","trincao":"trincão","tristao":"tristão","triunforevelacao":"triunforevelação","trovao":"trovão","tubarao":"tubarão","turistica":"turística","turisticas":"turísticas","turistico":"turístico","turisticos":"turísticos","unica":"única","unico":"único","uniracoes":"unirações","urbanizacao":"urbanização","urbanizacoes":"urbanizações","urbexpansao":"urbexpansão","valerio":"valério","valgroubetao":"valgroubetão","valorazao":"valorazão","varandao":"varandão","vedacoes":"vedações","veiculos":"veículos","velao":"velão","ventilacao":"ventilação","ventilacoes":"ventilações","verao":"verão","vestimao":"vestimão","veterinario":"veterinário","viacao":"viação","virgilio":"virgílio","visao":"visão","visoes":"visões","vitor":"vítor","vitoria":"vitória","viverfundao":"viverfundão","xarao":"xarão","ze":"zé"};
+
+const strip = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+const N = (s) => strip(s).toUpperCase();
+// Activity words → CAE prefixes where the word is normal for the company.
+const ACTIVITY = [
+  [/\b(RESTAURANTE|CHURRASQUEIRA|MARISQUEIRA|PIZZARIA|TASCA|SNACK|CERVEJARIA|ADEGA TIPICA)\b/, ["56"]],
+  [/\b(CAFE|PASTELARIA|CONFEITARIA|BAR)\b/, ["56", "107", "4724"]],
+  [/\b(HOTEL|HOSTEL|RESIDENCIAL|PENSAO|ALOJAMENTO|TURISMO RURAL)\b/, ["55"]],
+  [/\b(CLINICA|CONSULTORIO|LABORATORIO DE ANALISES)\b/, ["86", "75"]],
+  [/\b(FARMACIA)\b/, ["4773"]],
+  [/\b(ESCOLA|COLEGIO|EXPLICACOES|ACADEMIA)\b/, ["85"]],
+  [/\b(CABELEIREIRO|BARBEARIA|ESTETICA)\b/, ["9602"]],
+  [/\b(IMOBILIARIA)\b/, ["68"]],
+  [/\b(STAND|OFICINA)\b/, ["45"]],
+  [/\b(MINIMERCADO|SUPERMERCADO|MERCEARIA|TALHO|PADARIA|FRUTARIA)\b/, ["47", "1071", "101"]],
+];
+const LEGAL_FORM_IN_NAME = /(^|[\s,(])(lda|l\.da|limitada|unipessoal|s\.a\.u|s\.a\.r\.l|sgps|s\.g\.p\.s|e\.p\.e|s\.a)\.?(?=$|[\s,)])/i;
+const LONG = 45;
+
+// Portuguese accents restored word by word ("Construcoes" → "Construções").
+function accent(s) {
+  return String(s).replace(/[\p{L}]+/gu, (w) => {
+    const a = ACCENTS[w.toLowerCase()];
+    if (!a || strip(w) !== w) return w;
+    return w === w.toUpperCase() && w.length > 1 ? a.toUpperCase() : w[0] === w[0].toUpperCase() ? a[0].toUpperCase() + a.slice(1) : a;
+  });
+}
+// Where the name comes from: typed in the Search CRM, Orbis "Also known as", or the legal name.
+function nameSource(c) {
+  if (String(c?.emailName || "").trim()) return "typed";
+  const aka = String(c?.akaName || "").split(/[;\n|]/)[0].trim();
+  return aka && aka !== "-" && !/^n\.?a\.?$/i.test(aka) ? "trade" : "legal";
+}
+// The legal name's short form, with accents — the suggestion when a name is flagged.
+function suggestedName(c) {
+  const s = shortCompanyName(c?.name || "").replace(/\s*\bsociedade gestora de participa[cç][oõ]es sociais\b/gi, "").replace(/\s*\(?\bsgps\b\)?/gi, "").replace(/[\s,]+(s\.e|e\.p\.e)\.?$/i, "").replace(/\s*,\s*,/g, ",").replace(/[\s,-]+$/, "").trim();
+  return accent(s || shortCompanyName(c?.name || ""));
+}
+// A short name that starts the legal name is its brand ("TN" for "TN - TRANSPORTES").
+const startsLegal = (name, legal) => { const a = N(name).replace(/[^A-Z0-9&+]/g, ""), b = N(legal).replace(/[^A-Z0-9&+]/g, ""); return !!a && b.startsWith(a); };
+
+// [{ kind, level: "warn" | "info", text }] for the name used in emails; [] when fine or confirmed.
+function nameIssues(c) {
+  const name = emailNameOf(c || {});
+  if (!name || (c?.emailNameChecked && c.emailNameChecked.name === name)) return [];
+  const legal = String(c?.name || ""), cae = String(c?.caeCode || ""), out = [];
+  const en = N(name), lg = N(legal);
+  for (const [re, okCae] of ACTIVITY) {
+    const m = en.match(re);
+    if (m && !lg.match(re) && !okCae.some((p) => cae.startsWith(p))) { out.push({ kind: "activity", level: "warn", text: `names a ${accent(m[0].toLowerCase())} — the company's CAE is ${cae || "unknown"}` }); break; }
+  }
+  if (LEGAL_FORM_IN_NAME.test(name) && !startsLegal(name, legal)) out.push({ kind: "legalform", level: "warn", text: "legal-form words in the name (Lda, S.A., SGPS…)" });
+  const letters = name.replace(/[^\p{L}\p{N}]/gu, "");
+  if (letters.length <= 3 && !startsLegal(name, legal)) out.push({ kind: "acronym", level: "warn", text: "a short name that isn't in the legal name" });
+  if (name === name.toUpperCase() && /\p{Lu}{4,}/u.test(name) && name.trim().split(/\s+/).length > 1) out.push({ kind: "caps", level: "warn", text: "written in capitals" });
+  if (/\s{2,}|^\s|\s$/.test(name)) out.push({ kind: "spaces", level: "warn", text: "extra spaces" });
+  if (name.length > LONG && !out.length) out.push({ kind: "long", level: "info", text: `long (${name.length} characters) — fine for a formal name; shorten if the company uses a shorter one` });
+  return out;
+}
+const hasWarning = (c) => nameIssues(c).some((i) => i.level === "warn");
+
+// What "Add companies" and the draft card show for one company, or null when its name is fine.
+function nameCheckOf(c, id) {
+  const issues = nameIssues(c).filter((i) => i.level === "warn");
+  if (!issues.length) return null;
+  const sug = suggestedName(c);
+  return { companyId: id || c.id || null, companyName: c.name || "", emailName: emailNameOf(c), source: nameSource(c), issues: issues.map((i) => i.text), suggestion: sug && sug !== emailNameOf(c) ? sug : null };
+}
+
+// Search words for a name (same shape as the Search CRM's companySearchFields), added when the email name changes.
+function searchWordsFor(name) {
+  const key = strip(String(name || "").replace(/[.,\-–—&/]/g, " ")).replace(/\s+/g, " ").trim().toUpperCase();
+  const tokens = [...new Set(key.split(" ").filter((w) => w.length > 1))];
+  const prefixes = new Set();
+  for (const t of tokens) for (let i = 2; i <= t.length; i++) prefixes.add(t.slice(0, i));
+  return { tokens, prefixes: [...prefixes] };
+}
+
+export { nameIssues, hasWarning, nameCheckOf, nameSource, suggestedName, accent, searchWordsFor, emailNameOf, LONG, shortCompanyName };

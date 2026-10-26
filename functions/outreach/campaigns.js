@@ -23,6 +23,7 @@
 //                                                    a manual step's result (Phase 2b)
 //   updateTask  { taskId, assignee?, dueAt?, notes? } reassign / reschedule an open task
 //   setDoNotContact { companyId, on, reason? }       stops every campaign for the company
+//   emailName   { companyId, op: "use"|"set"|"keep", name? }  fix or confirm the name used in emails (26 Oct)
 //
 // The audience's companies are chosen in the browser (Search CRM filters over
 // the full cached list, a matched CSV, or ticked rows) and arrive as ids; the
@@ -37,6 +38,7 @@ const { companyRecipients, pickByPolicy } = require("./recipients");
 const store = require("./store");
 const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
 const Related = require("./related"); // owner-aware outreach (22 Oct, switch outreach.ownerAware)
+const EN = require("./email_name_check"); // email name check (26 Oct, switch search.emailNameCheck)
 const { addWait, sendingDaysOf, skipHolidaysOf, waitOptsOf, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
@@ -321,8 +323,11 @@ async function preview({ campaignId, companyIds }, caller, opts = {}) {
   const addable = ids.filter((id) => { const { company, alreadyEnrolled } = data.get(id); const r = evaluateCompany(company, { ...ctx, alreadyEnrolled, companyId: id }); return r.ok || r.reason === "in_other_campaign"; });
   const contacted = await contactedBefore(addable, data, campaignId);
   const owner = opts.ownerAware && addable.length ? await ownerPanel(addable, data, campaign, ctx) : null;
+  // Email name check (26 Oct): companies whose name in emails looks wrong, to fix before Email 1.
+  const nameCheck = opts.nameCheck && addable.length ? addable.map((id) => EN.nameCheckOf({ id, ...(data.get(id).company || {}) }, id)).filter(Boolean).slice(0, 300) : null;
   return {
     owner,
+    nameCheck,
     contacted,
     requested: ids.length,
     eligible,
@@ -1200,6 +1205,38 @@ async function setDoNotContact({ companyId, on, reason }, caller) {
   return { ok: true, on: !!on, stopped };
 }
 
+// Email name check (26 Oct, switch search.emailNameCheck): fix or confirm the name
+// a company gets in emails ({{company.shortName}}). "use" = the suggestion (the
+// legal name's short form, with accents), "set" = a name typed by the person
+// (taken as checked), "keep" = today's name is right (not flagged again until it
+// changes). The new name's words join the Search CRM search words; logged on the company.
+async function setEmailName({ companyId, op, name }, caller) {
+  if (!companyId || typeof companyId !== "string") fail("invalid-argument", "company_required", "Choose a company.");
+  if (!["use", "set", "keep"].includes(op)) fail("invalid-argument", "bad_op", "Choose what to do with the email name.");
+  const ref = db().doc(`searchCompanies/${companyId}`);
+  const snap = await ref.get();
+  if (!snap.exists) fail("not-found", "company_not_found", "Company not found.");
+  const c = { id: companyId, ...snap.data() };
+  const before = EN.emailNameOf(c);
+  const log = (content) => db().collection("searchActivities").add({ companyId, type: "company_edited", date: Timestamp.now(), title: null, content, status: null, createdAt: FieldValue.serverTimestamp(), createdBy: caller || "system" });
+  if (op === "keep") {
+    await ref.update({ emailNameChecked: { name: before, by: caller, at: new Date().toISOString() }, updatedAt: FieldValue.serverTimestamp(), updatedBy: caller });
+    await log(`Email name "${before}" checked and kept`);
+    return { ok: true, emailName: before, kept: true };
+  }
+  const next = op === "use" ? EN.suggestedName(c) : String(name || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!next) fail("invalid-argument", "name_required", "Type the email name.");
+  const w = EN.searchWordsFor(next);
+  await ref.update({
+    emailName: next,
+    emailNameChecked: op === "set" ? { name: next, by: caller, at: new Date().toISOString() } : FieldValue.delete(),
+    ...(w.tokens.length ? { nameTokens: FieldValue.arrayUnion(...w.tokens), namePrefixes: FieldValue.arrayUnion(...w.prefixes) } : {}),
+    updatedAt: FieldValue.serverTimestamp(), updatedBy: caller,
+  });
+  await log(`Email name changed: "${before}" → "${next}"${op === "use" ? " (the legal name)" : ""}`);
+  return { ok: true, emailName: next };
+}
+
 // Team access: the permission each action needs. Starting a campaign sends
 // emails, so it needs "approve" like approving drafts.
 const CAMPAIGN_ACTION_PERM = {
@@ -1209,6 +1246,7 @@ const CAMPAIGN_ACTION_PERM = {
   approve: "out.approve", skipDraft: "out.approve", unapprove: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
   createTask: "out.tasks", logActivity: "out.tasks",
   related: "search.view", // owner-aware outreach (22 Oct): the company page's "related companies in outreach"
+  emailName: "search.edit", // email name check (26 Oct)
 };
 function campaignActionPerm(data) {
   // Starting / resuming sends emails; finishing ends a live campaign.
@@ -1223,7 +1261,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   const canApprove = P.hasPerm(request, "out.approve");
   // Feature switches: Outreach, then company or people campaigns by audience.
   // "Do not contact" (Search CRM) is a safety control and never switched.
-  if (!["setDoNotContact", "related"].includes(data.action)) {
+  if (data.action === "emailName") await Feat.requireFeature(request, "search.emailNameCheck"); // a Search CRM change, not Outreach
+  if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
     let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
       let aud = data.campaign?.audienceType;
@@ -1254,6 +1293,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   const usePeople = ["preview", "enrol", "recipientsPreview"].includes(data.action) ? await Feat.isOnFor(request, "search.people") : false;
   // Owner-aware outreach (22 Oct): the owner panel when adding companies, and the company page's related companies.
   const ownerAware = ["preview", "enrol", "related"].includes(data.action) ? await Feat.isOnFor(request, "outreach.ownerAware") : false;
+  // Email name check (26 Oct): flagged names in "Add companies".
+  const nameCheck = data.action === "preview" ? await Feat.isOnFor(request, "search.emailNameCheck") : false;
   try {
     switch (data.action) {
       case "save": return await save(data, caller, { canApprove, testCampaigns: !data.campaignId && !!data.campaign?.isTest && await Feat.isOnFor(request, "outreach.testCampaigns") });
@@ -1261,7 +1302,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "returnStart": return await returnStart(data, caller);
       case "duplicate": return await duplicate(data, caller);
       case "delete": return await remove(data, caller);
-      case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware });
+      case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware, nameCheck });
       case "related": return await relatedOf(data, { ownerAware });
       case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople });
       case "runNow": return await runNow(data, caller);
@@ -1278,6 +1319,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "createTask": return await createTask(data, caller);
       case "logActivity": return await logActivity(data, caller);
       case "setDoNotContact": return await setDoNotContact(data, caller);
+      case "emailName": return await setEmailName(data, caller);
       default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
     }
   } catch (e) {

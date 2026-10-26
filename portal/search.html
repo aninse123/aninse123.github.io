@@ -513,6 +513,7 @@
       <select class="filter-sel" id="groupFilter" data-feature="search.ownership" title="Group = companies in the CRM with the same ultimate owner (Orbis)"><option value="">Group: Any</option><option value="2">In a group (2+ companies)</option><option value="5">Group of 5+</option><option value="10">Group of 10+</option></select>
       <select class="filter-sel" id="subsFilter" data-feature="search.ownership" title="Current shareholdings between companies that are both in the CRM"><option value="">Subsidiaries: Any</option><option value="subs">Has subsidiaries in the CRM</option><option value="parent">Has a parent in the CRM</option></select>
       <select class="filter-sel" id="ownerOtherFilter" data-feature="search.ownership" title="Its owners (any %, since 22 Oct) and managers are owners or managers of other CRM companies too. Auditors and assembly roles left out."><option value="">Owner's other companies: Any</option><option value="yes">Owner has other companies</option><option value="no">Owner has no other company</option></select>
+      <select class="filter-sel" id="emailNameFilter" data-feature="search.emailNameCheck" title="The name each company gets inside the emails ({{company.shortName}}). To check = it looks wrong (a trade name naming another activity, legal-form words, a short name not in the legal name, capitals, extra spaces). Long = over 45 characters."><option value="">Email name: Any</option><option value="warn">Email name: to check</option><option value="long">Email name: long</option></select>
       <select class="filter-sel" id="sameEmailFilter" data-feature="search.sameEmail" title="Same company email address as another CRM company (the full address). Possible link = not the same group and not yet confirmed or dismissed; the company's Ownership tab also checks the people in Orbis."><option value="">Same email: Any</option><option value="possible">Possible same-email link</option><option value="confirmed">Same email, confirmed</option></select>
       <input type="hidden" id="groupKeyFilter"><span class="badge badge-blue" id="groupKeyChip" data-feature="search.ownership" style="display:none;align-self:center;"></span>
       <button class="btn btn--ghost btn--sm" id="clearFiltersBtn">Clear all</button>
@@ -1363,6 +1364,8 @@ import { auth, db, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, g
 import { guardPage, logExport, editedBadge } from './access.js';
 import { isOn, onFeaturesChange } from './features.js';
 import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText, isRelatedDecider } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
+import { nameIssues, nameCheckOf } from './email-name-check.js'; // 26 Oct (search.emailNameCheck)
+import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-ui.js';
 import { applyDirectory } from './team-dir.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -3235,7 +3238,7 @@ function renderSummary(){
 // Shared with the filter-input listeners near the bottom of the file and with
 // the subset-of-loaded disclaimer banner below — one list, so a filter added
 // in one place is never silently missing from the other two.
-const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter','tierFilter','contactableFilter','groupFilter','subsFilter','ownerOtherFilter','groupKeyFilter','sameEmailFilter'];
+const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter','tierFilter','contactableFilter','groupFilter','subsFilter','ownerOtherFilter','groupKeyFilter','sameEmailFilter','emailNameFilter'];
 // Always states the true total (not just what's loaded) whenever the two
 // differ, right where people are actually looking — the results count next
 // to the table — rather than a separate banner that's easy to scan past.
@@ -3285,8 +3288,7 @@ function getFiltered(){
   const subsF = ownF ? document.getElementById('subsFilter')?.value || '' : '';
   const ooF   = ownF ? document.getElementById('ownerOtherFilter')?.value || '' : '';
   const gkF   = ownF ? document.getElementById('groupKeyFilter')?.value || '' : '';
-  const seF   = isOn('search.sameEmail') ? document.getElementById('sameEmailFilter')?.value || '' : ''; // 22 Oct (D1)
-  const seMap = seF === 'possible' ? sameEmailIndex(companies) : null;
+  const { seF, seMap, enF } = extraFilters();
 
   return companies.filter(c => {
     if (search) {
@@ -3338,6 +3340,7 @@ function getFiltered(){
     if (gkF && ownGroupKey(c)?.value !== gkF) return false;
     if (seF === 'confirmed' && !(c.sameEmailLinks || []).length) return false;
     if (seF === 'possible' && !hasPossibleSameEmail(c, seMap)) return false;
+    if (enF && !nameIssues(c).some(i => enF === 'warn' ? i.level === 'warn' : i.kind === 'long')) return false;
     return true;
   });
 }
@@ -4008,7 +4011,7 @@ function renderLegalCompliance(c){
         <div class="info-row"><span class="k">Size classification</span><span class="v">${esc(c.sizeClassification||'—')}</span></div>
         <div class="info-row"><span class="k">Previous company name</span><span class="v">${esc(c.previousCompanyName||'—')}</span></div>
         <div class="info-row"><span class="k">Also known as</span><span class="v">${esc(c.akaName||'—')}</span></div>
-        <div class="info-row"><span class="k">Email name</span><span class="v">${esc(c.emailName || autoEmailName(c))}${c.emailName ? '' : ' <span style="color:var(--text-light);font-size:0.75rem;">(automatic)</span>'}</span></div>
+        <div class="info-row"><span class="k">Email name</span><span class="v">${esc(c.emailName || autoEmailName(c))}${c.emailName ? '' : ' <span style="color:var(--text-light);font-size:0.75rem;">(automatic)</span>'}${isOn('search.emailNameCheck') ? nameCheckNote(nameIssues(c), nameCheckOf(c, c.id), c.id, !window.pageAccess || window.pageAccess.can('search.edit')) : ''}</span></div>
         <div class="info-row"><span class="k">Owners in emails</span><span class="v">${esc(emailOwnersText(c.emailOwners) || '—')}</span></div>
         <div class="info-row"><span class="k">Orbis release date</span><span class="v">${c.orbisReleaseDate?fmtDate(c.orbisReleaseDate):'—'}</span></div>
       </div>
@@ -4983,6 +4986,12 @@ function sameEmailIndex(list){
   const m = new Map();
   for (const x of list) { const e = sameEmailKey(x); if (e.includes('@')) { if (!m.has(e)) m.set(e, []); m.get(e).push(x); } }
   return m;
+}
+// The Same email (22 Oct) and Email name (26 Oct) list filters, each behind its switch.
+function extraFilters(){
+  const seF = isOn('search.sameEmail') ? document.getElementById('sameEmailFilter')?.value || '' : '';
+  const enF = isOn('search.emailNameCheck') ? document.getElementById('emailNameFilter')?.value || '' : '';
+  return { seF, seMap: seF === 'possible' ? sameEmailIndex(companies) : null, enF };
 }
 function hasPossibleSameEmail(c, index){
   const conf = new Set((c.sameEmailLinks || []).map(x => x.companyId)), dis = new Set(c.sameEmailDismissed || []);
@@ -11079,6 +11088,12 @@ let outreachCfg = null; // { settings, senders, templates }, loaded on first ope
 // this only chooses the ids and shows its summary. The filters are saved on the
 // campaign as a portable spec so Metrics can compare audiences later.
 const callOutreachCampaign = httpsCallable(outreachFns, 'outreachCampaign', { timeout: 300000 });
+// Email name check (26 Oct): one handler for the Overview note and the Add companies section;
+// the fixed name goes into the loaded copy so the list and filters follow at once.
+wireNameCheck(document.body, (payload) => callOutreachCampaign(payload), (id, r) => {
+  const c = companies.find(x => x.id === id);
+  if (c) { c.emailName = r.emailName; c.emailNameChecked = { name: r.emailName }; }
+});
 const CAMP_EXCL_LABELS = {
   not_found: 'not found', already_in_campaign: 'already in this campaign', do_not_contact: 'marked do not contact', not_contactable: 'marked not contactable',
   unsubscribed: 'unsubscribed', bounced: 'email bounced before', suppressed: 'on the suppression list',
@@ -11129,6 +11144,7 @@ function buildFilterSpec(){
     if (v('groupKeyFilter')) add('ownGroupKey', 'eq', v('groupKeyFilter'), `same group as ${ownGroupKeyLabel || v('groupKeyFilter')}`);
   }
   // Same email isn't a stored field, so it is named but not kept for new matches.
+  if (v('emailNameFilter')) label.push(v('emailNameFilter') === 'warn' ? 'email name to check (not kept for new matches)' : 'long email name (not kept for new matches)');
   if (v('sameEmailFilter')) label.push(v('sameEmailFilter') === 'confirmed' ? 'same email, confirmed (not kept for new matches)' : 'possible same-email link (not kept for new matches)');
   return { spec, label: label.join(' · ') };
 }
@@ -11248,6 +11264,7 @@ async function openAddToCampaign(opts){
           ${preview.eligible || preview.conflictCount ? `<p style="font-size:0.8rem;color:var(--text-light);margin-top:10px;">At ${fmt(preview.newPerDay)} new companies a day, everyone starts within about ${fmt(Math.max(1, preview.eligible ? preview.daysToStart : preview.daysToStartIfMoved))} sending day(s)${camp?.status === 'draft' ? ', once the campaign is started' : ''}.</p>` : ''}`;
         // 22 Oct (outreach.ownerAware): related companies, with Proceed / Skip for now / Proceed and mention.
         if (preview.owner?.count) { body.insertAdjacentHTML('beforeend', ownerPanelHtml(preview.owner)); wireOwnerPanel(body); }
+        if (preview.nameCheck?.length) body.insertAdjacentHTML('beforeend', nameCheckPanelHtml(preview.nameCheck, !window.pageAccess || window.pageAccess.can('search.edit'))); // 26 Oct
         if (!preview.eligible && !preview.conflictCount) { next.textContent = 'Close'; next.disabled = false; next.onclick = () => showEl('addCampModal', false); return; }
         next.textContent = 'Add companies'; next.disabled = false;
         return;
@@ -11290,7 +11307,7 @@ const EN_SMALL = new Set(['de','da','do','das','dos','e','a','o','em','para','co
 function enTitle(s){ return s.toLowerCase().split(/(\s+)/).map((w,i)=>{ if(!w.trim()) return w; if(i>0 && EN_SMALL.has(w)) return w; return w.split('-').map(p=>p.charAt(0).toUpperCase()+p.slice(1)).join('-'); }).join(''); }
 function enShort(name){
   const n = String(name||'').trim();
-  let s = n.replace(/[\s,]*(,?\s*(unipessoal|sociedade unipessoal)?\s*,?\s*(lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i, '').replace(/[\s,-]+$/, '').trim() || n;
+  let s = n.replace(/(?:[\s,]+(?:(?:sociedade\s+)?unipessoal[\s,]+)?(?:lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i, '') // 26 Oct: a suffix needs a space or comma before it.replace(/[\s,-]+$/, '').trim() || n;
   const brand = s.split(/\s+[-–—]\s+/)[0].trim();
   if (brand.length >= 2) s = brand;
   if (s === s.toUpperCase() && /\p{Lu}/u.test(s) && !(/^\S+$/.test(s) && s.replace(/[^\p{L}]/gu, '').length <= 4)) s = enTitle(s);

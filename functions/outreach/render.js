@@ -8,7 +8,8 @@
 const { escapeHtml } = require("./util");
 const { inCityOf, toCityOf } = require("./places");
 
-const LEGAL_SUFFIX_RE = /[\s,]*(,?\s*(unipessoal|sociedade unipessoal)?\s*,?\s*(lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i;
+// 26 Oct: each suffix needs a space or comma before it ("SOUSA, LDA" kept "Sou" before).
+const LEGAL_SUFFIX_RE = /(?:[\s,]+(?:(?:sociedade\s+)?unipessoal[\s,]+)?(?:lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i;
 
 const PT_SMALL_WORDS = new Set(["de", "da", "do", "das", "dos", "e", "a", "o", "em", "para", "com"]);
 

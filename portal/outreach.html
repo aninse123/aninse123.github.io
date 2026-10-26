@@ -781,6 +781,7 @@
     import { guardPage } from './access.js';
     import { isOn } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
+    import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
     import { applyDirectory } from './team-dir.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -1151,6 +1152,9 @@
     const callSend = httpsCallable(fns, 'outreachSend');
     const callAdmin = httpsCallable(fns, 'outreachAdmin');
     const callCampaign = httpsCallable(fns, 'outreachCampaign', { timeout: 300000 });
+    // Email name check (26 Oct): one handler for the Add companies section and the draft cards.
+    const canEditCompanies = () => !window.pageAccess || window.pageAccess.can('search.edit');
+    wireNameCheck(document.body, (payload) => callCampaign(payload));
     const callAi = httpsCallable(fns, 'outreachAi', { timeout: 120000 });
     const callRecurring = httpsCallable(fns, 'outreachRecurring', { timeout: 300000 });
 
@@ -4608,6 +4612,7 @@ Optional note for them:`, '');
           </dl>
           ${contactedHtml(p.contacted, 'acLeaveOut')}
           ${ownerPanelHtml(p.owner)}
+          ${isOn('search.emailNameCheck') ? nameCheckPanelHtml(p.nameCheck, canEditCompanies()) : ''}
           ${p.conflictCount ? `<div class="field"><label>Companies already in another campaign</label>
             <label class="checkline"><input type="radio" name="acConflict" value="skip" checked> <span>Leave them where they are (recommended)</span></label>
             <label class="checkline"><input type="radio" name="acConflict" value="move"> <span>Move them here — their other campaign stops for them</span></label></div>` : ''}
@@ -4975,8 +4980,9 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
           <details${risk ? ' open' : ''} style="margin-top:6px;"><summary style="cursor:pointer;">Related companies and their addresses</summary>
           <ul>${op.related.map(r => `<li>${relatedLine(r)}${r.email ? ` · <span class="mono">${esc(r.email)}</span> <button type="button" class="camp-link" data-copyemail="${esc(r.email)}" style="font-size:0.74rem;">Copy address</button>` : ''}</li>`).join('')}</ul></details>
           ${op.lead ? `<div class="hint" style="margin-top:4px;">Suggested lead company: ${leadText(op.lead)}</div>` : ''}</div>` : '';
+      const ncHtml = isOn('search.emailNameCheck') && d.nameCheck ? nameCheckLine(d.nameCheck, d.companyId, canEditCompanies()) : ''; // 26 Oct
       const mentionHtml = isOn('outreach.ownerAware') && d.checkMention && !op?.related?.length ? '<div style="margin:0 0 6px;"><span class="pill pill--warn" title="The email names the related companies chosen when this company was added ({{owner.otherCompanies}})">Check the mention of the related companies</span></div>' : '';
-      return mentionHtml + opHtml + `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
+      return ncHtml + mentionHtml + opHtml + `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
     }
     let approveCtxLoading = false;
     // 19 Oct (one inbox): companies whose first email waits because their address

@@ -35,6 +35,7 @@ const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, skipHolidaysOf, skipM
 const { isMunicipalHoliday } = require("./places");
 const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
 const Related = require("./related"); // owner-aware outreach (22 Oct, switch outreach.ownerAware)
+const EN = require("./email_name_check"); // email name check (26 Oct, switch search.emailNameCheck)
 const Report = require("./report"); // owner-aware outreach, Stage 5: the Monday report
 const { normEmail } = require("./util");
 
@@ -130,6 +131,17 @@ async function ownerPanelOnDraft(messageRef, e, campaign, variantBody) {
     const mention = (e.mention || []).map((x) => x.name).filter(Boolean); // D6: "This email mentions: X"
     if (related.length || checkMention) await messageRef.update({ ownerPanel: { related, flags, lead: entry.lead, mention }, ...(checkMention ? { checkMention: true } : {}) });
   } catch (err) { logger.warn("outreachScheduler: owner panel", { message: err.message }); }
+}
+// Email name check (26 Oct, switch "search.emailNameCheck"): a draft whose
+// company's email name looks wrong carries the warning to the approval card.
+// Best effort.
+async function nameCheckOnDraft(messageRef, e) {
+  try {
+    const snap = await db().doc(`searchCompanies/${e.companyId}`).get();
+    if (!snap.exists) return;
+    const nc = EN.nameCheckOf({ id: snap.id, ...snap.data() }, snap.id);
+    if (nc) await messageRef.update({ nameCheck: { emailName: nc.emailName, source: nc.source, issues: nc.issues, suggestion: nc.suggestion } });
+  } catch (err) { logger.warn("outreachScheduler: name check", { message: err.message }); }
 }
 // Owner-aware outreach, Stage 4: when a company gets its first email, its related
 // companies (up to 9) get "Group contacted via X" in their history — an automatic
@@ -230,7 +242,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware")]);
+  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
@@ -501,6 +513,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       if (wantsDraft) {
         await saveDraft(p, { campaign: campaignRef });
         if (allowed(ownerState, campaign) && e.companyId) await ownerPanelOnDraft(messageRef, e, campaign, variantBody);
+        if (allowed(nameState, campaign) && e.companyId) await nameCheckOnDraft(messageRef, e); // 26 Oct (search.emailNameCheck)
         await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id, senderId, [`variants.${step.id}`]: p.variantKey, lastError: null, ...(e.holdKind ? { holdKind: null, holdReason: null } : {}) });
         report.drafts++;
         continue;
