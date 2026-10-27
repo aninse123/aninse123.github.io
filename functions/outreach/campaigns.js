@@ -388,9 +388,10 @@ async function contactedBefore(ids, data, campaignId) {
   const last = new Map();   // companyId → { at, email, campaignId, isTest }
   for (const group of chunks(ids, 30)) {
     const snap = await db().collection("outreachThreads").where("companyId", "in", group)
-      .select("companyId", "contactEmail", "lastMessageAt", "createdAt", "campaignId", "isTest").get();
+      .select("companyId", "contactEmail", "lastMessageAt", "createdAt", "campaignId", "isTest", "status").get();
     snap.docs.forEach((d) => {
       const t = d.data(), at = tsMs(t.lastMessageAt || t.createdAt);
+      if (t.status === "failed") return; // 27 Oct: its email never went out — not a contact
       const cur = last.get(t.companyId);
       if (!cur || at > cur.at) last.set(t.companyId, { at, email: t.contactEmail || "", campaignId: t.campaignId || null, isTest: !!t.isTest });
     });
@@ -644,8 +645,9 @@ async function recentlyEmailed(emails, days) {
       db().collection("outreachThreads").where("contactEmail", "in", group).get(),
       db().collection("outreachPeopleSends").where("recipients", "array-contains-any", group).get(),
     ]);
-    byPerson.docs.forEach((d) => { if (ms(d.data().lastMessageAt) >= cutoff) out.add(d.data().personEmail); });
-    byContact.docs.forEach((d) => { if (ms(d.data().lastMessageAt) >= cutoff) out.add(d.data().contactEmail); });
+    // 27 Oct: a conversation whose email failed (never went out) isn't an email.
+    byPerson.docs.forEach((d) => { if (d.data().status !== "failed" && ms(d.data().lastMessageAt) >= cutoff) out.add(d.data().personEmail); });
+    byContact.docs.forEach((d) => { if (d.data().status !== "failed" && ms(d.data().lastMessageAt) >= cutoff) out.add(d.data().contactEmail); });
     sends.docs.forEach((d) => { if (ms(d.data().at) >= cutoff) (d.data().recipients || []).forEach((e) => group.includes(e) && out.add(e)); });
   }
   return out;

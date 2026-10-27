@@ -37,6 +37,7 @@ async function recentByAddress(emails, { sinceMs, isTest }) {
     seen.add(d.id);
     const t = d.data();
     if (!!t.isTest !== !!isTest) return;
+    if (t.status === "failed") return; // 27 Oct: its email never went out — not a contact
     const at = ms(t.lastMessageAt || t.createdAt);
     if (at < sinceMs) return;
     const addrs = new Set([...(t.addresses || []), ...(t.isTest ? [] : [normEmail(t.contactEmail)])].filter(Boolean));

@@ -295,7 +295,14 @@ async function prepareEmail(opts) {
 // campaign: { campaignId, enrolmentId, stepId, pathId?, pathName? } for scheduler sends (null for manual).
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 async function deliverEmail(p, { campaign = null } = {}) {
-  const { isReply, isTest, messageRef, messageId, threadRef, thread, companyId, company, senderId, sender, to, toDomain, headers } = p;
+  const { isReply, isTest, messageRef, messageId, thread, companyId, company, senderId, sender, to, toDomain, headers } = p;
+  let { threadRef } = p;
+  // 27 Oct: a campaign email retried after Resend refused it goes into the conversation
+  // the failed try left — one company, one email, one conversation — not a new one.
+  if (!isReply && campaign?.enrolmentId) {
+    const prev = await db().collection("outreachThreads").where("enrolmentId", "==", campaign.enrolmentId).where("status", "==", "failed").limit(1).get();
+    if (!prev.empty) threadRef = prev.docs[0].ref;
+  }
   const owner = sender.owner || null;
   const source = campaign ? "campaign" : "manual";
   const now = FieldValue.serverTimestamp();

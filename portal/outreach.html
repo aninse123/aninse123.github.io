@@ -2869,7 +2869,8 @@
     function metricsScope() {
       const days = Number($('mPeriod').value), withTest = $('mTest').checked;
       const since = days ? Date.now() - days * 86400000 : 0;
-      const threads = metricsData.threads.filter(t => t.firstTouchAt && tsMs(t.firstTouchAt) >= since && (withTest || !t.isTest));
+      // 27 Oct: a conversation whose email failed at Resend (never went out) isn't a first email.
+      const threads = metricsData.threads.filter(t => t.firstTouchAt && t.status !== 'failed' && tsMs(t.firstTouchAt) >= since && (withTest || !t.isTest));
       const messages = metricsData.messages.filter(m => tsMs(m.createdAt) >= since && (withTest || !m.isTest) && m.via !== 'gmail');
       return { threads, messages, withTest };
     }
