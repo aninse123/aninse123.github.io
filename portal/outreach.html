@@ -779,7 +779,7 @@
   <script type="module">
     import { auth, db, storage, addReads, updateDoc, setDoc, addDoc, deleteDoc } from './firebase-config.js';
     import { guardPage } from './access.js';
-    import { isOn } from './features.js';
+    import { isOn, stateOf, currentFlags } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
     import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
@@ -5738,10 +5738,14 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <span class="hint" id="pathCheckNote">${multi ? 'Paths are checked top to bottom; the first that matches takes the company when it starts, and it keeps that path.' : 'Add a path to give some companies a different sequence (by fit score, revenue, EBITDA, tier, sector, region…).'}</span>
         </div>` : '';
       const offWithPaths = !pathsOn && hasPaths(c);
+      // 27 Oct: background jobs follow the production setting — say so when companies can't start.
+      const prodPaths = stateOf(currentFlags(), 'outreach.paths', 'production');
+      const heldNote = hasPaths(c) && !(prodPaths === 'on' || (prodPaths === 'test' && c.isTest)) ? `<div class="banner banner--warn" style="margin-bottom:12px;"><span>Companies won't start yet: "Campaign paths" is <b>${esc(prodPaths === 'test' ? 'Test' : 'Off')}</b> in production, and the scheduler follows the production setting${prodPaths === 'test' ? ' (Test = test campaigns only)' : ''}. They wait — nobody is left out — until it is ${c.isTest ? 'Test or On' : 'On'} (Team → Features).</span></div>` : '';
       $('cs-sequence').innerHTML = `
         <div class="card">
           ${noTpl ? '<div class="banner banner--warn" style="margin-bottom:12px;"><span>No active email templates yet — write one in Settings → Templates first.</span></div>' : ''}
           ${offWithPaths ? '<div class="banner banner--warn" style="margin-bottom:12px;"><span>This campaign has paths, but "Campaign paths" is off here — the sequence is shown read-only.</span></div>' : ''}
+          ${heldNote}
           ${bar}
           <div id="seqSteps">${view === 'tree' ? tree() : view === 'side' ? `<div class="paths-side"><div class="steps">${listHtml}</div>${tree()}</div>` : `<div class="steps">${listHtml}</div>`}</div>
           ${editable && !offWithPaths ? `<div class="actions" style="margin-top:14px;align-items:center;">
@@ -5859,7 +5863,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         } catch (e) { unbusy(); toast(errText(e)); }
       });
       root.querySelectorAll('[data-tree-step],[data-tree-path]').forEach(b => b.addEventListener('click', () => {
-        if (seqView === 'tree') { seqView = 'side'; renderSequence(); }
+        if (seqView === 'tree') { seqView = 'side'; try { localStorage.setItem('seqView', seqView); } catch (e) {} renderSequence(); }
         const t = b.dataset.treeStep != null ? root.querySelector(`.step[data-i="${b.dataset.treeStep}"]`) : root.querySelector(`.path-card[data-pid="${b.dataset.treePath}"]`);
         if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1600); }
       }));

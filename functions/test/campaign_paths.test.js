@@ -114,7 +114,10 @@ const STEPS = [
   flags("off");
   calls.length = 0;
   await run("2026-09-29T10:30:00+01:00");
-  ok("switch Off when companies start: no path is chosen — they take \"Everyone else\" (the original sequence)", !get(`outreachEnrolments/${k3}_high`).pathId && sent().some((s) => /^mid1 /.test(s)));
+  ok("switch Off when companies would start: a campaign with paths starts nobody — they wait (never left out by mistake)", get(`outreachEnrolments/${k3}_high`).status === "pending" && !sent().length);
+  flags("on"); calls.length = 0;
+  await run("2026-09-30T10:30:00+01:00");
+  ok("…switch back On: they start on their path", get(`outreachEnrolments/${k3}_high`).pathId === "hi" && sent().some((s) => /^hi1 /.test(s)));
 
   // ── A task rule inside a path ──
   seed(); flags("on");

@@ -84,6 +84,9 @@ async function startPending(campaign, now, report) {
   const perDay = campaign.audienceType === "people" ? (campaign.pacing?.maxPerDay || campaign.pacing?.newPerDay || 20) : (campaign.pacing?.newPerDay || 20);
   const room = perDay - already;
   if (room <= 0 || !campaign.steps?.length) return;
+  // 27 Oct: a campaign with paths starts nobody while "Campaign paths" is off for it
+  // (production setting; Test = test campaigns) — its companies wait, never left out by mistake.
+  if ((campaign.paths || []).length > 1 && !campaign._pathsOn) { report.heldPaths = (report.heldPaths || 0) + 1; return; }
   const snap = await db().collection("outreachEnrolments")
     .where("campaignId", "==", campaign.id).where("status", "==", "pending")
     .orderBy("enrolledAt", "asc").limit(room).get();
