@@ -1246,35 +1246,39 @@ async function setEmailName({ companyId, op, name }, caller) {
 // companies of the campaign per path, in three groups (27 Oct, André): "to start"
 // (waiting — the path they would take today with the paths being edited, unsaved),
 // "in progress" (live, their stored path) and "closed" (finished, stopped or left
-// out by the paths; leftOut is the part of closed the paths left out). Up to 2,000
-// waiting companies are checked.
+// out by the paths; leftOut is the part of closed the paths left out). "elsewhere"
+// (27 Oct, T4b): placed companies the paths as they are now would put on another
+// path — placed under earlier conditions or older data; they keep their path.
+// Up to 2,000 waiting and 2,000 placed companies are checked.
 async function pathsPreview({ campaignId, paths, steps }) {
   const campaign = await getCampaign(campaignId);
   const draft = { ...campaign, paths: paths !== undefined ? normalizePaths(paths, (steps || campaign.steps || []).map((s) => ({ ...s, pathId: s.pathId || ELSE_PATH }))) : campaign.paths };
   const list = pathsOf(draft);
-  const counts = Object.fromEntries(list.map((p) => [p.id, { waiting: 0, active: 0, closed: 0, leftOut: 0 }]));
+  const counts = Object.fromEntries(list.map((p) => [p.id, { waiting: 0, active: 0, closed: 0, leftOut: 0, elsewhere: 0 }]));
   const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).limit(5000).get();
-  const waiting = [];
+  const waiting = [], placed = [];
   for (const d of snap.docs) {
     const e = d.data();
     if (e.status === "pending") { if (e.companyId) waiting.push(e.companyId); continue; }
     if (["removed", "moved"].includes(e.status)) continue;
     const id = counts[e.pathId || ELSE_PATH] ? (e.pathId || ELSE_PATH) : null;
     if (!id) continue;
+    if (e.companyId) placed.push([e.companyId, id]);
     if (LIVE_ENROLMENT.includes(e.status)) counts[id].active++;
     else { counts[id].closed++; if (/^Left out by the campaign's paths/.test(e.stopReason || "")) counts[id].leftOut++; }
   }
   const byTier = list.some((p) => (p.filters || []).some((f) => f.field === "targetTier"));
   const tierRules = byTier ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
-  const ids = waiting.slice(0, 2000);
-  for (let i = 0; i < ids.length; i += 100) {
-    const snaps = await db().getAll(...ids.slice(i, i + 100).map((id) => db().doc(`searchCompanies/${id}`)));
-    for (const s of snaps) {
-      const c = s.exists ? s.data() : {};
-      const p = choosePath(draft, byTier ? { ...c, targetTier: tierOf(c, tierRules) } : c).path;
-      counts[p.id].waiting++;
+  const ids = waiting.slice(0, 2000), placedIds = placed.slice(0, 2000);
+  const pathNow = async (list2, each) => {
+    for (let i = 0; i < list2.length; i += 100) {
+      const part = list2.slice(i, i + 100);
+      const snaps = await db().getAll(...part.map((x) => db().doc(`searchCompanies/${Array.isArray(x) ? x[0] : x}`)));
+      snaps.forEach((s, j) => { const c = s.exists ? s.data() : {}; each(choosePath(draft, byTier ? { ...c, targetTier: tierOf(c, tierRules) } : c).path, part[j]); });
     }
-  }
+  };
+  await pathNow(ids, (p) => { counts[p.id].waiting++; });
+  await pathNow(placedIds, (p, [, stored]) => { if (p.id !== stored) counts[stored].elsewhere++; });
   return { paths: list.map((p) => ({ id: p.id, name: p.name, ...counts[p.id], started: counts[p.id].active + counts[p.id].closed, steps: pathSteps(draft, p.id).length })), waitingChecked: ids.length, waitingTotal: waiting.length };
 }
 

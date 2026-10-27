@@ -5889,7 +5889,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           const r = (await callCampaign({ action: 'pathsPreview', campaignId: c.id, paths: pathsDraft, steps: seqDraft })).data;
           pathCounts = Object.fromEntries(r.paths.map(p => [p.id, p]));
           renderSequence();
-          $('pathCheckNote').textContent = `${r.paths.map(p => `${p.name}: ${pathCountText(p)}`).join(' — ')}${r.waitingTotal > r.waitingChecked ? ` (first ${num(r.waitingChecked)} of ${num(r.waitingTotal)} to start checked)` : ''}. "To start" uses today's data and the paths as edited; in progress and closed keep the path they were given.`;
+          $('pathCheckNote').textContent = `${r.paths.map(p => `${p.name}: ${pathCountText(p)}`).join(' — ')}${r.waitingTotal > r.waitingChecked ? ` (first ${num(r.waitingChecked)} of ${num(r.waitingTotal)} to start checked)` : ''}. "To start" uses today's data and the paths as edited; in progress and closed keep the path they were given${r.paths.some(p => p.elsewhere) ? ' — "wouldn\'t be placed here now" means they were placed under earlier conditions or older data' : ''}.`;
         } catch (e) { unbusy(); toast(errText(e)); }
       });
       root.querySelectorAll('[data-tree-step],[data-tree-path]').forEach(b => b.addEventListener('click', () => {

@@ -86,6 +86,8 @@ const STEPS = [
   ok("\"Everyone else\" with no steps leaves them out — never contacted", en("low").status === "completed" && /Left out by the campaign's paths \("Everyone else"\)/.test(en("low").stopReason) && en("none").status === "completed");
   pv = await camp({ action: "pathsPreview", campaignId: k });
   ok("Check who goes where after the start (27 Oct): in progress vs closed, left out counted — Everyone else shows its 2 closed (2 left out), not 0", cnt("hi", "active") === 2 && cnt("md", "active") === 1 && cnt("main", "closed") === 2 && cnt("main", "leftOut") === 2 && cnt("main", "waiting") === 0 && cnt("main", "started") === 2);
+  pv = await camp({ action: "pathsPreview", campaignId: k, paths: [{ id: "hi", name: "High fit", filters: [{ field: "fitScore", op: "gte", value: 80 }] }, { id: "md", name: "Middle", filters: [{ field: "fitScore", op: "range", value: [25, 75] }] }, { id: "main" }], steps: STEPS });
+  ok("…with conditions edited after the start (T4b): High fit keeps its 2, 1 of them (fit 75) wouldn't be placed there now; nothing else flagged", cnt("hi", "active") === 2 && cnt("hi", "elsewhere") === 1 && cnt("md", "elsewhere") === 0 && cnt("main", "elsewhere") === 0);
   const sent = () => calls.filter((c) => c.url.endsWith("/emails") && c.method === "POST").map((c) => `${String(c.body.text || "").trim().split(/[.\n]/)[0]} ${c.body.subject}`); // the template's first word (hi1, mid2…) + subject
   ok("first emails follow the paths: High fit gets hi1, Middle gets mid1", sent().some((s) => /^hi1 /.test(s)) && sent().some((s) => /^mid1 /.test(s)) && !sent().some((s) => /^mid1 Empresa High/i.test(s)));
   calls.length = 0;

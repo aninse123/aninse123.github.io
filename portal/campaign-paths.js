@@ -48,7 +48,9 @@ export function pathCountText(n) {
   const t = pathTotal(n), num = (x) => x.toLocaleString('en');
   const parts = [n.waiting ? `${num(n.waiting)} to start` : '', n.active ? `${num(n.active)} in progress` : '',
     n.closed ? `${num(n.closed)} closed${n.leftOut ? ` (${n.leftOut === n.closed ? 'all' : num(n.leftOut)} left out)` : ''}` : ''].filter(Boolean);
-  return `${num(t)} compan${t === 1 ? 'y' : 'ies'}${parts.length ? `: ${parts.join(' · ')}` : ''}`;
+  // Placed under earlier conditions (or older data): they keep this path, but these conditions wouldn't put them here (27 Oct, T4b).
+  const away = n.elsewhere ? ` — ${n.elsewhere === n.active + n.closed ? (n.elsewhere === 1 ? 'it' : 'all of them') : `${num(n.elsewhere)} of them`} wouldn't be placed here now` : '';
+  return `${num(t)} compan${t === 1 ? 'y' : 'ies'}${parts.length ? `: ${parts.join(' · ')}` : ''}${away}`;
 }
 // The example shown inside each box, and the unit after it (27 Oct, André: one way for all).
 export function placeholderOf(key) {
