@@ -1243,21 +1243,26 @@ async function setEmailName({ companyId, op, name }, caller) {
 }
 
 // Campaign paths (27 Oct, switch outreach.paths): "Check who goes where" — the
-// companies of the campaign per path: those already started (their stored path)
-// and those still waiting (the path they would take today with the paths being
-// edited, unsaved). Up to 2,000 waiting companies are checked.
+// companies of the campaign per path, in three groups (27 Oct, André): "to start"
+// (waiting — the path they would take today with the paths being edited, unsaved),
+// "in progress" (live, their stored path) and "closed" (finished, stopped or left
+// out by the paths; leftOut is the part of closed the paths left out). Up to 2,000
+// waiting companies are checked.
 async function pathsPreview({ campaignId, paths, steps }) {
   const campaign = await getCampaign(campaignId);
   const draft = { ...campaign, paths: paths !== undefined ? normalizePaths(paths, (steps || campaign.steps || []).map((s) => ({ ...s, pathId: s.pathId || ELSE_PATH }))) : campaign.paths };
   const list = pathsOf(draft);
-  const counts = Object.fromEntries(list.map((p) => [p.id, { started: 0, waiting: 0 }]));
-  const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).where("status", "in", LIVE_ENROLMENT).limit(5000).get();
+  const counts = Object.fromEntries(list.map((p) => [p.id, { waiting: 0, active: 0, closed: 0, leftOut: 0 }]));
+  const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).limit(5000).get();
   const waiting = [];
   for (const d of snap.docs) {
     const e = d.data();
     if (e.status === "pending") { if (e.companyId) waiting.push(e.companyId); continue; }
+    if (["removed", "moved"].includes(e.status)) continue;
     const id = counts[e.pathId || ELSE_PATH] ? (e.pathId || ELSE_PATH) : null;
-    if (id) counts[id].started++;
+    if (!id) continue;
+    if (LIVE_ENROLMENT.includes(e.status)) counts[id].active++;
+    else { counts[id].closed++; if (/^Left out by the campaign's paths/.test(e.stopReason || "")) counts[id].leftOut++; }
   }
   const byTier = list.some((p) => (p.filters || []).some((f) => f.field === "targetTier"));
   const tierRules = byTier ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
@@ -1270,7 +1275,7 @@ async function pathsPreview({ campaignId, paths, steps }) {
       counts[p.id].waiting++;
     }
   }
-  return { paths: list.map((p) => ({ id: p.id, name: p.name, ...counts[p.id], steps: pathSteps(draft, p.id).length })), waitingChecked: ids.length, waitingTotal: waiting.length };
+  return { paths: list.map((p) => ({ id: p.id, name: p.name, ...counts[p.id], started: counts[p.id].active + counts[p.id].closed, steps: pathSteps(draft, p.id).length })), waitingChecked: ids.length, waitingTotal: waiting.length };
 }
 
 // Team access: the permission each action needs. Starting a campaign sends

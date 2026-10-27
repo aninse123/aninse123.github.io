@@ -26,7 +26,7 @@ export const PATH_FIELDS = [
 export const fieldOf = (key) => PATH_FIELDS.find((f) => f.key === key) || PATH_FIELDS[0];
 export const OPS = {
   num: [['gte', 'at least'], ['lt', 'below'], ['range', 'from … to under']],
-  tier: [['in', 'is']], bool: [['bool', 'is']], text: [['eq', 'is']], prefix: [['prefix', 'starts with']],
+  tier: [['in', 'is']], bool: [['bool', 'is']], text: [['in', 'is any of'], ['eq', 'is']], prefix: [['prefix', 'starts with']],
   exists: [['exists', '']], days: [['within_days', 'in the last … days'], ['exists', 'ever / never']],
 };
 // A sensible first condition for a new path / a changed field.
@@ -38,9 +38,24 @@ export function defaultFilter(key = 'fitScore') {
   if (f.type === 'exists') return { field: f.key, op: 'exists', value: true };
   if (f.type === 'days') return { field: f.key, op: 'within_days', value: 90 };
   if (f.type === 'prefix') return { field: f.key, op: 'prefix', value: '' };
-  return { field: f.key, op: 'eq', value: '' };
+  return { field: f.key, op: 'in', value: [] }; // text: any of several (picked from the list)
 }
 
+// A path's companies (pathsPreview): total, then to start / in progress / closed (left out inside closed).
+export const pathTotal = (n) => (n ? (n.waiting || 0) + (n.active || 0) + (n.closed || 0) : 0);
+export function pathCountText(n) {
+  if (!n) return '';
+  const t = pathTotal(n), num = (x) => x.toLocaleString('en');
+  const parts = [n.waiting ? `${num(n.waiting)} to start` : '', n.active ? `${num(n.active)} in progress` : '',
+    n.closed ? `${num(n.closed)} closed${n.leftOut ? ` (${n.leftOut === n.closed ? 'all' : num(n.leftOut)} left out)` : ''}` : ''].filter(Boolean);
+  return `${num(t)} compan${t === 1 ? 'y' : 'ies'}${parts.length ? `: ${parts.join(' · ')}` : ''}`;
+}
+// The example shown inside each box, and the unit after it (27 Oct, André: one way for all).
+export function placeholderOf(key) {
+  return { fitScore: 'e.g. 75', computedRevenue: 'e.g. 2M', computedEBITDA: 'e.g. 500k', computedEBITDAMargin: 'e.g. 10', computedGrowthRecent: 'e.g. 5', ownGroupSize: 'e.g. 2', caeCode: 'e.g. 4621', naceCode: 'e.g. 46.21', lastTouchAt: 'e.g. 90' }[key] || '';
+}
+// "= €2,000,000" next to a money box, so what was typed is never in doubt.
+export const amountReadback = (n) => (n == null || !isFinite(n) ? '' : `= €${Math.round(n).toLocaleString('en')}`);
 // "2M" / "500k" / "1,5M" / "2 000 000" → a number (money and other amounts).
 export function parseAmount(s) {
   const t = String(s ?? '').trim().replace(/\s/g, '').replace(',', '.').toLowerCase();
@@ -63,7 +78,7 @@ export function condText(flt, labels = {}) {
     case 'gte': return `${f.label} at least ${money(v, f)}`;
     case 'lt': return `${f.label} below ${money(v, f)}`;
     case 'range': return `${f.label} from ${money(v?.[0], f)} to under ${money(v?.[1], f)}`;
-    case 'in': return `${f.label} is ${(v || []).join(' or ')}`;
+    case 'in': return `${f.label} is ${(v || []).map((x) => labels[flt.field]?.[x] || x).join(' or ') || '…'}`;
     case 'bool': return v ? f.label : `Not ${f.label.toLowerCase()}`;
     case 'eq': return `${f.label} is ${labels[flt.field]?.[v] || v}`;
     case 'prefix': return `${f.label} starts with ${v}`;
@@ -86,7 +101,7 @@ export function pathsTreeHtml({ paths, steps, counts = null, outcomeLabel = (ch,
     const [ink, bg] = pathColor(p, i);
     const ps = steps.map((s, gi) => ({ s, gi })).filter(({ s }) => (s.pathId || ELSE_PATH) === p.id);
     const n = counts?.[p.id];
-    const countTxt = n ? ` · ${n.waiting + n.started}` : '';
+    const countTxt = n ? ` · ${pathTotal(n)}` : '';
     const nodes = ps.map(({ s, gi }, k) => {
       const wait = k === 0 ? (Number(s.wait?.days) ? `${s.wait.days} ${s.wait?.unit === 'calendar' ? 'days' : 'sending days'} after the start` : '') : `${Number(s.wait?.days) || 0} ${s.wait?.unit === 'calendar' ? 'days' : 'sending days'}`;
       const rules = (s.branches || []).map((b) => `${outcomeLabel(s.channel || 'email', b.outcome)} → ${b.action === 'end' ? 'end' : `step ${ps.findIndex((x) => x.s.id === b.stepId) + 1}`}`);
@@ -126,6 +141,13 @@ export const TREE_CSS = `
   .path-conds { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
   .path-cond { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.85rem; }
   .path-cond select, .path-cond input { width: auto; }
+  .msel { position: relative; display: inline-block; }
+  .msel > summary { list-style: none; cursor: pointer; border: 1px solid #D8D3C8; border-radius: 6px; padding: 4px 26px 4px 8px; background: #fff; font-size: 0.85rem; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: relative; }
+  .msel > summary::-webkit-details-marker { display: none; }
+  .msel > summary::after { content: "▾"; position: absolute; right: 8px; color: #6B7280; }
+  .msel-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 260px; max-width: min(420px, 90vw); max-height: 280px; overflow: auto; background: #fff; border: 1px solid #D8D3C8; border-radius: 8px; padding: 6px 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); }
+  .msel-list label { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; font-size: 0.82rem; cursor: pointer; text-transform: none; letter-spacing: normal; font-weight: 400; }
+  .msel-list input[type="search"] { width: 100%; margin-bottom: 4px; }
   .paths-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
   .paths-side { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; align-items: start; }
   .paths-side > .pt-wrap { position: sticky; top: 12px; }

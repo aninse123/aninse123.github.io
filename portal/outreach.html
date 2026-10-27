@@ -782,7 +782,7 @@
     import { isOn, stateOf, currentFlags } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
-    import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
+    import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
     document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
@@ -3629,6 +3629,7 @@
     let seqDraft = null, seqDirty = false, csetDirty = false;
     // 27 Oct (outreach.paths): the paths being edited, their counts ("Check who goes where") and the view.
     let pathsDraft = null, pathCounts = null, seqView = 'list';
+    let pathOpts; // searchConfig/pathOptions: the sectors / sub-sectors / regions to pick from (Tools/path-options)
     try { seqView = localStorage.getItem('seqView') || 'list'; } catch (e) {}
     let audFilter = 'all', audSearch = '';
 
@@ -5686,6 +5687,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       // 27 Oct (switch outreach.paths): paths = a filter + its own steps; "Everyone else" (main) last.
       const pathsOn = isOn('outreach.paths');
       const multi = pathsDraft.length > 1;
+      if (pathsOn && pathOpts === undefined) { pathOpts = null; getDoc(doc(db, 'searchConfig', 'pathOptions')).then(s => { addReads(1); pathOpts = s.exists() ? s.data() : false; if (campSec === 'sequence') renderSequence(); }).catch(() => { pathOpts = false; }); }
+      // The choices for a "pick from the list" field (any of several).
+      const choicesOf = (key) => key === 'stage' ? STAGE_LABELS.map(([k, l]) => [k, l, null]) : key === 'owner' ? Object.entries(OWNER_LABEL).map(([k, l]) => [k, l, null]) : (pathOpts?.[key] || []).map(x => [x.value, x.value, x.count]);
       const pathLocked = (pid) => seqDraft.some(s => (s.pathId || ELSE_PATH) === pid && locked.has(s.id));
       const LABELS = { stage: Object.fromEntries(STAGE_LABELS), owner: OWNER_LABEL };
       const addStepCtl = (pid) => editable ? `<div class="actions" style="margin-top:8px;align-items:center;">
@@ -5694,17 +5698,30 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const valueCtl = (flt, pi, ci) => {
         const f = fieldOf(flt.field), at = `data-pi="${pi}" data-ci="${ci}"`, d = editable ? '' : ' disabled';
         if (f.type === 'num') {
+          // One way for every box (27 Oct): the example inside, the unit after, money read back.
           const show = (v) => esc(f.unit === '€' ? amountText(v, '€') : (v ?? ''));
+          const ph = esc(placeholderOf(f.key)), unit = f.unit ? ` <span class="hint">${f.unit}</span>` : '';
+          const back = (v) => f.unit === '€' ? ` <span class="hint" data-readback="${ci}">${esc(amountReadback(v))}</span>` : '';
           return flt.op === 'range'
-            ? `<input type="text" data-cf="v0" ${at} value="${show(flt.value?.[0])}" style="width:84px;" aria-label="From"${d}> <span class="hint">to under</span> <input type="text" data-cf="v1" ${at} value="${show(flt.value?.[1])}" style="width:84px;" aria-label="To under"${d}>${f.unit ? ` <span class="hint">${f.unit === '€' ? '€ (2M, 500k)' : '%'}</span>` : ''}`
-            : `<input type="text" data-cf="v" ${at} value="${show(flt.value)}" style="width:96px;" aria-label="Value"${d}>${f.unit ? ` <span class="hint">${f.unit === '€' ? '€ (2M, 500k)' : '%'}</span>` : ''}`;
+            ? `<input type="text" data-cf="v0" ${at} value="${show(flt.value?.[0])}" placeholder="${ph}" style="width:84px;" aria-label="From"${d}>${unit} <span class="hint">to under</span> <input type="text" data-cf="v1" ${at} value="${show(flt.value?.[1])}" placeholder="${ph}" style="width:84px;" aria-label="To under"${d}>${unit}${f.unit === '€' ? ` <span class="hint" data-readback="${ci}">${esc([amountReadback(flt.value?.[0]), amountReadback(flt.value?.[1])].filter(Boolean).join(' to '))}</span>` : ''}`
+            : `<input type="text" data-cf="v" ${at} value="${show(flt.value)}" placeholder="${ph}" style="width:96px;" aria-label="Value"${d}>${unit}${back(flt.value)}`;
+        }
+        if (f.type === 'text') {
+          // Pick from the list, several allowed = any of them (27 Oct). Without the list: type, separated by commas.
+          const chosen = Array.isArray(flt.value) ? flt.value : (flt.value ? [flt.value] : []);
+          const opts = choicesOf(f.key);
+          if (!opts.length) return `<input type="text" data-cf="vlist" ${at} value="${esc(chosen.join(', '))}" placeholder="separate with commas" style="width:220px;" aria-label="Values"${d}>`;
+          const label = (v) => opts.find(o => o[0] === v)?.[1] || v;
+          return `<details class="msel"><summary data-mselsum>${chosen.length ? esc(chosen.map(label).join(', ')) : '<span class="hint">Choose…</span>'}</summary><div class="msel-list">
+            ${opts.length > 12 ? `<input type="search" data-mselq placeholder="Search…" aria-label="Search the list">` : ''}
+            ${opts.map(([v, l, n]) => `<label data-mselopt="${esc(String(l).toLowerCase())}"><input type="checkbox" data-cf="msel" data-val="${esc(v)}" ${at} ${chosen.includes(v) ? 'checked' : ''}${d}> <span>${esc(l)}${n != null ? ` <span class="hint">${num(n)}</span>` : ''}</span></label>`).join('')}</div></details>`;
         }
         if (f.type === 'tier') return ['A', 'B', 'C'].map(t => `<label class="checkline" style="display:inline-flex;gap:4px;"><input type="checkbox" data-cf="tier" data-t="${t}" ${at} ${(flt.value || []).includes(t) ? 'checked' : ''}${d}> ${t}</label>`).join(' ');
         if (f.type === 'bool' || flt.op === 'exists') return `<select data-cf="yn" ${at}${d}><option value="1"${flt.value ? ' selected' : ''}>${f.type === 'days' ? 'touched before' : f.type === 'exists' ? 'has one' : 'yes'}</option><option value="0"${flt.value ? '' : ' selected'}>${f.type === 'days' ? 'never touched' : f.type === 'exists' ? 'has none' : 'no'}</option></select>`;
-        if (flt.op === 'within_days') return `<input type="text" inputmode="numeric" data-cf="v" ${at} value="${esc(flt.value ?? 90)}" style="width:64px;" aria-label="Days"${d}> <span class="hint">days</span>`;
+        if (flt.op === 'within_days') return `<input type="text" inputmode="numeric" data-cf="v" ${at} value="${esc(flt.value ?? 90)}" placeholder="e.g. 90" style="width:64px;" aria-label="Days"${d}> <span class="hint">days</span>`;
         if (flt.field === 'stage') return `<select data-cf="v" ${at}${d}>${STAGE_LABELS.map(([k, l]) => `<option value="${k}"${flt.value === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
         if (flt.field === 'owner') return `<select data-cf="v" ${at}${d}>${Object.entries(OWNER_LABEL).map(([k, l]) => `<option value="${k}"${flt.value === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
-        return `<input type="text" data-cf="v" ${at} value="${esc(flt.value ?? '')}" style="width:150px;" placeholder="${flt.op === 'prefix' ? 'e.g. 4621' : ''}" aria-label="Value"${d}>`;
+        return `<input type="text" data-cf="v" ${at} value="${esc(flt.value ?? '')}" style="width:150px;" placeholder="${esc(placeholderOf(f.key))}" aria-label="Value"${d}>`;
       };
       const pathCard = (p, pi) => {
         const [ink] = pathColor(p, pi);
@@ -5714,16 +5731,17 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         return `<div class="path-card" data-pid="${esc(p.id)}" style="--pc:${ink}">
           <div class="path-head">
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span class="pname">${pi + 1}.</span>${isElse ? '<span class="pname">Everyone else</span>' : `<input type="text" data-pf="name" data-pi="${pi}" value="${esc(p.name || '')}" maxlength="60" style="width:auto;min-width:160px;font-weight:600;" aria-label="Path name"${d}>`}
-              ${n ? `<span class="pill">${num(n.waiting + n.started)} compan${n.waiting + n.started === 1 ? 'y' : 'ies'}${n.started ? ` · ${num(n.started)} started` : ''}</span>` : ''}</div>
+              ${n ? `<span class="pill">${esc(pathCountText(n))}</span>` : ''}</div>
             ${editable && !isElse ? `<div class="actions"><button class="btn btn--ghost btn--sm" data-pmv="-1" data-pi="${pi}" ${pi === 0 ? 'disabled' : ''} aria-label="Move path up">↑</button><button class="btn btn--ghost btn--sm" data-pmv="1" data-pi="${pi}" ${pi >= pathsDraft.length - 2 ? 'disabled' : ''} aria-label="Move path down">↓</button><button class="btn btn--danger btn--sm" data-pdel="${pi}" ${pathLocked(p.id) ? 'disabled title="Steps of this path already ran — it can\'t be removed"' : ''}>Delete path</button></div>` : ''}
           </div>
           ${isElse ? `<p class="hint" style="margin:0 0 8px;">Any company the paths above don't take (including companies with no value for their conditions).${items.length ? '' : ' <b>No steps: these companies are left out — not contacted.</b> Add a step to contact them.'}</p>`
             : `<div class="path-conds">${(p.filters || []).map((flt, ci) => `<div class="path-cond"><span class="hint">${ci ? 'and' : 'When'}</span>
                 <select data-cf="field" data-pi="${pi}" data-ci="${ci}" aria-label="Field"${d}>${PATH_FIELDS.map(f => `<option value="${f.key}"${f.key === flt.field ? ' selected' : ''}>${esc(f.label)}</option>`).join('')}</select>
-                ${OPS[fieldOf(flt.field).type].length > 1 || OPS[fieldOf(flt.field).type][0][1] ? `<select data-cf="op" data-pi="${pi}" data-ci="${ci}" aria-label="Condition"${d}>${OPS[fieldOf(flt.field).type].map(([k, l]) => `<option value="${k}"${k === flt.op ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>` : ''}
+                ${fieldOf(flt.field).type !== 'text' && (OPS[fieldOf(flt.field).type].length > 1 || OPS[fieldOf(flt.field).type][0][1]) ? `<select data-cf="op" data-pi="${pi}" data-ci="${ci}" aria-label="Condition"${d}>${OPS[fieldOf(flt.field).type].map(([k, l]) => `<option value="${k}"${k === flt.op ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>` : ''}
                 ${valueCtl(flt, pi, ci)}
                 ${editable && (p.filters || []).length > 1 ? `<button type="button" class="btn btn--ghost btn--sm" data-cdel="${ci}" data-pi="${pi}" aria-label="Remove condition">✕</button>` : ''}</div>`).join('')}
-              ${editable && (p.filters || []).length < 10 ? `<div><button type="button" class="btn btn--ghost btn--sm" data-cadd="${pi}">+ and…</button></div>` : ''}</div>`}
+              ${editable && (p.filters || []).length < 10 ? `<div><button type="button" class="btn btn--ghost btn--sm" data-cadd="${pi}">+ and…</button></div>` : ''}
+              <div class="hint">Amounts: 2000000, 2000k and 2M are the same. Several values in one condition = any of them; separate conditions (+ and…) = all of them.</div></div>`}
           <div class="steps">${items.map(([s, i]) => card(s, i)).join('') || (isElse ? '' : '<div class="empty" style="padding:10px;">No steps yet — add the first one.</div>')}</div>
           ${addStepCtl(p.id)}
         </div>`;
@@ -5848,10 +5866,22 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         if (kind === 'field') { Object.assign(flt, defaultFilter(x.value)); pathCounts = null; mark(); renderSequence(); return; }
         if (kind === 'op') { const old = flt.value; flt.op = x.value; flt.value = x.value === 'range' ? [Number(Array.isArray(old) ? old[0] : old) || 0, (Number(Array.isArray(old) ? old[0] : old) || 0) + (f.unit === '€' ? 1e6 : 25)] : x.value === 'exists' ? true : x.value === 'within_days' ? 90 : (Array.isArray(old) ? old[0] : old); pathCounts = null; mark(); renderSequence(); return; }
         if (kind === 'v') flt.value = f.type === 'num' || flt.op === 'within_days' ? numOf(x.value) : x.value;
-        if (kind === 'v0' || kind === 'v1') { const v = Array.isArray(flt.value) ? [...flt.value] : [0, 0]; v[kind === 'v0' ? 0 : 1] = numOf(x.value); flt.value = v; }
+        if (kind === 'v' && f.unit === '€') { const rb = x.parentElement.querySelector(`[data-readback="${x.dataset.ci}"]`); if (rb) rb.textContent = isFinite(flt.value) ? amountReadback(flt.value) : 'not a number — e.g. 2M'; }
+        if (kind === 'vlist') { flt.op = 'in'; flt.value = x.value.split(',').map(v => v.trim()).filter(Boolean); }
+        if (kind === 'msel') {
+          flt.op = 'in';
+          flt.value = [...root.querySelectorAll(`[data-cf="msel"][data-pi="${x.dataset.pi}"][data-ci="${x.dataset.ci}"]`)].filter(t => t.checked).map(t => t.dataset.val);
+          const sum = x.closest('.msel')?.querySelector('[data-mselsum]');
+          if (sum) sum.textContent = flt.value.join(', ') || 'Choose…';
+        }
+        if (kind === 'v0' || kind === 'v1') { const v = Array.isArray(flt.value) ? [...flt.value] : [0, 0]; v[kind === 'v0' ? 0 : 1] = numOf(x.value); flt.value = v; const rb = f.unit === '€' && x.parentElement.querySelector(`[data-readback="${x.dataset.ci}"]`); if (rb) rb.textContent = v.every(isFinite) ? `${amountReadback(v[0])} to ${amountReadback(v[1])}` : 'not a number — e.g. 2M'; }
         if (kind === 'yn') flt.value = x.value === '1';
         if (kind === 'tier') flt.value = [...root.querySelectorAll(`[data-cf="tier"][data-pi="${x.dataset.pi}"][data-ci="${x.dataset.ci}"]`)].filter(t => t.checked).map(t => t.dataset.t);
         pathCounts = null; mark();
+      }));
+      root.querySelectorAll('[data-mselq]').forEach(q => q.addEventListener('input', () => {
+        const t = q.value.trim().toLowerCase();
+        q.closest('.msel-list').querySelectorAll('[data-mselopt]').forEach(l => { l.hidden = !!t && !l.dataset.mselopt.includes(t); });
       }));
       $('pathCheck')?.addEventListener('click', async () => {
         const b = $('pathCheck'); const unbusy = busyBtn(b, 'Checking…');
@@ -5859,7 +5889,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           const r = (await callCampaign({ action: 'pathsPreview', campaignId: c.id, paths: pathsDraft, steps: seqDraft })).data;
           pathCounts = Object.fromEntries(r.paths.map(p => [p.id, p]));
           renderSequence();
-          $('pathCheckNote').textContent = `${r.paths.map(p => `${p.name}: ${num(p.waiting + p.started)}`).join(' · ')}${r.waitingTotal > r.waitingChecked ? ` (first ${num(r.waitingChecked)} of ${num(r.waitingTotal)} waiting checked)` : ''} — companies waiting to start counted with today's data.`;
+          $('pathCheckNote').textContent = `${r.paths.map(p => `${p.name}: ${pathCountText(p)}`).join(' — ')}${r.waitingTotal > r.waitingChecked ? ` (first ${num(r.waitingChecked)} of ${num(r.waitingTotal)} to start checked)` : ''}. "To start" uses today's data and the paths as edited; in progress and closed keep the path they were given.`;
         } catch (e) { unbusy(); toast(errText(e)); }
       });
       root.querySelectorAll('[data-tree-step],[data-tree-path]').forEach(b => b.addEventListener('click', () => {

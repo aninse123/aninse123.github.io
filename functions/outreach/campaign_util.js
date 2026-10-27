@@ -37,7 +37,7 @@ const ELSE_PATH = "main"; // campaign paths (27 Oct): "Everyone else" / the only
 const MAX_PATHS = 20;
 // What a path condition can use (the Search CRM filters) and how.
 const PATH_FIELDS = { fitScore: "num", computedRevenue: "num", computedEBITDA: "num", computedEBITDAMargin: "num", computedGrowthRecent: "num", ownGroupSize: "num", targetTier: "tier", contactable: "bool", sector: "text", subSector: "text", caeCode: "prefix", naceCode: "prefix", nuts2: "text", nuts3: "text", stage: "text", owner: "text", website: "exists", lastTouchAt: "days" };
-const PATH_OPS = { num: ["gte", "lt", "range"], tier: ["in"], bool: ["bool"], text: ["eq"], prefix: ["prefix"], exists: ["exists"], days: ["within_days", "exists"] };
+const PATH_OPS = { num: ["gte", "lt", "range"], tier: ["in"], bool: ["bool"], text: ["in", "eq"], prefix: ["prefix"], exists: ["exists"], days: ["within_days", "exists"] }; // text "in" = any of several (27 Oct, André)
 const PATH_FIELD_LABEL = { fitScore: "Fit score", computedRevenue: "Revenue", computedEBITDA: "EBITDA", computedEBITDAMargin: "EBITDA margin", computedGrowthRecent: "Growth", ownGroupSize: "Group size", targetTier: "Tier", contactable: "Contactable", sector: "Sector", subSector: "Sub-sector", caeCode: "CAE", naceCode: "NACE", nuts2: "Region (NUTS II)", nuts3: "Region (NUTS III)", stage: "Stage", owner: "Owner", website: "Website", lastTouchAt: "Last touch" };
 
 const DEFAULT_CAMPAIGN = {
@@ -268,7 +268,8 @@ function normalizePathFilter(f, pathName) {
   const num = (x) => { const n = Number(x); if (!isFinite(n)) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]} needs a number.`); return n; };
   if (op === "range") { if (!Array.isArray(value) || value.length !== 2) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]} needs "from" and "to".`); value = [num(value[0]), num(value[1])]; if (!(value[0] < value[1])) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]}: "from" must be below "to".`); }
   else if (op === "gte" || op === "lt") value = num(value);
-  else if (op === "in") { value = [...new Set((Array.isArray(value) ? value : [value]).filter((x) => TIERS.includes(x)))]; if (!value.length) bad("bad_path", `${pathName}: pick at least one tier.`); }
+  else if (op === "in" && type === "tier") { value = [...new Set((Array.isArray(value) ? value : [value]).filter((x) => TIERS.includes(x)))]; if (!value.length) bad("bad_path", `${pathName}: pick at least one tier.`); }
+  else if (op === "in") { value = [...new Set((Array.isArray(value) ? value : [value]).map((x) => cleanText(x, 80)).filter(Boolean))].slice(0, 100); if (!value.length) bad("bad_path", `${pathName}: pick at least one ${PATH_FIELD_LABEL[field].toLowerCase()}.`); }
   else if (op === "bool" || op === "exists") value = !!value;
   else if (op === "within_days") value = intIn(value, 1, 3650, 30);
   else { value = cleanText(value, 80); if (!value) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]} needs a value.`); }
