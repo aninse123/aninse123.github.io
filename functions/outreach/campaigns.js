@@ -1049,8 +1049,8 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
       threadId: t.threadId || null, linkedinUrl, createdAt: FieldValue.serverTimestamp(), createdBy: caller,
     });
     activityId = ref.id;
-    await store.touchCompany(t.companyId, { direction: "out", isTest: t.isTest, outreach: t.channel !== "other" });
-    if (o.reply) await store.touchCompany(t.companyId, { direction: "in", isTest: t.isTest });
+    await store.touchCompany(t.companyId, { direction: "out", isTest: t.isTest, outreach: t.channel !== "other", channel: t.channel, by: caller, outcome: o.key });
+    if (o.reply) await store.touchCompany(t.companyId, { direction: "in", isTest: t.isTest, channel: t.channel });
   }
 
   // 2. Call back / reschedule: the same task stays open for the new date.
@@ -1205,8 +1205,8 @@ async function logActivity({ companyId, threadId, channel, outcome, notes, date 
     channel, threadId: thread?.id || null, source: "outreach",
     createdAt: FieldValue.serverTimestamp(), createdBy: caller,
   });
-  await store.touchCompany(cid, { direction: "out", isTest, outreach: channel !== "other" });
-  if (o.reply) await store.touchCompany(cid, { direction: "in", isTest });
+  await store.touchCompany(cid, { direction: "out", isTest, outreach: channel !== "other", channel, by: caller, outcome: o.key });
+  if (o.reply) await store.touchCompany(cid, { direction: "in", isTest, channel });
   return { ok: true, activityId: ref.id };
 }
 

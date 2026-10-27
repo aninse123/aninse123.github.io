@@ -61,6 +61,8 @@ const cases = [
   C('Reach: add a person\'s email to the company email search', REACH, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', emailKeys: ['rit', 'rita@empresa.pt'], updatedBy: REACH.email }, { name: 'A' }),
   C('Intern: confirm a same-email link on a company they don’t own (22 Oct)', INTERN, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', owner: 'andre', sameEmailLinks: [{ companyId: 'c2' }], updatedBy: INTERN.email }, { name: 'A', owner: 'andre' }),
   C('Intern: cannot edit a company they don’t own beyond the same-email link', INTERN, 'update', 'searchCompanies/c1', 'DENY', { name: 'B', owner: 'andre', sameEmailLinks: [{ companyId: 'c2' }], updatedBy: INTERN.email }, { name: 'A', owner: 'andre' }),
+  C('Intern: logging an activity on a company they don’t own updates its contact summary (27 Oct, Contacted column)', INTERN, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', owner: 'andre', lastTouchAt: 1, touches: { call: { n: 1 } } }, { name: 'A', owner: 'andre' }),
+  C('Intern: cannot slip another field in with the contact summary', INTERN, 'update', 'searchCompanies/c1', 'DENY', { name: 'B', owner: 'andre', touches: { call: { n: 1 } } }, { name: 'A', owner: 'andre' }),
   C('Reach-only: cannot confirm a same-email link', REACH, 'update', 'searchCompanies/c1', 'DENY', { name: 'A', sameEmailLinks: [{ companyId: 'c2' }], updatedBy: REACH.email }, { name: 'A' }),
   C('Partner: read the Monday reports', PARTNER, 'get', 'outreachReports/2026-10-12', 'ALLOW', null, { status: 'done' }),
   C('Partner: cannot write a Monday report', PARTNER, 'create', 'outreachReports/2026-10-12', 'DENY', { status: 'done' }),

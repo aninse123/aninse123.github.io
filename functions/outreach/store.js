@@ -4,6 +4,7 @@
 const { getFirestore, FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { DEFAULT_SETTINGS } = require("./config");
 const { utcDayKey, normEmail, domainOf } = require("./util");
+const CS = require("./contact_summary"); // Contacted column (27 Oct)
 
 const db = () => getFirestore();
 
@@ -121,7 +122,9 @@ async function writeActivity({ companyId, direction, subject, content, threadId,
 // fields outreach changes. Test traffic never touches real company fields.
 // `outreach` (default true for outgoing touches): also moves lastOutreachAt,
 // which the campaign "contacted in the last N days" rule uses (Phase 3c).
-async function touchCompany(companyId, { direction, isAutoReply = false, isTest, outreach = true }) {
+// channel / by / outcome (27 Oct, Contacted column): the per-channel summary
+// touches.<channel> = { n, at, by, outcome, inAt } — see contact_summary.js.
+async function touchCompany(companyId, { direction, isAutoReply = false, isTest, outreach = true, channel = null, by = null, outcome = null }) {
   if (!companyId || isTest) return;
   const ref = db().doc(`searchCompanies/${companyId}`);
   await db().runTransaction(async (tx) => {
@@ -138,6 +141,7 @@ async function touchCompany(companyId, { direction, isAutoReply = false, isTest,
       upd.lastReplyAt = now;
       if (!["unsubscribed", "bounced"].includes(c.outreachStatus)) upd.outreachStatus = "replied";
     }
+    if (channel && !(direction === "in" && isAutoReply)) Object.assign(upd, CS.patchFor({ channel, direction, by, outcome }, { now, inc: FieldValue.increment(1) }));
     tx.update(ref, upd);
   });
 }

@@ -100,7 +100,7 @@ async function maybeRecordGmailReply(data) {
       companyId: thread.companyId, direction: "out", subject: data.subject, content: stripQuoted(text || ""),
       threadId: threadDoc.id, messageId: messageRef.id, contactEmail: to, createdBy: "gmail", isTest,
     });
-    await store.touchCompany(thread.companyId, { direction: "out", isTest });
+    await store.touchCompany(thread.companyId, { direction: "out", isTest, channel: "email", by: fromEmail });
   }
   await store.bumpDaily("repliesSent", { senderId: fromEmail, owner: senderSnap.data().owner || null });
   return true;

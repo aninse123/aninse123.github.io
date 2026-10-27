@@ -208,7 +208,7 @@ async function handleReceived(data) {
     messageId: messageRef.id, contactName: from.name || null, contactEmail: from.email,
     createdBy: "resend-webhook", isTest: thread.isTest,
   });
-  await store.touchCompany(thread.companyId, { direction: "in", isAutoReply: autoReply, isTest: thread.isTest });
+  await store.touchCompany(thread.companyId, { direction: "in", isAutoReply: autoReply, isTest: thread.isTest, channel: "email" });
   // Received mail costs quota but must not eat into a sender's send cap, so no senderId here.
   await store.bumpDaily("received", { owner: thread.owner });
   await Usage.bump({ [`email.replies.${thread.isTest ? "test" : "real"}`]: 1 });

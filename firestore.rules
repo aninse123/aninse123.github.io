@@ -78,7 +78,8 @@ service cloud.firestore {
     function flagFields() { return ['priority', 'contactable', 'contactableNote', 'contactableSource', 'contactableRules', 'targetTierManual', 'doNotContact']; }
     function stampFields() { return ['updatedAt', 'updatedBy', 'updatedByAt']; }
     // Bookkeeping written when an activity is logged or closed (last touch, attempts).
-    function activityTouch() { return onlyFields(['lastTouchAt', 'outreachAttempts', 'lastOutreachAt', 'updatedAt', 'nextContactAt', 'nextContactTime', 'nextContactTz', 'hasOverdue']); }
+    // touches (27 Oct, Contacted column): the per-channel contact summary rebuilt with the other activity fields.
+    function activityTouch() { return onlyFields(['lastTouchAt', 'outreachAttempts', 'lastOutreachAt', 'updatedAt', 'nextContactAt', 'nextContactTime', 'nextContactTz', 'hasOverdue', 'touches']); }
     // Edit any company, or (search.edit) only companies they own.
     function companyEditor(owner) { return can('search.editall') || (can('search.edit') && owner != null && owner == request.auth.token.get('key', '~')); }
     // Activities are never edited or deleted: only closed once (outcome), or

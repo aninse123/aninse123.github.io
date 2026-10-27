@@ -394,7 +394,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
     messageId, contactEmail: to, createdBy: p.callerEmail, isTest,
     campaignId: campaign?.campaignId, stepId: campaign?.stepId, enrolmentId: campaign?.enrolmentId,
   });
-  await store.touchCompany(companyId, { direction: "out", isTest });
+  await store.touchCompany(companyId, { direction: "out", isTest, channel: "email", by: p.callerEmail });
   if (p.person) await store.logPersonSend({ refs: p.person.refs, email: p.person.email, subject: p.subject, content: p.bodyText, messageId, threadId: threadRef.id, campaignId: campaign?.campaignId || null, createdBy: p.callerEmail, isTest });
   await store.bumpDaily(p.countsAsOutreach ? "outreachSent" : "repliesSent", { senderId, owner, extra: campaign ? ["campaignSent"] : [] });
   await store.recordQuota(result.quota, "send");
