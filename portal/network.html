@@ -180,6 +180,7 @@
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn--ghost" id="followupsBtn">📋 Follow-ups</button>
       <button class="btn btn--ghost btn--icon" id="categorySettingsBtn" data-perm="net.categories" title="Edit categories">⚙</button>
+      <button class="btn btn--ghost" id="newFirmBtn" data-perm="net.edit">＋ New Firm</button>
       <button class="btn btn--primary" id="newContactBtn" data-perm="net.edit">＋ New Contact</button>
     </div>
   </div>
@@ -1181,9 +1182,12 @@ function renderFirmDetail() {
   document.getElementById('firmEmailAllBtn').style.display = withEmail.length > 1 ? '' : 'none';
 }
 
-function openQuickAddFirm() {
+// Header "New Firm": create a firm on its own, then land on it to add its people.
+function openNewFirm() { openQuickAddFirm('standalone'); }
+
+function openQuickAddFirm(context) {
   editFirmId = null;
-  firmModalContext = 'contact-picker';
+  firmModalContext = context === 'standalone' ? 'standalone' : 'contact-picker';
   document.getElementById('fmModalTitle').textContent = 'New Firm';
   ['fmName','fmWebsite','fmPhone','fmLinkedin','fmAddress','fmHowMet','fmNotes'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('fmOwner').value = '';
@@ -1223,6 +1227,7 @@ async function saveFirm() {
   if (!name) { err.textContent = 'Firm name is required.'; err.style.display = 'block'; return; }
   const btn = document.getElementById('fmSaveBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spin-sm"></span>Saving…';
+  let createdFirmId = null;
   const data = {
     name,
     website:  document.getElementById('fmWebsite').value.trim()  || null,
@@ -1248,8 +1253,11 @@ async function saveFirm() {
         populateFirmSelect();
         document.getElementById('ncFirmId').value = ref.id;
       }
+      createdFirmId = ref.id;
+      if (firmModalContext === 'standalone' && !firms.some(f => f.id === ref.id)) firms.push({ id: ref.id, ...data }); // the live listener may not have delivered it yet
     }
     showEl('firmModal', false);
+    if (createdFirmId && firmModalContext === 'standalone') openFirmDetail(createdFirmId);
     if (editFirmId && currentFirmId === editFirmId) renderFirmDetail();
   } catch(e) {
     err.textContent = e.message; err.style.display = 'block';
@@ -1824,7 +1832,8 @@ document.getElementById('editFirmBtn').addEventListener('click', openEditFirm);
 document.getElementById('deleteFirmBtn').addEventListener('click', deleteFirm);
 document.getElementById('firmAddContactBtn').addEventListener('click', () => openNewContact(currentFirmId));
 document.getElementById('firmEmailAllBtn').addEventListener('click', openSendEmailAll);
-document.getElementById('ncNewFirmBtn').addEventListener('click', openQuickAddFirm);
+document.getElementById('ncNewFirmBtn').addEventListener('click', () => openQuickAddFirm());
+document.getElementById('newFirmBtn').addEventListener('click', openNewFirm);
 document.getElementById('fmCancelBtn').addEventListener('click', () => showEl('firmModal', false));
 document.getElementById('fmSaveBtn').addEventListener('click', saveFirm);
 
