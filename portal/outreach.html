@@ -4036,7 +4036,7 @@ Optional note for them:`, '');
           </div>
           <div class="card">
             <h3>Pace</h3>
-            <p class="note">The scheduler checks every 10 minutes and sends ${esc(windowText(c.sendWindow))} (Lisbon)${skipHolidaysFor(c) ? ', never on national holidays' : ', national holidays included'}${skipMunicipalFor(c) ? ' — and never on a company\'s own municipal holiday' : ''}. It starts up to <b>${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))}</b> new ${c.audienceType === 'people' ? 'people' : 'companies'} a day${hasPaths(c) && c.startOrder?.mode && isOn('outreach.paths') ? ` (${esc(START_LABEL[c.startOrder.mode].toLowerCase())})` : ''}${c.pacing?.maxPerDay ? ` and sends at most <b>${num(c.pacing.maxPerDay)}</b> emails a day for this campaign` : ''}.</p>
+            <p class="note">The scheduler checks every 10 minutes and sends ${esc(windowText(c.sendWindow))} (Lisbon)${skipHolidaysFor(c) ? ', never on national holidays' : ', national holidays included'}${skipMunicipalFor(c) ? ' — and never on a company\'s own municipal holiday' : ''}. It starts up to <b>${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))}</b> new ${c.audienceType === 'people' ? 'people' : ((c.pacing?.newPerDay || 20) === 1 ? 'company' : 'companies')} a day${hasPaths(c) && c.startOrder?.mode && isOn('outreach.paths') ? ` (${esc(START_LABEL[c.startOrder.mode].toLowerCase())})` : ''}${c.pacing?.maxPerDay ? ` and sends at most <b>${num(c.pacing.maxPerDay)}</b> emails a day for this campaign` : ''}.</p>
             <p class="note" style="margin-top:8px;">With ${num(steps.length)} email${steps.length === 1 ? '' : 's'} per ${c.audienceType === 'people' ? 'person' : 'company'} that's about <b>${num(perDay)}</b> emails a day once the campaign is in full swing — the automations limit is <b>${num(limitN)}</b> a day for all campaigns together${perDay > limitN ? ' (<b>above the limit</b>: emails will queue up; lower the pace in Settings)' : ''}.</p>
             ${c.status === 'draft' ? '<p class="note" style="margin-top:8px;">Nothing is sent while the campaign is a draft.</p>' : ''}
           </div>
@@ -4600,7 +4600,7 @@ Optional note for them:`, '');
       const t0 = new Date(); t0.setHours(0, 0, 0, 0);
       const startedToday = curEnrols.filter(e => (e.history || []).some(h => firstIds.has(h.stepId) && tsMs(h.at) >= t0.getTime())).length;
       const unplanned = live.filter(e => e.status === 'pending' && !pathIdOf(e)).length;
-      return `<p class="note">Who starts first: <b>${esc(START_LABEL[c.startOrder?.mode || 'added'])}</b> · ${num(perDay)} new companies a day. Companies waiting to start are on their planned path.${unplanned ? ` ${num(unplanned)} aren't planned yet (they get a path when the paths are saved or the campaign runs) — counted in Everyone else here.` : ''}</p>`
+      return `<p class="note">Who starts first: <b>${esc(START_LABEL[c.startOrder?.mode || 'added'])}</b> · ${num(perDay)} new compan${perDay === 1 ? 'y' : 'ies'} a day. Companies waiting to start are on their planned path.${unplanned ? ` ${num(unplanned)} aren't planned yet (they get a path when the paths are saved or the campaign runs) — counted in Everyone else here.` : ''}</p>`
         + pathsOf(c).map((p, pi) => {
           const steps = stepsOfPath(c, p.id);
           const mine = live.filter(e => (pathIdOf(e) || ELSE_PATH) === p.id);
