@@ -33,7 +33,8 @@
 const P = require("../access/perms"); // team access: who may call what
 const Feat = require("../features"); // feature switches (Team & access → Features)
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { REGION, TEST_RECIPIENTS } = require("./config");
+const { REGION, TEST_RECIPIENTS, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET } = require("./config");
+const { ANTHROPIC_API_KEY } = require("./ai");
 const { normEmail } = require("./util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const store = require("./store");
@@ -1330,7 +1331,9 @@ function campaignActionPerm(data) {
   return CAMPAIGN_ACTION_PERM[data.action] || "out.admin";
 }
 
-exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async (request) => {
+// "Run now" (test campaigns / test mode) sends through the scheduler from here, so this
+// function needs the scheduler's secrets too (27 Oct: without them Resend said "API key is invalid").
+exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, ANTHROPIC_API_KEY] }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
   const data = request.data || {};
   if (!P.hasPerm(request, campaignActionPerm(data))) fail("permission-denied", "not_admin", "You don't have permission to do this.");
