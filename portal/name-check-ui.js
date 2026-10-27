@@ -6,7 +6,7 @@
 // Every fix goes through the outreachCampaign action "emailName" (logged on the company).
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const SOURCE = { typed: 'typed in the CRM', trade: 'from the Orbis trade name', legal: 'from the legal name' };
+const SOURCE = { typed: 'set in the CRM', trade: 'from the Orbis trade name', legal: 'from the legal name' };
 const PLAIN = 'text-transform:none;letter-spacing:normal;font-weight:400;';
 
 // One company's controls: the suggestion in a box you can edit, Save, and Keep.
