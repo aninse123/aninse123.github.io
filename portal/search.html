@@ -3416,8 +3416,10 @@ function renderList(){
 // the campaign now and the campaigns before (read once per company, on hover).
 const ctEnrolCache = new Map();
 function ctNameOf(x){
-  const m = (window.teamDir || []).find(t => t.key === x || t.email === x);
-  return OWNER_LABELS[x] || (m ? String(m.name || m.label || '').split(' ')[0] : String(x).split('@')[0]);
+  const e = String(x || '').toLowerCase(), local = e.split('@')[0];
+  // A key ("andre"), a team address ("andre.rocha@…", its contactEmail) → the first name.
+  const m = (window.teamDir || []).find(t => t.key === e || String(t.contactEmail || '').toLowerCase() === e || (e.includes('@') && t.key === local.split('.')[0]));
+  return OWNER_LABELS[x] || (m ? (m.label || String(m.name || '').split(' ')[0]) : local);
 }
 function ctShowTip(cell, ev){
   const c = companies.find(x => x.id === cell.dataset.ctid); if (!c) return;

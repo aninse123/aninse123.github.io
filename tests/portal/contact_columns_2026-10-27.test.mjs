@@ -38,6 +38,7 @@ ok('Flags: 🚫 do not contact (why, who), ⛔ not contactable (rules / by hand,
 ok('switch search.contactColumns in both catalogs', feat.includes("['search.contactColumns', 'Search CRM', 'release'") && cat.includes('key: "search.contactColumns"'));
 ok('list: Flags and Contacted columns after Company (behind the switch); the name alone when on, the old tags when off', page.includes('<th data-feature="search.contactColumns" title="Do not contact, not contactable, excluded sector — hover for why">Flags</th>') && page.includes("const ctOn = isOn('search.contactColumns');") && page.includes("${esc(c.name)}${ctOn ? '' : `${excluded?") && page.includes('data-ctid="${esc(c.id)}">${ctOn ? contactedHtml(c) : \'\'}'));
 ok('hover card: campaigns read once per company, on hover; test campaigns left out', page.includes("getDocs(query(collection(db, 'outreachEnrolments'), where('companyId', '==', c.id), limit(20)))") && page.includes('.filter(e => !e.isTest)'));
+ok('hover names: a team address (contactEmail, or andre.rocha@… → key andre) shows the first name, not the address', page.includes("String(t.contactEmail || '').toLowerCase() === e || (e.includes('@') && t.key === local.split('.')[0])"));
 ok('logging an activity rebuilds the summary with the other activity fields; the rules allow it for "log activities"', page.includes('const touches = contactSummaryOf(activities);') && /function activityTouch\(\) \{ return onlyFields\(\[[^\]]*'touches'\]\); \}/.test(rules));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
