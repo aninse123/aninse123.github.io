@@ -782,6 +782,8 @@
     import { isOn } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
+    import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
+    document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -1228,7 +1230,7 @@
       const capOf = (id) => active.find(x => x.id === id)?.dailyCap || OB_CAP;
       const items = (enrols || []).filter(e => camps.has(e.campaignId) && ['active', 'pending', 'awaiting_approval'].includes(e.status)).map(e => {
         const ap = approved?.get?.(e.id) || null;
-        return { e, c: camps.get(e.campaignId), step: e.status === 'pending' ? 0 : (e.currentStep || 0), pending: e.status === 'pending', awaiting: e.status === 'awaiting_approval',
+        return { e, c: camps.get(e.campaignId), steps: stepsFor(camps.get(e.campaignId), e), step: e.status === 'pending' ? 0 : (e.currentStep || 0), pending: e.status === 'pending', awaiting: e.status === 'awaiting_approval',
           due: e.status === 'active' ? (tsMs(e.nextActionAt) || now.getTime()) : null, approved: ap, sender: e.senderId || ap?.senderId || null, done: false };
       });
       const pendingOf = new Map();
@@ -1256,18 +1258,19 @@
           const perDay = c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20);
           const q = pendingOf.get(c.id) || [];
           while (q.length && (started[c.id] || 0) < perDay) {
-            const it = q.shift(); it.pending = false; it.step = 0; it.startedAt = slot.getTime();
-            it.due = obAddWait(slot, c.steps[0].wait, c, isOpenDay, waitOpts(c, false)).getTime(); started[c.id] = (started[c.id] || 0) + 1;
+            const it = q.shift(); it.pending = false; it.step = 0; it.startedAt = slot.getTime(); started[c.id] = (started[c.id] || 0) + 1;
+            if (!it.steps.length) { it.done = true; continue; } // a path with no steps: left out
+            it.due = obAddWait(slot, it.steps[0].wait, c, isOpenDay, waitOpts(c, false)).getTime();
           }
         }
         // 2. Due steps, campaign priority first, then the oldest due.
-        const due = items.filter(it => !it.done && !it.pending && !it.awaiting && it.due != null && it.due <= slot.getTime() && isOpen(it.c, slot) && it.step < it.c.steps.length)
+        const due = items.filter(it => !it.done && !it.pending && !it.awaiting && it.due != null && it.due <= slot.getTime() && isOpen(it.c, slot) && it.step < it.steps.length)
           .sort((a, b) => (a.c.priority || 2) - (b.c.priority || 2) || a.due - b.due);
         let sends = 0, drafts = 0; const used = new Set();
         const push = (r) => { rows.push(r); rowDays.add(k); };
         for (const it of due) {
-          const st = it.c.steps[it.step], ch = st.channel || 'email';
-          const base = { at: new Date(slot.getTime()), enrolmentId: it.e.id, companyId: it.e.companyId || null, companyName: it.e.companyName || it.e.personName || it.e.personEmail || '', campaignId: it.c.id, stepIndex: it.step, stepCount: it.c.steps.length, stepName: st.name || '', starts: it.startedAt === slot.getTime() && it.step === 0 };
+          const st = it.steps[it.step], ch = st.channel || 'email';
+          const base = { at: new Date(slot.getTime()), enrolmentId: it.e.id, companyId: it.e.companyId || null, companyName: it.e.companyName || it.e.personName || it.e.personEmail || '', campaignId: it.c.id, stepIndex: it.step, stepCount: it.steps.length, stepName: st.name || '', starts: it.startedAt === slot.getTime() && it.step === 0 };
           if (ch !== 'email') { push({ ...base, kind: 'task', channel: ch }); it.done = true; continue; }
           if (needsApproval(it.c, st) && !it.approved) {
             if (drafts >= OB_MAX_DRAFTS) continue;
@@ -1285,7 +1288,7 @@
           push({ ...base, kind: 'send', senderId: sid, approvedMessageId: it.approved?.id || null });
           used.add(sid); sentBy[sid] = (sentBy[sid] || 0) + 1; sends++; autoSent++; campDay[it.c.id] = (campDay[it.c.id] || 0) + 1;
           it.sender = sid; it.approved = null; it.step++;
-          if (it.step >= it.c.steps.length) it.done = true; else it.due = obAddWait(slot, it.c.steps[it.step].wait, it.c, isOpenDay, waitOpts(it.c, true)).getTime();
+          if (it.step >= it.steps.length) it.done = true; else it.due = obAddWait(slot, it.steps[it.step].wait, it.c, isOpenDay, waitOpts(it.c, true)).getTime();
         }
       }
       return { rows, awaiting: items.filter(it => it.e.status === 'awaiting_approval').length };
@@ -1428,7 +1431,7 @@
       if (!c) { toast('Campaign not found (deleted?).'); return; }
       let en = null;
       if (t.enrolmentId) { try { const s = await getDoc(doc(db, 'outreachEnrolments', t.enrolmentId)); addReads(1); refreshReads(); en = s.exists() ? s.data() : null; } catch (e) {} }
-      const steps = c.steps || [];
+      const steps = en ? stepsFor(c, en) : (c.steps || []); // 27 Oct: its path's steps
       const done = new Map((en?.history || []).map(h => [h.stepId, h]));
       const EN_LABEL = { pending: 'waiting to start', active: 'in sequence', awaiting_approval: 'draft waiting for approval', awaiting_task: 'task open', paused: 'paused', replied: 'stopped — they replied', completed: 'finished', stopped: 'stopped', removed: 'removed', moved: 'moved' };
       openModal(c.name, `
@@ -3624,6 +3627,9 @@
     let curEnrols = [], curThreads = [];
     let campSec = 'overview';
     let seqDraft = null, seqDirty = false, csetDirty = false;
+    // 27 Oct (outreach.paths): the paths being edited, their counts ("Check who goes where") and the view.
+    let pathsDraft = null, pathCounts = null, seqView = 'list';
+    try { seqView = localStorage.getItem('seqView') || 'list'; } catch (e) {}
     let audFilter = 'all', audSearch = '';
 
     const curCamp = () => campaigns.find(c => c.id === curCampId) || null;
@@ -3755,7 +3761,7 @@
 
     function openCampaign(id, sec = 'overview') {
       if ($('panel-campaigns').hidden) showTab('campaigns');
-      curCampId = id; seqDraft = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = ''; refreshUnsaved();
+      curCampId = id; seqDraft = null; pathsDraft = null; pathCounts = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = ''; refreshUnsaved();
       $('campList').hidden = true; $('campPage').hidden = false; $('listsView').hidden = true; $('recurView').hidden = true;
       $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.cview === 'campaigns'));
       curEnrols = []; curThreads = [];
@@ -3780,7 +3786,7 @@
       box.hidden = !parts.length;
       box.innerHTML = parts.length ? `<span><b>Unsaved changes</b> in ${parts.join(' and ')}.</span><button class="btn btn--primary btn--sm" id="saveAllBtn" data-perm="out.campaigns" style="margin-left:auto;">Save all</button><button class="btn btn--ghost btn--sm" id="discardAllBtn">Discard all</button>` : '';
       $('saveAllBtn')?.addEventListener('click', () => { if (seqDirty) $('seqSave')?.click(); if (csetDirty) $('csSave')?.click(); });
-      $('discardAllBtn')?.addEventListener('click', () => { if (!confirm('Discard the unsaved changes?')) return; seqDirty = csetDirty = false; seqDraft = null; if (campSec === 'sequence') renderSequence(); if (campSec === 'csettings') renderCampSettings(); refreshUnsaved(); });
+      $('discardAllBtn')?.addEventListener('click', () => { if (!confirm('Discard the unsaved changes?')) return; seqDirty = csetDirty = false; seqDraft = null; pathsDraft = null; if (campSec === 'sequence') renderSequence(); if (campSec === 'csettings') renderCampSettings(); refreshUnsaved(); });
     }
     function showCampSec(name) {
       campSec = name;
@@ -3788,7 +3794,7 @@
       document.querySelectorAll('.campsec').forEach(s => { s.hidden = s.id !== 'cs-' + name; });
       if (name === 'overview') renderOverview();
       if (name === 'audience') renderAudience();
-      if (name === 'sequence') { if (!seqDirty) seqDraft = null; renderSequence(); }
+      if (name === 'sequence') { if (!seqDirty) { seqDraft = null; pathsDraft = null; } renderSequence(); }
       if (name === 'csettings') { if (!csetDirty) renderCampSettings(); }
     }
 
@@ -3961,7 +3967,7 @@ Optional note for them:`, '');
       const chanRows = Object.entries(steps.reduce((acc, s) => { if (s.channel && s.channel !== 'email') (acc[s.channel] = acc[s.channel] || []).push(s.id); return acc; }, {})).map(([ch, ids]) => {
         const outs = {};
         curEnrols.forEach(e => (e.history || []).filter(h => ids.includes(h.stepId)).forEach(h => { outs[h.result] = (outs[h.result] || 0) + 1; }));
-        const open = curEnrols.filter(e => e.status === 'awaiting_task' && ids.includes(steps[e.currentStep]?.id)).length;
+        const open = curEnrols.filter(e => e.status === 'awaiting_task' && ids.includes(stepsFor(c, e)[e.currentStep]?.id)).length;
         const done = Object.values(outs).reduce((a, n) => a + n, 0);
         const txt = Object.entries(outs).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${num(n)} ${esc(outcomeLabel(ch, k))}`).join(' · ');
         return `<tr><td>${esc(CHANNEL_LABELS[ch] || ch)}</td><td class="num">${num(done)}</td><td class="num">${num(open)}</td><td style="font-size:0.78rem;">${txt || '—'}</td></tr>`;
@@ -4032,8 +4038,12 @@ Optional note for them:`, '');
 
     // ── Companies (audience) ──
     function stepLabel(e, c) {
-      const steps = c.steps || [];
+      const steps = stepsFor(c, e); // 27 Oct: its path's steps
       if (e.status === 'pending') return 'Not started';
+      if (hasPaths(c) && e.pathName) return `<span class="hint">${esc(e.pathName)} ·</span> ` + stepLabelIn(e, steps);
+      return stepLabelIn(e, steps);
+    }
+    function stepLabelIn(e, steps) {
       if (!LIVE_ENROL.includes(e.status)) return (e.history || []).length ? `${(e.history || []).length} of ${steps.length} sent` : '—';
       if (e.currentStep >= steps.length) return 'All steps done — waiting for a reply';
       if (e.status === 'awaiting_task') return `${esc(steps[e.currentStep]?.name || 'Task')} — task open (${e.currentStep + 1} of ${steps.length})`;
@@ -4106,7 +4116,7 @@ Optional note for them:`, '');
       return { day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(p.weekday), hhmm: `${p.hour}:${p.minute}` };
     }
     function waitingFor(e, c) {
-      const steps = c.steps || [], st = steps[e.currentStep];
+      const steps = stepsFor(c, e), st = steps[e.currentStep];
       const win = c.sendWindow || settings?.sendWindow || { days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
       const n = lisbonNow(), open = (win.days || []).includes(n.day) && n.hhmm >= win.from && n.hhmm < win.to;
       if (e.status === 'pending') return c.status === 'active' ? `its turn to start (${num(c.pacing?.newPerDay || 20)} new a day)` : 'the campaign to start';
@@ -4468,6 +4478,7 @@ Optional note for them:`, '');
     function projectionHtml(c) {
       const steps = c.steps || [];
       if (!steps.length) return '<p class="note">Write the sequence first.</p>';
+      if (hasPaths(c)) return '<p class="note">This campaign has paths: the time per step, path by path, comes with the results by path (next round). The Outbox shows the next days.</p>'; // 27 Oct
       const live = curEnrols.filter(e => LIVE_ENROL.includes(e.status));
       const globalLimit = settings?.automationBudget ?? 80;
       const addrCap = (() => {
@@ -5076,7 +5087,7 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       const writerName = (email) => (window.teamDir || []).find(m => email && m.key === (drafts.find(x => x.writtenBy === email)?.writtenByKey))?.label || String(email || '').split('@')[0];
       const shown = list.slice(0, 50);
       const campName = (id) => (id === '__manual' ? 'Written by the team' : campaigns.find(c => c.id === id)?.name || 'Campaign');
-      const stepName = (d) => { const c = campaigns.find(x => x.id === d.campaignId); const i = (c?.steps || []).findIndex(s => s.id === d.stepId); return i < 0 ? 'Step' : `${c.steps[i].name} (${i + 1} of ${c.steps.length})`; };
+      const stepName = (d) => { const c = campaigns.find(x => x.id === d.campaignId); const st = (c?.steps || []).find(s => s.id === d.stepId); const ps = st ? stepsOfPath(c, st.pathId) : []; const i = ps.findIndex(s => s.id === d.stepId); return i < 0 ? 'Step' : `${hasPaths(c) ? (pathsOf(c).find(p => p.id === (st.pathId || ELSE_PATH))?.name || 'Path') + ' · ' : ''}${st.name} (${i + 1} of ${ps.length})`; };
       // B1: campaigns someone asked to start, and ones returned to me.
       const startReqs = campaigns.filter(c => ['draft', 'paused'].includes(c.status) && c.startRequest);
       const myLower = String(me || '').toLowerCase();
@@ -5600,7 +5611,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     // ── Sequence editor ──
     function renderSequence() {
       const c = curCamp(); if (!c) return;
-      if (!seqDraft) seqDraft = JSON.parse(JSON.stringify(c.steps || []));
+      if (!seqDraft) { seqDraft = JSON.parse(JSON.stringify(c.steps || [])); pathsDraft = JSON.parse(JSON.stringify(pathsOf(c))); pathCounts = null; }
+      if (!pathsDraft) pathsDraft = JSON.parse(JSON.stringify(pathsOf(c)));
+      seqDraft.forEach(s => { if (!s.pathId) s.pathId = ELSE_PATH; });
       const locked = new Set(c.lockedStepIds || []);
       const editable = campEditable(c);
       const tplOptions = (sel, kind, optional) => [`<option value="">${optional ? '— None —' : '— Choose a template —'}</option>`, ...templatesAll
@@ -5612,6 +5625,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const waitStartNote = isOn('outreach.waitFromWindowStart') ? ` Sending days end when this campaign's window opens that day (${(c.sendWindow || settings?.sendWindow)?.from || '09:00'}), at least ${typeof settings?.minGapHours === 'number' ? settings.minGapHours : 12} h after the previous email; calendar days keep the time of day.` : '';
 
       const card = (s, i) => {
+        // 27 Oct (paths): number, moves and "go to" count within the step's own path.
+        const ps = seqDraft.map((x, xi) => [x, xi]).filter(([x]) => (x.pathId || ELSE_PATH) === (s.pathId || ELSE_PATH));
+        const pi = ps.findIndex(([, xi]) => xi === i), lockedInPath = ps.filter(([x]) => locked.has(x.id)).length;
         const ch = s.channel || 'email';
         const isLocked = locked.has(s.id);
         const kind = CHANNEL_KIND[ch];
@@ -5623,21 +5639,21 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         const abOk = ch === 'email' || ch === 'letter';
         return `<div class="step${isLocked ? ' step--locked' : ''}" data-i="${i}">
           <div class="step__head">
-            <div class="step__num">${i + 1}.
+            <div class="step__num">${pi + 1}.
               <select data-f="channel" style="width:auto;"${dis}${isLocked ? ' disabled title="A step that already ran can\'t change type"' : ''}>${Object.entries(CHANNEL_LABELS).map(([k, l]) => `<option value="${k}"${k === ch ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
               <input type="text" data-f="name" value="${esc(s.name || '')}" maxlength="80" style="width:auto;min-width:180px;"${dis}>
               ${isLocked ? `<span class="pill pill--info">${ch === 'email' ? 'Sent' : 'Done'} for ${num(doneAt(s.id))} — can't be removed or moved</span>` : ''}</div>
             ${editable ? `<div class="actions">
-              <button class="btn btn--ghost btn--sm" data-mv="-1" ${isLocked || i === 0 || i <= lockedCount ? 'disabled' : ''} aria-label="Move up">↑</button>
-              <button class="btn btn--ghost btn--sm" data-mv="1" ${isLocked || i === seqDraft.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
+              <button class="btn btn--ghost btn--sm" data-mv="-1" ${isLocked || pi === 0 || pi <= lockedInPath ? 'disabled' : ''} aria-label="Move up">↑</button>
+              <button class="btn btn--ghost btn--sm" data-mv="1" ${isLocked || pi === ps.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
               <button class="btn btn--danger btn--sm" data-del ${isLocked ? 'disabled' : ''}>Delete</button></div>` : ''}
           </div>
           <div class="step__grid">
             <div class="field"><label>When<span class="info" title="Wait after the previous step before this step comes due: in sending days (the days this campaign sends — Mon–Fri unless it has its own window — no national holidays) or in calendar days.${waitStartNote}" aria-label="Wait after the previous step before this step comes due: in sending days (the days this campaign sends — Mon–Fri unless it has its own window — no national holidays) or in calendar days.${waitStartNote}">i</span></label>
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-                <input type="text" inputmode="numeric" data-f="waitDays" value="${esc(s.wait?.days ?? (i === 0 ? 0 : 3))}" style="width:64px;"${dis}>
+                <input type="text" inputmode="numeric" data-f="waitDays" value="${esc(s.wait?.days ?? (pi === 0 ? 0 : 3))}" style="width:64px;"${dis}>
                 <select data-f="waitUnit" style="width:auto;"${dis}><option value="working"${s.wait?.unit !== 'calendar' ? ' selected' : ''}>sending days</option><option value="calendar"${s.wait?.unit === 'calendar' ? ' selected' : ''}>calendar days</option></select>
-                <span class="hint">${i === 0 ? 'after the company starts' : 'after the previous step'}</span>
+                <span class="hint">${pi === 0 ? 'after the company starts' : 'after the previous step'}</span>
               </div></div>
             ${kind ? `<div class="field"><label>${ch === 'email' ? 'Template' : ch === 'letter' ? 'Letter template' : ch === 'call' ? 'Call script (optional)' : 'Message to send (optional)'}</label><select data-f="templateId"${dis}>${tplOptions(s.templateId, kind, !['email', 'letter'].includes(ch))}</select></div>` : ''}
             ${ch === 'email' ? `<div class="field"><label>Before sending<span class="info" title="Inherit = the campaign's rule. Approval = waits in To approve. Automatic = goes out on its own." aria-label="Inherit = the campaign's rule. Approval = waits in To approve. Automatic = goes out on its own.">i</span></label><select data-f="approval"${dis}>
@@ -5650,14 +5666,14 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           ${abOk && tplVars.length > 1 ? `<div class="field" style="margin-bottom:6px;"><label>A/B variants<span class="info" title="Send different versions of the template; the weights decide how often each one is used. Results per variant show in Overview." aria-label="Send different versions of the template; the weights decide how often each one is used. Results per variant show in Overview.">i</span></label>
             <div class="wvars">${tplVars.map(k => { const v = (s.variants || []).find(x => x.key === k); return `<label class="wvar"><input type="checkbox" data-vk="${k}" ${all || chosenKeys.has(k) ? 'checked' : ''}${dis}> ${k} <input type="text" inputmode="numeric" data-vw="${k}" value="${esc(v ? v.weight : 1)}" aria-label="Weight ${k}"${dis}></label>`; }).join('')}</div>
             <span class="hint">Each company gets one variant, picked at random by weight. Results per variant appear in the Overview.</span></div>` : ''}
-          ${ch === 'email' && i > 0 ? `<label class="checkline"><input type="checkbox" data-f="newSubject" ${s.newSubject ? 'checked' : ''}${dis}> <span>Start a new conversation with the template's subject (default: reply in the same conversation, "Re: …", quoting the previous email)</span></label>` : ''}
+          ${ch === 'email' && pi > 0 ? `<label class="checkline"><input type="checkbox" data-f="newSubject" ${s.newSubject ? 'checked' : ''}${dis}> <span>Start a new conversation with the template's subject (default: reply in the same conversation, "Re: …", quoting the previous email)</span></label>` : ''}
           ${ch !== 'other' && ruleOutcomes(ch).length ? `<div class="field" style="margin-bottom:6px;"><label>Rules (optional)<span class="info" title="What happens after an outcome, e.g. &quot;No answer → go to step 4&quot; or &quot;Not interested → end&quot;. Replies, bounces and unsubscribes always stop the sequence." aria-label="What happens after an outcome, e.g. &quot;No answer → go to step 4&quot; or &quot;Not interested → end&quot;. Replies, bounces and unsubscribes always stop the sequence.">i</span></label>
             ${(s.branches || []).map((b, bi) => `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px;" data-br="${bi}">
               <span class="hint">${ch === 'email' ? 'If they' : 'If the outcome is'}</span>
               <select data-bf="outcome" style="width:auto;"${dis}>${ruleOutcomes(ch).map(([k, l]) => `<option value="${k}"${b.outcome === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
               <select data-bf="target" style="width:auto;"${dis}>
                 <option value="end"${b.action === 'end' ? ' selected' : ''}>end the sequence</option>
-                ${seqDraft.map((x, xi) => xi > i && x.id ? `<option value="goto:${esc(x.id)}"${b.action === 'goto' && b.stepId === x.id ? ' selected' : ''}>go to step ${xi + 1} (${esc(x.name || CHANNEL_LABELS[x.channel || 'email'])})</option>` : '').join('')}
+                ${ps.map(([x], k) => k > pi && x.id ? `<option value="goto:${esc(x.id)}"${b.action === 'goto' && b.stepId === x.id ? ' selected' : ''}>go to step ${k + 1} (${esc(x.name || CHANNEL_LABELS[x.channel || 'email'])})</option>` : '').join('')}
               </select>
               ${editable ? `<button type="button" class="btn btn--ghost btn--sm" data-brdel="${bi}">Remove</button>` : ''}</div>`).join('')}
             ${editable ? '<button type="button" class="btn btn--ghost btn--sm" data-bradd>+ Add a rule</button>' : ''}
@@ -5667,16 +5683,73 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       };
 
       const noTpl = !templatesAll.some(t => t.status === 'active' && (t.kind || 'email') === 'email');
+      // 27 Oct (switch outreach.paths): paths = a filter + its own steps; "Everyone else" (main) last.
+      const pathsOn = isOn('outreach.paths');
+      const multi = pathsDraft.length > 1;
+      const pathLocked = (pid) => seqDraft.some(s => (s.pathId || ELSE_PATH) === pid && locked.has(s.id));
+      const LABELS = { stage: Object.fromEntries(STAGE_LABELS), owner: OWNER_LABEL };
+      const addStepCtl = (pid) => editable ? `<div class="actions" style="margin-top:8px;align-items:center;">
+            <select data-addch="${esc(pid)}" style="width:auto;" aria-label="Type of step">${Object.entries(CHANNEL_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
+            <button class="btn btn--ghost btn--sm" data-addstep="${esc(pid)}"${seqDraft.filter(s => (s.pathId || ELSE_PATH) === pid).length >= MAX_PATH_STEPS ? ' disabled title="Up to 20 steps per path"' : ''}>+ Add step${multi ? ' to this path' : ''}</button></div>` : '';
+      const valueCtl = (flt, pi, ci) => {
+        const f = fieldOf(flt.field), at = `data-pi="${pi}" data-ci="${ci}"`, d = editable ? '' : ' disabled';
+        if (f.type === 'num') {
+          const show = (v) => esc(f.unit === '€' ? amountText(v, '€') : (v ?? ''));
+          return flt.op === 'range'
+            ? `<input type="text" data-cf="v0" ${at} value="${show(flt.value?.[0])}" style="width:84px;" aria-label="From"${d}> <span class="hint">to under</span> <input type="text" data-cf="v1" ${at} value="${show(flt.value?.[1])}" style="width:84px;" aria-label="To under"${d}>${f.unit ? ` <span class="hint">${f.unit === '€' ? '€ (2M, 500k)' : '%'}</span>` : ''}`
+            : `<input type="text" data-cf="v" ${at} value="${show(flt.value)}" style="width:96px;" aria-label="Value"${d}>${f.unit ? ` <span class="hint">${f.unit === '€' ? '€ (2M, 500k)' : '%'}</span>` : ''}`;
+        }
+        if (f.type === 'tier') return ['A', 'B', 'C'].map(t => `<label class="checkline" style="display:inline-flex;gap:4px;"><input type="checkbox" data-cf="tier" data-t="${t}" ${at} ${(flt.value || []).includes(t) ? 'checked' : ''}${d}> ${t}</label>`).join(' ');
+        if (f.type === 'bool' || flt.op === 'exists') return `<select data-cf="yn" ${at}${d}><option value="1"${flt.value ? ' selected' : ''}>${f.type === 'days' ? 'touched before' : f.type === 'exists' ? 'has one' : 'yes'}</option><option value="0"${flt.value ? '' : ' selected'}>${f.type === 'days' ? 'never touched' : f.type === 'exists' ? 'has none' : 'no'}</option></select>`;
+        if (flt.op === 'within_days') return `<input type="text" inputmode="numeric" data-cf="v" ${at} value="${esc(flt.value ?? 90)}" style="width:64px;" aria-label="Days"${d}> <span class="hint">days</span>`;
+        if (flt.field === 'stage') return `<select data-cf="v" ${at}${d}>${STAGE_LABELS.map(([k, l]) => `<option value="${k}"${flt.value === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+        if (flt.field === 'owner') return `<select data-cf="v" ${at}${d}>${Object.entries(OWNER_LABEL).map(([k, l]) => `<option value="${k}"${flt.value === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+        return `<input type="text" data-cf="v" ${at} value="${esc(flt.value ?? '')}" style="width:150px;" placeholder="${flt.op === 'prefix' ? 'e.g. 4621' : ''}" aria-label="Value"${d}>`;
+      };
+      const pathCard = (p, pi) => {
+        const [ink] = pathColor(p, pi);
+        const items = seqDraft.map((s, i) => [s, i]).filter(([s]) => (s.pathId || ELSE_PATH) === p.id);
+        const isElse = p.id === ELSE_PATH, n = pathCounts?.[p.id];
+        const d = editable ? '' : ' disabled';
+        return `<div class="path-card" data-pid="${esc(p.id)}" style="--pc:${ink}">
+          <div class="path-head">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span class="pname">${pi + 1}.</span>${isElse ? '<span class="pname">Everyone else</span>' : `<input type="text" data-pf="name" data-pi="${pi}" value="${esc(p.name || '')}" maxlength="60" style="width:auto;min-width:160px;font-weight:600;" aria-label="Path name"${d}>`}
+              ${n ? `<span class="pill">${num(n.waiting + n.started)} compan${n.waiting + n.started === 1 ? 'y' : 'ies'}${n.started ? ` · ${num(n.started)} started` : ''}</span>` : ''}</div>
+            ${editable && !isElse ? `<div class="actions"><button class="btn btn--ghost btn--sm" data-pmv="-1" data-pi="${pi}" ${pi === 0 ? 'disabled' : ''} aria-label="Move path up">↑</button><button class="btn btn--ghost btn--sm" data-pmv="1" data-pi="${pi}" ${pi >= pathsDraft.length - 2 ? 'disabled' : ''} aria-label="Move path down">↓</button><button class="btn btn--danger btn--sm" data-pdel="${pi}" ${pathLocked(p.id) ? 'disabled title="Steps of this path already ran — it can\'t be removed"' : ''}>Delete path</button></div>` : ''}
+          </div>
+          ${isElse ? `<p class="hint" style="margin:0 0 8px;">Any company the paths above don't take (including companies with no value for their conditions).${items.length ? '' : ' <b>No steps: these companies are left out — not contacted.</b> Add a step to contact them.'}</p>`
+            : `<div class="path-conds">${(p.filters || []).map((flt, ci) => `<div class="path-cond"><span class="hint">${ci ? 'and' : 'When'}</span>
+                <select data-cf="field" data-pi="${pi}" data-ci="${ci}" aria-label="Field"${d}>${PATH_FIELDS.map(f => `<option value="${f.key}"${f.key === flt.field ? ' selected' : ''}>${esc(f.label)}</option>`).join('')}</select>
+                ${OPS[fieldOf(flt.field).type].length > 1 || OPS[fieldOf(flt.field).type][0][1] ? `<select data-cf="op" data-pi="${pi}" data-ci="${ci}" aria-label="Condition"${d}>${OPS[fieldOf(flt.field).type].map(([k, l]) => `<option value="${k}"${k === flt.op ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>` : ''}
+                ${valueCtl(flt, pi, ci)}
+                ${editable && (p.filters || []).length > 1 ? `<button type="button" class="btn btn--ghost btn--sm" data-cdel="${ci}" data-pi="${pi}" aria-label="Remove condition">✕</button>` : ''}</div>`).join('')}
+              ${editable && (p.filters || []).length < 10 ? `<div><button type="button" class="btn btn--ghost btn--sm" data-cadd="${pi}">+ and…</button></div>` : ''}</div>`}
+          <div class="steps">${items.map(([s, i]) => card(s, i)).join('') || (isElse ? '' : '<div class="empty" style="padding:10px;">No steps yet — add the first one.</div>')}</div>
+          ${addStepCtl(p.id)}
+        </div>`;
+      };
+      const tree = () => `<div class="pt-wrap card" style="padding:12px;"><div class="hint" style="margin-bottom:6px;">Click a box to edit it.</div>${pathsTreeHtml({ paths: pathsDraft, steps: seqDraft, counts: pathCounts, outcomeLabel, labels: LABELS })}</div>`;
+      const listHtml = multi ? pathsDraft.map(pathCard).join('') : `${seqDraft.map(card).join('') || '<div class="empty">No steps yet. Add the first one.</div>'}`;
+      const view = pathsOn ? seqView : 'list';
+      const bar = pathsOn ? `<div class="paths-bar">
+          <span class="seg" role="group" aria-label="View">${[['list', 'List'], ['tree', 'Tree'], ['side', 'Side by side']].map(([k, l]) => `<button type="button" class="chip${view === k ? ' on' : ''}" data-seqview="${k}">${l}</button>`).join('')}</span>
+          ${editable ? `<button class="btn btn--ghost btn--sm" id="pathAdd"${pathsDraft.length >= MAX_PATHS ? ' disabled' : ''}>＋ Add path</button>` : ''}
+          ${multi ? '<button class="btn btn--ghost btn--sm" id="pathCheck">Check who goes where</button>' : ''}
+          <span class="hint" id="pathCheckNote">${multi ? 'Paths are checked top to bottom; the first that matches takes the company when it starts, and it keeps that path.' : 'Add a path to give some companies a different sequence (by fit score, revenue, EBITDA, tier, sector, region…).'}</span>
+        </div>` : '';
+      const offWithPaths = !pathsOn && hasPaths(c);
       $('cs-sequence').innerHTML = `
         <div class="card">
           ${noTpl ? '<div class="banner banner--warn" style="margin-bottom:12px;"><span>No active email templates yet — write one in Settings → Templates first.</span></div>' : ''}
-          <div class="steps" id="seqSteps">${seqDraft.map(card).join('') || '<div class="empty">No steps yet. Add the first one.</div>'}</div>
-          ${editable ? `<div class="actions" style="margin-top:14px;align-items:center;">
-            <select id="seqAddCh" style="width:auto;">${Object.entries(CHANNEL_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
-            <button class="btn btn--ghost" id="seqAdd">+ Add step</button>
+          ${offWithPaths ? '<div class="banner banner--warn" style="margin-bottom:12px;"><span>This campaign has paths, but "Campaign paths" is off here — the sequence is shown read-only.</span></div>' : ''}
+          ${bar}
+          <div id="seqSteps">${view === 'tree' ? tree() : view === 'side' ? `<div class="paths-side"><div class="steps">${listHtml}</div>${tree()}</div>` : `<div class="steps">${listHtml}</div>`}</div>
+          ${editable && !offWithPaths ? `<div class="actions" style="margin-top:14px;align-items:center;">
+            ${multi ? '' : `<select id="seqAddCh" style="width:auto;">${Object.entries(CHANNEL_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
+            <button class="btn btn--ghost" id="seqAdd"${seqDraft.length >= MAX_PATH_STEPS ? ' disabled' : ''}>+ Add step</button>`}
             <button class="btn btn--primary" id="seqSave" data-perm="out.campaigns"${seqDirty ? '' : ' disabled'}>Save sequence</button>
             ${seqDirty ? '<button class="btn btn--ghost" id="seqDiscard">Discard changes</button>' : ''}
-          </div>` : '<p class="hint" style="margin-top:12px;">This campaign is finished — duplicate it to reuse the sequence.</p>'}
+          </div>` : (offWithPaths ? '' : '<p class="hint" style="margin-top:12px;">This campaign is finished — duplicate it to reuse the sequence.</p>')}
           <p class="hint" style="margin-top:12px;">Emails are sent by the scheduler. Calls, LinkedIn, WhatsApp, letters, visits and other steps become tasks (Tasks tab) for the company owner or the campaign's assignee; the sequence waits until each task is done or skipped. A reply, bounce or unsubscribe ends the sequence for that company. Steps already done for someone stay in place; you can still change their content.</p>
         </div>`;
 
@@ -5695,7 +5768,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           if (f === 'channel') {
             const oldDefault = /^(Email|Linkedin|LinkedIn|Call|Whatsapp|WhatsApp|Letter|Visit|Other|Other task) \d+$/.test(s.name || '');
             s.channel = inp.value; s.templateId = null; s.variants = []; s.branches = [];
-            if (oldDefault || !s.name) s.name = `${CHANNEL_LABELS[s.channel]} ${i + 1}`;
+            if (oldDefault || !s.name) s.name = `${CHANNEL_LABELS[s.channel]} ${seqDraft.filter(x => x.pathId === s.pathId).indexOf(s) + 1}`;
             mark(); renderSequence(); return;
           }
           if (f === 'templateId') { s.templateId = inp.value || null; s.variants = []; mark(); renderSequence(); return; }
@@ -5726,21 +5799,78 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         });
         el.querySelector('[data-del]')?.addEventListener('click', () => { seqDraft.splice(i, 1); mark(); renderSequence(); });
         el.querySelectorAll('[data-mv]').forEach(b => b.addEventListener('click', () => {
-          const j = i + Number(b.dataset.mv); [seqDraft[i], seqDraft[j]] = [seqDraft[j], seqDraft[i]]; mark(); renderSequence();
+          // within the step's own path (27 Oct)
+          const ps = seqDraft.map((x, xi) => [x, xi]).filter(([x]) => x.pathId === s.pathId), pi = ps.findIndex(([, xi]) => xi === i);
+          const j = ps[pi + Number(b.dataset.mv)]?.[1]; if (j == null) return;
+          [seqDraft[i], seqDraft[j]] = [seqDraft[j], seqDraft[i]]; mark(); renderSequence();
         }));
       });
-      $('seqAdd')?.addEventListener('click', () => {
-        const ch = $('seqAddCh').value;
-        seqDraft.push({ id: 'n' + Math.random().toString(36).slice(2, 9), name: `${CHANNEL_LABELS[ch]} ${seqDraft.length + 1}`, channel: ch, wait: { days: seqDraft.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false, instructions: '', branches: [] });
+      const addStep = (pid, ch) => {
+        const inPath = seqDraft.filter(x => x.pathId === pid);
+        const at = inPath.length ? seqDraft.indexOf(inPath[inPath.length - 1]) + 1 : seqDraft.length;
+        seqDraft.splice(at, 0, { id: 'n' + Math.random().toString(36).slice(2, 9), pathId: pid, name: `${CHANNEL_LABELS[ch]} ${inPath.length + 1}`, channel: ch, wait: { days: inPath.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false, instructions: '', branches: [] });
         mark(); renderSequence();
+      };
+      $('seqAdd')?.addEventListener('click', () => addStep(ELSE_PATH, $('seqAddCh').value));
+      $('seqDiscard')?.addEventListener('click', () => { seqDraft = null; pathsDraft = null; pathCounts = null; seqDirty = false; renderSequence(); });
+      // 27 Oct (outreach.paths): the paths' own controls, the views and the tree.
+      const root = $('cs-sequence');
+      root.querySelectorAll('[data-addstep]').forEach(b => b.addEventListener('click', () => addStep(b.dataset.addstep, root.querySelector(`[data-addch="${b.dataset.addstep}"]`)?.value || 'email')));
+      root.querySelectorAll('[data-seqview]').forEach(b => b.addEventListener('click', () => { seqView = b.dataset.seqview; try { localStorage.setItem('seqView', seqView); } catch (e) {} renderSequence(); }));
+      $('pathAdd')?.addEventListener('click', () => {
+        const n = pathsDraft.length;
+        const el = pathsDraft.pop(); el.name = 'Everyone else';
+        pathsDraft.push({ id: 'p' + Math.random().toString(36).slice(2, 8), name: `Path ${n}`, filters: [defaultFilter('fitScore')] }, el);
+        pathCounts = null; mark(); renderSequence();
       });
-      $('seqDiscard')?.addEventListener('click', () => { seqDraft = null; seqDirty = false; renderSequence(); });
+      const pathAt = (x) => pathsDraft[Number(x.dataset.pi)];
+      root.querySelectorAll('[data-pf="name"]').forEach(x => x.addEventListener('input', () => { pathAt(x).name = x.value; mark(); }));
+      root.querySelectorAll('[data-pmv]').forEach(b => b.addEventListener('click', () => {
+        const i = Number(b.dataset.pi), j = i + Number(b.dataset.pmv); if (j < 0 || j >= pathsDraft.length - 1) return;
+        [pathsDraft[i], pathsDraft[j]] = [pathsDraft[j], pathsDraft[i]]; pathCounts = null; mark(); renderSequence();
+      }));
+      root.querySelectorAll('[data-pdel]').forEach(b => b.addEventListener('click', () => {
+        const p = pathsDraft[Number(b.dataset.pdel)]; const n = seqDraft.filter(s => s.pathId === p.id).length;
+        if (!confirm(`Delete the path "${p.name}"${n ? ` and its ${n} step${n === 1 ? '' : 's'}` : ''}? Companies it would take go to the next path that matches.`)) return;
+        pathsDraft.splice(Number(b.dataset.pdel), 1); seqDraft = seqDraft.filter(s => s.pathId !== p.id);
+        if (pathsDraft.length === 1) pathsDraft[0].name = 'Everyone';
+        pathCounts = null; mark(); renderSequence();
+      }));
+      root.querySelectorAll('[data-cadd]').forEach(b => b.addEventListener('click', () => { pathsDraft[Number(b.dataset.cadd)].filters.push(defaultFilter('computedRevenue')); pathCounts = null; mark(); renderSequence(); }));
+      root.querySelectorAll('[data-cdel]').forEach(b => b.addEventListener('click', () => { pathAt(b).filters.splice(Number(b.dataset.cdel), 1); pathCounts = null; mark(); renderSequence(); }));
+      root.querySelectorAll('[data-cf]').forEach(x => x.addEventListener(x.tagName === 'SELECT' || x.type === 'checkbox' ? 'change' : 'input', () => {
+        const flt = pathAt(x).filters[Number(x.dataset.ci)], f = fieldOf(flt.field), kind = x.dataset.cf;
+        const numOf = (v) => (f.unit === '€' ? parseAmount(v) : Number(String(v).replace(',', '.')));
+        if (kind === 'field') { Object.assign(flt, defaultFilter(x.value)); pathCounts = null; mark(); renderSequence(); return; }
+        if (kind === 'op') { const old = flt.value; flt.op = x.value; flt.value = x.value === 'range' ? [Number(Array.isArray(old) ? old[0] : old) || 0, (Number(Array.isArray(old) ? old[0] : old) || 0) + (f.unit === '€' ? 1e6 : 25)] : x.value === 'exists' ? true : x.value === 'within_days' ? 90 : (Array.isArray(old) ? old[0] : old); pathCounts = null; mark(); renderSequence(); return; }
+        if (kind === 'v') flt.value = f.type === 'num' || flt.op === 'within_days' ? numOf(x.value) : x.value;
+        if (kind === 'v0' || kind === 'v1') { const v = Array.isArray(flt.value) ? [...flt.value] : [0, 0]; v[kind === 'v0' ? 0 : 1] = numOf(x.value); flt.value = v; }
+        if (kind === 'yn') flt.value = x.value === '1';
+        if (kind === 'tier') flt.value = [...root.querySelectorAll(`[data-cf="tier"][data-pi="${x.dataset.pi}"][data-ci="${x.dataset.ci}"]`)].filter(t => t.checked).map(t => t.dataset.t);
+        pathCounts = null; mark();
+      }));
+      $('pathCheck')?.addEventListener('click', async () => {
+        const b = $('pathCheck'); const unbusy = busyBtn(b, 'Checking…');
+        try {
+          const r = (await callCampaign({ action: 'pathsPreview', campaignId: c.id, paths: pathsDraft, steps: seqDraft })).data;
+          pathCounts = Object.fromEntries(r.paths.map(p => [p.id, p]));
+          renderSequence();
+          $('pathCheckNote').textContent = `${r.paths.map(p => `${p.name}: ${num(p.waiting + p.started)}`).join(' · ')}${r.waitingTotal > r.waitingChecked ? ` (first ${num(r.waitingChecked)} of ${num(r.waitingTotal)} waiting checked)` : ''} — companies waiting to start counted with today's data.`;
+        } catch (e) { unbusy(); toast(errText(e)); }
+      });
+      root.querySelectorAll('[data-tree-step],[data-tree-path]').forEach(b => b.addEventListener('click', () => {
+        if (seqView === 'tree') { seqView = 'side'; renderSequence(); }
+        const t = b.dataset.treeStep != null ? root.querySelector(`.step[data-i="${b.dataset.treeStep}"]`) : root.querySelector(`.path-card[data-pid="${b.dataset.treePath}"]`);
+        if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1600); }
+      }));
       refreshUnsaved();
       $('seqSave')?.addEventListener('click', async () => {
         const b = $('seqSave'); const unbusy = busyBtn(b, 'Saving…');
-        const r = await campCall({ action: 'save', campaignId: c.id, campaign: { steps: seqDraft.map(s => ({ ...s, channel: s.channel || 'email' })) } }, 'Sequence saved.');
+        const payload = { steps: seqDraft.map(s => ({ ...s, channel: s.channel || 'email' })) };
+        if (isOn('outreach.paths')) payload.paths = pathsDraft.length > 1 ? pathsDraft : null; // 27 Oct
+        const r = await campCall({ action: 'save', campaignId: c.id, campaign: payload }, 'Sequence saved.');
         unbusy();
-        if (r) { seqDirty = false; seqDraft = null; refreshUnsaved(); b.disabled = true; }
+        if (r) { seqDirty = false; seqDraft = null; pathsDraft = null; refreshUnsaved(); b.disabled = true; }
       });
     }
 

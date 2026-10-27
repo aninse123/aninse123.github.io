@@ -26,7 +26,7 @@ const Usage = require("../usage"); // Team & access → Usage
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience } = require("./campaigns");
 const { runRecurring } = require("./recurring");
-const { LIVE_ENROLMENT: LIVE_STATUSES } = require("./campaign_util");
+const { LIVE_ENROLMENT: LIVE_STATUSES, ELSE_PATH, pathSteps, choosePath, tierOf } = require("./campaign_util");
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
@@ -72,6 +72,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // message instead of sending twice.
 const stepMessageId = (enrolmentId, stepId) => `${enrolmentId}_${stepId}`.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120);
 
+// Campaign paths (27 Oct, switch outreach.paths): the campaign as one company
+// sees it — only its path's steps; every other read and write goes to the real
+// campaign object (the run's counters live there).
+const pathView = (campaign, e) => new Proxy(campaign, { get: (t, k) => (k === "steps" ? pathSteps(t, e?.pathId) : t[k]) });
+
 async function startPending(campaign, now, report) {
   const day = lisbonParts(now).dayKey;
   const already = campaign.startedToday?.day === day ? campaign.startedToday.count || 0 : 0;
@@ -83,12 +88,30 @@ async function startPending(campaign, now, report) {
     .where("campaignId", "==", campaign.id).where("status", "==", "pending")
     .orderBy("enrolledAt", "asc").limit(room).get();
   let n = 0;
-  const firstDue = ts(addWait(now, campaign.steps[0].wait, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart));
+  const dueFor = (steps) => ts(addWait(now, steps[0].wait, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart));
+  // Campaign paths (27 Oct): each company takes the first path its data matches today, and keeps it.
+  const usePaths = !!campaign._pathsOn && (campaign.paths || []).length > 1;
+  let tierRules = null;
   for (const d of snap.docs) {
+    let path = { id: ELSE_PATH, name: null }, why = null;
+    if (usePaths && d.data().companyId) {
+      const co = await db().doc(`searchCompanies/${d.data().companyId}`).get();
+      const c = co.exists ? co.data() : {};
+      if (tierRules === null) tierRules = (campaign.paths || []).some((p) => (p.filters || []).some((f) => f.field === "targetTier")) ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
+      const ch = choosePath(campaign, tierRules.length ? { ...c, targetTier: tierOf(c, tierRules) } : c, now.getTime());
+      path = ch.path; why = ch.why;
+    }
+    const steps = pathSteps(campaign, path.id);
+    if (!steps.length) {
+      // A path with no steps ("Everyone else" set to leave out): never contacted.
+      await d.ref.update({ pathId: path.id, pathName: path.name, pathWhy: why }).catch(() => {});
+      if (await endEnrolment(d.ref, "completed", `Left out by the campaign's paths ("${path.name || "Everyone else"}")`)) report.leftOut = (report.leftOut || 0) + 1;
+      continue;
+    }
     const started = await db().runTransaction(async (tx) => {
       const cur = await tx.get(d.ref);
       if (!cur.exists || cur.data().status !== "pending") return false;
-      tx.update(d.ref, { status: "active", currentStep: 0, nextActionAt: firstDue, startedAt: ts(now) });
+      tx.update(d.ref, { status: "active", currentStep: 0, nextActionAt: dueFor(steps), startedAt: ts(now), ...(usePaths ? { pathId: path.id, pathName: path.name, pathWhy: why } : {}) });
       return true;
     });
     if (started) n++;
@@ -242,7 +265,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck")]);
+  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
@@ -282,6 +305,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     // _waitOpts after an email (with the minimum gap), _waitStart for the rest.
     c._waitOpts = allowed(waitState, c) ? waitOptsOf(c, settings) : null;
     c._waitStart = c._waitOpts ? waitOptsOf(c, settings, { gap: false }) : null;
+    c._pathsOn = allowed(pathsState, c); // 27 Oct (outreach.paths): companies starting now take a path
     if (ignoreWindow || isWindowOpen(now, c.sendWindow || globalWindow, c._skipHolidays)) open.set(c.id, c);
   }
   report.open = open.size;
@@ -330,13 +354,14 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const todayParts = lisbonParts(now);
 
   for (const doc of due) {
-    const campaign = open.get(doc.data().campaignId);
-    if (!campaign || campaign.status !== "active") continue; // paused earlier in this run
-    const canSend = !report.stoppedSends && sendsThisRun < MAX_SENDS_PER_RUN && campaignSent < budget && allowed(sendState, campaign);
+    const campaignAll = open.get(doc.data().campaignId);
+    if (!campaignAll || campaignAll.status !== "active") continue; // paused earlier in this run
+    const canSend = !report.stoppedSends && sendsThisRun < MAX_SENDS_PER_RUN && campaignSent < budget && allowed(sendState, campaignAll);
     if (!canSend && report.drafts >= MAX_DRAFTS_PER_RUN && report.tasks >= MAX_TASKS_PER_RUN) break;
 
     const e = await claim(doc.ref, now);
     if (!e) continue;
+    const campaign = pathView(campaignAll, e); // 27 Oct: its path's steps (a campaign without paths = all of them)
     const enrolmentId = doc.id;
     const step = campaign.steps?.[e.currentStep];
 

@@ -24,6 +24,7 @@
 //   updateTask  { taskId, assignee?, dueAt?, notes? } reassign / reschedule an open task
 //   setDoNotContact { companyId, on, reason? }       stops every campaign for the company
 //   emailName   { companyId, op: "use"|"set"|"keep", name? }  fix or confirm the name used in emails (26 Oct)
+//   pathsPreview { campaignId, paths?, steps? }      "Check who goes where": companies per path (27 Oct)
 //
 // The audience's companies are chosen in the browser (Search CRM filters over
 // the full cached list, a matched CSV, or ticked rows) and arrive as ids; the
@@ -45,6 +46,7 @@ const Usage = require("../usage"); // Team & access → Usage (best-effort count
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
   evaluateCompany, enrolmentId, latestFilterSpec, matchesFilterSpec, personEnrolmentId, evaluatePerson, tierOf,
+  pathSteps, pathsOf, choosePath, ELSE_PATH, normalizePaths,
 } = require("./campaign_util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -1009,6 +1011,9 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   const campaignWait = (await waitJobOn(campaign)) ? waitOptsOf(campaign, settingsNow) : null;
   const linkedinUrl = t.channel === "linkedin" ? cleanUrl(profileUrl) : null;
   // Phase 2c branch for this outcome (set on the step): go to a later step or end.
+  // Campaign paths (27 Oct): only the steps of the task's own path.
+  const taskPath = ((campaign.steps || []).find((x) => x.id === t.stepId) || {}).pathId;
+  if (campaign.steps) campaign.steps = pathSteps(campaign, taskPath);
   const stepIdx = (campaign.steps || []).findIndex((x) => x.id === t.stepId);
   const branch = stepIdx >= 0 ? ((campaign.steps[stepIdx].branches || []).find((b) => b.outcome === o.key) || null) : null;
 
@@ -1237,6 +1242,37 @@ async function setEmailName({ companyId, op, name }, caller) {
   return { ok: true, emailName: next };
 }
 
+// Campaign paths (27 Oct, switch outreach.paths): "Check who goes where" — the
+// companies of the campaign per path: those already started (their stored path)
+// and those still waiting (the path they would take today with the paths being
+// edited, unsaved). Up to 2,000 waiting companies are checked.
+async function pathsPreview({ campaignId, paths, steps }) {
+  const campaign = await getCampaign(campaignId);
+  const draft = { ...campaign, paths: paths !== undefined ? normalizePaths(paths, (steps || campaign.steps || []).map((s) => ({ ...s, pathId: s.pathId || ELSE_PATH }))) : campaign.paths };
+  const list = pathsOf(draft);
+  const counts = Object.fromEntries(list.map((p) => [p.id, { started: 0, waiting: 0 }]));
+  const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).where("status", "in", LIVE_ENROLMENT).limit(5000).get();
+  const waiting = [];
+  for (const d of snap.docs) {
+    const e = d.data();
+    if (e.status === "pending") { if (e.companyId) waiting.push(e.companyId); continue; }
+    const id = counts[e.pathId || ELSE_PATH] ? (e.pathId || ELSE_PATH) : null;
+    if (id) counts[id].started++;
+  }
+  const byTier = list.some((p) => (p.filters || []).some((f) => f.field === "targetTier"));
+  const tierRules = byTier ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
+  const ids = waiting.slice(0, 2000);
+  for (let i = 0; i < ids.length; i += 100) {
+    const snaps = await db().getAll(...ids.slice(i, i + 100).map((id) => db().doc(`searchCompanies/${id}`)));
+    for (const s of snaps) {
+      const c = s.exists ? s.data() : {};
+      const p = choosePath(draft, byTier ? { ...c, targetTier: tierOf(c, tierRules) } : c).path;
+      counts[p.id].waiting++;
+    }
+  }
+  return { paths: list.map((p) => ({ id: p.id, name: p.name, ...counts[p.id], steps: pathSteps(draft, p.id).length })), waitingChecked: ids.length, waitingTotal: waiting.length };
+}
+
 // Team access: the permission each action needs. Starting a campaign sends
 // emails, so it needs "approve" like approving drafts.
 const CAMPAIGN_ACTION_PERM = {
@@ -1247,6 +1283,7 @@ const CAMPAIGN_ACTION_PERM = {
   createTask: "out.tasks", logActivity: "out.tasks",
   related: "search.view", // owner-aware outreach (22 Oct): the company page's "related companies in outreach"
   emailName: "search.edit", // email name check (26 Oct)
+  pathsPreview: "out.campaigns", // campaign paths (27 Oct)
 };
 function campaignActionPerm(data) {
   // Starting / resuming sends emails; finishing ends a live campaign.
@@ -1262,6 +1299,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   // Feature switches: Outreach, then company or people campaigns by audience.
   // "Do not contact" (Search CRM) is a safety control and never switched.
   if (data.action === "emailName") await Feat.requireFeature(request, "search.emailNameCheck"); // a Search CRM change, not Outreach
+  // Campaign paths (27 Oct): saving more than one path, or checking them, needs the switch.
+  if (data.action === "pathsPreview" || (data.action === "save" && Array.isArray(data.campaign?.paths) && data.campaign.paths.some((p) => p && p.id !== ELSE_PATH))) await Feat.requireFeature(request, "outreach.paths");
   if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
     let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
@@ -1320,6 +1359,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
       case "logActivity": return await logActivity(data, caller);
       case "setDoNotContact": return await setDoNotContact(data, caller);
       case "emailName": return await setEmailName(data, caller);
+      case "pathsPreview": return await pathsPreview(data);
       default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
     }
   } catch (e) {

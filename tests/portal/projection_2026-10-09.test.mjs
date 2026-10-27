@@ -25,6 +25,7 @@ const ctx = {
   curEnrols: Array.from({ length: 69 }, () => ({ status: 'pending', currentStep: 0 })),
 };
 vm.createContext(ctx);
+Object.assign(ctx, await import(new URL("../../portal/campaign-paths.js", import.meta.url))); // 27 Oct: the path helpers the page imports
 const holAt = page.indexOf('const skipHolidaysFor ='), holLine = page.slice(holAt, page.indexOf('\n', holAt));
 vm.runInContext([liftFn('easterUtc'), liftFn('ptHolidays'), liftFn('isPtHoliday'), holLine, liftFn('projectionHtml')].join('\n') + '\nthis.__p = projectionHtml;', ctx);
 const camp = { audienceType: 'companies', pacing: { newPerDay: 10 }, senderPolicy: { mode: 'fixed', senderIds: ['s1', 's2', 's3', 's4'] },

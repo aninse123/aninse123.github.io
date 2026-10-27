@@ -31,8 +31,14 @@ const MANUAL_CHANNELS = CHANNELS.filter((c) => c !== "email");
 // Which template kind each channel uses (templates without a kind are email).
 const TEMPLATE_KIND = { email: "email", letter: "letter", linkedin: "message", whatsapp: "message", call: "script" };
 const templateKind = (t) => t?.kind || "email";
-const MAX_STEPS = 12;
+const MAX_STEPS = 20; // per path (27 Oct, D6r: only a guard against mistakes; was 12)
 const MAX_WAIT_DAYS = 90;
+const ELSE_PATH = "main"; // campaign paths (27 Oct): "Everyone else" / the only path of a campaign without paths
+const MAX_PATHS = 20;
+// What a path condition can use (the Search CRM filters) and how.
+const PATH_FIELDS = { fitScore: "num", computedRevenue: "num", computedEBITDA: "num", computedEBITDAMargin: "num", computedGrowthRecent: "num", ownGroupSize: "num", targetTier: "tier", contactable: "bool", sector: "text", subSector: "text", caeCode: "prefix", naceCode: "prefix", nuts2: "text", nuts3: "text", stage: "text", owner: "text", website: "exists", lastTouchAt: "days" };
+const PATH_OPS = { num: ["gte", "lt", "range"], tier: ["in"], bool: ["bool"], text: ["eq"], prefix: ["prefix"], exists: ["exists"], days: ["within_days", "exists"] };
+const PATH_FIELD_LABEL = { fitScore: "Fit score", computedRevenue: "Revenue", computedEBITDA: "EBITDA", computedEBITDAMargin: "EBITDA margin", computedGrowthRecent: "Growth", ownGroupSize: "Group size", targetTier: "Tier", contactable: "Contactable", sector: "Sector", subSector: "Sub-sector", caeCode: "CAE", naceCode: "NACE", nuts2: "Region (NUTS II)", nuts3: "Region (NUTS III)", stage: "Stage", owner: "Owner", website: "Website", lastTouchAt: "Last touch" };
 
 const DEFAULT_CAMPAIGN = {
   name: "",
@@ -98,6 +104,7 @@ function normalizeStep(s, i, usedIds, reserved = new Set()) {
   return {
     id,
     order: i,
+    pathId: /^[a-z0-9_-]{1,20}$/i.test(s.pathId || "") ? s.pathId : ELSE_PATH, // campaign paths (27 Oct)
     channel,
     name: cleanText(s.name, 80) || (channel === "email" ? `Email ${i + 1}` : `${channel.charAt(0).toUpperCase() + channel.slice(1)} ${i + 1}`),
     wait: { days: intIn(s.wait?.days, 0, MAX_WAIT_DAYS, i === 0 ? 0 : 3), unit: s.wait?.unit === "calendar" ? "calendar" : "working" },
@@ -141,12 +148,13 @@ function normalizeCampaign(input, existing = null) {
   if (senderPolicy.mode === "fixed" && !senderPolicy.senderIds.length) bad("senders_required", "Pick at least one sender address, or use the owner's addresses.");
 
   const rawSteps = Array.isArray(src.steps) ? src.steps : [];
-  if (rawSteps.length > MAX_STEPS) bad("too_many_steps", `A sequence can have up to ${MAX_STEPS} steps.`);
+  if (rawSteps.length > MAX_STEPS * MAX_PATHS) bad("too_many_steps", `A campaign can have up to ${MAX_STEPS} steps per path.`);
   const used = new Set();
   const reserved = new Set((existing?.steps || []).map((s) => s.id));
   // F1 (27 Sep): people campaigns take every step type, like companies.
   if (existing && (existing.stats?.enrolled || 0) > 0 && (src.audienceType === "people" ? "people" : "companies") !== (existing.audienceType || "companies")) bad("audience_locked", "The audience type can't change once people or companies are in the campaign.");
   const steps = rawSteps.map((s, i) => normalizeStep(s, i, used, reserved));
+  const paths = normalizePaths(src.paths, steps);
 
   steps.forEach((st, i) => {
     const valid = new Set(st.channel === "email" ? ["clicked"] : (OUTCOMES[st.channel] || []).map((o) => o.key));
@@ -158,16 +166,22 @@ function normalizeCampaign(input, existing = null) {
       if (b.action === "goto") {
         const j = steps.findIndex((x) => x.id === b.stepId);
         if (j <= i) bad("bad_branch", `${st.name}: "go to" must point to a later step.`);
+        if (steps[j].pathId !== st.pathId) bad("bad_branch", `${st.name}: "go to" must point to a step of the same path.`);
       }
     }
   });
 
   const locked = (existing?.lockedStepIds || []).filter((id) => (existing.steps || []).some((s) => s.id === id));
   if (locked.length) {
+    // Per path (27 Oct): the steps that ran stay first in their own path, in the same order.
+    const oldPath = Object.fromEntries((existing.steps || []).map((s) => [s.id, s.pathId || ELSE_PATH]));
     const lockedOrder = (existing.steps || []).filter((s) => locked.includes(s.id)).map((s) => s.id);
-    const newPrefix = steps.slice(0, lockedOrder.length).map((s) => s.id);
-    if (lockedOrder.some((id, i) => newPrefix[i] !== id)) {
-      bad("step_locked", "Steps that have already run can't be removed or moved — you can still change their content, or add steps after them.");
+    for (const pid of new Set(lockedOrder.map((id) => oldPath[id]))) {
+      const want = lockedOrder.filter((id) => oldPath[id] === pid);
+      const have = steps.filter((s) => s.pathId === pid).slice(0, want.length).map((s) => s.id);
+      if (want.some((id, i) => have[i] !== id)) {
+        bad("step_locked", "Steps that have already run can't be removed or moved — you can still change their content, or add steps after them.");
+      }
     }
     const oldChannel = Object.fromEntries((existing.steps || []).map((s) => [s.id, s.channel || "email"]));
     if (steps.some((s) => locked.includes(s.id) && s.channel !== oldChannel[s.id])) {
@@ -209,7 +223,76 @@ function normalizeCampaign(input, existing = null) {
       includeNotContactable: !!ex.includeNotContactable,
     },
     steps,
+    paths,
   };
+}
+
+// ── Campaign paths (27 Oct 2026, switch outreach.paths) ─────────────────────
+// A path = a filter on the company (the Search CRM filters) + its own steps.
+// Paths are checked top to bottom; the first that matches takes the company,
+// when it starts, and it keeps that path. The last path, "Everyone else"
+// (id "main"), takes the rest; with no steps it means "leave out". A campaign
+// without paths is one path, "main", holding every step — as before. Each
+// step carries its pathId; an enrolment's currentStep counts within its path.
+function normalizePaths(input, steps) {
+  const list = Array.isArray(input) ? input : [];
+  const own = list.filter((p) => p && p.id !== ELSE_PATH);
+  if (!own.length) {
+    if (steps.some((s) => s.pathId !== ELSE_PATH)) bad("bad_path", "A step belongs to a path that doesn't exist.");
+    if (steps.length > MAX_STEPS) bad("too_many_steps", `A sequence can have up to ${MAX_STEPS} steps.`);
+    return null;
+  }
+  if (own.length + 1 > MAX_PATHS) bad("too_many_paths", `A campaign can have up to ${MAX_PATHS} paths.`);
+  const ids = new Set([ELSE_PATH]);
+  const out = own.map((p, i) => {
+    let id = /^[a-z0-9_-]{1,20}$/i.test(p.id || "") && !ids.has(p.id) ? p.id : null;
+    if (!id) { let n = i + 1; while (ids.has("p" + n)) n++; id = "p" + n; }
+    ids.add(id);
+    const name = cleanText(p.name, 60) || `Path ${i + 1}`;
+    const filters = (Array.isArray(p.filters) ? p.filters : []).slice(0, 10).map((f) => normalizePathFilter(f, name));
+    if (!filters.length) bad("bad_path", `${name}: give the path at least one condition.`);
+    return { id, name, filters };
+  });
+  const el = list.find((p) => p && p.id === ELSE_PATH);
+  out.push({ id: ELSE_PATH, name: cleanText(el?.name, 60) || "Everyone else", filters: null });
+  for (const s of steps) if (!ids.has(s.pathId)) bad("bad_path", `${s.name}: its path doesn't exist.`);
+  for (const p of out) if (steps.filter((s) => s.pathId === p.id).length > MAX_STEPS) bad("too_many_steps", `${p.name}: up to ${MAX_STEPS} steps per path.`);
+  return out;
+}
+function normalizePathFilter(f, pathName) {
+  const field = String(f?.field || ""), op = String(f?.op || "");
+  const type = PATH_FIELDS[field];
+  if (!type) bad("bad_path", `${pathName}: "${field}" can't be used in a condition.`);
+  if (!PATH_OPS[type].includes(op)) bad("bad_path", `${pathName}: "${op}" doesn't work with ${PATH_FIELD_LABEL[field]}.`);
+  let value = f.value;
+  const num = (x) => { const n = Number(x); if (!isFinite(n)) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]} needs a number.`); return n; };
+  if (op === "range") { if (!Array.isArray(value) || value.length !== 2) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]} needs "from" and "to".`); value = [num(value[0]), num(value[1])]; if (!(value[0] < value[1])) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]}: "from" must be below "to".`); }
+  else if (op === "gte" || op === "lt") value = num(value);
+  else if (op === "in") { value = [...new Set((Array.isArray(value) ? value : [value]).filter((x) => TIERS.includes(x)))]; if (!value.length) bad("bad_path", `${pathName}: pick at least one tier.`); }
+  else if (op === "bool" || op === "exists") value = !!value;
+  else if (op === "within_days") value = intIn(value, 1, 3650, 30);
+  else { value = cleanText(value, 80); if (!value) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]} needs a value.`); }
+  return { field, op, value };
+}
+const pathsOf = (campaign) => (Array.isArray(campaign?.paths) && campaign.paths.length ? campaign.paths : [{ id: ELSE_PATH, name: "Everyone", filters: null }]);
+const pathSteps = (campaign, pathId) => (campaign?.steps || []).filter((s) => (s.pathId || ELSE_PATH) === (pathId || ELSE_PATH));
+// The campaign as one enrolment sees it: only the steps of its path.
+const viewFor = (campaign, e) => ({ ...campaign, steps: pathSteps(campaign, e?.pathId) });
+// Which path a company takes, and why ("Fit score 82 (at least 75)").
+function choosePath(campaign, company, now = Date.now()) {
+  for (const p of pathsOf(campaign)) {
+    if (p.id === ELSE_PATH || !p.filters) return { path: p, why: pathsOf(campaign).length > 1 ? "no path above matched" : "" };
+    if (matchesFilterSpec(company, p.filters, now)) return { path: p, why: p.filters.map((f) => `${PATH_FIELD_LABEL[f.field]} ${pathValueText(f.field, company)}`).join(", ") };
+  }
+  return { path: { id: ELSE_PATH, name: "Everyone else", filters: null }, why: "" };
+}
+function pathValueText(field, c) {
+  const v = c?.[field];
+  if (v == null || v === "") return "—";
+  if (field === "computedRevenue" || field === "computedEBITDA") return `€${Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + "M" : Math.round(v / 1e3) + "k"}`;
+  if (PERCENT_FIELDS.has(field)) return `${(v * 100).toFixed(1)}%`;
+  if (field === "lastTouchAt") return tsMillis(v) ? new Date(tsMillis(v)).toISOString().slice(0, 10) : "—";
+  return String(v);
 }
 
 // What activation needs on top of a valid campaign: steps, and a usable
@@ -394,6 +477,9 @@ function matchesFilterSpec(c, spec, now = Date.now()) {
       case "gte": if (v == null || Number(v) < Number(f.value)) return false; break;
       case "lte": if (v == null || Number(v) > Number(f.value)) return false; break;
       case "between": if (v == null || !Array.isArray(f.value) || Number(v) < Number(f.value[0]) || Number(v) > Number(f.value[1])) return false; break;
+      // Campaign paths (27 Oct): "below" and "from … to under" (the upper end belongs to the next band).
+      case "lt": if (v == null || Number(v) >= Number(f.value)) return false; break;
+      case "range": if (v == null || !Array.isArray(f.value) || Number(v) < Number(f.value[0]) || Number(v) >= Number(f.value[1])) return false; break;
       case "exists": if (f.value ? !v : !!v) return false; break;
       // T6: yes/no fields where "not set" means yes (contactable).
       case "bool": if ((v !== false) !== !!f.value) return false; break;
@@ -413,4 +499,5 @@ module.exports = {
   CAMPAIGN_STATUSES, LIVE_ENROLMENT, STAGE_KEYS, DEFAULT_ALLOWED_STAGES, VARIANT_KEYS, MAX_STEPS,
   DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems, evaluateCompany,
   EXCLUSION_LABELS, enrolmentId, tsMillis, latestFilterSpec, matchesFilterSpec, tierOf, TIERS, personKey, personEnrolmentId, evaluatePerson,
+  ELSE_PATH, MAX_PATHS, PATH_FIELDS, PATH_OPS, PATH_FIELD_LABEL, pathsOf, pathSteps, viewFor, choosePath, pathValueText, normalizePaths,
 };

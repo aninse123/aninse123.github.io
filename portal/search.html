@@ -1366,6 +1366,7 @@ import { isOn, onFeaturesChange } from './features.js';
 import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText, isRelatedDecider } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
 import { nameIssues, nameCheckOf } from './email-name-check.js'; // 26 Oct (search.emailNameCheck)
 import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-ui.js';
+import { stepsFor } from './campaign-paths.js'; // 27 Oct (outreach.paths)
 import { applyDirectory } from './team-dir.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -11339,7 +11340,7 @@ async function renderCampaignTimeline(c){
     addReads(e ? 2 : 1); refreshReads();
     const camp = cSnap?.exists() ? cSnap.data() : null;
     if (!e || !camp || !['pending','active','awaiting_approval','awaiting_task','paused'].includes(e.status)) { box.remove(); return; }
-    const steps = camp.steps || [];
+    const steps = stepsFor(camp, e); // 27 Oct: the steps of its path (a campaign without paths = all)
     const fmtD = ms => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
     const done = (e.history || []).map(h => { const st = steps.find(s => s.id === h.stepId); return `<li style="color:var(--text-light);">${TL_CHANNEL[st?.channel || 'email']} · ${esc(st?.name || h.stepId)} — ${esc(TL_OUTCOME[h.result] || h.result)} · ${fmtD((h.at?.seconds || 0) * 1000)}</li>`; });
     let t = e.nextActionAt ? (e.nextActionAt.seconds * 1000) : Date.now();

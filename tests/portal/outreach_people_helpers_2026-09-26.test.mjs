@@ -16,6 +16,7 @@ function liftFn(name) {
 const liftToClose = (name) => { const i = page.indexOf(`function ${name}(`); if (i < 0) throw new Error(name); const m = /\r?\n    \}\r?\n/.exec(page.slice(i)); return page.slice(i, i + m.index + m[0].length); };
 const line = (a) => { const i = page.indexOf(a); if (i < 0) throw new Error(a); return page.slice(i, page.indexOf('\n', i)); };
 const ctx = {}; vm.createContext(ctx);
+Object.assign(ctx, await import(new URL("../../portal/campaign-paths.js", import.meta.url))); // 27 Oct: the path helpers the page imports
 vm.runInContext([
   liftFn('esc'), line('    function tsMs(t)'), line('const dayFmt ='), line('const num ='), line('const norm ='), line('const LIVE_ENROL ='), line('const validEmail ='),
   liftFn('parseCsv'), liftFn('parsePeopleRows'), liftFn('whereIs'), liftFn('mergePeople'), liftFn('peopleFor'), liftFn('easterUtc'), liftFn('ptHolidays'), liftFn('isPtHoliday'), line('    const skipHolidaysFor ='), liftToClose('projectionHtml'),

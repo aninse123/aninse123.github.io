@@ -29,6 +29,7 @@ const ctx = {
   showTab() {}, openCampaign() {}, campCall() {}, callSend() {}, toast() {}, errText: (e) => String(e), confirm: () => true, prompt: () => null,
 };
 vm.createContext(ctx);
+Object.assign(ctx, await import(new URL("../../portal/campaign-paths.js", import.meta.url))); // 27 Oct: the path helpers the page imports
 vm.runInContext([
   line('    const OWNER_BY_EMAIL ='), line('    const personName ='), line('    const OWNER_LABEL ='), line('    const DAY_NAMES ='), line('    function esc(s)'), line('    function tsMs(t)'), line('const dayFmt ='), line('const timeFmt ='), line('const dtFmt ='), lift('when'), line('const num ='), line('    function localPart(e)'), lift('windowText'),
   "let approveFilter = 'all'; const draftEdits = new Map(); let returnedMine = []; const coCache = new Map(); let taskView = 'approve'; async function loadCompaniesFor() {}",

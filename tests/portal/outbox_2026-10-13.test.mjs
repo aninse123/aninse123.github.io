@@ -6,6 +6,7 @@ const page = readFileSync(new URL('../../portal/outreach.html', import.meta.url)
 const a = page.indexOf('// ── Outbox (13 Oct) — planner begin ──'), b = page.indexOf('// ── Outbox — planner end ──');
 const lift = (name) => { const i = page.indexOf(`function ${name}(`); let d = 0, j = page.indexOf('{', page.indexOf(')', i)); for (; ; j++) { if (page[j] === '{') d++; else if (page[j] === '}' && --d === 0) break; } return page.slice(i, j + 1); };
 const ctx = {}; vm.createContext(ctx);
+Object.assign(ctx, await import(new URL("../../portal/campaign-paths.js", import.meta.url))); // 27 Oct: the path helpers the page imports
 vm.runInContext([lift('tsMs'), lift('senderKey'), lift('easterUtc'), lift('ptHolidays'), lift('isPtHoliday'), page.slice(a, b), 'globalThis.P = outboxPlan;'].join('\n'), ctx);
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 const hm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;

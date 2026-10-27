@@ -18,6 +18,7 @@ ok('the step\'s "When" help explains it when the switch is on', out.includes("co
 const page = out, a = page.indexOf('// ── Outbox (13 Oct) — planner begin ──'), b = page.indexOf('// ── Outbox — planner end ──');
 const lift = (name) => { const i = page.indexOf(`function ${name}(`); let d = 0, j = page.indexOf('{', page.indexOf(')', i)); for (; ; j++) { if (page[j] === '{') d++; else if (page[j] === '}' && --d === 0) break; } return page.slice(i, j + 1); };
 const ctx = {}; vm.createContext(ctx);
+Object.assign(ctx, await import(new URL("../../portal/campaign-paths.js", import.meta.url))); // 27 Oct: the path helpers the page imports
 vm.runInContext([lift('tsMs'), lift('senderKey'), lift('easterUtc'), lift('ptHolidays'), lift('isPtHoliday'), page.slice(a, b), 'globalThis.P = outboxPlan;'].join('\n'), ctx);
 const hm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 const S1 = [{ id: 'a@mail.douropartners-team.pt', status: 'active', dailyCap: 25, owner: 'andre' }];
