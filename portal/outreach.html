@@ -1317,13 +1317,14 @@
         const KIND = { send: ['Sends', 'pill--good'], draft: ['Becomes a draft', 'pill--info'], task: ['Becomes a task', ''] };
         const dayLabel = (d) => { const t = new Date(); t.setHours(0, 0, 0, 0); const x = new Date(d); x.setHours(0, 0, 0, 0); const diff = Math.round((x - t) / 86400000); return diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : dayFmt.format(d); };
         const byDay = new Map(); rows.forEach(r => { const k = dayLabel(r.at); (byDay.get(k) || byDay.set(k, []).get(k)).push(r); });
+        const pathCol = rows.some(r => r.pathName); // V10 (27 Oct): Campaign | Path | Step, Path only when a row has one
         const row = (r) => {
           const c = campaigns.find(x => x.id === r.campaignId);
           const [kl, kc] = KIND[r.kind];
           return `<tr data-ob="${esc(r.enrolmentId)}"><td style="white-space:nowrap;font-variant-numeric:tabular-nums;">≈ ${esc(timeFmt.format(r.at))}</td>
             <td><span class="pill ${kc}">${esc(kl)}</span>${r.starts ? ' <span class="hint">· first email</span>' : ''}${r.approvedMessageId ? ' <span class="hint">· approved</span>' : ''}</td>
             <td class="clip">${r.companyId ? `<a href="/portal/search.html?company=${encodeURIComponent(r.companyId)}" style="color:var(--text);">${esc(r.companyName || 'Company')}</a>` : esc(r.companyName || '')}</td>
-            <td class="clip" style="font-size:0.8rem;">${esc(c?.name || 'Campaign')} · ${r.pathName ? esc(r.pathName) + ' · ' : ''}${esc(r.stepName || 'Step')} (${r.stepIndex + 1} of ${r.stepCount})</td>
+            <td class="clip" style="font-size:0.8rem;">${esc(c?.name || 'Campaign')}</td>${pathCol ? `<td class="clip" style="font-size:0.8rem;">${esc(r.pathName || '—')}</td>` : ''}<td class="clip" style="font-size:0.8rem;">${esc(r.stepName || 'Step')} (${r.stepIndex + 1} of ${r.stepCount})</td>
             <td class="clip" style="font-size:0.8rem;">${r.senderId ? esc(localPart(r.senderId)) : '<span class="hint">chosen then</span>'}</td>
             <td style="text-align:right;white-space:nowrap;">${r.approvedMessageId ? `<button class="btn btn--ghost btn--sm" data-obback="${esc(r.approvedMessageId)}" data-perm="out.approve" title="Not sent yet — take it back to To approve">Back to To approve</button>` : ''}
               <button class="btn btn--ghost btn--sm" data-obpause="${esc(r.enrolmentId)}" data-perm="out.campaigns" title="Pause this company in its campaign (resume from the campaign's people list)">Pause</button></td></tr>`;
@@ -1338,7 +1339,7 @@
             <p class="hint" style="padding:10px 14px;">An estimate of the next sending days, following the scheduler's rules: a run every 10 minutes inside each campaign's sending window${isOn('outreach.waitFromWindowStart') ? ' (waits in sending days end when it opens)' : ''}${settings?.skipNationalHolidays !== false ? ' (national holidays skipped)' : ''}${settings?.skipMunicipalHolidays !== false ? ' (a company on its own municipal holiday waits a day — not shown here)' : ''}, new companies at each campaign's daily pace, at most ${OB_MAX_SENDS} emails per run and one per address, each address's daily cap and the automations limit (${num(settings?.automationBudget ?? 80)}/day). Approval steps become drafts in To approve; their send time is set when you approve. Replies, pauses and approvals change it.${plan.awaiting ? ` <b>${num(plan.awaiting)}</b> draft${plan.awaiting === 1 ? '' : 's'} waiting in <button class="camp-link" id="obToApprove">To approve</button>.` : ''}</p>
           </div>
           ${rows.length ? [...byDay.entries()].map(([d, rs]) => `<div class="day-head">${esc(d)} <span class="hint">· ${num(rs.filter(r => r.kind === 'send').length)} email${rs.filter(r => r.kind === 'send').length === 1 ? '' : 's'}${rs.some(r => r.kind === 'draft') ? ` · ${num(rs.filter(r => r.kind === 'draft').length)} draft${rs.filter(r => r.kind === 'draft').length === 1 ? '' : 's'}` : ''}</span></div>
-            <div class="card" style="padding:0;margin-bottom:12px;"><div class="table-wrap"><table><thead><tr><th>Time</th><th>What</th><th>Company</th><th>Campaign · step</th><th>From</th><th></th></tr></thead><tbody>${rs.map(row).join('')}</tbody></table></div></div>`).join('')
+            <div class="card" style="padding:0;margin-bottom:12px;"><div class="table-wrap"><table><thead><tr><th>Time</th><th>What</th><th>Company</th><th>Campaign</th>${pathCol ? '<th>Path</th>' : ''}<th>Step</th><th>From</th><th></th></tr></thead><tbody>${rs.map(row).join('')}</tbody></table></div></div>`).join('')
             : '<div class="card"><div class="empty">Nothing queued for the next sending days with these filters.</div></div>'}`;
         $('obCamp').addEventListener('change', (e) => { obFilterCamp = e.target.value; renderOutbox(); });
         $('obAddr').addEventListener('change', (e) => { obFilterAddr = e.target.value; renderOutbox(); });
@@ -5580,18 +5581,18 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <button class="btn btn--ghost btn--sm" id="letPosted"${letterSel.size ? '' : ' disabled'}>Mark selected as printed &amp; posted</button>
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th></th><th>To</th><th>Address</th><th>Campaign · step</th><th>Template</th><th>Signed by</th><th>Due</th></tr></thead>
+            <thead><tr><th></th><th>To</th><th>Address</th><th>Campaign</th>${list.some(t => t.pathName) ? '<th>Path</th>' : ''}<th>Step</th><th>Template</th><th>Signed by</th><th>Due</th></tr></thead>
             <tbody>${list.length ? list.map(t => {
               const c = taskCo(t);
               const addr = [c.hqAddress, [c.postcode, c.concelho].filter(Boolean).join(' ')].filter(Boolean).join(', ');
               return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}></td>
                 <td>${c._person ? `${esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
-                <td style="font-size:0.8rem;">${t.campaignId ? `${esc(t.campaignName || '')} · ${t.pathName ? esc(t.pathName) + ' · ' : ''}${esc(t.stepName || '')}` : `Own task${t.instructions ? ` · ${esc(t.instructions)}` : ''}`}</td>
+                <td style="font-size:0.8rem;">${t.campaignId ? esc(t.campaignName || '') : 'Own task'}</td>${list.some(x => x.pathName) ? `<td style="font-size:0.8rem;">${esc(t.pathName || '—')}</td>` : ''}<td style="font-size:0.8rem;">${t.campaignId ? esc(t.stepName || '') : esc(t.instructions || '')}</td>
                 <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
                 <td style="white-space:nowrap;"><select data-lsigner="${esc(t.id)}" style="width:auto;padding:2px 6px;font-size:0.78rem;">${ownerOpts(signerFor(t, c))}</select>${(window.teamDir || []).find(m => m.key === signerFor(t, c))?.contactPhone ? '' : ' <span class="pill pill--warn" title="Add it in Team → Contact details">no phone</span>'}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
-            }).join('') : '<tr><td colspan="7" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
+            }).join('') : '<tr><td colspan="8" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
           </table></div>
           <p class="hint" style="padding:10px 14px;">Print on plain A4 and fold into a window envelope (address on the left). The legal entity line from Settings → Email footer (if filled) is printed at the bottom. After posting, mark them — the sequence then moves on.</p>
         </div>`;
