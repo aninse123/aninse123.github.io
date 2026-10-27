@@ -4083,7 +4083,7 @@ Optional note for them:`, '');
               return `<tr>
                 <td>${e.personEmail ? `<b>${esc(e.personName || e.personEmail)}</b>${e.org ? ` <span class="hint">· ${esc(e.org)}</span>` : ''}<div class="hint">${esc(e.personEmail)}${(e.refs || []).length ? ' · ' + e.refs.map(r => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[r.source] || r.source)).join(', ') : ''}</div>` : `<a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div>`}</td>
                 ${c.audienceType === 'people' ? '' : `<td style="font-size:0.78rem;">${goesTo(e, c)}</td>`}
-                <td>${pill(ENROL_PILL, e.status)}</td>
+                <td>${e.status === 'completed' && /^Left out by the campaign's paths/.test(e.stopReason || '') ? '<span class="pill">Left out (paths)</span>' : pill(ENROL_PILL, e.status)}</td>
                 <td style="font-size:0.8rem;">${stepLabel(e, c)}</td>
                 <td style="font-size:0.78rem;">${next}</td>
                 <td style="font-size:0.8rem;">${esc(localPart(e.senderId) || '—')}</td>
