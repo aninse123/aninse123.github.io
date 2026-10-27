@@ -46,7 +46,7 @@ const Usage = require("../usage"); // Team & access → Usage (best-effort count
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
   evaluateCompany, enrolmentId, latestFilterSpec, matchesFilterSpec, personEnrolmentId, evaluatePerson, tierOf,
-  pathSteps, pathsOf, choosePath, ELSE_PATH, normalizePaths,
+  pathSteps, pathsOf, choosePath, ELSE_PATH, normalizePaths, plannedPath, pathsUseTier,
 } = require("./campaign_util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -102,7 +102,14 @@ function firstChannel(campaign) {
 
 async function evalContext(campaign) {
   const settings = await store.getSettings();
+  // Paths round 2 (R11, 27 Oct): a company added to a campaign with paths gets its planned path.
+  let plan = null;
+  if ((campaign.paths || []).length > 1) {
+    const rules = pathsUseTier(campaign) ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
+    plan = (company) => plannedPath(campaign, company || {}, rules);
+  }
   return {
+    plan,
     campaignId: campaign.id,
     exclusions: { ...DEFAULT_CAMPAIGN.exclusions, ...(campaign.exclusions || {}) },
     firstChannel: firstChannel(campaign),
@@ -224,7 +231,7 @@ async function save({ campaignId, campaign }, caller, opts = {}) {
     return { campaignId: ref.id };
   }
   const ref = db().doc(`outreachCampaigns/${campaignId}`);
-  const { renamed, name } = await db().runTransaction(async (tx) => {
+  const { renamed, name, repath } = await db().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) fail("not-found", "campaign_not_found", "Campaign not found.");
     const existing = snap.data();
@@ -235,8 +242,9 @@ async function save({ campaignId, campaign }, caller, opts = {}) {
     // B1: a request to start covered the previous version.
     const withdraw = existing.startRequest && opts.canApprove === false ? { startRequest: null } : {};
     tx.update(ref, { ...fields, ...withdraw, "audience.mode": audience.mode, updatedAt: FieldValue.serverTimestamp(), updatedBy: caller });
-    return { renamed: fields.name !== existing.name, name: fields.name };
+    return { renamed: fields.name !== existing.name, name: fields.name, repath: JSON.stringify(fields.paths || null) !== JSON.stringify(existing.paths || null) };
   });
+  if (repath) await planPending(campaignId); // R11: the waiting companies' planned paths follow the new paths
   if (renamed) {
     // Keep the Search CRM badge current on companies this campaign holds.
     const refs = await liveEnrolmentRefs("campaignId", campaignId);
@@ -505,6 +513,7 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller, ex
       enrolledAt: FieldValue.serverTimestamp(),
       enrolledBy: caller,
       endedAt: null,
+      ...(ctx.plan ? ctx.plan(company) : {}), // R11: plannedPathId / plannedPathName
       ...extra, // owner-aware outreach (22 Oct): mention [{ companyId, name }]
     });
     // A test campaign after go-live (22 Oct) doesn't take the company's campaign slot:
@@ -1242,6 +1251,27 @@ async function setEmailName({ companyId, op, name }, caller) {
   return { ok: true, emailName: next };
 }
 
+// Paths round 2 (R11, 27 Oct): the planned path of every company waiting to start
+// (up to 5,000), worked out again with the campaign's saved paths — after the paths
+// change. Only changed enrolments are written. The real path is chosen at the start.
+async function planPending(campaignId) {
+  const campaign = await getCampaign(campaignId);
+  const multi = (campaign.paths || []).length > 1;
+  const rules = multi && pathsUseTier(campaign) ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
+  const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).where("status", "==", "pending").limit(5000).get();
+  let changed = 0;
+  for (const part of chunks(snap.docs.filter((d) => d.data().companyId), 100)) {
+    const cos = multi ? await db().getAll(...part.map((d) => db().doc(`searchCompanies/${d.data().companyId}`))) : [];
+    const batch = db().batch(); let n = 0;
+    part.forEach((d, i) => {
+      const pl = multi ? plannedPath(campaign, cos[i].exists ? cos[i].data() : {}, rules) : { plannedPathId: null, plannedPathName: null };
+      if (pl.plannedPathId !== (d.data().plannedPathId ?? null) || pl.plannedPathName !== (d.data().plannedPathName ?? null)) { batch.update(d.ref, pl); n++; }
+    });
+    if (n) { await batch.commit(); changed += n; }
+  }
+  return changed;
+}
+
 // Campaign paths (27 Oct, switch outreach.paths): "Check who goes where" — the
 // companies of the campaign per path, in three groups (27 Oct, André): "to start"
 // (waiting — the path they would take today with the paths being edited, unsaved),
@@ -1309,7 +1339,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300 }, async
   // "Do not contact" (Search CRM) is a safety control and never switched.
   if (data.action === "emailName") await Feat.requireFeature(request, "search.emailNameCheck"); // a Search CRM change, not Outreach
   // Campaign paths (27 Oct): saving more than one path, or checking them, needs the switch.
-  if (data.action === "pathsPreview" || (data.action === "save" && Array.isArray(data.campaign?.paths) && data.campaign.paths.some((p) => p && p.id !== ELSE_PATH))) await Feat.requireFeature(request, "outreach.paths");
+  if (data.action === "pathsPreview" || (data.action === "save" && Array.isArray(data.campaign?.paths) && data.campaign.paths.some((p) => p && p.id !== ELSE_PATH))
+    || (data.action === "save" && data.campaign?.startOrder && data.campaign.startOrder.mode !== "added")) await Feat.requireFeature(request, "outreach.paths"); // + who starts first (R10)
   if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
     let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {

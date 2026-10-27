@@ -12,8 +12,67 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':
 export const pathsOf = (c) => (Array.isArray(c?.paths) && c.paths.length ? c.paths : [{ id: ELSE_PATH, name: 'Everyone', filters: null }]);
 export const hasPaths = (c) => pathsOf(c).length > 1;
 export const stepsOfPath = (c, pathId) => (c?.steps || []).filter((s) => (s.pathId || ELSE_PATH) === (pathId || ELSE_PATH));
+// Paths round 2 (27 Oct): a company's path — its own once started, the planned one
+// (R11, worked out by the server) while it waits; null = not planned yet.
+export const pathIdOf = (e) => e?.pathId || (e?.status === 'pending' ? e?.plannedPathId : null) || null;
 // The steps one company runs through (its path; a campaign without paths = all).
-export const stepsFor = (c, e) => stepsOfPath(c, e?.pathId);
+export const stepsFor = (c, e) => stepsOfPath(c, pathIdOf(e));
+export const isLeftOut = (e) => e?.status === 'completed' && /^Left out by the campaign's paths/.test(e?.stopReason || '');
+const msOf = (t) => (t?.toMillis ? t.toMillis() : t?.seconds != null ? t.seconds * 1000 : t ? new Date(t).getTime() : 0);
+
+// Who starts first (R10) — same rules as the server's splitShares / scheduler.
+export const START_LABEL = { added: 'As added', order: 'Path order', split: 'Split by path' };
+export function splitShares(c, perDay) {
+  const live = pathsOf(c).filter((p) => stepsOfPath(c, p.id).length);
+  const so = c?.startOrder || {};
+  if (!live.length) return {};
+  if (so.mode === 'split' && so.equal === false) return Object.fromEntries(live.map((p) => [p.id, Number(so.perPath?.[p.id]) || 0]));
+  const base = Math.floor(perDay / live.length), extra = perDay - base * live.length;
+  return Object.fromEntries(live.map((p, i) => [p.id, base + (i < extra ? 1 : 0)]));
+}
+// The order the waiting companies start in: as added (oldest first), path order, or
+// split by path day by day (each path's share, then the unused room in path order).
+// Companies planned for a path with no steps come last (they're left out).
+export function startQueue(c, pending, perDay) {
+  const sorted = [...pending].sort((a, b) => msOf(a.enrolledAt) - msOf(b.enrolledAt));
+  const mode = hasPaths(c) ? (c.startOrder?.mode || 'added') : 'added';
+  if (mode === 'added') return sorted;
+  const order = pathsOf(c).map((p) => p.id);
+  const live = order.filter((id) => stepsOfPath(c, id).length);
+  const groups = new Map(order.map((id) => [id, []]));
+  for (const e of sorted) (groups.get(pathIdOf(e)) || groups.get(ELSE_PATH)).push(e);
+  const rest = order.filter((id) => !live.includes(id)).flatMap((id) => groups.get(id));
+  if (mode === 'order') return [...live.flatMap((id) => groups.get(id)), ...rest];
+  const shares = splitShares(c, perDay), out = [];
+  while (live.some((id) => groups.get(id).length)) {
+    let room = perDay;
+    for (const id of live) { const take = groups.get(id).splice(0, Math.min(shares[id] || 0, room)); out.push(...take); room -= take.length; }
+    for (const id of live) { if (room <= 0) break; const take = groups.get(id).splice(0, room); out.push(...take); room -= take.length; }
+    if (room === perDay) break;
+  }
+  return [...out, ...rest];
+}
+// R2: the campaign's results per path (Overview "By path"): companies, waiting, in
+// the sequence, contacted, replied, positive (from the conversations) and left out.
+const IN_SEQ = ['active', 'awaiting_approval', 'awaiting_task', 'paused'];
+export function pathResults(c, enrols, threads = [], positive = []) {
+  const rows = new Map(pathsOf(c).map((p) => [p.id, { id: p.id, name: p.id === ELSE_PATH ? 'Everyone else' : p.name, total: 0, waiting: 0, inSeq: 0, contacted: 0, replied: 0, positive: 0, leftOut: 0 }]));
+  const byEnrol = new Map();
+  let unplanned = 0;
+  for (const e of enrols) {
+    if (['removed', 'moved'].includes(e.status)) continue;
+    const id = pathIdOf(e);
+    if (!id || !rows.has(id)) { if (e.status === 'pending') unplanned++; continue; }
+    byEnrol.set(e.id, id);
+    const r = rows.get(id); r.total++;
+    if (e.status === 'pending') r.waiting++; else if (IN_SEQ.includes(e.status)) r.inSeq++;
+    if ((e.history || []).length || e.status === 'replied') r.contacted++;
+    if (e.status === 'replied') r.replied++;
+    if (isLeftOut(e)) r.leftOut++;
+  }
+  for (const t of threads) { const id = byEnrol.get(t.enrolmentId) || t.pathId; if (id && rows.has(id) && positive.includes(t.responseCategory)) rows.get(id).positive++; }
+  return { rows: [...rows.values()], unplanned };
+}
 
 // What a condition can use: the Search CRM filters.
 export const PATH_FIELDS = [
@@ -122,6 +181,10 @@ export function pathsTreeHtml({ paths, steps, counts = null, outcomeLabel = (ch,
     <div class="pt-cols" style="grid-template-columns:repeat(${paths.length}, minmax(150px, 1fr));">${cols}</div></div>`;
 }
 export const TREE_CSS = `
+  .step-fold { display: flex; gap: 6px; align-items: baseline; width: 100%; text-align: left; border: 1px solid #E5E0D5; border-radius: 8px; background: #fff; padding: 7px 10px; margin: 0 0 6px; font: inherit; font-size: 0.84rem; cursor: pointer; color: inherit; }
+  .step-fold:hover { border-color: #B9C7D6; }
+  .step-fold .open { margin-left: auto; }
+  .path-row td { background: #FAF8F4; font-weight: 600; }
   .pt { overflow-x: auto; padding-bottom: 6px; }
   .pt-root { margin: 0 auto 6px; width: max-content; background: #E8F0F8; color: #3A5570; border-radius: 10px; padding: 6px 14px; font-weight: 600; font-size: 0.85rem; }
   .pt-split { margin: 0 auto 6px; width: max-content; max-width: 100%; text-align: center; font-size: 0.74rem; color: #6B7280; }

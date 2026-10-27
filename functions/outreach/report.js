@@ -15,6 +15,9 @@
 // company addresses that arrived or changed last week (an Orbis upload, an edit)
 // and are also another company's address, when Orbis doesn't relate the two and
 // nobody confirmed or dismissed it yet. Same check as the company's Ownership tab.
+// Paths round 2 (R5 / D11, 27 Oct): under each campaign with paths, the emails
+// sent and the replies split by path ("High fit 12 · Middle 5 · 3 respostas
+// (High fit 2)") — from the path stored on each email and conversation (R1).
 
 const { logger } = require("firebase-functions");
 const { db, FieldValue, Timestamp } = require("./store");
@@ -45,14 +48,18 @@ function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions
   const inWeek = (t) => { const x = ms(t); return x >= from && x < to; };
   const keep = (x) => (onlyTest ? !!x.isTest : !x.isTest);
   const sent = messages.filter((m) => m.direction === "out" && keep(m) && inWeek(m.createdAt) && !NOT_SENT.includes(m.status) && m.via !== "gmail");
-  const week = { sent: sent.length, byCampaign: {}, bySender: {}, delivered: 0, bounced: 0, replies: 0, byCategory: {}, unsubscribes: 0, meetings: 0, tasksDone: 0, tasksByChannel: {}, started: 0, held: 0 };
+  const week = { sent: sent.length, byCampaign: {}, byCampaignPath: {}, bySender: {}, delivered: 0, bounced: 0, replies: 0, byCategory: {}, unsubscribes: 0, meetings: 0, tasksDone: 0, tasksByChannel: {}, started: 0, held: 0 };
   for (const m of sent) {
     inc(week.byCampaign, m.campaignId ? (campaigns.get(m.campaignId)?.name || "Campaign") : "Written by hand");
+    if (m.campaignId && m.pathName) inc(((week.byCampaignPath[campaigns.get(m.campaignId)?.name || "Campaign"] ||= { sent: {}, replies: {} }).sent), m.pathName);
     inc(week.bySender, m.senderId || "—");
     if (["delivered", "complained", "opened", "clicked"].includes(m.status)) week.delivered++;
     if (m.status === "bounced") week.bounced++;
   }
-  for (const t of threads.filter((x) => keep(x) && inWeek(x.repliedAt))) { week.replies++; inc(week.byCategory, CATS[t.responseCategory] || (t.responseCategory ? t.responseCategory : "Not classified")); }
+  for (const t of threads.filter((x) => keep(x) && inWeek(x.repliedAt))) {
+    week.replies++; inc(week.byCategory, CATS[t.responseCategory] || (t.responseCategory ? t.responseCategory : "Not classified"));
+    if (t.campaignId && t.pathName) inc(((week.byCampaignPath[campaigns.get(t.campaignId)?.name || "Campaign"] ||= { sent: {}, replies: {} }).replies), t.pathName);
+  }
   week.unsubscribes = suppressions.filter((s) => inWeek(s.at) && (s.source === "unsubscribe" || s.reason === "unsubscribe" || /unsub/i.test(s.reason || ""))).length
     + threads.filter((t) => keep(t) && inWeek(t.unsubscribedAt)).length;
   for (const a of activities.filter((x) => inWeek(x.createdAt) && keep(x))) {
@@ -118,10 +125,13 @@ async function newSameEmailPairs(from, to) {
 function reportText(r, { weekKey, toKey }) {
   const w = r.week, o = r.owners;
   const list = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([k, n]) => `  · ${k}: ${n}`).join("\n") || "  · —";
+  // R5: a campaign with paths gets its split by path on the next line.
+  const byPath = (k) => { const p = (w.byCampaignPath || {})[k]; if (!p) return ""; const parts = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([n, x]) => `${n} ${x}`).join(" · "); const rep = Object.values(p.replies).reduce((a, b) => a + b, 0); return `\n      por caminho: ${parts(p.sent) || "—"}${rep ? ` · ${rep} resposta${rep === 1 ? "" : "s"} (${parts(p.replies)})` : ""}`; };
+  const campaignList = Object.entries(w.byCampaign).sort((a, b) => b[1] - a[1]).map(([k, n]) => `  · ${k}: ${n}${byPath(k)}`).join("\n") || "  · —";
   const lines = [
     `Relatório semanal de outreach — semana de ${weekKey} a ${toKey}`, "",
     "1. A semana", "",
-    `Emails enviados: ${w.sent} (entregues ${w.delivered}, devolvidos ${w.bounced})`, "Por campanha:", list(w.byCampaign), "Por endereço:", list(w.bySender), "",
+    `Emails enviados: ${w.sent} (entregues ${w.delivered}, devolvidos ${w.bounced})`, "Por campanha:", campaignList, "Por endereço:", list(w.bySender), "",
     `Respostas: ${w.replies}`, list(w.byCategory), "",
     `Pedidos de remoção: ${w.unsubscribes}`, `Reuniões marcadas: ${w.meetings}`,
     `Tarefas feitas: ${w.tasksDone}`, list(w.tasksByChannel), "",

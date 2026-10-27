@@ -26,7 +26,7 @@ const Usage = require("../usage"); // Team & access → Usage
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience } = require("./campaigns");
 const { runRecurring } = require("./recurring");
-const { LIVE_ENROLMENT: LIVE_STATUSES, ELSE_PATH, pathSteps, choosePath, tierOf } = require("./campaign_util");
+const { LIVE_ENROLMENT: LIVE_STATUSES, ELSE_PATH, pathSteps, pathsOf, choosePath, tierOf, splitShares, plannedPath, pathsUseTier } = require("./campaign_util");
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
@@ -87,20 +87,65 @@ async function startPending(campaign, now, report) {
   // 27 Oct: a campaign with paths starts nobody while "Campaign paths" is off for it
   // (production setting; Test = test campaigns) — its companies wait, never left out by mistake.
   if ((campaign.paths || []).length > 1 && !campaign._pathsOn) { report.heldPaths = (report.heldPaths || 0) + 1; return; }
-  const snap = await db().collection("outreachEnrolments")
-    .where("campaignId", "==", campaign.id).where("status", "==", "pending")
-    .orderBy("enrolledAt", "asc").limit(room).get();
-  let n = 0;
-  const dueFor = (steps) => ts(addWait(now, steps[0].wait, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart));
   // Campaign paths (27 Oct): each company takes the first path its data matches today, and keeps it.
   const usePaths = !!campaign._pathsOn && (campaign.paths || []).length > 1;
+  const mode = usePaths ? (campaign.startOrder?.mode || "added") : "added";
   let tierRules = null;
-  for (const d of snap.docs) {
+  const rulesFor = async () => (tierRules ??= pathsUseTier(campaign) ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : []);
+  // Who starts first (R10, round 2): "added" takes the oldest waiting companies; "order"
+  // and "split" look at up to 2,000 waiting companies, by their planned path (R11 —
+  // planned here when missing), and pick by the paths' order or each path's share.
+  const byPathToday = campaign.startedToday?.day === day ? { ...(campaign.startedToday.byPath || {}) } : {};
+  let docs;
+  if (mode === "added") {
+    docs = (await db().collection("outreachEnrolments")
+      .where("campaignId", "==", campaign.id).where("status", "==", "pending")
+      .orderBy("enrolledAt", "asc").limit(room).get()).docs;
+  } else {
+    const all = (await db().collection("outreachEnrolments")
+      .where("campaignId", "==", campaign.id).where("status", "==", "pending")
+      .orderBy("enrolledAt", "asc").limit(2000).get()).docs;
+    const unplanned = all.filter((d) => !d.data().plannedPathId && d.data().companyId);
+    const planned = new Map();
+    if (unplanned.length) await rulesFor();
+    for (let i = 0; i < unplanned.length; i += 100) {
+      const part = unplanned.slice(i, i + 100);
+      const cos = await db().getAll(...part.map((d) => db().doc(`searchCompanies/${d.data().companyId}`)));
+      const batch = db().batch();
+      cos.forEach((s, j) => { const pl = plannedPath(campaign, s.exists ? s.data() : {}, tierRules, now.getTime()); planned.set(part[j].id, pl.plannedPathId); batch.update(part[j].ref, pl); });
+      await batch.commit();
+    }
+    const pathOf = (d) => planned.get(d.id) || d.data().plannedPathId || ELSE_PATH;
+    const order = pathsOf(campaign).map((p) => p.id);
+    const live = new Set(order.filter((id) => pathSteps(campaign, id).length));
+    const byPath = new Map(order.map((id) => [id, []]));
+    for (const d of all) (byPath.get(pathOf(d)) || byPath.get(ELSE_PATH)).push(d);
+    const pick = [];
+    if (mode === "order") {
+      for (const id of order) if (live.has(id)) pick.push(...byPath.get(id));
+    } else {
+      // Each path's share left today, then the room nobody used goes to the next paths in order.
+      const shares = splitShares(campaign, perDay);
+      const taken = new Set();
+      for (const id of order) {
+        if (!live.has(id)) continue;
+        const left = Math.max(0, (shares[id] || 0) - (byPathToday[id] || 0));
+        byPath.get(id).slice(0, left).forEach((d) => { pick.push(d); taken.add(d.id); });
+      }
+      for (const id of order) if (live.has(id)) byPath.get(id).forEach((d) => { if (!taken.has(d.id)) pick.push(d); });
+    }
+    // Companies planned for a path with no steps (leave out) are handled once nobody else waits.
+    docs = pick.length ? pick : order.filter((id) => !live.has(id)).flatMap((id) => byPath.get(id));
+  }
+  let n = 0;
+  const dueFor = (steps) => ts(addWait(now, steps[0].wait, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart));
+  for (const d of docs) {
+    if (n >= room) break;
     let path = { id: ELSE_PATH, name: null }, why = null;
     if (usePaths && d.data().companyId) {
       const co = await db().doc(`searchCompanies/${d.data().companyId}`).get();
       const c = co.exists ? co.data() : {};
-      if (tierRules === null) tierRules = (campaign.paths || []).some((p) => (p.filters || []).some((f) => f.field === "targetTier")) ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
+      await rulesFor();
       const ch = choosePath(campaign, tierRules.length ? { ...c, targetTier: tierOf(c, tierRules) } : c, now.getTime());
       path = ch.path; why = ch.why;
     }
@@ -117,10 +162,10 @@ async function startPending(campaign, now, report) {
       tx.update(d.ref, { status: "active", currentStep: 0, nextActionAt: dueFor(steps), startedAt: ts(now), ...(usePaths ? { pathId: path.id, pathName: path.name, pathWhy: why } : {}) });
       return true;
     });
-    if (started) n++;
+    if (started) { n++; if (usePaths) byPathToday[path.id] = (byPathToday[path.id] || 0) + 1; }
   }
   if (n) {
-    await db().doc(`outreachCampaigns/${campaign.id}`).update({ startedToday: { day, count: already + n } });
+    await db().doc(`outreachCampaigns/${campaign.id}`).update({ startedToday: { day, count: already + n, ...(usePaths ? { byPath: byPathToday } : {}) } });
     report.started += n;
   }
 }
@@ -247,6 +292,7 @@ async function createTask(ref, e, campaign, step, now, rand) {
         // F1: a people campaign's task is for the person (Network / Investor CRM / broker record).
         ...(e.personEmail ? { personEmail: e.personEmail, personName: e.personName || "", org: e.org || "", refs: e.refs || [] } : {}),
         stepId: step.id, stepName: step.name, stepIndex: e.currentStep, stepCount: (campaign.steps || []).length,
+        ...((campaign.paths || []).length > 1 && e.pathId ? { pathId: e.pathId, pathName: e.pathName || null } : {}), // paths round 2 (R1)
         channel: step.channel, instructions: step.instructions || "", templateId: step.templateId || null, variantKey,
         assignee: campaign.assignee && campaign.assignee !== "owner" ? campaign.assignee : (e.owner || null),
         dueAt: ts(now), status: "open", outcome: null, notes: "", activityId: null,
@@ -537,7 +583,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         // A draft costs no quota; the target is checked again when it's approved.
         confirmOverTarget: wantsDraft,
       });
-      const campaignRef = { campaignId: campaign.id, enrolmentId, stepId: step.id, approvedBy: approved?.approvedBy || null, kind: campaign.issueId ? "recurring" : "campaign" };
+      const campaignRef = { campaignId: campaign.id, enrolmentId, stepId: step.id, approvedBy: approved?.approvedBy || null, kind: campaign.issueId ? "recurring" : "campaign",
+        ...((campaign.paths || []).length > 1 && e.pathId ? { pathId: e.pathId, pathName: e.pathName || null } : {}) }; // paths round 2 (R1)
       if (wantsDraft) {
         await saveDraft(p, { campaign: campaignRef });
         if (allowed(ownerState, campaign) && e.companyId) await ownerPanelOnDraft(messageRef, e, campaign, variantBody);

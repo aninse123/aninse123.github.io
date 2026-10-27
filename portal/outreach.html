@@ -573,7 +573,7 @@
         <div class="card" style="margin-top:16px;">
           <div class="toolbar" style="border-radius:var(--radius) var(--radius) 0 0;">
             <label class="usage__label" for="mGroup">Breakdown by</label>
-            <select id="mGroup"><option value="owner">Person</option><option value="sender">Sender address</option><option value="template">Template · variant</option><option value="campaign">Campaign</option><option value="week">Week</option></select>
+            <select id="mGroup"><option value="owner">Person</option><option value="sender">Sender address</option><option value="template">Template · variant</option><option value="campaign">Campaign</option><option value="campaignPath" data-feature="outreach.paths">Campaign · path</option><option value="week">Week</option></select>
           </div>
           <div class="table-wrap">
             <table>
@@ -782,7 +782,7 @@
     import { isOn, stateOf, currentFlags } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
-    import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
+    import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
     document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
@@ -1234,7 +1234,9 @@
           due: e.status === 'active' ? (tsMs(e.nextActionAt) || now.getTime()) : null, approved: ap, sender: e.senderId || ap?.senderId || null, done: false };
       });
       const pendingOf = new Map();
-      items.filter(it => it.pending).sort((a, b) => tsMs(a.e.enrolledAt) - tsMs(b.e.enrolledAt)).forEach(it => { (pendingOf.get(it.c.id) || pendingOf.set(it.c.id, []).get(it.c.id)).push(it); });
+      items.filter(it => it.pending).forEach(it => { (pendingOf.get(it.c.id) || pendingOf.set(it.c.id, []).get(it.c.id)).push(it); });
+      // Paths round 2 (R10): companies start in the campaign's order (as added = oldest first).
+      for (const [cid, list] of pendingOf) { const cc = camps.get(cid); const pos = new Map(startQueue(cc, list.map(it => it.e), cc.pacing?.newPerDay || 20).map((e, k) => [e, k])); list.sort((a, b) => pos.get(a.e) - pos.get(b.e)); }
       const rows = [], rowDays = new Set();
       let slot = new Date(now.getTime()); slot.setSeconds(0, 0); slot.setMinutes(Math.ceil(slot.getMinutes() / 10) * 10);
       const end = now.getTime() + 21 * D;
@@ -1270,7 +1272,7 @@
         const push = (r) => { rows.push(r); rowDays.add(k); };
         for (const it of due) {
           const st = it.steps[it.step], ch = st.channel || 'email';
-          const base = { at: new Date(slot.getTime()), enrolmentId: it.e.id, companyId: it.e.companyId || null, companyName: it.e.companyName || it.e.personName || it.e.personEmail || '', campaignId: it.c.id, stepIndex: it.step, stepCount: it.steps.length, stepName: st.name || '', starts: it.startedAt === slot.getTime() && it.step === 0 };
+          const base = { at: new Date(slot.getTime()), enrolmentId: it.e.id, companyId: it.e.companyId || null, companyName: it.e.companyName || it.e.personName || it.e.personEmail || '', campaignId: it.c.id, stepIndex: it.step, stepCount: it.steps.length, stepName: st.name || '', pathName: hasPaths(it.c) ? (it.e.pathName || it.e.plannedPathName || '') : '', starts: it.startedAt === slot.getTime() && it.step === 0 };
           if (ch !== 'email') { push({ ...base, kind: 'task', channel: ch }); it.done = true; continue; }
           if (needsApproval(it.c, st) && !it.approved) {
             if (drafts >= OB_MAX_DRAFTS) continue;
@@ -1321,7 +1323,7 @@
           return `<tr data-ob="${esc(r.enrolmentId)}"><td style="white-space:nowrap;font-variant-numeric:tabular-nums;">≈ ${esc(timeFmt.format(r.at))}</td>
             <td><span class="pill ${kc}">${esc(kl)}</span>${r.starts ? ' <span class="hint">· first email</span>' : ''}${r.approvedMessageId ? ' <span class="hint">· approved</span>' : ''}</td>
             <td class="clip">${r.companyId ? `<a href="/portal/search.html?company=${encodeURIComponent(r.companyId)}" style="color:var(--text);">${esc(r.companyName || 'Company')}</a>` : esc(r.companyName || '')}</td>
-            <td class="clip" style="font-size:0.8rem;">${esc(c?.name || 'Campaign')} · ${esc(r.stepName || 'Step')} (${r.stepIndex + 1} of ${r.stepCount})</td>
+            <td class="clip" style="font-size:0.8rem;">${esc(c?.name || 'Campaign')} · ${r.pathName ? esc(r.pathName) + ' · ' : ''}${esc(r.stepName || 'Step')} (${r.stepIndex + 1} of ${r.stepCount})</td>
             <td class="clip" style="font-size:0.8rem;">${r.senderId ? esc(localPart(r.senderId)) : '<span class="hint">chosen then</span>'}</td>
             <td style="text-align:right;white-space:nowrap;">${r.approvedMessageId ? `<button class="btn btn--ghost btn--sm" data-obback="${esc(r.approvedMessageId)}" data-perm="out.approve" title="Not sent yet — take it back to To approve">Back to To approve</button>` : ''}
               <button class="btn btn--ghost btn--sm" data-obpause="${esc(r.enrolmentId)}" data-perm="out.campaigns" title="Pause this company in its campaign (resume from the campaign's people list)">Pause</button></td></tr>`;
@@ -1776,7 +1778,7 @@
         return `<button class="thread${t.unread ? ' unread' : ''}${t.id === selectedId ? ' sel' : ''}" data-id="${esc(t.id)}">
           <div class="thread__top"><span class="thread__who">${esc(who)}</span><span class="thread__time">${esc(when(t.lastMessageAt))}</span></div>
           <div class="thread__subj">${esc(t.subject || '(no subject)')}</div>
-          <div class="thread__meta">${threadPill(t)}${t.lastInboundAuto && t.lastDirection === 'in' ? '<span class="pill pill--warn" title="The last email received was automatic (out of office…)">Auto-reply</span>' : ''}${t.responseCategory ? `<span class="pill">${esc(catLabel(t.responseCategory))}</span>` : ''}${t.campaignId ? `<span class="pill pill--info" title="From this campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}</span>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}<span class="thread__alias">${esc(t.contactEmail || '')}${t.senderId ? ' · ' + esc(localPart(t.senderId)) : ''}</span></div>
+          <div class="thread__meta">${threadPill(t)}${t.lastInboundAuto && t.lastDirection === 'in' ? '<span class="pill pill--warn" title="The last email received was automatic (out of office…)">Auto-reply</span>' : ''}${t.responseCategory ? `<span class="pill">${esc(catLabel(t.responseCategory))}</span>` : ''}${t.campaignId ? `<span class="pill pill--info" title="From this campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}${t.pathName ? ' · ' + esc(t.pathName) : ''}</span>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}<span class="thread__alias">${esc(t.contactEmail || '')}${t.senderId ? ' · ' + esc(localPart(t.senderId)) : ''}</span></div>
         </button>`;
       }).join('');
       $('threadList').querySelectorAll('.thread').forEach(b => b.addEventListener('click', () => openThread(b.dataset.id)));
@@ -1935,7 +1937,7 @@
         <div class="view__title">${esc(t.subject || '(no subject)')}</div>
         <div class="view__sub">${company}${addrTrail(t)}
           <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
-          ${threadPill(t)}${t.campaignId ? `<button type="button" class="pill pill--info" id="campInfoBtn" style="border:0;cursor:pointer;" title="Show the campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}</button>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
+          ${threadPill(t)}${t.campaignId ? `<button type="button" class="pill pill--info" id="campInfoBtn" style="border:0;cursor:pointer;" title="Show the campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}${t.pathName ? ' · ' + esc(t.pathName) : ''}</button>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
         ${t.recipientIssue ? `<div class="banner banner--warn" style="margin:8px 0 4px;"><span>An email in this conversation to several people bounced for one of them (Resend doesn't say which), so nobody was put on the suppression list. Addresses: ${esc((t.recipientIssue.addresses || []).join(', '))}.</span></div>` : ''}
         <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button>
           <button class="btn btn--ghost btn--sm" id="taskBtn" data-perm="out.tasks" title="Plan a call or other task for this company — or record one that already happened">＋ Task or activity</button></div>
@@ -2968,12 +2970,13 @@
       if (!metricsData) return;
       const { threads } = metricsScope();
       const by = $('mGroup').value;
-      $('mGroupHead').textContent = { owner: 'Person', sender: 'Sender address', template: 'Template · variant', campaign: 'Campaign', week: 'Week starting' }[by];
+      $('mGroupHead').textContent = { owner: 'Person', sender: 'Sender address', template: 'Template · variant', campaign: 'Campaign', campaignPath: 'Campaign · path', week: 'Week starting' }[by];
       const tplName = (id) => (templatesAll.find(t => t.id === id)?.name) || (id ? 'Deleted template' : 'Written from scratch');
       const keyOf = (t) => by === 'owner' ? (OWNER_LABEL[t.owner] || 'Unassigned')
         : by === 'sender' ? (t.senderId || '—')
         : by === 'template' ? (t.templateId ? `${tplName(t.templateId)} · ${t.variantKey || 'A'}` : tplName(null))
         : by === 'campaign' ? (t.campaignId ? (campaigns.find(c => c.id === t.campaignId)?.name || 'Deleted campaign') : 'Not from a campaign')
+        : by === 'campaignPath' ? (t.campaignId ? `${campaigns.find(c => c.id === t.campaignId)?.name || 'Deleted campaign'}${t.pathName ? ' · ' + t.pathName : ''}` : 'Not from a campaign') // R4 (27 Oct): the path stored on the conversation
         : isoWeekStart(tsMs(t.firstTouchAt)).toISOString().slice(0, 10);
       const groups = {};
       threads.forEach(t => { (groups[keyOf(t)] ||= []).push(t); });
@@ -3629,9 +3632,11 @@
     let seqDraft = null, seqDirty = false, csetDirty = false;
     // 27 Oct (outreach.paths): the paths being edited, their counts ("Check who goes where") and the view.
     let pathsDraft = null, pathCounts = null, seqView = 'list';
+    // R9 (27 Oct): inside paths, steps fold to one line; stepOpen = the ones opened.
+    let foldSteps = (() => { try { return localStorage.getItem('seqFold') !== 'off'; } catch (e) { return true; } })(), stepOpen = new Set();
     let pathOpts; // searchConfig/pathOptions: the sectors / sub-sectors / regions to pick from (Tools/path-options)
     try { seqView = localStorage.getItem('seqView') || 'list'; } catch (e) {}
-    let audFilter = 'all', audSearch = '';
+    let audFilter = 'all', audSearch = '', audPath = 'all'; // audPath: paths round 2 (R3)
 
     const curCamp = () => campaigns.find(c => c.id === curCampId) || null;
     const campEditable = (c) => c && !['finished', 'archived'].includes(c.status);
@@ -3762,7 +3767,7 @@
 
     function openCampaign(id, sec = 'overview') {
       if ($('panel-campaigns').hidden) showTab('campaigns');
-      curCampId = id; seqDraft = null; pathsDraft = null; pathCounts = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = ''; refreshUnsaved();
+      curCampId = id; seqDraft = null; pathsDraft = null; pathCounts = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = ''; audPath = 'all'; refreshUnsaved();
       $('campList').hidden = true; $('campPage').hidden = false; $('listsView').hidden = true; $('recurView').hidden = true;
       $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.cview === 'campaigns'));
       curEnrols = []; curThreads = [];
@@ -3981,7 +3986,7 @@ Optional note for them:`, '');
         g.n++; if ((e.history || []).length || e.status === 'replied') g.contacted++; if (e.status === 'replied') g.replied++;
       });
       const srcRows = Object.entries(bySrc).sort((a, b) => b[1].n - a[1].n).map(([k, g]) => `<tr><td class="clip" title="${esc(k)}">${esc(k)}</td><td class="num">${num(g.n)}</td><td class="num">${num(g.contacted)}</td><td class="num">${num(g.replied)}</td><td class="num">${pctTxt(pct(g.replied, g.contacted))}</td></tr>`).join('');
-      const stepRows = steps.map((s, i) => {
+      const stepRow = (s, i) => {
         const hist = curEnrols.flatMap(e => (e.history || []).filter(h => h.stepId === s.id).map(h => ({ ...h, e })));
         const repliedHere = curEnrols.filter(e => e.status === 'replied' && (e.history || []).slice(-1)[0]?.stepId === s.id);
         const variants = {};
@@ -3991,7 +3996,14 @@ Optional note for them:`, '');
         const verb = !s.channel || s.channel === 'email' ? 'sent' : 'done';
         const vtxt = abStep ? Object.keys(variants).sort().map(k => `${esc(k)}: ${num(variants[k].sent)} ${verb} · ${num(variants[k].replied)} replied (${pctTxt(pct(variants[k].replied, variants[k].sent))})`).join('<br>') : '';
         return `<tr><td>${i + 1}. ${esc(s.name)} <span class="ch">${esc(CHANNEL_LABELS[s.channel || 'email'])}</span></td><td class="clip">${esc(s.templateId ? tplName(s.templateId) : (s.channel && s.channel !== 'email' ? '—' : tplName(s.templateId)))}</td><td class="num">${num(hist.length)}</td><td class="num">${num(repliedHere.length)}</td><td style="font-size:0.78rem;">${vtxt || '—'}</td></tr>`;
-      }).join('');
+      };
+      // Paths round 2 (R2, 27 Oct): "By step" grouped by path (each path numbers from 1) and a "By path" table.
+      const pathsView = hasPaths(c) && isOn('outreach.paths');
+      const stepRows = pathsView ? pathsOf(c).map((p, pi) => { const ps = stepsOfPath(c, p.id); return `<tr class="path-row"><td colspan="5" style="color:${pathColor(p, pi)[0]};">${esc(p.id === ELSE_PATH ? 'Everyone else' : p.name)}</td></tr>${ps.length ? ps.map(stepRow).join('') : '<tr><td colspan="5" class="hint">No steps — these companies are left out.</td></tr>'}`; }).join('') : steps.map(stepRow).join('');
+      const pr = pathsView ? pathResults(c, curEnrols, curThreads, POSITIVE) : null;
+      const byPathHtml = pr ? `<div style="padding:14px 16px 4px;"><h3>By path</h3><p class="hint" style="margin:2px 0 0;">Companies waiting to start are on their planned path${pr.unplanned ? ` (${num(pr.unplanned)} not planned yet — they get one when the paths are saved or the campaign runs)` : ''}.</p></div>
+            <div class="table-wrap"><table><thead><tr><th>Path</th><th class="num">Companies</th><th class="num">Waiting</th><th class="num">In sequence</th><th class="num">Contacted</th><th class="num">Replied</th><th class="num">Reply rate</th><th class="num">Positive</th><th class="num">Left out</th></tr></thead>
+            <tbody>${pr.rows.map((r, pi) => `<tr><td style="color:${pathColor(pathsOf(c)[pi], pi)[0]};font-weight:600;">${esc(r.name)}</td><td class="num">${num(r.total)}</td><td class="num">${num(r.waiting)}</td><td class="num">${num(r.inSeq)}</td><td class="num">${num(r.contacted)}</td><td class="num">${num(r.replied)}</td><td class="num">${pctTxt(pct(r.replied, r.contacted))}</td><td class="num">${num(r.positive)}</td><td class="num">${r.leftOut ? num(r.leftOut) : '—'}</td></tr>`).join('')}</tbody></table></div>` : '';
 
       $('cs-overview').innerHTML = `
         <div class="kpis">
@@ -4007,6 +4019,7 @@ Optional note for them:`, '');
         </div>
         <div class="ov-grid">
           <div class="card" style="padding:0;">
+            ${byPathHtml}
             <div style="padding:14px 16px 4px;"><h3>By step</h3></div>
             <div class="table-wrap"><table>
               <thead><tr><th>Step</th><th>Template</th><th class="num">Sent / done</th><th class="num">Replied after it</th><th>Variants</th></tr></thead>
@@ -4023,7 +4036,7 @@ Optional note for them:`, '');
           </div>
           <div class="card">
             <h3>Pace</h3>
-            <p class="note">The scheduler checks every 10 minutes and sends ${esc(windowText(c.sendWindow))} (Lisbon)${skipHolidaysFor(c) ? ', never on national holidays' : ', national holidays included'}${skipMunicipalFor(c) ? ' — and never on a company\'s own municipal holiday' : ''}. It starts up to <b>${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))}</b> new ${c.audienceType === 'people' ? 'people' : 'companies'} a day${c.pacing?.maxPerDay ? ` and sends at most <b>${num(c.pacing.maxPerDay)}</b> emails a day for this campaign` : ''}.</p>
+            <p class="note">The scheduler checks every 10 minutes and sends ${esc(windowText(c.sendWindow))} (Lisbon)${skipHolidaysFor(c) ? ', never on national holidays' : ', national holidays included'}${skipMunicipalFor(c) ? ' — and never on a company\'s own municipal holiday' : ''}. It starts up to <b>${num(c.audienceType === 'people' ? (c.pacing?.maxPerDay || c.pacing?.newPerDay || 20) : (c.pacing?.newPerDay || 20))}</b> new ${c.audienceType === 'people' ? 'people' : 'companies'} a day${hasPaths(c) && c.startOrder?.mode && isOn('outreach.paths') ? ` (${esc(START_LABEL[c.startOrder.mode].toLowerCase())})` : ''}${c.pacing?.maxPerDay ? ` and sends at most <b>${num(c.pacing.maxPerDay)}</b> emails a day for this campaign` : ''}.</p>
             <p class="note" style="margin-top:8px;">With ${num(steps.length)} email${steps.length === 1 ? '' : 's'} per ${c.audienceType === 'people' ? 'person' : 'company'} that's about <b>${num(perDay)}</b> emails a day once the campaign is in full swing — the automations limit is <b>${num(limitN)}</b> a day for all campaigns together${perDay > limitN ? ' (<b>above the limit</b>: emails will queue up; lower the pace in Settings)' : ''}.</p>
             ${c.status === 'draft' ? '<p class="note" style="margin-top:8px;">Nothing is sent while the campaign is a draft.</p>' : ''}
           </div>
@@ -4040,7 +4053,7 @@ Optional note for them:`, '');
     // ── Companies (audience) ──
     function stepLabel(e, c) {
       const steps = stepsFor(c, e); // 27 Oct: its path's steps
-      if (e.status === 'pending') return 'Not started';
+      if (e.status === 'pending') return hasPaths(c) && e.plannedPathName ? `Not started <span class="hint">· planned: ${esc(e.plannedPathName)}</span>` : 'Not started'; // R11
       if (hasPaths(c) && e.pathName) return `<span class="hint">${esc(e.pathName)} ·</span> ` + stepLabelIn(e, steps);
       return stepLabelIn(e, steps);
     }
@@ -4054,7 +4067,9 @@ Optional note for them:`, '');
       const c = curCamp(); if (!c) return;
       const statuses = [...new Set(curEnrols.map(e => e.status))];
       const q = norm(audSearch);
-      const rows = curEnrols.filter(e => (audFilter === 'all' || (audFilter === 'live' ? LIVE_ENROL.includes(e.status) : e.status === audFilter))
+      const pathsView = hasPaths(c) && isOn('outreach.paths');
+      const inPath = (e) => audPath === 'all' || !pathsView || (audPath === 'left' ? isLeftOut(e) : audPath === 'none' ? !pathIdOf(e) : pathIdOf(e) === audPath && !isLeftOut(e));
+      const rows = curEnrols.filter(e => inPath(e) && (audFilter === 'all' || (audFilter === 'live' ? LIVE_ENROL.includes(e.status) : e.status === audFilter))
         && (!q || norm(e.companyName).includes(q) || norm(e.contactEmail).includes(q) || norm(e.personName).includes(q)));
       const shown = rows.slice(0, 300);
       const canAdd = campEditable(c) && c.kind !== 'issue';
@@ -4066,6 +4081,7 @@ Optional note for them:`, '');
               <option value="live">Still in the campaign (${num(curEnrols.filter(e => LIVE_ENROL.includes(e.status)).length)})</option>
               ${Object.keys(ENROL_PILL).filter(k => statuses.includes(k)).map(k => `<option value="${k}">${esc(ENROL_PILL[k][0])} (${num(curEnrols.filter(e => e.status === k).length)})</option>`).join('')}
             </select>
+            ${pathsView ? `<select id="audPath" aria-label="Path"><option value="all">All paths</option>${pathsOf(c).map(p => `<option value="${esc(p.id)}">${esc(p.id === ELSE_PATH ? 'Everyone else' : p.name)} (${num(curEnrols.filter(e => pathIdOf(e) === p.id && !isLeftOut(e)).length)})</option>`).join('')}<option value="left">Left out (${num(curEnrols.filter(isLeftOut).length)})</option>${curEnrols.some(e => e.status === 'pending' && !pathIdOf(e)) ? `<option value="none">Not planned yet (${num(curEnrols.filter(e => e.status === 'pending' && !pathIdOf(e)).length)})</option>` : ''}</select>` : ''}
             <input type="search" id="audSearch" placeholder="Company or email…" style="max-width:240px;" value="${esc(audSearch)}">
             <button class="btn btn--ghost btn--sm" id="audRefresh">Refresh</button>
             ${canAdd ? `<button class="btn btn--primary btn--sm" id="audAdd" style="margin-left:auto;">${c.audienceType === 'people' ? 'Add people' : 'Add companies'}</button>` : ''}
@@ -4096,6 +4112,7 @@ Optional note for them:`, '');
         </div>`;
       $('audFilter').value = audFilter;
       $('audFilter').addEventListener('change', (e) => { audFilter = e.target.value; renderAudience(); });
+      if ($('audPath')) { $('audPath').value = audPath; $('audPath').addEventListener('change', (e) => { audPath = e.target.value; renderAudience(); }); }
       $('audSearch').addEventListener('input', (e) => { audSearch = e.target.value; clearTimeout(renderAudience._t); renderAudience._t = setTimeout(() => { renderAudience(); $('audSearch').focus(); const v = $('audSearch'); v.setSelectionRange(v.value.length, v.value.length); }, 250); });
       $('audRefresh').addEventListener('click', loadCampaignData);
       $('audAdd')?.addEventListener('click', () => (c.audienceType === 'people' ? openAddPeople() : openAddCompanies()));
@@ -4476,11 +4493,13 @@ Optional note for them:`, '');
     }
 
     // P4 projection: days each step needs at the effective daily pace.
-    function projectionHtml(c) {
-      const steps = c.steps || [];
+    // part (R6, paths round 2): one path's steps and companies, with the place of each
+    // waiting company in the campaign's start queue — see projectionByPath.
+    function projectionHtml(c, part = null) {
+      const steps = part ? part.steps : (c.steps || []);
       if (!steps.length) return '<p class="note">Write the sequence first.</p>';
-      if (hasPaths(c)) return '<p class="note">This campaign has paths: the time per step, path by path, comes with the results by path (next round). The Outbox shows the next days.</p>'; // 27 Oct
-      const live = curEnrols.filter(e => LIVE_ENROL.includes(e.status));
+      if (hasPaths(c) && !part) return isOn('outreach.paths') ? projectionByPath(c) : '<p class="note">This campaign has paths — the forecast per path shows when "Campaign paths" is on.</p>';
+      const live = part ? part.live : curEnrols.filter(e => LIVE_ENROL.includes(e.status));
       const globalLimit = settings?.automationBudget ?? 80;
       const addrCap = (() => {
         const sp = c.senderPolicy || {};
@@ -4521,7 +4540,7 @@ Optional note for them:`, '');
       const waitSend = (st) => { const d = Number(st.wait?.days) || 0; return st.wait?.unit === 'calendar' ? Math.ceil(d * sendDays.length / 7) : d; };
       const waitBetween = (from, to) => { let w = 0; for (let k = from + 1; k <= to; k++) w += waitSend(steps[k]); return w; };
       const newPerDay = c.audienceType !== 'people' ? (c.pacing?.newPerDay || 20) : pace;
-      const startedToday = curEnrols.filter(e => (e.history || []).some(h => h.stepId === steps[0].id && midnight(tsMs(h.at)).getTime() === today0.getTime())).length;
+      const startedToday = part ? part.startedToday : curEnrols.filter(e => (e.history || []).some(h => h.stepId === steps[0].id && midnight(tsMs(h.at)).getTime() === today0.getTime())).length;
       const pendingList = live.filter(e => e.status === 'pending');
       const startIdx = (k) => { // k-th company not started yet
         const roomToday = todayOpen ? Math.max(0, newPerDay - startedToday) : 0;
@@ -4535,7 +4554,7 @@ Optional note for them:`, '');
       const dueOn = (e, i) => {
         const cur = e.status === 'pending' ? 0 : (e.currentStep || 0);
         if (cur > i) return null;
-        if (cur === i) return e.status === 'pending' ? startIdx(pendingList.indexOf(e)) : idxOf(['active', 'paused'].includes(e.status) ? tsMs(e.nextActionAt) : 0);
+        if (cur === i) return e.status === 'pending' ? startIdx(part ? part.queueIdx(e) : pendingList.indexOf(e)) : idxOf(['active', 'paused'].includes(e.status) ? tsMs(e.nextActionAt) : 0);
         return (sentAt.get(e) ?? 0) + waitSend(steps[i]);
       };
       let firstIn = 0;
@@ -4564,10 +4583,31 @@ Optional note for them:`, '');
         const firstTxt = !left ? '—' : underway ? 'underway' : dayFmt.format(dateOfIdx(first ?? firstIn));
         return `<tr><td>${i + 1}. ${esc(st.name)}${i > 0 ? `<div class="hint">${num(st.wait?.days || 0)} ${st.wait?.unit === 'calendar' ? 'calendar' : 'sending'} day(s) after each company's previous step</div>` : ''}</td><td class="num">${dayOf[i]}</td><td style="white-space:nowrap;font-size:0.8rem;">${firstTxt}</td><td style="white-space:nowrap;font-size:0.8rem;">${left && last != null ? '≈ ' + dayFmt.format(dateOfIdx(last)) : 'done'}</td><td class="num">${num(left)}</td><td class="num">${days ? num(days) : '—'}</td></tr>`;
       }).join('');
-      return `<p class="note">Effective pace: <b>${num(pace)}</b> emails a day — the lowest of this campaign's limit (${c.pacing?.maxPerDay ? num(c.pacing.maxPerDay) : 'none'}), the automations limit (${num(globalLimit)}, shared by all campaigns) and the addresses' daily caps (${num(addrCap)}).</p>
+      return `${part ? '' : `<p class="note">Effective pace: <b>${num(pace)}</b> emails a day — the lowest of this campaign's limit (${c.pacing?.maxPerDay ? num(c.pacing.maxPerDay) : 'none'}), the automations limit (${num(globalLimit)}, shared by all campaigns) and the addresses' daily caps (${num(addrCap)}).</p>`}
         <div class="table-wrap" style="margin-top:8px;"><table><thead><tr><th>Step</th><th class="num" title="Sending days after a company's first step (the campaign's sending days, no holidays)">Day in each company's sequence</th><th title="When the first companies reach this step">First companies</th><th title="When the last companies are done with this step">Last companies (done by)</th><th class="num">Still to go</th><th class="num" title="Sending days with emails of this step">Sending days</th></tr></thead><tbody>${rows}</tbody></table></div>
         <p class="note" style="margin-top:8px;">Each company goes through the whole sequence in about <b>${num(acc + 1)}</b> ${steps.some(s => s.wait?.unit === 'calendar') ? 'days (* calendar days)' : 'sending days'}, from its first step. <b>Day</b> counts this campaign's sending days (${esc(dayNames)}${skipHol ? '; national holidays skipped' : '; national holidays included'}); the dates are when the first and the last companies reach each step.</p>
-        <p class="hint" style="margin-top:6px;">Estimates — other campaigns share the daily limit, and approval steps wait for you. Recomputed each time the campaign is opened.</p>`;
+        ${part ? '' : '<p class="hint" style="margin-top:6px;">Estimates — other campaigns share the daily limit, and approval steps wait for you. Recomputed each time the campaign is opened.</p>'}`;
+    }
+
+    // Paths round 2 (R6, 27 Oct): one forecast per path. Companies waiting to start are
+    // on their planned path (R11) and start in the campaign's order ("Who starts first").
+    function projectionByPath(c) {
+      const live = curEnrols.filter(e => LIVE_ENROL.includes(e.status));
+      const perDay = c.pacing?.newPerDay || 20;
+      const queue = startQueue(c, live.filter(e => e.status === 'pending'), perDay);
+      const qi = new Map(queue.map((e, k) => [e, k]));
+      const firstIds = new Set(pathsOf(c).map(p => stepsOfPath(c, p.id)[0]?.id).filter(Boolean));
+      const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+      const startedToday = curEnrols.filter(e => (e.history || []).some(h => firstIds.has(h.stepId) && tsMs(h.at) >= t0.getTime())).length;
+      const unplanned = live.filter(e => e.status === 'pending' && !pathIdOf(e)).length;
+      return `<p class="note">Who starts first: <b>${esc(START_LABEL[c.startOrder?.mode || 'added'])}</b> · ${num(perDay)} new companies a day. Companies waiting to start are on their planned path.${unplanned ? ` ${num(unplanned)} aren't planned yet (they get a path when the paths are saved or the campaign runs) — counted in Everyone else here.` : ''}</p>`
+        + pathsOf(c).map((p, pi) => {
+          const steps = stepsOfPath(c, p.id);
+          const mine = live.filter(e => (pathIdOf(e) || ELSE_PATH) === p.id);
+          const head = `<h4 style="margin:14px 0 2px;color:${pathColor(p, pi)[0]};">${esc(p.id === ELSE_PATH ? 'Everyone else' : p.name)} <span class="hint">· ${num(mine.length)} compan${mine.length === 1 ? 'y' : 'ies'}</span></h4>`;
+          return head + (steps.length ? projectionHtml(c, { steps, live: mine, queueIdx: (e) => qi.get(e) ?? 0, startedToday }) : '<p class="hint">No steps — left out when they start.</p>');
+        }).join('')
+        + '<p class="hint" style="margin-top:6px;">Estimates — other campaigns share the daily limit, and approval steps wait for you. Recomputed each time the campaign is opened.</p>';
     }
 
     // ── Add companies: by name, or a CSV list → preview → enrol ──
@@ -5438,7 +5478,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <span class="hint">${overdue ? '<b style="color:var(--danger);">overdue</b> · ' : ''}due ${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}${t.attempts?.length ? ` · ${t.attempts.length} earlier attempt${t.attempts.length === 1 ? '' : 's'}` : ''}</span>
           </div>
           <div class="draft__meta">
-            ${t.campaignId ? `<span><button class="camp-link" style="font-size:0.76rem;" data-topencamp="${esc(t.campaignId)}">${esc(t.campaignName || 'Campaign')}</button> · ${esc(t.stepName || '')} (${(t.stepIndex ?? 0) + 1} of ${t.stepCount || '?'})</span>`
+            ${t.campaignId ? `<span><button class="camp-link" style="font-size:0.76rem;" data-topencamp="${esc(t.campaignId)}">${esc(t.campaignName || 'Campaign')}</button> · ${t.pathName ? esc(t.pathName) + ' · ' : ''}${esc(t.stepName || '')} (${(t.stepIndex ?? 0) + 1} of ${t.stepCount || '?'})</span>`
               : `<span>Own task · added by ${esc(OWNER_LABEL[OWNER_BY_EMAIL[t.createdBy]] || localPart(t.createdBy) || '—')}${t.threadId ? ` · <button class="camp-link" style="font-size:0.76rem;" data-topenthread="${esc(t.threadId)}">from a conversation</button>` : ''}</span>`}
             <span>for <select data-tassign style="width:auto;padding:2px 6px;font-size:0.76rem;"><option value="">nobody</option>${ownerOpts(t.assignee)}</select></span>
             ${txt ? `<span title="Name, phone and email in the ${t.channel === 'call' ? 'script' : 'text'}">signed by <select data-tsigner style="width:auto;padding:2px 6px;font-size:0.76rem;">${ownerOpts(signerFor(t, c))}</select></span>` : ''}
@@ -5547,7 +5587,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}></td>
                 <td>${c._person ? `${esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
-                <td style="font-size:0.8rem;">${t.campaignId ? `${esc(t.campaignName || '')} · ${esc(t.stepName || '')}` : `Own task${t.instructions ? ` · ${esc(t.instructions)}` : ''}`}</td>
+                <td style="font-size:0.8rem;">${t.campaignId ? `${esc(t.campaignName || '')} · ${t.pathName ? esc(t.pathName) + ' · ' : ''}${esc(t.stepName || '')}` : `Own task${t.instructions ? ` · ${esc(t.instructions)}` : ''}`}</td>
                 <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
                 <td style="white-space:nowrap;"><select data-lsigner="${esc(t.id)}" style="width:auto;padding:2px 6px;font-size:0.78rem;">${ownerOpts(signerFor(t, c))}</select>${(window.teamDir || []).find(m => m.key === signerFor(t, c))?.contactPhone ? '' : ' <span class="pill pill--warn" title="Add it in Team → Contact details">no phone</span>'}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
@@ -5723,6 +5763,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         if (flt.field === 'owner') return `<select data-cf="v" ${at}${d}>${Object.entries(OWNER_LABEL).map(([k, l]) => `<option value="${k}"${flt.value === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
         return `<input type="text" data-cf="v" ${at} value="${esc(flt.value ?? '')}" style="width:150px;" placeholder="${esc(placeholderOf(f.key))}" aria-label="Value"${d}>`;
       };
+      const foldLine = (s, i, k) => `<button type="button" class="step-fold" data-sopen="${esc(s.id)}" data-i="${i}"><b>${k + 1}.</b> ${esc(s.name || '')} <span class="hint">· ${esc(CHANNEL_LABELS[s.channel || 'email'] || '')}${s.templateId ? ' · ' + esc(templatesAll.find(t => t.id === s.templateId)?.name || 'template') : ''}${k ? ` · ${num(s.wait?.days || 0)} ${s.wait?.unit === 'calendar' ? 'calendar' : 'sending'} day(s) after` : ''}${(s.branches || []).length ? ' · rules' : ''}</span><span class="hint open">Open ›</span></button>`;
       const pathCard = (p, pi) => {
         const [ink] = pathColor(p, pi);
         const items = seqDraft.map((s, i) => [s, i]).filter(([s]) => (s.pathId || ELSE_PATH) === p.id);
@@ -5742,7 +5783,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
                 ${editable && (p.filters || []).length > 1 ? `<button type="button" class="btn btn--ghost btn--sm" data-cdel="${ci}" data-pi="${pi}" aria-label="Remove condition">✕</button>` : ''}</div>`).join('')}
               ${editable && (p.filters || []).length < 10 ? `<div><button type="button" class="btn btn--ghost btn--sm" data-cadd="${pi}">+ and…</button></div>` : ''}
               <div class="hint">Amounts: 2000000, 2000k and 2M are the same. Several values in one condition = any of them; separate conditions (+ and…) = all of them.</div></div>`}
-          <div class="steps">${items.map(([s, i]) => card(s, i)).join('') || (isElse ? '' : '<div class="empty" style="padding:10px;">No steps yet — add the first one.</div>')}</div>
+          <div class="steps">${items.map(([s, i], k) => (foldSteps && !stepOpen.has(s.id) ? foldLine(s, i, k) : (foldSteps ? `<div style="text-align:right;margin:0 0 2px;"><button type="button" class="btn btn--ghost btn--sm" data-sfold="${esc(s.id)}">Fold ‹</button></div>` : '') + card(s, i))).join('') || (isElse ? '' : '<div class="empty" style="padding:10px;">No steps yet — add the first one.</div>')}</div>
           ${addStepCtl(p.id)}
         </div>`;
       };
@@ -5753,6 +5794,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <span class="seg" role="group" aria-label="View">${[['list', 'List'], ['tree', 'Tree'], ['side', 'Side by side']].map(([k, l]) => `<button type="button" class="chip${view === k ? ' on' : ''}" data-seqview="${k}">${l}</button>`).join('')}</span>
           ${editable ? `<button class="btn btn--ghost btn--sm" id="pathAdd"${pathsDraft.length >= MAX_PATHS ? ' disabled' : ''}>＋ Add path</button>` : ''}
           ${multi ? '<button class="btn btn--ghost btn--sm" id="pathCheck">Check who goes where</button>' : ''}
+          ${multi && view !== 'tree' ? `<button class="btn btn--ghost btn--sm" id="foldAll">${foldSteps ? 'Open all steps' : 'Fold steps'}</button>` : ''}
           <span class="hint" id="pathCheckNote">${multi ? 'Paths are checked top to bottom; the first that matches takes the company when it starts, and it keeps that path.' : 'Add a path to give some companies a different sequence (by fit score, revenue, EBITDA, tier, sector, region…).'}</span>
         </div>` : '';
       const offWithPaths = !pathsOn && hasPaths(c);
@@ -5830,7 +5872,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const addStep = (pid, ch) => {
         const inPath = seqDraft.filter(x => x.pathId === pid);
         const at = inPath.length ? seqDraft.indexOf(inPath[inPath.length - 1]) + 1 : seqDraft.length;
-        seqDraft.splice(at, 0, { id: 'n' + Math.random().toString(36).slice(2, 9), pathId: pid, name: `${CHANNEL_LABELS[ch]} ${inPath.length + 1}`, channel: ch, wait: { days: inPath.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false, instructions: '', branches: [] });
+        const nid = 'n' + Math.random().toString(36).slice(2, 9); stepOpen.add(nid);
+        seqDraft.splice(at, 0, { id: nid, pathId: pid, name: `${CHANNEL_LABELS[ch]} ${inPath.length + 1}`, channel: ch, wait: { days: inPath.length ? 3 : 0, unit: 'working' }, approval: 'inherit', templateId: null, variants: [], newSubject: false, instructions: '', branches: [] });
         mark(); renderSequence();
       };
       $('seqAdd')?.addEventListener('click', () => addStep(ELSE_PATH, $('seqAddCh').value));
@@ -5838,6 +5881,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       // 27 Oct (outreach.paths): the paths' own controls, the views and the tree.
       const root = $('cs-sequence');
       root.querySelectorAll('[data-addstep]').forEach(b => b.addEventListener('click', () => addStep(b.dataset.addstep, root.querySelector(`[data-addch="${b.dataset.addstep}"]`)?.value || 'email')));
+      root.querySelectorAll('[data-sopen]').forEach(b => b.addEventListener('click', () => { stepOpen.add(b.dataset.sopen); renderSequence(); }));
+      root.querySelectorAll('[data-sfold]').forEach(b => b.addEventListener('click', () => { stepOpen.delete(b.dataset.sfold); renderSequence(); }));
+      $('foldAll')?.addEventListener('click', () => { foldSteps = !foldSteps; stepOpen = new Set(); try { localStorage.setItem('seqFold', foldSteps ? 'on' : 'off'); } catch (e) {} renderSequence(); });
       root.querySelectorAll('[data-seqview]').forEach(b => b.addEventListener('click', () => { seqView = b.dataset.seqview; try { localStorage.setItem('seqView', seqView); } catch (e) {} renderSequence(); }));
       $('pathAdd')?.addEventListener('click', () => {
         const n = pathsDraft.length;
@@ -5894,6 +5940,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       });
       root.querySelectorAll('[data-tree-step],[data-tree-path]').forEach(b => b.addEventListener('click', () => {
         if (seqView === 'tree') { seqView = 'side'; try { localStorage.setItem('seqView', seqView); } catch (e) {} renderSequence(); }
+        const ts = b.dataset.treeStep != null ? seqDraft[Number(b.dataset.treeStep)] : null;
+        if (ts && foldSteps && !stepOpen.has(ts.id)) { stepOpen.add(ts.id); renderSequence(); }
         const t = b.dataset.treeStep != null ? root.querySelector(`.step[data-i="${b.dataset.treeStep}"]`) : root.querySelector(`.path-card[data-pid="${b.dataset.treePath}"]`);
         if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1600); }
       }));
@@ -5956,6 +6004,10 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               <span class="hint">0 = off (default). Counts campaign, Compose and Investor CRM / Network emails sent through the portal. Recurring emails always go to the whole list.</span></div>` : ''}
             <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csPace">New companies per day<span class="info" title="How many companies start the sequence each sending day. Follow-ups of companies already started come on top." aria-label="How many companies start the sequence each sending day. Follow-ups of companies already started come on top.">i</span></label><input type="text" inputmode="numeric" id="csPace" value="${esc(c.pacing?.newPerDay || 20)}"${dis}>
               <span class="hint">Emails per day ≈ this × emails per company. The automations limit (${num(settings?.automationBudget ?? 80)}/day) is shared by all campaigns.</span></div>
+            ${hasPaths(c) && c.audienceType !== 'people' && isOn('outreach.paths') ? `<div class="field"><label for="csStart">Who starts first<span class="info" title="Which waiting companies start each day. Paths round 2 (27 Oct)." aria-label="Which waiting companies start each day">i</span></label>
+              <select id="csStart"${dis}>${[['added', 'As added — the oldest first, whatever the path'], ['order', 'Path order — the first path\'s companies first, then the next'], ['split', 'Split by path — a number a day per path']].map(([k, l]) => `<option value="${k}"${(c.startOrder?.mode || 'added') === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
+              <div id="csSplit" style="margin-top:6px;"${c.startOrder?.mode === 'split' ? '' : ' hidden'}><label class="checkline"><input type="checkbox" id="csEqual"${c.startOrder?.equal === false ? '' : ' checked'}${dis}> <span>Share equally</span></label><div id="csSplitRows"></div></div>
+              <span class="hint" id="csStartHint"></span></div>` : ''}
           </div>
         </div>
         <div class="card">
@@ -6017,6 +6069,25 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         } catch (e) { out.textContent = errText(e); }
         finally { b.disabled = false; }
       });
+      // R10 (27 Oct): who starts first — split by path shows each path's number a day.
+      const splitRows = () => {
+        if (!$('csStart')) return;
+        const mode = $('csStart').value, equal = $('csEqual').checked;
+        $('csSplit').hidden = mode !== 'split';
+        $('csStartHint').textContent = { added: 'Today\'s way: the X a day are the oldest waiting companies.', order: 'The paths\' order is the ↑↓ on the path cards (Sequence).', split: 'A path with nobody waiting gives its room to the next one in order. A path with no steps (leave out) gets no share.' }[mode];
+        if (mode !== 'split') { $('csPace').disabled = false; return; }
+        const live = pathsOf(c).filter(p => stepsOfPath(c, p.id).length);
+        const typed = Object.fromEntries([...root.querySelectorAll('[data-share]')].map(x => [x.dataset.share, parseInt(x.value, 10) || 0]));
+        const pace = parseInt($('csPace').value, 10) || 0;
+        const shares = equal ? splitShares({ ...c, startOrder: { mode: 'split', equal: true } }, pace) : Object.fromEntries(live.map(p => [p.id, typed[p.id] ?? c.startOrder?.perPath?.[p.id] ?? splitShares({ ...c, startOrder: { mode: 'split', equal: true } }, pace)[p.id] ?? 0]));
+        $('csSplitRows').innerHTML = live.map(p => `<div style="display:flex;gap:8px;align-items:center;margin:3px 0;"><span style="min-width:140px;">${esc(p.id === ELSE_PATH ? 'Everyone else' : p.name)}</span><input type="text" inputmode="numeric" data-share="${esc(p.id)}" value="${num(shares[p.id] || 0)}" style="width:64px;"${equal || dis ? ' disabled' : ''}> <span class="hint">a day</span></div>`).join('');
+        $('csPace').disabled = !equal;
+        if (!equal) $('csPace').value = Object.values(shares).reduce((a, b) => a + b, 0);
+        root.querySelectorAll('[data-share]').forEach(x => x.addEventListener('input', () => { $('csPace').value = [...root.querySelectorAll('[data-share]')].reduce((a, y) => a + (parseInt(y.value, 10) || 0), 0); }));
+      };
+      ['csStart', 'csEqual'].forEach(id => $(id)?.addEventListener('change', splitRows));
+      $('csPace')?.addEventListener('input', () => { if ($('csStart')?.value === 'split' && $('csEqual').checked) splitRows(); });
+      splitRows();
       $('csSave')?.addEventListener('click', async () => {
         const err = $('csErr'); err.hidden = true;
         const pace = parseInt($('csPace').value, 10), recent = parseInt($('csRecent').value, 10);
@@ -6045,6 +6116,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           skipMunicipalHolidays: $('csMunHol').value === 'skip' ? true : $('csMunHol').value === 'send' ? false : null,
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, includeNotContactable: !!$('csInclNC')?.checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },
           audience: { mode: $('csAudMode').value },
+          ...($('csStart') ? { startOrder: { mode: $('csStart').value, equal: $('csEqual').checked, perPath: Object.fromEntries([...root.querySelectorAll('[data-share]')].map(x => [x.dataset.share, parseInt(x.value, 10) || 0])) } } : {}),
         } }, 'Settings saved.');
         unbusy();
         if (r) { csetDirty = false; renderCampSettings(); }

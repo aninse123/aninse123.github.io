@@ -155,6 +155,7 @@ function normalizeCampaign(input, existing = null) {
   if (existing && (existing.stats?.enrolled || 0) > 0 && (src.audienceType === "people" ? "people" : "companies") !== (existing.audienceType || "companies")) bad("audience_locked", "The audience type can't change once people or companies are in the campaign.");
   const steps = rawSteps.map((s, i) => normalizeStep(s, i, used, reserved));
   const paths = normalizePaths(src.paths, steps);
+  const startOrder = normalizeStartOrder(src.startOrder, paths, steps);
 
   steps.forEach((st, i) => {
     const valid = new Set(st.channel === "email" ? ["clicked"] : (OUTCOMES[st.channel] || []).map((o) => o.key));
@@ -207,7 +208,8 @@ function normalizeCampaign(input, existing = null) {
     skipHolidays: typeof src.skipHolidays === "boolean" ? src.skipHolidays : null,
     skipMunicipalHolidays: typeof src.skipMunicipalHolidays === "boolean" ? src.skipMunicipalHolidays : null,
     // P4: maxPerDay = this campaign's own daily email limit (null = only the global limits).
-    pacing: { newPerDay: intIn(src.pacing?.newPerDay, 1, 500, 20), maxPerDay: src.pacing?.maxPerDay == null || src.pacing?.maxPerDay === "" ? null : intIn(src.pacing.maxPerDay, 1, 1000, null) },
+    // R10 (27 Oct): split by path with own numbers — their total is the new companies a day.
+    pacing: { newPerDay: startOrder?.mode === "split" && !startOrder.equal ? Object.values(startOrder.perPath).reduce((a, b) => a + b, 0) : intIn(src.pacing?.newPerDay, 1, 500, 20), maxPerDay: src.pacing?.maxPerDay == null || src.pacing?.maxPerDay === "" ? null : intIn(src.pacing.maxPerDay, 1, 1000, null) },
     audienceType: src.audienceType === "people" ? "people" : "companies",
     footer: typeof src.footer === "boolean" ? src.footer : null,
     sector: cleanText(src.sector, 120),
@@ -224,8 +226,42 @@ function normalizeCampaign(input, existing = null) {
     },
     steps,
     paths,
+    startOrder,
   };
 }
+
+// ── Who starts first (27 Oct, paths round 2 — R10) ─────────────────────────
+// Only for a campaign with paths. "added" (null: as added, the default — the
+// oldest waiting company first), "order" (the paths' order: the first path's
+// companies first, then the next…) or "split" (a number a day per path; equal =
+// the day's number shared equally). A path with no steps (leave out) gets no share.
+const START_MODES = ["added", "order", "split"];
+function normalizeStartOrder(input, paths, steps) {
+  if (!paths || !input || !START_MODES.includes(input.mode) || input.mode === "added") return null;
+  if (input.mode === "order") return { mode: "order" };
+  const equal = input.equal !== false;
+  const perPath = {};
+  for (const p of paths) if (steps.some((s) => s.pathId === p.id)) perPath[p.id] = equal ? 0 : intIn(input.perPath?.[p.id], 0, 500, 0);
+  if (!equal && !Object.values(perPath).some((n) => n > 0)) bad("bad_split", "Give at least one path a number of new companies a day.");
+  return { mode: "split", equal, perPath };
+}
+// The day's starts per path for "split": equal shares (the remainder to the first
+// paths) or the numbers typed. Paths with no steps get none.
+function splitShares(campaign, perDay) {
+  const live = pathsOf(campaign).filter((p) => pathSteps(campaign, p.id).length);
+  const so = campaign.startOrder || {};
+  if (!live.length) return {};
+  if (so.mode === "split" && so.equal === false) return Object.fromEntries(live.map((p) => [p.id, Number(so.perPath?.[p.id]) || 0]));
+  const base = Math.floor(perDay / live.length), extra = perDay - base * live.length;
+  return Object.fromEntries(live.map((p, i) => [p.id, base + (i < extra ? 1 : 0)]));
+}
+// R11: the path a waiting company would take today — stored on its enrolment as
+// plannedPathId / plannedPathName, confirmed when it really starts.
+function plannedPath(campaign, company, tierRules = [], now = Date.now()) {
+  const p = choosePath(campaign, tierRules.length ? { ...company, targetTier: tierOf(company, tierRules) } : company, now).path;
+  return { plannedPathId: p.id, plannedPathName: p.name || "Everyone else" };
+}
+const pathsUseTier = (campaign) => pathsOf(campaign).some((p) => (p.filters || []).some((f) => f.field === "targetTier"));
 
 // ── Campaign paths (27 Oct 2026, switch outreach.paths) ─────────────────────
 // A path = a filter on the company (the Search CRM filters) + its own steps.
@@ -501,4 +537,5 @@ module.exports = {
   DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems, evaluateCompany,
   EXCLUSION_LABELS, enrolmentId, tsMillis, latestFilterSpec, matchesFilterSpec, tierOf, TIERS, personKey, personEnrolmentId, evaluatePerson,
   ELSE_PATH, MAX_PATHS, PATH_FIELDS, PATH_OPS, PATH_FIELD_LABEL, pathsOf, pathSteps, viewFor, choosePath, pathValueText, normalizePaths,
+  START_MODES, normalizeStartOrder, splitShares, plannedPath, pathsUseTier,
 };

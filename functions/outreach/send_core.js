@@ -292,7 +292,7 @@ async function prepareEmail(opts) {
   };
 }
 
-// campaign: { campaignId, enrolmentId, stepId } for scheduler sends (null for manual).
+// campaign: { campaignId, enrolmentId, stepId, pathId?, pathName? } for scheduler sends (null for manual).
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 async function deliverEmail(p, { campaign = null } = {}) {
   const { isReply, isTest, messageRef, messageId, threadRef, thread, companyId, company, senderId, sender, to, toDomain, headers } = p;
@@ -313,6 +313,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
       lastMessageAt: now, lastDirection: "out", rfcIds: [], lastInboundRfcId: null,
       templateId: p.templateId, variantKey: p.variantKey, footer: !!p.footer,
       campaignId: campaign?.campaignId || null, enrolmentId: campaign?.enrolmentId || null,
+      ...(campaign?.pathId ? { pathId: campaign.pathId, pathName: campaign.pathName || null } : {}), // paths round 2 (R1)
       firstTouchAt: now, repliedAt: null,
       responseCategory: null, isTest, createdAt: now, createdBy: p.callerEmail,
     });
@@ -325,6 +326,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
     subject: p.subject, text: p.text, html: p.html, snippet: p.bodyText.slice(0, 500),
     templateId: p.templateId, variantKey: p.variantKey, senderId, sentBy: p.callerEmail, source, footer: !!p.footer,
     campaignId: campaign?.campaignId || null, enrolmentId: campaign?.enrolmentId || null, stepId: campaign?.stepId || null,
+    ...(campaign?.pathId ? { pathId: campaign.pathId, pathName: campaign.pathName || null } : {}),
     redirectedFrom: p.redirectedFrom, approvedBy: campaign?.approvedBy || null,
     recipientKind: p.recipientKind, personalAddress: !!p.personalAddress,
     status: "queued", events: [], attachments: [], isAutoReply: false, isTest, createdAt: now,
@@ -413,6 +415,7 @@ async function saveDraft(p, { campaign }) {
     subject: p.subject, draftBody: p.bodyText, text: p.text, html: p.html, snippet: p.bodyText.slice(0, 500),
     templateId: p.templateId, variantKey: p.variantKey, senderId: p.senderId, source: "campaign",
     campaignId: campaign.campaignId, enrolmentId: campaign.enrolmentId, stepId: campaign.stepId,
+    ...(campaign.pathId ? { pathId: campaign.pathId, pathName: campaign.pathName || null } : {}),
     redirectedFrom: p.redirectedFrom, isReply: p.isReply,
     recipient: p.isReply ? null : { email: p.redirectedFrom || p.to, name: p.contactName || "", kind: p.recipientKind, personal: !!p.personalAddress },
     status: "draft", events: [], attachments: [], isAutoReply: false, isTest: p.isTest,
