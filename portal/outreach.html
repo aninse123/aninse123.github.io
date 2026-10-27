@@ -5862,11 +5862,11 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       root.querySelectorAll('[data-cdel]').forEach(b => b.addEventListener('click', () => { pathAt(b).filters.splice(Number(b.dataset.cdel), 1); pathCounts = null; mark(); renderSequence(); }));
       root.querySelectorAll('[data-cf]').forEach(x => x.addEventListener(x.tagName === 'SELECT' || x.type === 'checkbox' ? 'change' : 'input', () => {
         const flt = pathAt(x).filters[Number(x.dataset.ci)], f = fieldOf(flt.field), kind = x.dataset.cf;
-        const numOf = (v) => (f.unit === '€' ? parseAmount(v) : Number(String(v).replace(',', '.')));
+        const numOf = (v) => (String(v).trim() === '' ? null : f.unit === '€' ? parseAmount(v) : Number(String(v).replace(',', '.')));
         if (kind === 'field') { Object.assign(flt, defaultFilter(x.value)); pathCounts = null; mark(); renderSequence(); return; }
         if (kind === 'op') { const old = flt.value; flt.op = x.value; flt.value = x.value === 'range' ? [Number(Array.isArray(old) ? old[0] : old) || 0, (Number(Array.isArray(old) ? old[0] : old) || 0) + (f.unit === '€' ? 1e6 : 25)] : x.value === 'exists' ? true : x.value === 'within_days' ? 90 : (Array.isArray(old) ? old[0] : old); pathCounts = null; mark(); renderSequence(); return; }
         if (kind === 'v') flt.value = f.type === 'num' || flt.op === 'within_days' ? numOf(x.value) : x.value;
-        if (kind === 'v' && f.unit === '€') { const rb = x.parentElement.querySelector(`[data-readback="${x.dataset.ci}"]`); if (rb) rb.textContent = isFinite(flt.value) ? amountReadback(flt.value) : 'not a number — e.g. 2M'; }
+        if (kind === 'v' && f.unit === '€') { const rb = x.parentElement.querySelector(`[data-readback="${x.dataset.ci}"]`); if (rb) rb.textContent = flt.value == null ? '' : isFinite(flt.value) ? amountReadback(flt.value) : 'not a number — e.g. 2M'; }
         if (kind === 'vlist') { flt.op = 'in'; flt.value = x.value.split(',').map(v => v.trim()).filter(Boolean); }
         if (kind === 'msel') {
           flt.op = 'in';

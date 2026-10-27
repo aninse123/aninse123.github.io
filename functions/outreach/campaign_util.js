@@ -265,7 +265,7 @@ function normalizePathFilter(f, pathName) {
   if (!type) bad("bad_path", `${pathName}: "${field}" can't be used in a condition.`);
   if (!PATH_OPS[type].includes(op)) bad("bad_path", `${pathName}: "${op}" doesn't work with ${PATH_FIELD_LABEL[field]}.`);
   let value = f.value;
-  const num = (x) => { const n = Number(x); if (!isFinite(n)) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]} needs a number.`); return n; };
+  const num = (x) => { const n = x == null || x === "" ? NaN : Number(x); if (!isFinite(n)) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]} needs a number.`); return n; };
   if (op === "range") { if (!Array.isArray(value) || value.length !== 2) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]} needs "from" and "to".`); value = [num(value[0]), num(value[1])]; if (!(value[0] < value[1])) bad("bad_path", `${pathName}: ${PATH_FIELD_LABEL[field]}: "from" must be below "to".`); }
   else if (op === "gte" || op === "lt") value = num(value);
   else if (op === "in" && type === "tier") { value = [...new Set((Array.isArray(value) ? value : [value]).filter((x) => TIERS.includes(x)))]; if (!value.length) bad("bad_path", `${pathName}: pick at least one tier.`); }

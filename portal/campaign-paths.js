@@ -32,7 +32,7 @@ export const OPS = {
 // A sensible first condition for a new path / a changed field.
 export function defaultFilter(key = 'fitScore') {
   const f = fieldOf(key);
-  if (f.type === 'num') return { field: f.key, op: 'gte', value: f.key === 'fitScore' ? 75 : 0 };
+  if (f.type === 'num') return { field: f.key, op: 'gte', value: f.key === 'fitScore' ? 75 : null }; // empty, so the example shows (27 Oct)
   if (f.type === 'tier') return { field: f.key, op: 'in', value: ['A'] };
   if (f.type === 'bool') return { field: f.key, op: 'bool', value: true };
   if (f.type === 'exists') return { field: f.key, op: 'exists', value: true };
@@ -68,7 +68,7 @@ export function amountText(n, unit) {
   if (unit === '€') return Math.abs(n) >= 1e6 ? `${+(n / 1e6).toFixed(2)}M` : Math.abs(n) >= 1e3 ? `${+(n / 1e3).toFixed(1)}k` : String(n);
   return String(n);
 }
-const money = (n, f) => (f.unit === '€' ? `€${amountText(n, '€')}` : f.unit === '%' ? `${n}%` : String(n));
+const money = (n, f) => (n == null || !isFinite(n) ? '…' : f.unit === '€' ? `€${amountText(n, '€')}` : f.unit === '%' ? `${n}%` : String(n));
 
 // "Fit score at least 75", "Revenue from €2M to under €10M", "Tier is A or B".
 export function condText(flt, labels = {}) {
