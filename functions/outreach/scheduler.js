@@ -316,7 +316,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState, burstState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths"), Feat.jobState("outreach.sendAllNow")]);
+  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState, burstState, ccState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths"), Feat.jobState("outreach.sendAllNow"), Feat.jobState("outreach.campaignCc")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
@@ -584,6 +584,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         // I21: a campaign started by someone with an approved test address
         // sends its test emails there; otherwise the general test address.
         countsAsOutreach: true, redirectTo: testRun(campaign) && testAddress ? (campaign.testRecipient || testAddress) : null,
+        campaignCc: allowed(ccState, campaign) ? (campaign.cc || []) : [], // 28 Oct (outreach.campaignCc)
         testCampaign: !!campaign.isTest, // marks it test and redirects it even when Outreach is live
         // A draft costs no quota; the target is checked again when it's approved.
         confirmOverTarget: wantsDraft,

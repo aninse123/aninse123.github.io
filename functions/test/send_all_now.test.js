@@ -23,7 +23,7 @@ const camp = async (data) => { try { return await fns.outreachCampaign({ ...ADMI
 const docs = (coll) => [...store.entries()].filter(([p]) => p.startsWith(coll + "/")).map(([p, d]) => ({ id: p.split("/").pop(), ...d }));
 const sent = () => calls.filter((c) => c.url.endsWith("/emails") && c.method === "POST").length;
 const IDS = ["a", "b", "c", "d", "e", "f"];
-function flags(state) { store.set("config/features", { flags: { "outreach.sendAllNow": { staging: state, production: state } } }); Feat._reset(); }
+function flags(state) { store.set("config/features", { flags: { "outreach.sendAllNow": { staging: state, production: state }, "outreach.campaignCc": { staging: state, production: state } } }); Feat._reset(); }
 
 function seed() {
   store.clear(); calls.length = 0;
@@ -75,6 +75,17 @@ async function ready(extra) {
   store.set(`outreachCampaigns/${docs("outreachCampaigns")[0].id}`, { ...docs("outreachCampaigns")[0], sendAllAtOnce: true });
   await runScheduler({ now: new Date(Date.now() + 60000) /* after the approval (due "now") */, gap: null });
   ok("switch Off: a campaign with the setting stored still sends one per address per run", sent() === 1);
+
+  // Cc on every email (outreach.campaignCc)
+  seed(); flags("on");
+  calls.length = 0;
+  r = await ready({ sendAllAtOnce: true, cc: ["Antonio.Carvalho@douropartners.pt"] });
+  const draft = docs("outreachMessages").find((m) => m.campaignId === r.k);
+  await camp({ action: "sendNow", campaignId: r.k });
+  const posts = calls.filter((c) => c.url.endsWith("/emails") && c.method === "POST");
+  ok("Cc on every email: the draft shows it, and each email goes to its person with António in Cc", JSON.stringify(draft.cc) === JSON.stringify(["antonio.carvalho@douropartners.pt"]) && posts.length === 6 && posts.every((c) => JSON.stringify(c.body.cc) === JSON.stringify(["antonio.carvalho@douropartners.pt"]) && c.body.to.length === 1));
+  const outsider = await camp({ action: "save", campaign: { name: "Y", steps: [{ channel: "email", name: "E" }], cc: ["someone@gmail.com"] } });
+  ok("Cc refuses an outside address (only Douro addresses)", outsider.err?.details?.reason === "bad_cc");
 
   if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
   console.log("\nall send-all-now tests passed");

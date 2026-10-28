@@ -214,6 +214,8 @@ function normalizeCampaign(input, existing = null) {
     footer: typeof src.footer === "boolean" ? src.footer : null,
     // 28 Oct (switch outreach.sendAllNow): approved emails leave together, not one per address every 10 minutes.
     sendAllAtOnce: !!src.sendAllAtOnce,
+    // 28 Oct (switch outreach.campaignCc): Douro addresses copied on every email.
+    cc: normalizeCc(src.cc),
     sector: cleanText(src.sector, 120),
     audience: { mode: audienceMode, sources: base.audience?.sources || [] },
     exclusions: {
@@ -230,6 +232,19 @@ function normalizeCampaign(input, existing = null) {
     paths,
     startOrder,
   };
+}
+
+// ── Cc on every email (28 Oct, switch outreach.campaignCc) ─────────────────
+// Only Douro addresses (…@douropartners.pt, the team's sending domain), at most 3:
+// a campaign can't copy outsiders by mistake.
+const CC_DOMAINS = ["douropartners.pt", "mail.douropartners-team.pt"];
+function normalizeCc(input) {
+  const list = (Array.isArray(input) ? input : String(input || "").split(/[,;\s]+/)).map((e) => normEmail(e)).filter(Boolean);
+  const out = [...new Set(list)];
+  const wrong = out.find((e) => !isValidEmail(e) || !CC_DOMAINS.includes(String(e.split("@")[1] || "")));
+  if (wrong) bad("bad_cc", `Cc can only be a Douro address (…@douropartners.pt): not ${wrong}.`);
+  if (out.length > 3) bad("bad_cc", "Cc: at most 3 addresses.");
+  return out;
 }
 
 // ── Who starts first (27 Oct, paths round 2 — R10) ─────────────────────────

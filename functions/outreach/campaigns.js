@@ -1360,6 +1360,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
   if (data.action === "pathsPreview" || (data.action === "save" && Array.isArray(data.campaign?.paths) && data.campaign.paths.some((p) => p && p.id !== ELSE_PATH))
     || (data.action === "save" && data.campaign?.startOrder && data.campaign.startOrder.mode !== "added")) await Feat.requireFeature(request, "outreach.paths"); // + who starts first (R10)
   if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
+  if (data.action === "save" && Array.isArray(data.campaign?.cc) && data.campaign.cc.length) await Feat.requireFeature(request, "outreach.campaignCc"); // 28 Oct
   if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
     let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {

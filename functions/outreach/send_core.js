@@ -168,7 +168,9 @@ async function prepareEmail(opts) {
     fail("unavailable", "dns_error", `Couldn't check ${toDomain}'s mail servers — try again in a moment.`);
   }
   // The other reply recipients: valid, test-approved in test mode, not suppressed, a domain that takes mail.
-  const toList = replyLists ? replyLists.to : [to], ccList = replyLists ? replyLists.cc : [];
+  // 28 Oct (outreach.campaignCc): a campaign's "Cc on every email" (Douro addresses only — campaign_util).
+  const campaignCc = (Array.isArray(opts.campaignCc) ? opts.campaignCc : []).map((e) => normEmail(e)).filter((e) => e && e !== to);
+  const toList = replyLists ? replyLists.to : [to], ccList = replyLists ? replyLists.cc : campaignCc;
   const others = [...toList.slice(1), ...ccList];
   for (const e of others) {
     if (!isValidEmail(e)) fail("invalid-argument", "bad_recipient", `"${e}" is not a valid email address.`);
@@ -418,7 +420,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
 async function saveDraft(p, { campaign }) {
   await p.messageRef.set({
     threadId: p.isReply ? p.threadRef.id : null, companyId: p.companyId, companyName: p.company?.name || null,
-    direction: "out", via: "portal", from: `${p.sender.displayName} <${p.senderId}>`, to: [p.to], cc: [],
+    direction: "out", via: "portal", from: `${p.sender.displayName} <${p.senderId}>`, to: [p.to], cc: p.ccList || [],
     subject: p.subject, draftBody: p.bodyText, text: p.text, html: p.html, snippet: p.bodyText.slice(0, 500),
     templateId: p.templateId, variantKey: p.variantKey, senderId: p.senderId, source: "campaign",
     campaignId: campaign.campaignId, enrolmentId: campaign.enrolmentId, stepId: campaign.stepId,
