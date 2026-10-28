@@ -3415,6 +3415,7 @@ function renderList(){
 // 27 Oct (search.contactColumns): the Contacted cell's hover card — every channel,
 // the campaign now and the campaigns before (read once per company, on hover).
 const ctEnrolCache = new Map();
+const ctExtra = new Map(); // 28 Oct: companies shown on the Ownership tab (group, ladder, subsidiaries), for the hover
 function ctNameOf(x){
   const e = String(x || '').toLowerCase(), local = e.split('@')[0];
   // A key ("andre"), a team address ("andre.rocha@…", its contactEmail) → the first name.
@@ -3422,7 +3423,7 @@ function ctNameOf(x){
   return OWNER_LABELS[x] || (m ? (m.label || String(m.name || '').split(' ')[0]) : local);
 }
 function ctShowTip(cell, ev){
-  const c = companies.find(x => x.id === cell.dataset.ctid); if (!c) return;
+  const c = companies.find(x => x.id === cell.dataset.ctid) || ctExtra.get(cell.dataset.ctid); if (!c) return;
   let tip = document.getElementById('ctTip');
   if (!tip) { tip = document.createElement('div'); tip.id = 'ctTip'; document.body.appendChild(tip); }
   const draw = () => { tip.innerHTML = contactTipHtml(c, { nameOf: ctNameOf, enrolments: ctEnrolCache.has(c.id) ? ctEnrolCache.get(c.id) : null }); };
@@ -5242,10 +5243,12 @@ function ownCoStatus(x){
   const bits = [];
   if (x.computedRevenue != null) bits.push(fmtEurShort(x.computedRevenue));
   bits.push(STAGES[x.stage || 'universe']?.label || x.stage);
-  if (x.doNotContact?.on) bits.push('🚫 do not contact');
-  else if (x.contactable === false) bits.push('not contactable');
-  else bits.push('contactable');   // not set = contactable, as everywhere else
-  if (x.activeCampaignName) bits.push(`📣 ${x.activeCampaignName}`);
+  if (!isOn('search.contactColumns')) { // with the columns on, the icons say it (28 Oct)
+    if (x.doNotContact?.on) bits.push('🚫 do not contact');
+    else if (x.contactable === false) bits.push('not contactable');
+    else bits.push('contactable');   // not set = contactable, as everywhere else
+    if (x.activeCampaignName) bits.push(`📣 ${x.activeCampaignName}`);
+  }
   return bits.map(esc).join(' · ');
 }
 // One tree row: the holder (ladder) or the held company (subsidiaries).
@@ -5272,6 +5275,8 @@ function ownTreeHtml(node, { mode, cos, people, depth = 1, chainPct = 100 }){
       if (p?.country) meta.push(esc(p.country));
     }
     if (co) meta.push(ownCoStatus(co));
+    // 28 Oct (search.contactColumns): Flags + Contacted icons after a CRM company's name, same hover as the list.
+    if (co && isOn('search.contactColumns')) { ctExtra.set(co.id, co); name += ` <span class="ct-cell" data-ctid="${esc(co.id)}">${flagsHtml(co)}${contactedHtml(co)}</span>`; }
     if (depth > 1 && eff != null) meta.push(mode === 'up' ? `≈ ${fmtPctOwn(eff)} of this company through the chain` : `≈ ${fmtPctOwn(eff)} held through the chain`);
     if (n.repeat) meta.push('also listed elsewhere here');
     if (n.cut) meta.push('more levels not shown');
@@ -5339,9 +5344,26 @@ async function renderOwnershipLadder(c, links){
     const sum = k => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
     const isGuo = m => om.guoNif && ownCoNif(m) === om.guoNif && /^PT/i.test(om.guoBvdId || 'PT');
     const ct = m => m.doNotContact?.on ? '🚫 Do not contact' : m.contactable === false ? 'Not contactable' : 'Contactable';
+    const ctOn = isOn('search.contactColumns'); // 28 Oct: totals first, Flags / Contacted / Fit / Tier / Owner, CAE with its description
     groupHtml = `<div class="ot-meta" style="margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;"><span>Ultimate owner: <strong>${esc(om.guoName || '—')}</strong>${om.guoType ? ` · ${esc(om.guoType)}` : ''}${group.total > rows.length ? ` · showing ${rows.length} of ${group.total} companies; all of them with the button` : ''}</span><button type="button" class="btn btn--ghost btn--sm" data-group-list title="Open the Search CRM list with only this group (then filter, export or add to a campaign)">Show the group in the list</button></div>
       <div style="overflow-x:auto;"><table class="own-table own-group-table">
-        <thead><tr><th>Company</th><th>CAE</th><th class="num">Revenue</th><th class="num">EBITDA</th><th class="num">Employees</th><th>Stage</th><th>Contactable</th></tr></thead>
+        ${ctOn ? `<thead><tr><th>Company</th><th class="num">Revenue</th><th class="num">EBITDA</th><th class="num">Employees</th><th title="Do not contact, not contactable, excluded sector — hover for why">Flags</th><th title="How the company was contacted — hover for the detail">Contacted</th><th>Fit</th><th>Tier</th><th>Owner</th><th>CAE</th><th>Stage</th></tr></thead>
+        <tbody>${rows.map(m => { ctExtra.set(m.id, m); return `<tr${m.id === c.id ? ' class="own-self"' : ''}>
+          <td>${m.id === c.id ? `<strong>${esc(m.name || '—')}</strong> <span class="badge badge-grey">this company</span>` : `<span class="person-link" data-gotoco="${esc(m.id)}">${esc(m.name || '—')}</span>`}${isGuo(m) ? ' <span class="badge badge-green" title="The ultimate owner itself">ultimate owner</span>' : ''}</td>
+          <td class="num">${fmtEurShort(m.computedRevenue)}</td>
+          <td class="num">${fmtEurShort(m.computedEBITDA)}</td>
+          <td class="num">${m.computedEmployees != null ? Number(m.computedEmployees).toLocaleString('de-DE') : '—'}</td>
+          <td class="ct-cell">${flagsHtml(m)}</td>
+          <td class="ct-cell" data-ctid="${esc(m.id)}">${contactedHtml(m)}</td>
+          <td>${fitBadge(m.fitScore)}</td>
+          <td>${tierPill(m)}</td>
+          <td>${OWNER_LABELS[m.owner] || '—'}</td>
+          <td style="min-width:180px;max-width:260px;white-space:normal;">${esc(m.caeCode || '—')}${m.caeDescription ? `<div class="ot-meta" style="font-size:0.72rem;line-height:1.3;">${esc(m.caeDescription)}</div>` : ''}</td>
+          <td>${stagePill(m.stage || 'universe')}</td></tr>`; }).join('')}</tbody>
+        <tfoot><tr><td><strong>Group (${rows.length}${group.total > rows.length ? ` of ${group.total}` : ''})</strong></td>
+          <td class="num"><strong>${fmtEurShort(sum('computedRevenue'))}</strong></td>
+          <td class="num"><strong>${fmtEurShort(sum('computedEBITDA'))}</strong></td>
+          <td class="num"><strong>${sum('computedEmployees').toLocaleString('de-DE')}</strong></td><td colspan="7"></td></tr></tfoot>` : `<thead><tr><th>Company</th><th>CAE</th><th class="num">Revenue</th><th class="num">EBITDA</th><th class="num">Employees</th><th>Stage</th><th>Contactable</th></tr></thead>
         <tbody>${rows.map(m => `<tr${m.id === c.id ? ' class="own-self"' : ''}>
           <td>${m.id === c.id ? `<strong>${esc(m.name || '—')}</strong> <span class="badge badge-grey">this company</span>` : `<span class="person-link" data-gotoco="${esc(m.id)}">${esc(m.name || '—')}</span>`}${isGuo(m) ? ' <span class="badge badge-green" title="The ultimate owner itself">ultimate owner</span>' : ''}</td>
           <td>${esc(m.caeCode || '—')}</td>
@@ -5353,7 +5375,7 @@ async function renderOwnershipLadder(c, links){
         <tfoot><tr><td><strong>Group (${rows.length}${group.total > rows.length ? ` of ${group.total}` : ''})</strong></td><td></td>
           <td class="num"><strong>${fmtEurShort(sum('computedRevenue'))}</strong></td>
           <td class="num"><strong>${fmtEurShort(sum('computedEBITDA'))}</strong></td>
-          <td class="num"><strong>${sum('computedEmployees').toLocaleString('de-DE')}</strong></td><td></td><td></td></tr></tfoot>
+          <td class="num"><strong>${sum('computedEmployees').toLocaleString('de-DE')}</strong></td><td></td><td></td></tr></tfoot>`}
       </table></div>`;
     // Header pill: jumps here.
     const meta = document.getElementById('dMeta');
