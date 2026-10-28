@@ -26,6 +26,7 @@ const LINKS = [
 let reads = 0;
 const byCompany = (id) => LINKS.filter((l) => l.companyId === id);
 const ctx = {
+  isOn: () => false, // 28 Oct: feature switches (search.contactColumns off here = the status words as before)
   console, Intl, Map, Set, Math, Number, String, Promise,
   companies: [{ id: 'A', name: 'A Lda', stage: 'universe', contactable: true, computedRevenue: 5e6 }, { id: 'B', name: 'B SGPS' }, { id: 'C', name: 'C Holding' }, { id: 'D', name: 'D Lda' }],
   PERSON_IN_CHUNK: 30, personDocCache: new Map([['pFOREIGN', { id: 'pFOREIGN', nif: '999', country: 'ES' }]]),
