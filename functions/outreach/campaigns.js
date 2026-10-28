@@ -850,6 +850,19 @@ async function restore(campaignId, caller) {
 // I22 (8 Oct): "Run now" — test mode or a test campaign (22 Oct). Every waiting step of this
 // campaign is brought forward to now and the scheduler runs for this campaign
 // alone, ignoring the sending window (approval steps still wait for approval).
+// 28 Oct (switch outreach.sendAllNow): "Send approved now" — a campaign with "Send
+// approved emails all at once" sends its approved, due emails right away, inside its
+// sending window (unlike Run now, nothing else is pulled forward). Real campaigns too.
+async function sendNow({ campaignId }, caller) {
+  const campaign = await getCampaign(campaignId);
+  if (!campaign.sendAllAtOnce) fail("failed-precondition", "not_send_all", "Tick \"Send approved emails all at once\" in the campaign's Settings first.");
+  if (campaign.status !== "active") fail("failed-precondition", "not_active", "Start the campaign first.");
+  const { runScheduler } = require("./scheduler");
+  const r = await runScheduler({ now: new Date(), onlyCampaignId: campaignId, gap: () => 1500 });
+  // report.open = campaigns inside their window this run: 0 means this one is outside it.
+  return { ok: true, sent: r.sent || 0, drafts: r.drafts || 0, deferred: r.deferred || 0, outsideWindow: !r.killed && !r.open, by: caller };
+}
+
 async function runNow({ campaignId }, caller) {
   const settings = await store.getSettings();
   const campaign = await getCampaign(campaignId);
@@ -1320,7 +1333,7 @@ async function pathsPreview({ campaignId, paths, steps }) {
 const CAMPAIGN_ACTION_PERM = {
   save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns", recipientsPreview: "out.campaigns",
   enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
-  requestStart: "out.campaigns", returnStart: "out.approve", runNow: "out.approve",
+  requestStart: "out.campaigns", returnStart: "out.approve", runNow: "out.approve", sendNow: "out.approve",
   approve: "out.approve", skipDraft: "out.approve", unapprove: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
   createTask: "out.tasks", logActivity: "out.tasks",
   related: "search.view", // owner-aware outreach (22 Oct): the company page's "related companies in outreach"
@@ -1346,6 +1359,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
   // Campaign paths (27 Oct): saving more than one path, or checking them, needs the switch.
   if (data.action === "pathsPreview" || (data.action === "save" && Array.isArray(data.campaign?.paths) && data.campaign.paths.some((p) => p && p.id !== ELSE_PATH))
     || (data.action === "save" && data.campaign?.startOrder && data.campaign.startOrder.mode !== "added")) await Feat.requireFeature(request, "outreach.paths"); // + who starts first (R10)
+  if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
   if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
     let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
@@ -1390,6 +1404,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
       case "related": return await relatedOf(data, { ownerAware });
       case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople });
       case "runNow": return await runNow(data, caller);
+      case "sendNow": return await sendNow(data, caller);
       case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware });
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);

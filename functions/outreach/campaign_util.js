@@ -212,6 +212,8 @@ function normalizeCampaign(input, existing = null) {
     pacing: { newPerDay: startOrder?.mode === "split" && !startOrder.equal ? Object.values(startOrder.perPath).reduce((a, b) => a + b, 0) : intIn(src.pacing?.newPerDay, 1, 500, 20), maxPerDay: src.pacing?.maxPerDay == null || src.pacing?.maxPerDay === "" ? null : intIn(src.pacing.maxPerDay, 1, 1000, null) },
     audienceType: src.audienceType === "people" ? "people" : "companies",
     footer: typeof src.footer === "boolean" ? src.footer : null,
+    // 28 Oct (switch outreach.sendAllNow): approved emails leave together, not one per address every 10 minutes.
+    sendAllAtOnce: !!src.sendAllAtOnce,
     sector: cleanText(src.sector, 120),
     audience: { mode: audienceMode, sources: base.audience?.sources || [] },
     exclusions: {

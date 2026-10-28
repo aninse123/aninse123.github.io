@@ -42,6 +42,8 @@ const { normEmail } = require("./util");
 const { db, FieldValue, Timestamp } = store;
 
 const MAX_SENDS_PER_RUN = 4;
+const MAX_BURST_PER_RUN = 60;   // 28 Oct: "send all at once" campaigns, on top of the 4
+const BURST_GAP_MS = 1500;      // …a short pause between them (the run must end within 9 minutes)
 const MAX_DRAFTS_PER_RUN = 50;
 const MAX_TASKS_PER_RUN = 200;
 const DUE_BATCH = 200;
@@ -314,7 +316,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths")]);
+  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState, burstState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths"), Feat.jobState("outreach.sendAllNow")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
@@ -405,7 +407,10 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   for (const doc of due) {
     const campaignAll = open.get(doc.data().campaignId);
     if (!campaignAll || campaignAll.status !== "active") continue; // paused earlier in this run
-    const canSend = !report.stoppedSends && sendsThisRun < MAX_SENDS_PER_RUN && campaignSent < budget && allowed(sendState, campaignAll);
+    // 28 Oct (outreach.sendAllNow): "Send approved emails all at once" lifts the per-run limits
+    // (4 a run, one per address) for that campaign; the daily ones (budget, caps) stay.
+    const burst = !!campaignAll.sendAllAtOnce && allowed(burstState, campaignAll);
+    const canSend = !report.stoppedSends && sendsThisRun < (burst ? MAX_SENDS_PER_RUN + MAX_BURST_PER_RUN : MAX_SENDS_PER_RUN) && campaignSent < budget && allowed(sendState, campaignAll);
     if (!canSend && report.drafts >= MAX_DRAFTS_PER_RUN && report.tasks >= MAX_TASKS_PER_RUN) break;
 
     const e = await claim(doc.ref, now);
@@ -493,14 +498,14 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     let pickedNow = false;
     if (senderId) {
       const s = senders.find((x) => x.id === senderId);
-      if (!wantsDraft && (usedThisRun.has(senderId) || (s && sentToday[senderId] >= (s.dailyCap || DEFAULT_SENDER_CAP)))) {
+      if (!wantsDraft && ((!burst && usedThisRun.has(senderId)) || (s && sentToday[senderId] >= (s.dailyCap || DEFAULT_SENDER_CAP)))) {
         await unlock(doc.ref); report.deferred++; continue;
       }
     } else {
       pickedNow = true;
       const load = wantsDraft ? Object.fromEntries(senders.map((x) => [x.id, (sentToday[x.id] || 0) + (draftLoad[x.id] || 0)])) : sentToday;
       const args = { policy: campaign.senderPolicy, owner: e.owner, senders, sentToday: load, defaultCap: DEFAULT_SENDER_CAP };
-      const picked = pickSender({ ...args, usedThisRun: wantsDraft ? new Set() : usedThisRun })
+      const picked = pickSender({ ...args, usedThisRun: wantsDraft || burst ? new Set() : usedThisRun })
         || (wantsDraft ? pickSender({ ...args, usedThisRun: new Set(), sentToday: {} }) : null);
       if (!picked) {
         await unlock(doc.ref, { lastError: "No active sender address with room today." });
@@ -593,7 +598,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         report.drafts++;
         continue;
       }
-      if (sendsThisRun > 0 && gap) await sleep(gap());
+      if (sendsThisRun > 0 && gap) await sleep(burst ? BURST_GAP_MS : gap());
       const res = await deliverEmail(p, { campaign: campaignRef });
       await recordSent(doc.ref, e, campaign, step, res, { senderId, variantKey: p.variantKey, now });
       if (allowed(ownerState, campaign) && e.currentStep === 0 && e.companyId && !e.isTest && !testRun(campaign)) await groupContacted(e, campaign, step);

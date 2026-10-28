@@ -3870,12 +3870,13 @@
       if (c.status === 'active') acts.push(['pause', 'Pause', 'ghost'], ['finish', 'Finish', 'ghost']);
       if (c.status === 'paused') acts.push(['resume', 'Resume', 'primary'], ['finish', 'Finish', 'ghost']);
       if (c.status === 'active' && canApprove && (!settings || settings.testMode !== false || c.isTest)) acts.unshift(['runnow', '▶ Run now (test)', 'primary']);
+      if (c.status === 'active' && canApprove && c.sendAllAtOnce && isOn('outreach.sendAllNow')) acts.unshift(['sendnow', '⚡ Send approved now', 'primary']); // 28 Oct
       if (c.status === 'finished') acts.push(['archive', 'Archive', 'ghost']);
       if (c.status === 'archived') acts.push(['restore', 'Restore', 'ghost']);
       acts.push(['duplicate', 'Duplicate', 'ghost']);
       // I5: nothing is deleted — a draft is archived (its companies are released).
       if (c.status === 'draft') acts.push(['archive', 'Archive', 'ghost']);
-      $('campActions').innerHTML = acts.map(([a, l, k]) => `<button class="btn btn--${k} btn--sm" data-cact="${a}" data-perm="${['start', 'resume', 'finish', 'returnstart', 'runnow'].includes(a) ? 'out.approve' : 'out.campaigns'}">${l}</button>`).join('');
+      $('campActions').innerHTML = acts.map(([a, l, k]) => `<button class="btn btn--${k} btn--sm" data-cact="${a}" data-perm="${['start', 'resume', 'finish', 'returnstart', 'runnow', 'sendnow'].includes(a) ? 'out.approve' : 'out.campaigns'}">${l}</button>`).join('');
       $('campActions').querySelectorAll('[data-cact]').forEach(b => b.addEventListener('click', () => campAction(b.dataset.cact, b)));
 
       const test = !settings || settings.testMode !== false;
@@ -3937,6 +3938,11 @@ Optional note for them:`, '');
           await setStatus('archived', c.status === 'draft' ? 'Draft archived — its companies are released.' : 'Campaign archived.');
         }
         if (a === 'restore') await setStatus('restore', (r) => r.status === 'draft' ? 'Restored as a draft.' : 'Restored.');
+        if (a === 'sendnow') {
+          if (!confirm(`Send the approved emails of "${c.name}" now?\n\nEvery approved email of this campaign goes out at once (inside its sending window). Drafts still waiting for approval stay in To approve.`)) return;
+          const r = await campCall({ action: 'sendNow', campaignId: c.id }, (x) => x.outsideWindow ? 'Outside the sending window — nothing sent; they go when it opens.' : `Sent ${num(x.sent)} now${x.drafts ? `, ${num(x.drafts)} new draft${x.drafts === 1 ? '' : 's'} to approve` : ''}${x.deferred ? ` · ${num(x.deferred)} held (daily limits)` : ''}.`);
+          if (r) loadCampaignData();
+        }
         if (a === 'runnow') {
           if (!confirm(`Run "${c.name}" now?\n\nTest mode only: every waiting step of this campaign runs at once, ignoring the waits and the sending window. Approval steps still wait for approval.`)) return;
           const r = await campCall({ action: 'runNow', campaignId: c.id }, (x) => `Ran now — ${num(x.sent)} sent, ${num(x.drafts)} waiting for approval, ${num(x.tasks)} task${x.tasks === 1 ? '' : 's'}${x.started ? `, ${num(x.started)} started` : ''}.`);
@@ -5983,6 +5989,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           </div>
           <div class="row2">
             <div class="field"><label for="csAppr">Before emails go out (steps can override)<span class="info" title="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule." aria-label="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule.">i</span></label>
+              ${isOn('outreach.sendAllNow') ? `<label class="checkline" style="margin-top:6px;"><input type="checkbox" id="csSendAll"${c.sendAllAtOnce ? ' checked' : ''}${dis}> <span>Send approved emails all at once <span class="hint">(no 10-minute spacing; "⚡ Send approved now" appears on the campaign; daily limits still apply)</span></span></label>` : ''}
               <select id="csAppr"${dis}><option value="approval"${c.approvalDefault !== 'auto' ? ' selected' : ''}>Each email waits for approval</option><option value="auto"${c.approvalDefault === 'auto' ? ' selected' : ''}>Emails go out automatically</option></select></div>
             <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csRecip">Emails go to</label>
               <select id="csRecip"${dis}>
@@ -6119,6 +6126,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           skipMunicipalHolidays: $('csMunHol').value === 'skip' ? true : $('csMunHol').value === 'send' ? false : null,
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, includeNotContactable: !!$('csInclNC')?.checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },
           audience: { mode: $('csAudMode').value },
+          ...($('csSendAll') ? { sendAllAtOnce: $('csSendAll').checked } : {}),
           ...($('csStart') ? { startOrder: { mode: $('csStart').value, equal: $('csEqual').checked, perPath: Object.fromEntries([...root.querySelectorAll('[data-share]')].map(x => [x.dataset.share, parseInt(x.value, 10) || 0])) } } : {}),
         } }, 'Settings saved.');
         unbusy();
