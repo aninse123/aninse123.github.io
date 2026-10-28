@@ -37,7 +37,7 @@ ok('read: "mention" with nothing ticked is sent as "proceed", no mentions', P.re
 
 // D6: the approval box
 ok('approval: its own box, red when a related company said no, amber when in conversation, open then', out.includes("const risk = ownerRisk(d);") && out.includes("<div class=\"owner-box${risk ? ' owner-box--' + risk : ''}\">") && out.includes(".owner-box--red {") && out.includes(".owner-box--amber {") && out.includes("<details${risk ? ' open' : ''}"));
-ok('…"This email mentions: X" and "Copy address" per related company (no automatic Cc)', out.includes('This email mentions: <b>${mentioned.map(esc).join(\' and \')}</b>') && out.includes('>Copy address</button>'));
+ok('…"This email mentions: X"; per related company Fit · Rev · EBITDA and "open company ↗" (28 Oct, instead of Copy address; no automatic Cc)', out.includes('This email mentions: <b>${mentioned.map(esc).join(\' and \')}</b>') && out.includes('${relatedLine(r)}${coFiguresHtml(coCache.get(r.companyId))}') && out.includes('...(d.ownerPanel?.related || []).map(r => r.companyId)'));
 ok('…approving or sending a red / amber draft asks first; "Approve all" counts them', out.includes("if ((act === 'approve' || act === 'send') && ownerRisk(d) && !confirm(") && out.includes("const risky = list.filter(d => ids.includes(d.id) && ownerRisk(d)).length;"));
 
 // D1: the filter

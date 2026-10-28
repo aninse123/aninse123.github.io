@@ -36,7 +36,7 @@ ok('"skipped for now (related companies)" in the add result', search.includes("o
 
 // Outreach
 ok('Outreach add screen: same panel and choices', out.includes("${ownerPanelHtml(p.owner)}") && out.includes("if (stage !== 'pick') wireOwnerPanel($('modalBody'));") && out.includes("ownerChoices: readOwnerChoices($('modalBody')), ownerMentions: readOwnerMentions($('modalBody')) })"));
-ok('approval card: related companies with why, status and the address to copy (no automatic Cc); "Check the mention"', out.includes("const op = isOn('outreach.ownerAware') ? d.ownerPanel : null;") && out.includes('data-copyemail=') && out.includes('Check the mention of the related companies') && out.includes('mentionHtml + opHtml +'));
+ok('approval card: related companies with why, status, their address and "open company" (28 Oct, replaced Copy address; no automatic Cc); "Check the mention"', out.includes("const op = isOn('outreach.ownerAware') ? d.ownerPanel : null;") && out.includes('open company ↗</a></li>') && out.includes('Check the mention of the related companies') && out.includes('mentionHtml + opHtml +'));
 ok('Metrics: replied by company and by owner, and the latest Monday report', out.includes('<div id="mOwner" data-feature="outreach.ownerAware"></div>') && out.includes("orderBy('weekFrom', 'desc'), limit(1)") && out.includes('of ${num(started.size)} owners'));
 ok('Settings: "Email the Monday report to the partners" (on unless unticked)', out.includes('id="gWeeklyReport"') && out.includes("$('gWeeklyReport').checked = s.weeklyReportEmail !== false;") && out.includes("weeklyReportEmail: $('gWeeklyReport').checked,"));
 

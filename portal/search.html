@@ -5349,7 +5349,7 @@ async function renderOwnershipLadder(c, links){
       <div style="overflow-x:auto;"><table class="own-table own-group-table">
         ${ctOn ? `<thead><tr><th>Company</th><th class="num">Revenue</th><th class="num">EBITDA</th><th class="num">Employees</th><th title="Do not contact, not contactable, excluded sector — hover for why">Flags</th><th title="How the company was contacted — hover for the detail">Contacted</th><th>Fit</th><th>Tier</th><th>Owner</th><th>CAE</th><th>Stage</th></tr></thead>
         <tbody>${rows.map(m => { ctExtra.set(m.id, m); return `<tr${m.id === c.id ? ' class="own-self"' : ''}>
-          <td>${m.id === c.id ? `<strong>${esc(m.name || '—')}</strong> <span class="badge badge-grey">this company</span>` : `<span class="person-link" data-gotoco="${esc(m.id)}">${esc(m.name || '—')}</span>`}${isGuo(m) ? ' <span class="badge badge-green" title="The ultimate owner itself">ultimate owner</span>' : ''}</td>
+          <td style="white-space:normal;min-width:170px;max-width:240px;">${m.id === c.id ? `<strong>${esc(m.name || '—')}</strong> <span class="badge badge-grey">this company</span>` : `<span class="person-link" data-gotoco="${esc(m.id)}">${esc(m.name || '—')}</span>`}${isGuo(m) ? ' <span class="badge badge-green" title="The ultimate owner itself">ultimate owner</span>' : ''}</td>
           <td class="num">${fmtEurShort(m.computedRevenue)}</td>
           <td class="num">${fmtEurShort(m.computedEBITDA)}</td>
           <td class="num">${m.computedEmployees != null ? Number(m.computedEmployees).toLocaleString('de-DE') : '—'}</td>

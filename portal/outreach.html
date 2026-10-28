@@ -5086,7 +5086,7 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       // 22 Oct (owner-aware): the related companies worked out when the draft was made.
       // D6: its own box on top — red / amber when a related company said no / is in
       // conversation (approving then asks to confirm), what the email mentions, and
-      // each related company's address to copy (never an automatic Cc).
+      // each related company's figures, address and "open company ↗" (28 Oct; never an automatic Cc).
       const op = isOn('outreach.ownerAware') ? d.ownerPanel : null;
       const risk = ownerRisk(d);
       const FLAG_PILL = { said_no: 'pill--bad', in_conversation: 'pill--warn' };
@@ -5095,7 +5095,7 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
           <div class="owner-box__head"><b>${risk === 'red' ? '🚫 Same owner said no — check before approving' : risk === 'amber' ? '💬 Same owner already in conversation — check before approving' : 'Related companies'} (${op.related.length})</b>${(op.flags || []).map(f => `<span class="pill ${FLAG_PILL[f.kind] || 'pill--info'}">${esc(f.text)}</span>`).join('')}</div>
           ${mentioned.length ? `<div class="owner-box__mention">This email mentions: <b>${mentioned.map(esc).join(' and ')}</b>${d.checkMention ? ' — read the sentence before approving' : ' (chosen when added; this template doesn\'t use it)'}</div>` : ''}
           <details${risk ? ' open' : ''} style="margin-top:6px;"><summary style="cursor:pointer;">Related companies and their addresses</summary>
-          <ul>${op.related.map(r => `<li>${relatedLine(r)}${r.email ? ` · <span class="mono">${esc(r.email)}</span> <button type="button" class="camp-link" data-copyemail="${esc(r.email)}" style="font-size:0.74rem;">Copy address</button>` : ''}</li>`).join('')}</ul></details>
+          <ul>${op.related.map(r => `<li>${relatedLine(r)}${coFiguresHtml(coCache.get(r.companyId))}${r.email ? ` · <span class="mono">${esc(r.email)}</span>` : ''} · <a href="/portal/search.html?company=${encodeURIComponent(r.companyId)}" target="_blank" rel="noopener" style="font-size:0.78rem;">open company ↗</a></li>`).join('')}</ul></details>
           ${op.lead ? `<div class="hint" style="margin-top:4px;">Suggested lead company: ${leadText(op.lead)}</div>` : ''}</div>` : '';
       const ncHtml = isOn('search.emailNameCheck') && d.nameCheck ? nameCheckLine(d.nameCheck, d.companyId, canEditCompanies()) : ''; // 26 Oct
       const mentionHtml = isOn('outreach.ownerAware') && d.checkMention && !op?.related?.length ? '<div style="margin:0 0 6px;"><span class="pill pill--warn" title="The email names the related companies chosen when this company was added ({{owner.otherCompanies}})">Check the mention of the related companies</span></div>' : '';
@@ -5121,7 +5121,8 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       if (document.activeElement?.closest?.('#approveView .draft')) return; // don't wipe what's being typed
       loadInboxHeld();
       // I7: load the companies behind the shown drafts once, then render again.
-      const needCo = drafts.slice(0, 50).map(d => d.companyId).filter(id => id && !coCache.has(id));
+      // 28 Oct: the related companies too (Fit · Rev · EBITDA in the owner box).
+      const needCo = [...new Set(drafts.slice(0, 50).flatMap(d => [d.companyId, ...(d.ownerPanel?.related || []).map(r => r.companyId)]))].filter(id => id && !coCache.has(id));
       if (needCo.length && !approveCtxLoading) { approveCtxLoading = true; loadCompaniesFor(needCo).catch(() => {}).finally(() => { approveCtxLoading = false; if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove(); }); }
       const byCamp = {};
       drafts.forEach(d => { const k = d.source === 'manual' ? '__manual' : d.campaignId; byCamp[k] = (byCamp[k] || 0) + 1; });
