@@ -110,6 +110,31 @@ async function setTracking(on, callerEmail) {
   return { ok: true, on: !!on, domain: SENDER_DOMAIN };
 }
 
+// 28 Oct (plan "Decision-Maker Roles", R5): redo the "Related companies" box on
+// the drafts waiting in To approve (draft / approved) with the current rule — after
+// a change to who counts as a decision-maker. The box is removed when nothing is
+// related any more. Returns how many drafts had a box before and after.
+async function refreshOwnerPanels() {
+  const { ownerPanelOnDraft } = require("./scheduler");
+  const snap = await db().collection("outreachMessages").where("status", "in", ["draft", "approved"]).get();
+  let before = 0, after = 0, checked = 0;
+  const camps = new Map();
+  for (const d of snap.docs) {
+    const m = d.data();
+    if (!m.companyId || !m.campaignId || !m.enrolmentId) continue;
+    checked++;
+    if (m.ownerPanel?.related?.length) before++;
+    if (!camps.has(m.campaignId)) { const c = await db().doc(`outreachCampaigns/${m.campaignId}`).get(); camps.set(m.campaignId, c.exists ? { id: c.id, ...c.data() } : null); }
+    const campaign = camps.get(m.campaignId);
+    const e = await db().doc(`outreachEnrolments/${m.enrolmentId}`).get();
+    if (!campaign || !e.exists) continue;
+    await d.ref.update({ ownerPanel: FieldValue.delete(), checkMention: FieldValue.delete() });
+    await ownerPanelOnDraft(d.ref, e.data(), campaign, m.draftBody || m.text || "");
+    if ((await d.ref.get()).data()?.ownerPanel?.related?.length) after++;
+  }
+  return { ok: true, checked, before, after };
+}
+
 const Feat = require("../features"); // feature switches (Team & access → Features)
 exports.outreachAdmin = onCall({ region: REGION, secrets: [RESEND_READ_KEY] }, async (request) => {
   await Feat.requireFeature(request, "outreach");
@@ -119,5 +144,6 @@ exports.outreachAdmin = onCall({ region: REGION, secrets: [RESEND_READ_KEY] }, a
   if (action === "seed") return seed(callerEmail);
   if (action === "clearTestData") return clearTestData();
   if (action === "setTracking") return setTracking(!!request.data?.on, callerEmail);
+  if (action === "refreshOwnerPanels") return refreshOwnerPanels();
   throw new HttpsError("invalid-argument", `Unknown action "${action}".`);
 });

@@ -5125,7 +5125,8 @@ const OWN_MAX_LEVELS = 6;        // ladder and subsidiaries depth
 const OWN_MAX_ROWS = 40;         // per company, then "and N more"
 const OWN_GROUP_MAX = 80;        // group rows fetched; the count covers the rest
 const OWN_ALSO_MAX_LINKS = 40;   // in more companies than this: link to their page instead
-const OWN_AUDITOR_RE = /fiscal|auditor|revisor|\bROC\b|statutory/i;
+// 28 Oct: the portal's list of roles that never make someone a decision-maker (functions/outreach/roles.js).
+const OWN_AUDITOR_RE = /fiscal|auditor|revisor|\bROC\b|statutory|\baudit\b|assembl|general meeting|secret[aá]ri|secretary|no specific function|sem fun[cç][aã]o|insolv|liquidat|administrador judicial|judicial administrator|supervis|conselho geral|general (and supervisory )?(board|council)|curador|trustee|conselho fundador|board of the foundation|provedor|\bprovider\b|consultiv|advisory|conselho t[eé]cnico|technical board|vencimentos|remunera|representative|representante|procurador|attorney|general contact|^none$/i;
 const ownCompanyCache = new Map();   // companies outside the loaded list
 const ownSubsCache = new Map();      // companyId -> links where it is the shareholder
 const ownGroupCache = new Map();     // group key -> { members, total }

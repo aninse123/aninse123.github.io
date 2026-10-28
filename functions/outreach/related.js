@@ -13,8 +13,10 @@
 // manager on the best-person ladder (recipients.rankPerson, 10 Oct): ultimate
 // owner, majority shareholder (managing or not), sócio-gerente, any other current
 // shareholder (any %), hired gerente / CEO / administrador, other managers. "Any
-// other current role" doesn't count, nor auditors, fiscal, assembly or secretary
-// roles: an auditor firm checks many unrelated companies. The same ladder orders
+// other current role" doesn't count, nor the roles in roles.js (auditors, fiscal /
+// audit board, insolvency administrators, supervisory and advisory bodies,
+// representatives… — 28 Oct): a professional appointed to many companies isn't
+// an owner. A "Sócio" with no recorded stake counts as a shareholder. The same ladder orders
 // the related companies and picks the suggested lead.
 //
 // Cost: the ownership summary fields (own*) skip companies with nothing related
@@ -24,13 +26,14 @@ const { db } = require("./store");
 const { emailNameOf } = require("./render");
 const { rankPerson } = require("./recipients");
 
-const EXCLUDED_ROLE = /fiscal|auditor|revisor|\bROC\b|statutory|assembl|secret[aá]ri|secretary|no specific function|sem fun[cç][aã]o/i;
+const { NOT_DECIDER_RE: EXCLUDED_ROLE } = require("./roles"); // 28 Oct: one list for the portal
 const RELATED_MIN_RANK = 60; // "other managers" and above
 // A person's level in one company (current data only; same as portal/owner-panel.js relatedRank).
 function deciderRank(l) {
   if (!l || l.personEntityType === "entity") return 0;
   const roles = l.mgmtCurrent === true ? (l.mgmtRoles || []).filter((r) => !EXCLUDED_ROLE.test(r)) : [];
-  const r = rankPerson({ ...l, shCurrent: l.shCurrent === true, mgmtCurrent: l.mgmtCurrent === true, mgmtRoles: roles });
+  // shCurrent stays "no record" (undefined) when Orbis has no shareholding: a Sócio then still holds a share (R7, 28 Oct).
+  const r = rankPerson({ ...l, shCurrent: l.shCurrent === true ? true : l.shCurrent === false ? false : undefined, mgmtCurrent: l.mgmtCurrent === true, mgmtRoles: roles });
   return l.shCurrent === true ? Math.max(r, 120) : r; // a current shareholder with no % given is still a shareholder
 }
 const isDecider = (l) => deciderRank(l) >= RELATED_MIN_RANK;

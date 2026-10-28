@@ -6,6 +6,7 @@
 
 const { normEmail, isValidEmail, isFreeMail, domainOf } = require("./util");
 const store = require("./store");
+const { NOT_DECIDER_RE, SOCIO_RE } = require("./roles"); // 28 Oct: who counts as a decision-maker
 
 const { db } = store;
 
@@ -48,15 +49,21 @@ function isGuoPerson(link, guoName) {
   return !!g && !!n && (g === n || (g.split(" ").length >= 2 && g.split(" ").every((w) => n.split(" ").includes(w))));
 }
 function rankPerson(link, guoName = "") {
-  const roles = (link.mgmtRoles || []).filter((r) => !GUO_ROLE_RE.test(r) && !/^shareholder/i.test(r)).join(" ");
+  // 28 Oct: roles that never make someone a decision-maker are ignored (insolvency
+  // administrators, audit / supervisory boards, representatives… — roles.js), and a
+  // "Sócio" / "Partner" with no recorded stake holds a share (R7).
+  const kept = (link.mgmtRoles || []).filter((r) => !NOT_DECIDER_RE.test(r));
+  const socio = link.mgmtCurrent !== false && kept.some((r) => SOCIO_RE.test(r));
+  const roles = kept.filter((r) => !GUO_ROLE_RE.test(r) && !/^shareholder/i.test(r) && !SOCIO_RE.test(r)).join(" ");
   const manages = link.mgmtCurrent !== false && roles.trim().length > 0;
   const share = link.shCurrent === false ? 0 : (Number(link.shTotalPct ?? link.shDirectPct) || 0);
+  const holds = share > 0 || (socio && link.shCurrent !== false);
   const s = Math.min(share, 100) / 1000; // tie-break inside a level: larger stake first
   if (isGuoPerson(link, guoName) && (share > 0 || manages || GUO_ROLE_RE.test((link.mgmtRoles || []).join(" ")))) return 200 + s;
   if (share >= 50 && manages) return 180 + s;
   if (share >= 50) return 160 + s;
-  if (share > 0 && manages) return 140 + s;
-  if (share > 0) return 120 + s;
+  if (holds && manages) return 140 + s;
+  if (holds) return 120 + s;
   if (manages && TOP_ROLE_RE.test(roles)) return 100;
   if (manages && MANAGER_RE.test(roles)) return 60;
   if (manages) return 40;
