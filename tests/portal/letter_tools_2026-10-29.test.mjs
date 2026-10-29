@@ -11,6 +11,7 @@ const { FEATURES } = require('../../functions/features/catalog.js');
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const page = read('../../portal/outreach.html');
 const feats = read('../../portal/features.js');
+const search = read('../../portal/search.html');
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 
 const samples = [
@@ -21,6 +22,7 @@ const samples = [
   { lastAvailYear: '2025', computedRevenue: 1000000, computedEBITDA: 999700, computedEBITDAMargin: 0.999 },
 ];
 ok('page = server: every figure and sentence, 6 sample companies', samples.every((c) => JSON.stringify(P.figuresOf(c)) === JSON.stringify(S.figuresOf(c))));
+ok('page = server: accounts two or more years old (pinned dates)', [new Date('2026-10-29'), new Date('2027-03-01')].every((d) => samples.every((c) => JSON.stringify(P.figuresOf(c, d)) === JSON.stringify(S.figuresOf(c, d)))));
 ok('page = server: amounts and percentages', [0, 850, 999700, 1e6, 2340000, 12400000, null, -3].every((v) => P.eurPt(v) === S.eurPt(v)) && [0, 0.03, 0.1789, null].every((v) => P.pctPt(v) === S.pctPt(v)));
 
 ok('both page contexts (tasks and compose preview) add the figures; the page imports the module', page.includes("import { figuresOf } from './company-figures.js'") && (page.match(/\.\.\.figuresOf\(c( \|\| \{\})?\)/g) || []).length === 2);
@@ -28,6 +30,9 @@ ok('the Letters screen only changes behind the switch (preview / edit column, mi
 ok('a letter with its own text prints that text; a missing field disables its checkbox', page.includes('t.letterText?.body') && /disabled title="A field is missing/.test(page));
 ok('saving goes through updateTask with letterText; null goes back to the template', page.includes("action: 'updateTask', taskId: t.id, letterText: { subject, body }") && page.includes('letterText: null'));
 ok('a [field] marker left in the text can\'t be saved', page.includes("Replace the [field] markers with text before saving."));
+ok('Search CRM company form: a Letter intro box, shown only while the switch is on', /data-feature="outreach\.letterTools"[^>]*><label>Letter intro/.test(search) && search.includes('id="cLetterIntro"'));
+ok('it is filled from the company and saved only while the switch is on (otherwise edits leave the field alone)', search.includes("set('cLetterIntro',c.letterIntro)") && search.includes("...(isOn('outreach.letterTools') ? { letterIntro: v('cLetterIntro')||null } : {})"));
+ok('the company page shows it behind the switch; a new company starts with an empty box', search.includes("isOn('outreach.letterTools') ? `<div class=\"info-row\"><span class=\"k\">Letter intro") && /'cEmailOwners','cLetterIntro'/.test(search));
 const sv = FEATURES.find((f) => f.key === 'outreach.letterTools');
 ok('switch outreach.letterTools: release, in Outreach, in both catalogs with the same name', !!sv && sv.kind === 'release' && sv.area === 'Outreach' && feats.includes("'outreach.letterTools', 'Outreach', 'release', '" + sv.name + "'"));
 ok('the server asks for the switch before a letter\'s own text', read('../../functions/outreach/campaigns.js').includes('data.action === "updateTask" && data.letterText !== undefined) await Feat.requireFeature(request, "outreach.letterTools")'));

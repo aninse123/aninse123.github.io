@@ -683,6 +683,7 @@
       <div style="font-size:0.74rem;color:var(--text-light);margin-top:3px;" id="cEmailNameHint"></div></div>
     <div class="form-group"><label>Owners in emails <span class="opt">(up to 3, in the order to name them — {{owner.of}} / {{owner.with}})</span></label><input type="text" class="field" id="cEmailOwners" maxlength="200" placeholder="Senhor José Peres; Senhora Maria Lima">
       <div style="font-size:0.74rem;color:var(--text-light);margin-top:3px;">Separate with ";". Start each with Senhor or Senhora (no title if you leave it out). Empty → "à atenção da gerência". Emails write "à atenção do Senhor José Peres ou da Senhora Maria Lima".</div></div>
+    <div class="form-group" data-feature="outreach.letterTools"><label>Letter intro <span class="opt">(the opening line of the letter and the hook of the calls — {{company.letterIntro}})</span></label><textarea class="field" id="cLetterIntro" rows="3" maxlength="600" placeholder="A Dimexa distribui material elétrico a partir de Setúbal desde 1987."></textarea><div style="font-size:0.74rem;color:var(--text-light);margin-top:3px;">One or two sentences about this company, researched by hand. A letter can't be printed without it.</div></div>
     <div class="form-row">
       <div class="form-group"><label>Company Email <span class="opt">(general)</span></label><input type="text" class="field" id="cCompanyEmail"></div>
       <div class="form-group"><label>Company Phone</label><input type="text" class="field" id="cCompanyPhone"></div>
@@ -4052,6 +4053,7 @@ function renderLegalCompliance(c){
         <div class="info-row"><span class="k">Also known as</span><span class="v">${esc(c.akaName||'—')}</span></div>
         <div class="info-row"><span class="k">Email name</span><span class="v">${esc(c.emailName || autoEmailName(c))}${c.emailName ? '' : ' <span style="color:var(--text-light);font-size:0.75rem;">(automatic)</span>'}${isOn('search.emailNameCheck') ? nameCheckNote(nameIssues(c), nameCheckOf(c, c.id), c.id, !window.pageAccess || window.pageAccess.can('search.edit')) : ''}</span></div>
         <div class="info-row"><span class="k">Owners in emails</span><span class="v">${esc(emailOwnersText(c.emailOwners) || '—')}</span></div>
+        ${isOn('outreach.letterTools') ? `<div class="info-row"><span class="k">Letter intro</span><span class="v">${esc(c.letterIntro || '—')}</span></div>` : ''}
         <div class="info-row"><span class="k">Orbis release date</span><span class="v">${c.orbisReleaseDate?fmtDate(c.orbisReleaseDate):'—'}</span></div>
       </div>
       <div class="card">
@@ -10887,7 +10889,7 @@ function lockCompanyFields(isNew){
 function openNewCompany(){
   editCoId = null;
   document.getElementById('companyModalTitle').textContent = 'New Company';
-  ['cName','cNif','cLegalForm','cYearFounded','cWebsite','cLinkedin','cEmailName','cEmailOwners','cCompanyEmail','cCompanyPhone','cDescription','cSector','cSubSector','cNaceCode','cNaceDesc','cCaeCode','cCaeDesc','cAuditingFirm','cBvdId','cIndependence','cGuo','cConcelho','cPostcode','cHqAddress','cNuts2','cNuts3','cCountries'].forEach(id=>document.getElementById(id).value='');
+  ['cName','cNif','cLegalForm','cYearFounded','cWebsite','cLinkedin','cEmailName','cEmailOwners','cLetterIntro','cCompanyEmail','cCompanyPhone','cDescription','cSector','cSubSector','cNaceCode','cNaceDesc','cCaeCode','cCaeDesc','cAuditingFirm','cBvdId','cIndependence','cGuo','cConcelho','cPostcode','cHqAddress','cNuts2','cNuts3','cCountries'].forEach(id=>document.getElementById(id).value='');
   ['cOwnershipType','cSuccession','cStage','cPriority','cOwner','cSourceType','cReasonExcluded'].forEach(id=>{ const el=document.getElementById(id); el.value = id==='cStage'?'universe':''; });
   document.getElementById('cMultinational').checked = false;
   document.querySelectorAll('.cRegion').forEach(cb=>cb.checked=false);
@@ -10905,6 +10907,7 @@ function openEditCompany(){
   set('cWebsite',c.website); set('cLinkedin',c.linkedinUrl); set('cCompanyEmail',c.companyEmail); set('cCompanyPhone',c.companyPhone);
   set('cEmailName',c.emailName);
   set('cEmailOwners',emailOwnersText(c.emailOwners));
+  set('cLetterIntro',c.letterIntro);
   document.getElementById('cEmailNameHint').textContent = `Leave empty to use: "${autoEmailName(c)}"${c.akaName ? ' (from Orbis "Also known as")' : ' (from the legal name)'}.`;
   set('cDescription',c.description); set('cSector',c.sector); set('cSubSector',c.subSector);
   set('cNaceCode',c.naceCode); set('cNaceDesc',c.naceDescription); set('cCaeCode',c.caeCode); set('cCaeDesc',c.caeDescription);
@@ -10946,6 +10949,7 @@ async function saveCompany(){
     website:v('cWebsite')||null, linkedinUrl:v('cLinkedin')||null, companyEmail:v('cCompanyEmail')||null, companyPhone:v('cCompanyPhone')||null,
     emailName:v('cEmailName')||null,
     emailOwners:parseEmailOwners(v('cEmailOwners')),
+    ...(isOn('outreach.letterTools') ? { letterIntro: v('cLetterIntro')||null } : {}), // 29 Oct: the letter's opening line (only saved while the switch is on)
     description:v('cDescription')||null, sector:v('cSector')||null, subSector:v('cSubSector')||null,
     naceCode:v('cNaceCode')||null, naceDescription:v('cNaceDesc')||null, caeCode:v('cCaeCode')||null, caeDescription:v('cCaeDesc')||null,
     auditingFirm:v('cAuditingFirm')||null, bvdId:v('cBvdId')||null, independenceIndicator:v('cIndependence')||null, guoName:v('cGuo')||null,

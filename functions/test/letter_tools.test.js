@@ -8,6 +8,7 @@ const Feat = require("../features");
 const R = require("../outreach/render.js");
 const Fig = require("../outreach/company_figures.js");
 const { store } = F;
+const NOW = new Date("2026-10-29"); // the rule for old accounts depends on today: pinned
 
 let fail = 0;
 const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : "FAIL"}  ${label}`); };
@@ -23,19 +24,24 @@ function flags(state) { store.set("config/features", { flags: { "outreach.letter
   ok("a ratio is a percentage with a comma", Fig.pctPt(0.1789) === "17,9%" && Fig.pctPt(0.03) === "3%" && Fig.pctPt(null) === "");
 
   const full = { lastAvailYear: "2025", computedRevenue: 2340000, computedEBITDA: 412300, computedEBITDAMargin: 0.1762, computedEmployees: 42, computedGrowthRecent: 0.052, computedGrowthSustained: 0.031, letterIntro: "  Fundada em 1982.  " };
-  const f = Fig.figuresOf(full);
+  const f = Fig.figuresOf(full, NOW);
   ok("fields: year, revenue, EBITDA, margin, employees, intro (trimmed)", f.finYear === "2025" && f.revenue === "2,3 milhões de euros" && f.ebitda === "412 mil euros" && f.ebitdaMargin === "17,6%" && f.employees === "42" && f.letterIntro === "Fundada em 1982.");
   ok("financials sentence names the year and all figures", f.financialsSentence === "Estudámos as contas mais recentes da empresa: em 2025, registou um volume de negócios de 2,3 milhões de euros e um EBITDA de 412 mil euros (uma margem de 17,6%), com 42 colaboradores.");
   ok("growth sentence: both periods, with their years (Y1→Y3 = 2023→2025, Y1→Y5 = 2021→2025)", f.growthSentence === "Entre 2023 e 2025, o volume de negócios cresceu, em média, 5,2% ao ano, e 3,1% ao ano entre 2021 e 2025.");
-  const g = Fig.figuresOf({ lastAvailYear: "2025", computedRevenue: 900000, computedEBITDA: -5, computedGrowthRecent: -0.02, computedGrowthSustained: 0.03 });
+  const g = Fig.figuresOf({ lastAvailYear: "2025", computedRevenue: 900000, computedEBITDA: -5, computedGrowthRecent: -0.02, computedGrowthSustained: 0.03 }, NOW);
   ok("negative EBITDA is left out; a negative recent growth is dropped, the positive sustained one stays", g.ebitda === "" && g.financialsSentence === "Estudámos as contas mais recentes da empresa: em 2025, registou um volume de negócios de 900 mil euros." && g.growthSentence === "Entre 2021 e 2025, o volume de negócios cresceu, em média, 3% ao ano.");
-  ok("no positive growth → empty sentence; no revenue → no financials sentence; one employee is singular", Fig.figuresOf({ lastAvailYear: "2025", computedRevenue: 5e5, computedGrowthRecent: -0.1 }).growthSentence === "" && Fig.figuresOf({ computedGrowthRecent: 0.1 }).financialsSentence === "" && /com 1 colaborador\./.test(Fig.figuresOf({ computedRevenue: 5e5, computedEmployees: 1 }).financialsSentence));
+  ok("no positive growth → empty sentence; no revenue → no financials sentence; one employee is singular", Fig.figuresOf({ lastAvailYear: "2025", computedRevenue: 5e5, computedGrowthRecent: -0.1 }, NOW).growthSentence === "" && Fig.figuresOf({ computedGrowthRecent: 0.1 }).financialsSentence === "" && /com 1 colaborador\./.test(Fig.figuresOf({ computedRevenue: 5e5, computedEmployees: 1 }).financialsSentence));
   ok("no year → \"no último ano\", and no growth sentence (its years would be a guess)", /no último ano, registou/.test(Fig.figuresOf({ computedRevenue: 5e5, computedGrowthRecent: 0.1 }).financialsSentence) && Fig.figuresOf({ computedRevenue: 5e5, computedGrowthRecent: 0.1 }).growthSentence === "");
 
+  const old = Fig.figuresOf({ lastAvailYear: "2024", computedRevenue: 900000, computedEBITDA: 100000, computedEBITDAMargin: 0.11, computedEmployees: 5 }, NOW);
+  ok("accounts two years old are named as such: \"últimas contas disponíveis (2024)\"; last year's keep \"contas mais recentes\"", old.financialsSentence === "Estudámos as últimas contas disponíveis da empresa (2024): registou um volume de negócios de 900 mil euros e um EBITDA de 100 mil euros (uma margem de 11%), com 5 colaboradores." && /contas mais recentes da empresa: em 2025/.test(Fig.figuresOf({ lastAvailYear: "2025", computedRevenue: 9e5 }, NOW).financialsSentence));
+  ok("…and the same rule a year later: 2025 is then the old one", /últimas contas disponíveis da empresa \(2025\)/.test(Fig.figuresOf({ lastAvailYear: "2025", computedRevenue: 9e5 }, new Date("2027-03-01")).financialsSentence));
+
   // In a template
-  const ctx = R.buildContext({ company: { name: "AC CONSULTING, LDA", emailName: "AC Consulting", ...full } });
+  const lastYear = new Date().getFullYear() - 1;
+  const ctx = R.buildContext({ company: { name: "AC CONSULTING, LDA", emailName: "AC Consulting", ...full, lastAvailYear: String(lastYear) } });
   const t = R.renderTemplate("{{company.letterIntro}} {{company.financialsSentence|}} {{company.growthSentence|}}", ctx);
-  ok("the fields work in a template and nothing is reported missing", t.missing.length === 0 && /^Fundada em 1982\. Estudámos as contas/.test(t.text) && /Entre 2023 e 2025/.test(t.text));
+  ok("the fields work in a template and nothing is reported missing", t.missing.length === 0 && /^Fundada em 1982\. Estudámos as contas mais recentes/.test(t.text) && t.text.includes(`Entre ${lastYear - 2} e ${lastYear}`));
   const empty = R.renderTemplate("A {{company.letterIntro}} B {{company.growthSentence|}}", R.buildContext({ company: { name: "X" } }));
   ok("an empty intro without a fallback is reported missing (a letter can't be printed without it); an empty sentence with a fallback is not", empty.missing.join() === "company.letterIntro" && /B $/.test(empty.text));
 

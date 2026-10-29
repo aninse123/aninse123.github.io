@@ -38,7 +38,7 @@ function pctPt(ratio) {
   return `${dec(r * 100, 1)}%`;
 }
 
-function figuresOf(company = {}) {
+function figuresOf(company = {}, now = new Date()) {
   const year = num(String(company.lastAvailYear || "").slice(0, 4));
   const revenue = num(company.computedRevenue), ebitda = num(company.computedEBITDA);
   const margin = num(company.computedEBITDAMargin), employees = num(company.computedEmployees);
@@ -53,7 +53,11 @@ function figuresOf(company = {}) {
     letterIntro: String(company.letterIntro || "").trim(),
   };
   if (out.revenue) {
-    let s = `Estudámos as contas mais recentes da empresa: ${year ? `em ${year}` : "no último ano"}, registou um volume de negócios de ${out.revenue}`;
+    // Accounts two or more years old (2024 or older in 2026) are named as such, with the year.
+    const stale = year && year <= now.getFullYear() - 2;
+    let s = stale
+      ? `Estudámos as últimas contas disponíveis da empresa (${year}): registou um volume de negócios de ${out.revenue}`
+      : `Estudámos as contas mais recentes da empresa: ${year ? `em ${year}` : "no último ano"}, registou um volume de negócios de ${out.revenue}`;
     if (out.ebitda) s += ` e um EBITDA de ${out.ebitda}${out.ebitdaMargin ? ` (uma margem de ${out.ebitdaMargin})` : ""}`;
     if (out.employees) s += `, com ${out.employees} ${out.employees === "1" ? "colaborador" : "colaboradores"}`;
     out.financialsSentence = s + ".";
