@@ -673,6 +673,19 @@
               </div>
               <span class="hint" id="aiStatus">Checking the API key…</span>
             </div>
+            <div data-feature="outreach.letterTools" style="margin:6px 0 16px;padding-top:14px;border-top:1px solid var(--border);">
+              <h3 style="margin:0 0 4px;font-size:0.95rem;">Letters: address window</h3>
+              <p class="hint" style="margin:0 0 10px;">Measure the window on the envelope (DL, 110 × 220 mm) in millimetres. The folded A4 sits centred inside the envelope. Print the test sheet to check it against a real envelope.</p>
+              <div class="row2">
+                <div class="field"><label for="gLwLeft">From the envelope's left edge</label><input type="text" inputmode="decimal" id="gLwLeft"><span class="hint">Window on the right, 20 mm from the right edge: 130.</span></div>
+                <div class="field"><label for="gLwTop">From the envelope's top edge</label><input type="text" inputmode="decimal" id="gLwTop"></div>
+              </div>
+              <div class="row2">
+                <div class="field"><label for="gLwW">Window width</label><input type="text" inputmode="decimal" id="gLwW"></div>
+                <div class="field"><label for="gLwH">Window height</label><input type="text" inputmode="decimal" id="gLwH"></div>
+              </div>
+              <button class="btn btn--ghost btn--sm" id="gLwCal" type="button">Print window test sheet</button>
+            </div>
             <div class="banner banner--bad" id="gErr" hidden style="margin-bottom:12px;"></div>
             <div class="actions">
               <button class="btn btn--primary" id="gSave">Save</button>
@@ -786,6 +799,7 @@
     document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
     import { figuresOf } from './company-figures.js'; // 29 Oct: last-year figures + letterIntro for letters / call scripts
+    import { normalizeWindow, checkWindow, letterCss, calibrationCss, calibrationPage, FIT_SCRIPT } from './letter-layout.js'; // 29 Oct: address window + page layout of the letters
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
@@ -3120,7 +3134,8 @@
       $('setNav').addEventListener('click', (e) => { const b = e.target.closest('[data-sec]'); if (b) showSec(b.dataset.sec); });
       $('modalCancel').addEventListener('click', closeModal);
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) closeModal(); });
-      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gHolidays', 'gMunHol', 'gMinGap', 'gWeeklyReport', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
+      ['gTarget', 'gAuto', 'gPersonal', 'gTestList', 'gDays', 'gFrom', 'gTo', 'gHolidays', 'gMunHol', 'gMinGap', 'gLwLeft', 'gLwTop', 'gLwW', 'gLwH', 'gWeeklyReport', 'gCampTest', 'gAiOn', 'gAiModel', 'gAiCap'].forEach(id => $(id).addEventListener('input', () => { generalDirty = true; }));
+      $('gLwCal').addEventListener('click', () => { const c = checkWindow({ left: $('gLwLeft').value.replace(',', '.'), top: $('gLwTop').value.replace(',', '.'), width: $('gLwW').value.replace(',', '.'), height: $('gLwH').value.replace(',', '.') }); printCalibration(c.ok ? c.value : null); });
       $('gSave').addEventListener('click', async () => { const unbusy = busyBtn($('gSave'), 'Saving…'); try { await saveGeneral(); } finally { unbusy(); } });
       $('rdRun').addEventListener('click', () => renderReadiness(true));
       $('gTrack').addEventListener('change', async (e) => {
@@ -3186,6 +3201,7 @@
       $('gMunHol').checked = s.skipMunicipalHolidays !== false;
       $('gWeeklyReport').checked = s.weeklyReportEmail !== false;
       $('gMinGap').value = s.minGapHours ?? 12;
+      { const lw = normalizeWindow(s.letterWindow); $('gLwLeft').value = lw.left; $('gLwTop').value = lw.top; $('gLwW').value = lw.width; $('gLwH').value = lw.height; }
       const yNow = new Date().getFullYear();
       renderMunList();
       $('gHolList').innerHTML = [yNow, yNow + 1].map(y => `<div style="margin-bottom:6px;"><b>${y}</b> · ${ptHolidays(y).map(h => `${esc(dayFmt.format(new Date(h.date + 'T12:00:00')))} ${esc(h.name)}`).join(' · ')}</div>`).join('');
@@ -3239,6 +3255,12 @@
       const campTest = $('gCampTest').value;
       const aiCap = parseInt($('gAiCap').value, 10);
       if (!(aiCap >= 0 && aiCap <= 2000)) { err.textContent = 'AI daily limit must be between 0 and 2,000.'; err.hidden = false; return; }
+      let letterWindow = null; // 29 Oct (outreach.letterTools): the address window of the envelope
+      if (isOn('outreach.letterTools')) {
+        const lc = checkWindow({ left: $('gLwLeft').value.replace(',', '.'), top: $('gLwTop').value.replace(',', '.'), width: $('gLwW').value.replace(',', '.'), height: $('gLwH').value.replace(',', '.') });
+        if (!lc.ok) { err.textContent = 'Letters, address window: ' + lc.error; err.hidden = false; return; }
+        letterWindow = lc.value;
+      }
       const minGap = Number(String($('gMinGap').value).replace(',', '.'));
       if (!($('gMinGap').value !== '' && minGap >= 0 && minGap <= 72)) { err.textContent = 'The minimum gap between a company\'s emails must be between 0 and 72 hours.'; err.hidden = false; return; }
       if (campTest && !list.includes(campTest)) { err.textContent = `The campaign test address (${campTest}) must be on the approved list.`; err.hidden = false; return; }
@@ -3246,6 +3268,7 @@
         dailyTarget: target, automationBudget: auto, blockPersonalDomains: $('gPersonal').checked,
         testRecipients: list, sendWindow: { days, from: wFrom, to: wTo, tz: 'Europe/Lisbon' }, skipNationalHolidays: $('gHolidays').checked, skipMunicipalHolidays: $('gMunHol').checked, minGapHours: minGap, weeklyReportEmail: $('gWeeklyReport').checked,
         ...(campTest ? { campaignTestRecipient: campTest } : {}),
+        ...(letterWindow ? { letterWindow } : {}),
         aiEnabled: $('gAiOn').checked, aiModel: $('gAiModel').value, aiDailyCap: aiCap,
         updatedAt: serverTimestamp(), updatedBy: me,
       }, { merge: true });
@@ -5640,6 +5663,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <label class="checkline"><input type="checkbox" id="letAll"${list.length && letterSel.size === list.length ? ' checked' : ''}> <span>Select all</span></label>
             <button class="btn btn--primary btn--sm" id="letPrint"${letterSel.size ? '' : ' disabled'}>Print selected (${num(letterSel.size)})</button>
             <button class="btn btn--ghost btn--sm" id="letPosted"${letterSel.size ? '' : ' disabled'}>Mark selected as printed &amp; posted</button>
+            ${LT ? '<button class="btn btn--ghost btn--sm" id="letCal" title="One page to print on plain paper and fold into the envelope: the dashed rectangle must sit in the window">Print window test sheet</button>' : ''}
           </div>
           <div class="table-wrap"><table>
             <thead><tr><th></th><th>To</th><th>Address</th><th>Campaign</th>${list.some(t => t.pathName) ? '<th>Path</th>' : ''}<th>Step</th><th>Template</th>${LT ? '<th>Letter</th>' : ''}<th>Signed by</th><th>Due</th></tr></thead>
@@ -5667,6 +5691,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       $('lettersView').querySelectorAll('[data-leted]').forEach(b => b.addEventListener('click', () => openLetterEditor(list.find(x => x.id === b.dataset.leted))));
       $('letAll')?.addEventListener('change', (e) => { letterSel = e.target.checked ? new Set(list.filter(t => !(LT && info(t)?.missing?.length)).map(t => t.id)) : new Set(); renderLetters(); });
       $('letPrint').addEventListener('click', () => printLetters(list.filter(t => letterSel.has(t.id))));
+      $('letCal')?.addEventListener('click', () => printCalibration());
       $('letPosted').addEventListener('click', async () => {
         const ids = [...letterSel];
         if (!confirm(`Mark ${num(ids.length)} letter${ids.length === 1 ? '' : 's'} as printed & posted? Each company's sequence moves on.`)) return;
@@ -5677,15 +5702,18 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       });
     }
 
+    // 29 Oct (outreach.letterTools): the envelope window from Settings (default: 2 cm from the right edge, 4.5 cm from the top, 7 x 3.5 cm).
+    const letterWindowSetting = () => normalizeWindow(settings?.letterWindow);
+    const letterLogoUrl = () => new URL('../assets/logo-transparent.png', location.href).href;
     async function printLetters(list) {
-      const LT = isOn('outreach.letterTools'); // 29 Oct: letters with a missing field are not printed; "Ao cuidado de" line
+      const LT = isOn('outreach.letterTools'); // 29 Oct: letters with a missing field are not printed; logo, address in the envelope window, "Ao cuidado de", no footer
       if (LT) {
         const bad = list.filter(t => letterTextOf(t, taskCo(t))?.missing?.length);
         if (bad.length) { toast(`${num(bad.length)} letter${bad.length === 1 ? '' : 's'} left out: a field is missing (open Preview / edit).`); list = list.filter(t => !bad.includes(t)); }
         if (!list.length) return;
       }
       let entity = '';
-      try { const cs = await getDoc(doc(db, 'outreachCompliance', settings?.complianceBlockId || 'default')); addReads(1); entity = cs.exists() ? (cs.data().legalEntityLine || '') : ''; } catch (e) {}
+      if (!LT) { try { const cs = await getDoc(doc(db, 'outreachCompliance', settings?.complianceBlockId || 'default')); addReads(1); entity = cs.exists() ? (cs.data().legalEntityLine || '') : ''; } catch (e) {} } // the new layout carries no footer line
       const date = new Intl.DateTimeFormat('pt-PT', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
       const pages = list.map(t => {
         const c = taskCo(t);
@@ -5694,6 +5722,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         const ctx = coCtx(c, signerFor(t, c));
         const careOf = LT && !c._person && ctx.owner.of ? `Ao cuidado ${ctx.owner.of}` : '';
         return `<section class="page">
+          ${LT ? `<img class="logo" src="${esc(letterLogoUrl())}" alt="">` : ''}
           <div class="addr">${(careOf ? [addrLines[0], careOf, ...addrLines.slice(1)] : addrLines).map(esc).join('<br>')}</div>
           <p class="date">${esc(date)}</p>
           ${txt.subject ? `<p class="subj"><b>Assunto:</b> ${esc(txt.subject)}</p>` : ''}
@@ -5704,7 +5733,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       }).join('');
       const w = window.open('', '_blank');
       if (!w) { toast('Allow pop-ups for this site to print the letters.'); return; }
-      w.document.write(`<!DOCTYPE html><html lang="pt"><head><meta charset="utf-8"><title>Cartas — ${esc(date)}</title><style>
+      const css = LT ? letterCss(letterWindowSetting()) : `
         @page { size: A4; margin: 0; }
         body { margin: 0; font-family: Arial, Helvetica, sans-serif; font-size: 11pt; line-height: 1.5; color: #111; }
         .page { width: 210mm; min-height: 297mm; box-sizing: border-box; padding: 20mm 22mm 24mm; position: relative; page-break-after: always; }
@@ -5715,8 +5744,16 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         .body { white-space: pre-wrap; }
         .sig { white-space: pre-wrap; margin-top: 12mm; }
         footer { position: absolute; bottom: 12mm; left: 22mm; right: 22mm; font-size: 8pt; color: #666; }
-        @media screen { body { background: #ddd; } .page { background: #fff; margin: 10mm auto; box-shadow: 0 2px 10px rgba(0,0,0,.2); } }
-      </style></head><body>${pages}<script>window.onload = () => window.print();<\/script></body></html>`);
+        @media screen { body { background: #ddd; } .page { background: #fff; margin: 10mm auto; box-shadow: 0 2px 10px rgba(0,0,0,.2); } }`;
+      w.document.write(`<!DOCTYPE html><html lang="pt"><head><meta charset="utf-8"><title>Cartas — ${esc(date)}</title><style>${css}</style></head><body>${pages}<script>window.onload = () => { ${LT ? FIT_SCRIPT : ''} window.print(); };<\/script></body></html>`);
+      w.document.close();
+    }
+    // One test page: print on plain A4 at 100%, fold in three, slip into the envelope; the dashed rectangle must sit in the window.
+    function printCalibration(win = null) {
+      const w = window.open('', '_blank');
+      if (!w) { toast('Allow pop-ups for this site to print the test sheet.'); return; }
+      const addressHtml = ['Empresa de Exemplo, S.A.', 'Ao cuidado da Senhora Maria Exemplo ou do Senhor João Exemplo', 'Rua do Exemplo, 123', '1000-000 Lisboa'].map(esc).join('<br>');
+      w.document.write(`<!DOCTYPE html><html lang="pt"><head><meta charset="utf-8"><title>Teste da janela</title><style>${calibrationCss}</style></head><body>${calibrationPage(win || letterWindowSetting(), { addressHtml, logoUrl: letterLogoUrl(), escape: esc })}<script>window.onload = () => { ${FIT_SCRIPT} window.print(); };<\/script></body></html>`);
       w.document.close();
     }
 
