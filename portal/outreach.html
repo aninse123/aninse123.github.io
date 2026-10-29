@@ -5689,7 +5689,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
             }).join('') : '<tr><td colspan="8" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
           </table></div>
-          <p class="hint" style="padding:10px 14px;">Print on plain A4 and fold into a window envelope (address on the left). The legal entity line from Settings → Email footer (if filled) is printed at the bottom. After posting, mark them — the sequence then moves on.</p>
+          <p class="hint" style="padding:10px 14px;">Print on plain A4 and fold into a window envelope (address in the envelope window, set in Settings → General). ${LT ? 'No footer is printed; sign the last page by hand.' : 'The legal entity line from Settings → Email footer (if filled) is printed at the bottom.'} After posting, mark them — the sequence then moves on.</p>
         </div>`;
       const sync = () => { $('letPrint').disabled = $('letPosted').disabled = !letterSel.size; $('letPrint').textContent = `Print selected (${num(letterSel.size)})`; };
       $('lettersView').querySelectorAll('[data-let]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) letterSel.add(cb.dataset.let); else letterSel.delete(cb.dataset.let); sync(); }));
