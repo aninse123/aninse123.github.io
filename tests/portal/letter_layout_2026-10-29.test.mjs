@@ -19,7 +19,7 @@ ok('another envelope (left-hand window, 90 x 45) moves the address to the left s
 
 const css = L.letterCss(L.DEFAULT_WINDOW);
 ok('print CSS: address at 127.5 / 42 mm, 65 x 30 mm; date beside it at the left; logo top-left', css.includes('left: 127.5mm; top: 42mm; width: 65mm; height: 30mm') && css.includes('.date { position: absolute; left: 22mm; top: 42mm') && css.includes('.logo { position: absolute; top: 6mm; left: 15mm'));
-ok('the body starts below the window (window bottom 74.5 mm + 9 = 83.5 mm); a short window never starts it above 70 mm', css.includes('padding: 83.5mm 22mm 20mm') && L.letterCss({ left: 130, top: 20, width: 70, height: 20 }).includes('padding: 70mm '));
+ok('the text starts below the window (window bottom 74.5 mm + 9 = 83.5 mm); a short window never starts it above 70 mm', L.layoutCfg(L.DEFAULT_WINDOW).flowTop === 83.5 && L.layoutCfg({ left: 130, top: 20, width: 70, height: 20 }).flowTop === 70);
 ok('no footer, 10.5 pt text, A4 with no margins', !/footer/.test(css) && css.includes('font-size: 10.5pt') && css.includes('size: A4; margin: 0'));
 ok('the address shrinks (never below 7 pt) instead of being cut off', /fs > 7/.test(L.FIT_SCRIPT) && /scrollHeight > a\.clientHeight/.test(L.FIT_SCRIPT));
 
@@ -33,9 +33,34 @@ ok('Settings → General: four measurements and a test sheet button, behind the 
 ok('loaded from settings.letterWindow (default when empty), tracked as an unsaved change', page.includes('normalizeWindow(s.letterWindow)') && page.includes("'gLwLeft', 'gLwTop', 'gLwW', 'gLwH'"));
 ok('saved only while the switch is on, after checking the numbers (comma accepted)', page.includes("if (isOn('outreach.letterTools')) {\n        const lc = checkWindow(") && page.includes('...(letterWindow ? { letterWindow } : {}),') && page.includes("$('gLwLeft').value.replace(',', '.')"));
 ok('letters printed with the tools: layout from the setting, logo, no legal entity footer read; old layout untouched otherwise', page.includes('letterCss(letterWindowSetting())') && page.includes('if (!LT) { try { const cs = await getDoc(doc(db, \'outreachCompliance\'') && page.includes("${LT ? `<img class=\"logo\"") && page.includes('@page { size: A4; margin: 0; }'));
-ok('the address shrink script runs before printing', page.includes("window.onload = () => { ${LT ? FIT_SCRIPT : ''} window.print(); }"));
+ok('in the print window the pages are built first, then the address shrink runs, then it prints', page.includes('buildLetters(${JSON.stringify(layoutCfg(letterWindowSetting()') && page.includes('${FIT_SCRIPT}` : \'\'} window.print();') && page.includes("${LT ? LAYOUT_JS : ''}"));
 ok('Letters to print has a test sheet button (only with the tools); the Settings button prints the typed numbers', page.includes('id="letCal"') && page.includes("$('letCal')?.addEventListener('click', () => printCalibration());") && page.includes('printCalibration(c.ok ? c.value : null)'));
 ok('the module is imported from the page', page.includes("from './letter-layout.js'"));
+
+
+// ── Pagination rules (pure) ──
+const body = 'Exma. Senhora Ana,\n\nPrimeiro parágrafo.\n\nSomos dois gestores. Em concreto:\n\n• um\n• dois\n\nGostaríamos de falar.\n\nCom os melhores cumprimentos,';
+const blocks = L.parseBlocks(body);
+ok('paragraphs are the blocks between blank lines; lines starting with • are one list block', blocks.length === 6 && blocks[3].list && blocks[3].text === '• um\n• dois' && !blocks[2].list);
+ok('keep with next: the salutation, a block ending in ":", the last two blocks and the signature', JSON.stringify(L.keepFlags(blocks, true)) === JSON.stringify([true, false, true, false, true, true, false]));
+ok('without a signature block (the template signs itself) the last two blocks still stay together', JSON.stringify(L.keepFlags(blocks, false)) === JSON.stringify([true, false, true, false, true, false]));
+ok('one block only, and an empty body, do not break', JSON.stringify(L.keepFlags(L.parseBlocks('só uma linha'), false)) === '[false]' && L.parseBlocks('').length === 0);
+// heights in mm, gap 5
+ok('everything fits: one page', JSON.stringify(L.paginate([20, 20, 20], [false, false, false], 100, 200, 5)) === '[[0,1,2]]');
+ok('a paragraph that does not fit goes whole to the next page (never split)', JSON.stringify(L.paginate([60, 50, 30], [false, false, false], 100, 200, 5)) === '[[0],[1,2]]');
+ok('a block ending in ":" stays with its list, even if that moves both to the next page', JSON.stringify(L.paginate([50, 20, 40], [false, true, false], 100, 200, 5)) === '[[0],[1,2]]');
+ok('the closing chain (last blocks + signature) is never left alone: it moves with the paragraph before it', JSON.stringify(L.paginate([60, 20, 10, 15], [false, true, true, false], 100, 200, 5)) === '[[0],[1,2,3]]');
+ok('a chain taller than a page is split block by block as a last resort; a block taller than a page goes alone', JSON.stringify(L.paginate([60, 60, 60], [true, true, false], 100, 100, 5)) === '[[0],[1],[2]]' && JSON.stringify(L.paginate([30, 300, 30], [false, false, false], 100, 100, 5)) === '[[0],[1],[2]]');
+ok('later pages have their own room (the first page has the window and the subject)', JSON.stringify(L.paginate([90, 90, 90], [false, false, false], 100, 200, 5)) === '[[0],[1,2]]');
+const cfg = L.layoutCfg(L.DEFAULT_WINDOW, { duplex: true, logoUrl: 'u' });
+ok('layout settings: text down to 277 mm (20 mm margin), continuation pages from 36 mm, 166 mm wide, three sizes from 10.5 pt down to 10 pt, double-sided flag', cfg.bottom === 277 && cfg.contTop === 36 && cfg.textWidth === 166 && cfg.levels.length === 3 && cfg.levels[0][0] === 10.5 && cfg.levels[2][0] === 10 && cfg.duplex === true && cfg.logoUrl === 'u');
+ok('the print window gets the three functions as source', (L.LAYOUT_JS.match(/^function (paginate|planLetter|buildLetters)\(/gm) || []).length === 3);
+ok('continuation pages: small logo and "Página n de N" with the same margins; pages are fixed A4 boxes', css.includes('.cont {') && css.includes('.pbody { position: absolute; left: 22mm; right: 22mm;') && css.includes('.blk { margin: 0 0 1.35em; }') && /Página ' \+ \(pi \+ 1\) \+ ' de '/.test(L.LAYOUT_JS));
+ok('double-sided: a blank back is added after an odd number of pages', /cfg\.duplex && N % 2 === 1/.test(L.LAYOUT_JS));
+// The page
+ok('printing hands the paragraphs to the print window as blocks, with the keep flags and the company name', page.includes('const blocks = parseBlocks(txt.body), withSig = !txt.signs;') && page.includes('data-keep="${JSON.stringify(keepFlags(blocks, withSig))}"') && page.includes('class=\"src\"'));
+ok('Letters to print: a "N pages" pill, a Double-sided tick, and the editor says how many pages', page.includes('letterPageCount(i, taskCo(t), t)') && page.includes('id="letDuplex"') && page.includes('{ duplex: !!$(\'letDuplex\')?.checked }') && page.includes('It runs to ${np} pages'));
+ok('the page count is measured with the same function as the print window', page.includes('planLetter(document, layoutCfg(letterWindowSetting())'));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');

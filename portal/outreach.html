@@ -799,7 +799,7 @@
     document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
     import { figuresOf } from './company-figures.js'; // 29 Oct: last-year figures + letterIntro for letters / call scripts
-    import { normalizeWindow, checkWindow, letterCss, calibrationCss, calibrationPage, FIT_SCRIPT } from './letter-layout.js'; // 29 Oct: address window + page layout of the letters
+    import { normalizeWindow, checkWindow, letterCss, calibrationCss, calibrationPage, FIT_SCRIPT, parseBlocks, keepFlags, planLetter, layoutCfg, LAYOUT_JS } from './letter-layout.js'; // 29 Oct: address window + page layout of the letters
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
@@ -5457,13 +5457,21 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const ctx = coCtx(c, signerFor(t, c), campaigns.find(x => x.id === t.campaignId));
       return { ...base, edited: false, missing: [...missingFieldsOf(v.subject, ctx), ...missingFieldsOf(v.body, ctx)] };
     }
+    // 29 Oct: how many pages a letter will print on (measured like the print window does it).
+    function letterPageCount(Lt, c, t) {
+      try {
+        const blocks = parseBlocks(Lt.body), withSig = !Lt.signs;
+        const texts = blocks.map(b => ({ text: b.text })).concat(withSig ? [{ text: coCtx(c, signerFor(t, c)).sender.signature, sig: true }] : []);
+        return planLetter(document, layoutCfg(letterWindowSetting()), Lt.subject ? 'Assunto: ' + Lt.subject : '', texts, keepFlags(blocks, withSig)).pages.length;
+      } catch (e) { return 1; }
+    }
     function openLetterEditor(t) {
       if (!t) return;
       const c = taskCo(t), Lt = letterTextOf(t, c);
       if (!Lt) { toast('This step has no letter template.'); return; }
       const signer = signerFor(t, c);
       openModal(`Letter — ${t.companyName || c.name || ''}`, `
-        <p class="hint">${Lt.edited ? 'This letter has its own text, saved for this letter only.' : 'The template filled in for this company. Edit anything: the change applies to this letter only.'}${Lt.missing.length ? ` <b>Fill in: ${esc(Lt.missing.join(', '))}</b> — shown as [name] below.` : ''}</p>
+        <p class="hint">${Lt.edited ? 'This letter has its own text, saved for this letter only.' : 'The template filled in for this company. Edit anything: the change applies to this letter only.'} ${(() => { const np = letterPageCount(Lt, c, t); return np > 1 ? `<b>It runs to ${np} pages</b> (paragraphs are never split; shorten the intro to fit one).` : 'It fits one page.'; })()}${Lt.missing.length ? ` <b>Fill in: ${esc(Lt.missing.join(', '))}</b> — shown as [name] below.` : ''}</p>
         <div class="field"><label for="lSubj">Subject (Assunto)</label><input type="text" id="lSubj" value="${esc(Lt.subject)}" maxlength="300"></div>
         <div class="field"><label for="lBody">Letter</label><textarea id="lBody" rows="22" style="font-family:inherit;">${esc(Lt.body)}</textarea></div>
         <p class="hint">The date, the address, the signature (${esc(OWNER_LABEL[signer] || signer)}) and the legal line are added when printing.</p>
@@ -5663,6 +5671,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <label class="checkline"><input type="checkbox" id="letAll"${list.length && letterSel.size === list.length ? ' checked' : ''}> <span>Select all</span></label>
             <button class="btn btn--primary btn--sm" id="letPrint"${letterSel.size ? '' : ' disabled'}>Print selected (${num(letterSel.size)})</button>
             <button class="btn btn--ghost btn--sm" id="letPosted"${letterSel.size ? '' : ' disabled'}>Mark selected as printed &amp; posted</button>
+            ${LT ? '<label class="checkline" title="Printing on both sides of the sheet: every one-page letter gets a blank back, so each letter starts on a fresh sheet"><input type="checkbox" id="letDuplex"> <span>Double-sided</span></label>' : ''}
             ${LT ? '<button class="btn btn--ghost btn--sm" id="letCal" title="One page to print on plain paper and fold into the envelope: the dashed rectangle must sit in the window">Print window test sheet</button>' : ''}
           </div>
           <div class="table-wrap"><table>
@@ -5675,7 +5684,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
                 <td style="font-size:0.8rem;">${t.campaignId ? esc(t.campaignName || '') : 'Own task'}</td>${list.some(x => x.pathName) ? `<td style="font-size:0.8rem;">${esc(t.pathName || '—')}</td>` : ''}<td style="font-size:0.8rem;">${t.campaignId ? esc(t.stepName || '') : esc(t.instructions || '')}</td>
                 <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
-                ${LT ? (() => { const i = info(t); return `<td style="white-space:nowrap;font-size:0.8rem;">${i?.missing?.length ? `<span class="pill pill--bad" title="${esc(i.missing.join(', '))}">missing: ${esc(i.missing[0])}${i.missing.length > 1 ? ` +${i.missing.length - 1}` : ''}</span> ` : i?.edited ? '<span class="pill pill--info">edited</span> ' : ''}<button class="btn btn--ghost btn--sm" data-leted="${esc(t.id)}">Preview / edit</button></td>`; })() : ''}
+                ${LT ? (() => { const i = info(t); return `<td style="white-space:nowrap;font-size:0.8rem;">${(() => { const np = i && !i.missing?.length ? letterPageCount(i, taskCo(t), t) : 1; return np > 1 ? `<span class="pill pill--test" title="This letter runs to ${np} pages">${np} pages</span> ` : ''; })()}${i?.missing?.length ? `<span class="pill pill--bad" title="${esc(i.missing.join(', '))}">missing: ${esc(i.missing[0])}${i.missing.length > 1 ? ` +${i.missing.length - 1}` : ''}</span> ` : i?.edited ? '<span class="pill pill--info">edited</span> ' : ''}<button class="btn btn--ghost btn--sm" data-leted="${esc(t.id)}">Preview / edit</button></td>`; })() : ''}
                 <td style="white-space:nowrap;"><select data-lsigner="${esc(t.id)}" style="width:auto;padding:2px 6px;font-size:0.78rem;">${ownerOpts(signerFor(t, c))}</select>${(window.teamDir || []).find(m => m.key === signerFor(t, c))?.contactPhone ? '' : ' <span class="pill pill--warn" title="Add it in Team → Contact details">no phone</span>'}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
             }).join('') : '<tr><td colspan="8" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
@@ -5690,7 +5699,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       }));
       $('lettersView').querySelectorAll('[data-leted]').forEach(b => b.addEventListener('click', () => openLetterEditor(list.find(x => x.id === b.dataset.leted))));
       $('letAll')?.addEventListener('change', (e) => { letterSel = e.target.checked ? new Set(list.filter(t => !(LT && info(t)?.missing?.length)).map(t => t.id)) : new Set(); renderLetters(); });
-      $('letPrint').addEventListener('click', () => printLetters(list.filter(t => letterSel.has(t.id))));
+      $('letPrint').addEventListener('click', () => printLetters(list.filter(t => letterSel.has(t.id)), { duplex: !!$('letDuplex')?.checked }));
       $('letCal')?.addEventListener('click', () => printCalibration());
       $('letPosted').addEventListener('click', async () => {
         const ids = [...letterSel];
@@ -5705,7 +5714,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     // 29 Oct (outreach.letterTools): the envelope window from Settings (default: 2 cm from the right edge, 4.5 cm from the top, 7 x 3.5 cm).
     const letterWindowSetting = () => normalizeWindow(settings?.letterWindow);
     const letterLogoUrl = () => new URL('../assets/logo-transparent.png', location.href).href;
-    async function printLetters(list) {
+    async function printLetters(list, opts = {}) {
       const LT = isOn('outreach.letterTools'); // 29 Oct: letters with a missing field are not printed; logo, address in the envelope window, "Ao cuidado de", no footer
       if (LT) {
         const bad = list.filter(t => letterTextOf(t, taskCo(t))?.missing?.length);
@@ -5721,6 +5730,14 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         const txt = (LT ? letterTextOf(t, c) : taskTemplateText(t, c)) || { subject: '', body: '(no letter template on this step)' };
         const ctx = coCtx(c, signerFor(t, c));
         const careOf = LT && !c._person && ctx.owner.of ? `Ao cuidado ${ctx.owner.of}` : '';
+        if (LT) { // paragraphs go onto pages in the print window (buildLetters): never split inside a paragraph, real margins, continuation pages
+          const blocks = parseBlocks(txt.body), withSig = !txt.signs;
+          return `<div class="letter" data-name="${esc(c._person ? c._person.name : emailNameOf(c) || c.name || t.companyName || '')}" data-keep="${JSON.stringify(keepFlags(blocks, withSig))}">
+            <div class="first"><img class="logo" src="${esc(letterLogoUrl())}" alt=""><div class="addr">${(careOf ? [addrLines[0], careOf, ...addrLines.slice(1)] : addrLines).map(esc).join('<br>')}</div><p class="date">${esc(date)}</p></div>
+            ${txt.subject ? `<p class="subj"><b>Assunto:</b> ${esc(txt.subject)}</p>` : ''}
+            <div class="src">${blocks.map(b => `<p class="blk">${esc(b.text)}</p>`).join('')}${withSig ? `<p class="blk sig">${esc(ctx.sender.signature)}</p>` : ''}</div>
+          </div>`;
+        }
         return `<section class="page">
           ${LT ? `<img class="logo" src="${esc(letterLogoUrl())}" alt="">` : ''}
           <div class="addr">${(careOf ? [addrLines[0], careOf, ...addrLines.slice(1)] : addrLines).map(esc).join('<br>')}</div>
@@ -5745,7 +5762,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         .sig { white-space: pre-wrap; margin-top: 12mm; }
         footer { position: absolute; bottom: 12mm; left: 22mm; right: 22mm; font-size: 8pt; color: #666; }
         @media screen { body { background: #ddd; } .page { background: #fff; margin: 10mm auto; box-shadow: 0 2px 10px rgba(0,0,0,.2); } }`;
-      w.document.write(`<!DOCTYPE html><html lang="pt"><head><meta charset="utf-8"><title>Cartas — ${esc(date)}</title><style>${css}</style></head><body>${pages}<script>window.onload = () => { ${LT ? FIT_SCRIPT : ''} window.print(); };<\/script></body></html>`);
+      w.document.write(`<!DOCTYPE html><html lang="pt"><head><meta charset="utf-8"><title>Cartas — ${esc(date)}</title><style>${css}</style></head><body>${pages}<script>${LT ? LAYOUT_JS : ''}
+window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWindowSetting(), { duplex: !!opts.duplex, logoUrl: letterLogoUrl() }))}); ${FIT_SCRIPT}` : ''} window.print(); };<\/script></body></html>`);
       w.document.close();
     }
     // One test page: print on plain A4 at 100%, fold in three, slip into the envelope; the dashed rectangle must sit in the window.

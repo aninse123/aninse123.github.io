@@ -40,19 +40,23 @@ export function addressBox(w) {
 const BASE = 'body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #111; } .page { width: 210mm; height: 297mm; box-sizing: border-box; position: relative; page-break-after: always; overflow: hidden; } .page:last-child { page-break-after: auto; }';
 const SCREEN = '@media screen { body { background: #ddd; } .page { background: #fff; margin: 10mm auto; box-shadow: 0 2px 10px rgba(0,0,0,.2); } }';
 
-// CSS of a letter page: logo top-left, address in the window, date beside it, body from below the window.
+// CSS of a letter page. Every page is a fixed A4 box; buildLetters() (below) measures the paragraphs and
+// puts them on pages. Page 1: logo, address in the window, date beside it, subject, text. Next pages:
+// small logo + "Página n de N" and the text, with the same margins (20 mm top and bottom, 22 mm sides).
 export function letterCss(w) {
   const p = windowOnPaper(w), a = addressBox(w);
-  const flowTop = Math.max(70, r1(p.y + p.h + 9));
   return `@page { size: A4; margin: 0; } ${BASE}
     body { font-size: 10.5pt; line-height: 1.35; }
-    .page { height: auto; min-height: 297mm; overflow: visible; padding: ${flowTop}mm 22mm 20mm; }
+    .page { overflow: visible; }
     .logo { position: absolute; top: 6mm; left: 15mm; width: 28mm; height: 28mm; }
     .addr { position: absolute; left: ${a.x}mm; top: ${a.y}mm; width: ${a.w}mm; height: ${a.h}mm; font-size: 10pt; line-height: 1.25; overflow: hidden; }
     .date { position: absolute; left: 22mm; top: ${r1(p.y + INNER)}mm; margin: 0; }
+    .pbody { position: absolute; left: 22mm; right: 22mm; white-space: pre-wrap; }
     .subj { margin: 0 0 5mm; }
-    .body { white-space: pre-wrap; }
-    .sig { white-space: pre-wrap; margin-top: 8mm; }
+    .blk { margin: 0 0 1.35em; } .blk:last-child { margin-bottom: 0; } .blk.sig { padding-top: 8mm; }
+    .cont { position: absolute; top: 12mm; left: 22mm; right: 22mm; height: 16mm; border-bottom: 0.2mm solid #ccc; }
+    .cont img { position: absolute; left: -6mm; top: -6mm; width: 28mm; height: 28mm; clip-path: inset(6mm 6mm 6mm 6mm); }
+    .cont span { position: absolute; right: 0; top: 4mm; font-size: 9pt; color: #666; }
     ${SCREEN}`;
 }
 // The address block shrinks a little rather than being cut off (7 pt at the least).
@@ -91,3 +95,101 @@ export const calibrationCss = `@page { size: A4; margin: 0; } ${BASE}
     .addr { position: absolute; overflow: hidden; font-size: 10pt; line-height: 1.25; }
     .note { position: absolute; left: 22mm; right: 22mm; font-size: 9.5pt; line-height: 1.4; color: #333; }
     ${SCREEN}`;
+
+// ───────────────────────── Pagination ─────────────────────────
+// A letter that does not fit on one page is split BETWEEN paragraphs, never inside one. Rules:
+//  - paragraphs = blocks separated by a blank line; a run of lines starting with "•" is one block;
+//  - a salutation (first block ending in "," or ":") and any block ending in ":" stay with the next block;
+//  - the last two blocks and the signature stay together (the signature is never alone on a page);
+//  - a chain taller than a page is split block by block; a single block taller than a page goes alone.
+export function parseBlocks(body) {
+  const blocks = []; let cur = [];
+  const flush = () => { if (cur.length) { blocks.push({ text: cur.join('\n'), list: cur.every((l) => /^\s*[•–-]\s/.test(l)) }); cur = []; } };
+  String(body || '').replace(/\r/g, '').split('\n').forEach((l) => { if (!l.trim()) flush(); else cur.push(l); });
+  flush();
+  return blocks;
+}
+// keep[i] = block i stays with block i + 1. withSig: the signature is one more block at the end.
+export function keepFlags(blocks, withSig = true) {
+  const n = blocks.length, keep = blocks.map((b, i) => {
+    const t = b.text.trim();
+    if (i === 0 && /[,:]$/.test(t) && n > 1) return true;
+    if (/:$/.test(t) && i < n - 1) return true;
+    return i >= n - 2 && (withSig || i === n - 2);
+  });
+  if (n === 1 && !withSig) keep[0] = false;
+  if (withSig) keep.push(false);
+  return keep;
+}
+// heights in mm (without the gap), keep flags, the room on page 1 and on the next pages, the gap between blocks.
+export function paginate(h, keep, capFirst, capNext, gap) {
+  var chains = [], cur = [], i, pages = [[]], used = 0, cap = capFirst;
+  for (i = 0; i < h.length; i++) { cur.push(i); if (!keep[i]) { chains.push(cur); cur = []; } }
+  if (cur.length) chains.push(cur);
+  function nonEmpty() { return pages[pages.length - 1].length > 0; }
+  function place(k) { used += (nonEmpty() ? gap : 0) + h[k]; pages[pages.length - 1].push(k); }
+  function next() { pages.push([]); used = 0; cap = capNext; }
+  function height(ch) { var t = 0, j; for (j = 0; j < ch.length; j++) t += h[ch[j]]; return t + gap * (ch.length - 1); }
+  chains.forEach(function (ch) {
+    var t = height(ch), j;
+    if (used + (nonEmpty() ? gap : 0) + t <= cap + 0.01) { ch.forEach(place); return; }
+    if (t <= capNext) { if (nonEmpty()) next(); ch.forEach(place); return; }
+    for (j = 0; j < ch.length; j++) { if (nonEmpty() && used + gap + h[ch[j]] > cap + 0.01) next(); place(ch[j]); }
+  });
+  return pages;
+}
+// Measures the paragraphs in `doc` (a hidden box as wide as the text) and plans the pages: the usual size
+// first, then slightly tighter ones, taking the first that fits one page; otherwise the usual size, in pages.
+export function planLetter(doc, cfg, subjectText, texts, keep) {
+  var MM = 96 / 25.4, root = doc.createElement('div'), best = null, li;
+  root.style.cssText = 'position:absolute;left:-9999px;top:0;width:' + cfg.textWidth + 'mm;font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap';
+  doc.body.appendChild(root);
+  function run(level) {
+    root.style.fontSize = cfg.levels[level][0] + 'pt'; root.style.lineHeight = String(cfg.levels[level][1]); root.innerHTML = '';
+    var s = null, subjH = 0, subjGap = 0;
+    if (subjectText) { s = doc.createElement('p'); s.style.margin = '0'; s.textContent = subjectText; root.appendChild(s); }
+    var els = texts.map(function (t) { var p = doc.createElement('p'); p.style.margin = '0 0 1.35em'; if (t.sig) p.style.paddingTop = '8mm'; p.textContent = t.text; root.appendChild(p); return p; });
+    var h = els.map(function (e) { return e.getBoundingClientRect().height / MM; });
+    var gap = els.length ? parseFloat(doc.defaultView.getComputedStyle(els[0]).marginBottom) / MM : 0;
+    if (s) { subjH = s.getBoundingClientRect().height / MM; subjGap = cfg.subjGap; }
+    return { level: level, h: h, gap: gap, subjH: subjH, pages: paginate(h, keep, cfg.bottom - cfg.flowTop - subjH - subjGap, cfg.bottom - cfg.contTop, gap) };
+  }
+  for (li = 0; li < cfg.levels.length; li++) { var r = run(li); if (r.pages.length === 1) { best = r; break; } }
+  if (!best) best = run(0);
+  doc.body.removeChild(root);
+  return best;
+}
+// Runs in the print window: turns every <div class="letter"> (first-page pieces, subject, source blocks) into
+// A4 pages. A one-page letter is one page; a longer one gets continuation pages; with cfg.duplex an odd number
+// of pages gets a blank back, so the next letter starts on a fresh sheet.
+export function buildLetters(cfg) {
+  document.querySelectorAll('.letter').forEach(function (L) {
+    var src = [].slice.call(L.querySelectorAll('.src > .blk')), keep = JSON.parse(L.getAttribute('data-keep'));
+    var subj = L.querySelector('.subj'), first = L.querySelector('.first'), name = L.getAttribute('data-name') || '';
+    var plan = planLetter(document, cfg, subj ? subj.textContent : '', src.map(function (b) { return { text: b.textContent, sig: b.className.indexOf('sig') > -1 }; }), keep);
+    var lv = cfg.levels[plan.level], N = plan.pages.length, frag = document.createDocumentFragment();
+    plan.pages.forEach(function (idxs, pi) {
+      var pg = document.createElement('section'), body = document.createElement('div');
+      pg.className = 'page'; pg.style.fontSize = lv[0] + 'pt'; pg.style.lineHeight = String(lv[1]);
+      body.className = 'pbody'; body.style.top = (pi === 0 ? cfg.flowTop : cfg.contTop) + 'mm';
+      if (pi === 0) { [].slice.call(first.children).forEach(function (c) { pg.appendChild(c); }); if (subj) body.appendChild(subj); }
+      else {
+        var ch = document.createElement('div'); ch.className = 'cont';
+        ch.innerHTML = (cfg.logoUrl ? '<img src="' + cfg.logoUrl + '" alt="">' : '') + '<span></span>';
+        ch.querySelector('span').textContent = 'Página ' + (pi + 1) + ' de ' + N + (name ? ' · ' + name : '');
+        pg.appendChild(ch);
+      }
+      idxs.forEach(function (i) { body.appendChild(src[i]); });
+      pg.appendChild(body); frag.appendChild(pg);
+    });
+    if (cfg.duplex && N % 2 === 1) { var blank = document.createElement('section'); blank.className = 'page blank'; frag.appendChild(blank); }
+    L.parentNode.replaceChild(frag, L);
+  });
+}
+// Settings for the functions above, from the envelope window (mm on the sheet).
+export function layoutCfg(w, { duplex = false, logoUrl = '' } = {}) {
+  const p = windowOnPaper(w);
+  return { bottom: 277, flowTop: Math.max(70, r1(p.y + p.h + 9)), subjGap: 5, contTop: 36, textWidth: 166, levels: [[10.5, 1.35], [10.25, 1.32], [10, 1.3]], duplex: !!duplex, logoUrl };
+}
+// The three functions, as source, for the print window (it runs them after loading).
+export const LAYOUT_JS = [paginate, planLetter, buildLetters].map((f) => f.toString()).join('\n');
