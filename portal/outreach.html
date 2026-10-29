@@ -785,6 +785,7 @@
     import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
     document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
+    import { figuresOf } from './company-figures.js'; // 29 Oct: last-year figures + letterIntro for letters / call scripts
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
@@ -2721,7 +2722,7 @@
       const s = senders.find(x => x.id === $('cFrom').value) || {};
       const c = picked || ((!settings || settings.testMode !== false) ? TEST_SAMPLE_COMPANY : {});
       return {
-        company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '', inCity: inCityOf(c), toCity: toCityOf(c) },
+        company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '', inCity: inCityOf(c), toCity: toCityOf(c), ...figuresOf(c) },
         owner: ownerContext(c),
         campaign: { sector: '' }, // Compose isn't part of a campaign — the fallback shows
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
@@ -5381,7 +5382,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const m = (window.teamDir || []).find(x => x.key === signer) || {};
       const full = m.name || OWNER_FULL[signer] || '';
       return {
-        company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '', inCity: inCityOf(c || {}), toCity: toCityOf(c || {}) },
+        company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '', inCity: inCityOf(c || {}), toCity: toCityOf(c || {}), ...figuresOf(c || {}) },
         owner: ownerContext(c?._person ? {} : c),
         campaign: { sector: camp?.sector || '' },
         contact: { firstName: c?._person ? String(c._person.name || '').split(' ')[0] : '' },
@@ -5408,6 +5409,55 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       if (!v) return null;
       const ctx = coCtx(c, signerFor(t, c), campaigns.find(x => x.id === t.campaignId));
       return { subject: v.subject ? fillText(v.subject, ctx) : '', body: fillText(v.body, ctx), name: tpl.name, signs: !!tpl.signs };
+    }
+    // 29 Oct (switch outreach.letterTools): the fields of a template that have no value and no fallback,
+    // a letter's text (its own edited text, else the template filled in) and the editor for one letter.
+    function missingFieldsOf(str, ctx) {
+      const miss = [];
+      const render = (x) => scanTemplate(x, (field, fb) => {
+        const onlyIf = field.startsWith('?'), path = onlyIf ? field.slice(1) : field;
+        const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), ctx);
+        if (onlyIf) return v != null && String(v).trim() ? render(fb || '') : '';
+        if (v != null && String(v).trim()) return String(v);
+        if (fb != null) return render(fb);
+        miss.push(path); return '';
+      }, (t) => t);
+      render(str || '');
+      return [...new Set(miss)];
+    }
+    function letterTextOf(t, c) {
+      const tpl = templatesAll.find(x => x.id === t.templateId);
+      if (t.letterText?.body) return { subject: t.letterText.subject || '', body: t.letterText.body, signs: !!tpl?.signs, edited: true, missing: [] };
+      const base = taskTemplateText(t, c);
+      if (!base) return null;
+      const v = (tpl?.variants || []).find(x => x.key === t.variantKey) || (tpl?.variants || [])[0] || {};
+      const ctx = coCtx(c, signerFor(t, c), campaigns.find(x => x.id === t.campaignId));
+      return { ...base, edited: false, missing: [...missingFieldsOf(v.subject, ctx), ...missingFieldsOf(v.body, ctx)] };
+    }
+    function openLetterEditor(t) {
+      if (!t) return;
+      const c = taskCo(t), Lt = letterTextOf(t, c);
+      if (!Lt) { toast('This step has no letter template.'); return; }
+      const signer = signerFor(t, c);
+      openModal(`Letter — ${t.companyName || c.name || ''}`, `
+        <p class="hint">${Lt.edited ? 'This letter has its own text, saved for this letter only.' : 'The template filled in for this company. Edit anything: the change applies to this letter only.'}${Lt.missing.length ? ` <b>Fill in: ${esc(Lt.missing.join(', '))}</b> — shown as [name] below.` : ''}</p>
+        <div class="field"><label for="lSubj">Subject (Assunto)</label><input type="text" id="lSubj" value="${esc(Lt.subject)}" maxlength="300"></div>
+        <div class="field"><label for="lBody">Letter</label><textarea id="lBody" rows="22" style="font-family:inherit;">${esc(Lt.body)}</textarea></div>
+        <p class="hint">The date, the address, the signature (${esc(OWNER_LABEL[signer] || signer)}) and the legal line are added when printing.</p>
+        ${Lt.edited ? '<button type="button" class="btn btn--ghost btn--sm" id="lReset">Back to the template</button>' : ''}`,
+        async () => {
+          const subject = $('lSubj').value.trim(), body = $('lBody').value.trim();
+          if (/\[(company|owner|sender|contact|team|campaign|partner)\.[\w.]+\]/.test(subject + ' ' + body)) throw new Error('Replace the [field] markers with text before saving.');
+          const r = await campCall({ action: 'updateTask', taskId: t.id, letterText: { subject, body } }, 'Letter text saved.');
+          if (!r) return false;
+          t.letterText = { subject, body };
+          renderLetters();
+          return true;
+        }, 'Save');
+      $('lReset')?.addEventListener('click', async () => {
+        const r = await campCall({ action: 'updateTask', taskId: t.id, letterText: null }, 'Back to the template.');
+        if (r) { delete t.letterText; closeModal(); renderLetters(); }
+      });
     }
     const telHref = (n) => 'tel:' + String(n || '').replace(/[^\d+]/g, '');
     function waNumber(n) {
@@ -5579,6 +5629,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     let letterSel = new Set();
     async function renderLetters() {
       const list = tasks.filter(t => t.channel === 'letter');
+      const LT = isOn('outreach.letterTools'); // 29 Oct: preview, edit, missing-field check
+      const info = (t) => (LT ? letterTextOf(t, taskCo(t)) : null);
       await loadCompaniesFor(list.slice(0, 200).map(t => t.companyId));
       await loadPersonRecords(list.slice(0, 200).filter(t => !t.companyId && t.personEmail));
       letterSel = new Set([...letterSel].filter(id => list.some(t => t.id === id)));
@@ -5590,15 +5642,16 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <button class="btn btn--ghost btn--sm" id="letPosted"${letterSel.size ? '' : ' disabled'}>Mark selected as printed &amp; posted</button>
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th></th><th>To</th><th>Address</th><th>Campaign</th>${list.some(t => t.pathName) ? '<th>Path</th>' : ''}<th>Step</th><th>Template</th><th>Signed by</th><th>Due</th></tr></thead>
+            <thead><tr><th></th><th>To</th><th>Address</th><th>Campaign</th>${list.some(t => t.pathName) ? '<th>Path</th>' : ''}<th>Step</th><th>Template</th>${LT ? '<th>Letter</th>' : ''}<th>Signed by</th><th>Due</th></tr></thead>
             <tbody>${list.length ? list.map(t => {
               const c = taskCo(t);
               const addr = [c.hqAddress, [c.postcode, c.concelho].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-              return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}></td>
+              return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}${LT && info(t)?.missing?.length ? ' disabled title="A field is missing — open the letter"' : ''}></td>
                 <td>${c._person ? `${esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
                 <td style="font-size:0.8rem;">${t.campaignId ? esc(t.campaignName || '') : 'Own task'}</td>${list.some(x => x.pathName) ? `<td style="font-size:0.8rem;">${esc(t.pathName || '—')}</td>` : ''}<td style="font-size:0.8rem;">${t.campaignId ? esc(t.stepName || '') : esc(t.instructions || '')}</td>
                 <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
+                ${LT ? (() => { const i = info(t); return `<td style="white-space:nowrap;font-size:0.8rem;">${i?.missing?.length ? `<span class="pill pill--bad" title="${esc(i.missing.join(', '))}">missing: ${esc(i.missing[0])}${i.missing.length > 1 ? ` +${i.missing.length - 1}` : ''}</span> ` : i?.edited ? '<span class="pill pill--info">edited</span> ' : ''}<button class="btn btn--ghost btn--sm" data-leted="${esc(t.id)}">Preview / edit</button></td>`; })() : ''}
                 <td style="white-space:nowrap;"><select data-lsigner="${esc(t.id)}" style="width:auto;padding:2px 6px;font-size:0.78rem;">${ownerOpts(signerFor(t, c))}</select>${(window.teamDir || []).find(m => m.key === signerFor(t, c))?.contactPhone ? '' : ' <span class="pill pill--warn" title="Add it in Team → Contact details">no phone</span>'}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
             }).join('') : '<tr><td colspan="8" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
@@ -5611,7 +5664,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         const r = await campCall({ action: 'updateTask', taskId: s.dataset.lsigner, signer: s.value || null }, `Signed by ${OWNER_LABEL[s.value] || s.value}.`);
         if (r) { const t = tasks.find(x => x.id === s.dataset.lsigner); if (t) t.signer = s.value; renderLetters(); }
       }));
-      $('letAll')?.addEventListener('change', (e) => { letterSel = e.target.checked ? new Set(list.map(t => t.id)) : new Set(); renderLetters(); });
+      $('lettersView').querySelectorAll('[data-leted]').forEach(b => b.addEventListener('click', () => openLetterEditor(list.find(x => x.id === b.dataset.leted))));
+      $('letAll')?.addEventListener('change', (e) => { letterSel = e.target.checked ? new Set(list.filter(t => !(LT && info(t)?.missing?.length)).map(t => t.id)) : new Set(); renderLetters(); });
       $('letPrint').addEventListener('click', () => printLetters(list.filter(t => letterSel.has(t.id))));
       $('letPosted').addEventListener('click', async () => {
         const ids = [...letterSel];
@@ -5624,16 +5678,23 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     }
 
     async function printLetters(list) {
+      const LT = isOn('outreach.letterTools'); // 29 Oct: letters with a missing field are not printed; "Ao cuidado de" line
+      if (LT) {
+        const bad = list.filter(t => letterTextOf(t, taskCo(t))?.missing?.length);
+        if (bad.length) { toast(`${num(bad.length)} letter${bad.length === 1 ? '' : 's'} left out: a field is missing (open Preview / edit).`); list = list.filter(t => !bad.includes(t)); }
+        if (!list.length) return;
+      }
       let entity = '';
       try { const cs = await getDoc(doc(db, 'outreachCompliance', settings?.complianceBlockId || 'default')); addReads(1); entity = cs.exists() ? (cs.data().legalEntityLine || '') : ''; } catch (e) {}
       const date = new Intl.DateTimeFormat('pt-PT', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
       const pages = list.map(t => {
         const c = taskCo(t);
         const addrLines = c._person ? [c._person.name, c._person.org, ...c._person.address.split(/\n+/)].filter(Boolean) : [c.name || t.companyName || '', c.hqAddress || '', [c.postcode, c.concelho].filter(Boolean).join(' ')];
-        const txt = taskTemplateText(t, c) || { subject: '', body: '(no letter template on this step)' };
+        const txt = (LT ? letterTextOf(t, c) : taskTemplateText(t, c)) || { subject: '', body: '(no letter template on this step)' };
         const ctx = coCtx(c, signerFor(t, c));
+        const careOf = LT && !c._person && ctx.owner.of ? `Ao cuidado ${ctx.owner.of}` : '';
         return `<section class="page">
-          <div class="addr">${addrLines.map(esc).join('<br>')}</div>
+          <div class="addr">${(careOf ? [addrLines[0], careOf, ...addrLines.slice(1)] : addrLines).map(esc).join('<br>')}</div>
           <p class="date">${esc(date)}</p>
           ${txt.subject ? `<p class="subj"><b>Assunto:</b> ${esc(txt.subject)}</p>` : ''}
           <div class="body">${esc(txt.body)}</div>

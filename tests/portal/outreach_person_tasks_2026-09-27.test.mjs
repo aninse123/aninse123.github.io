@@ -13,6 +13,7 @@ const line = (a) => { const i = page.indexOf(a); if (i < 0) throw new Error(a); 
 
 const ctx = { window: { teamDir: [{ key: 'andre', name: 'André Rocha', active: true, contactPhone: '+351 1' }, { key: 'antonio', name: 'António Carvalho', active: true }] }, campaigns: [{ id: 'k1', signer: 'owner' }], coCache: new Map() };
 vm.createContext(ctx);
+ctx.figuresOf = (await import('../../portal/company-figures.js')).figuresOf; // 29 Oct: coCtx adds the company figures
 vm.runInContext([
   line('    const OWNER_FULL ='), line('    const PT_SMALL_WORDS ='), lift('titleCasePt'), lift('shortName'), lift('emailNameOf'),
   lift('scanTemplate'), lift('signerFor'), lift('joinPt'), lift('teamContext'), page.slice(page.indexOf('function joinOu('), page.indexOf('// Same as the server (render.js teamContext).')), lift('coCtx'), lift('fillText'),

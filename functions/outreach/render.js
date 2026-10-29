@@ -7,6 +7,7 @@
 
 const { escapeHtml } = require("./util");
 const { inCityOf, toCityOf } = require("./places");
+const { figuresOf } = require("./company_figures"); // 29 Oct: last-year figures for letters / call scripts
 
 // 26 Oct: each suffix needs a space or comma before it ("SOUSA, LDA" kept "Sou" before).
 const LEGAL_SUFFIX_RE = /(?:[\s,]+(?:(?:sociedade\s+)?unipessoal[\s,]+)?(?:lda\.?|limitada|s\.?\s?a\.?|sgps|s\.?\s?g\.?\s?p\.?\s?s\.?|crl|ace)\.?)+\s*$/i;
@@ -117,6 +118,7 @@ function buildContext({ company = {}, contactName = "", sender = {}, unsubscribe
       cae: company.caeDescription || company.caeCode || "",
       inCity: inCityOf(company), // "em Setúbal" / "no Porto" — 14 Oct: all 308 municipalities (concelho, any spelling; else city; Calheta / Lagoa by district)
       toCity: toCityOf(company), // 13 Oct: "a Setúbal" / "ao Porto" / "à Maia" — after "deslocar-nos"
+      ...figuresOf(company), // 29 Oct: finYear, revenue, ebitda, ebitdaMargin, employees, financialsSentence, growthSentence, letterIntro
     },
     owner: { ...ownerContext(company), otherCompanies: joinPt(others.map((n) => `da ${n}`)), otherCompanyNames: joinPt(others) },
     campaign: { sector: String(campaign?.sector || "").trim() },

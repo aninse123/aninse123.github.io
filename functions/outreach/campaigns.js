@@ -21,7 +21,7 @@
 //   skipDraft   { messageId }                        drop the draft, redraft next working day
 //   completeTask { taskId, outcome, notes?, stopSequence?, profileUrl?, reopenAt? }
 //                                                    a manual step's result (Phase 2b)
-//   updateTask  { taskId, assignee?, dueAt?, notes? } reassign / reschedule an open task
+//   updateTask  { taskId, assignee?, dueAt?, notes?, letterText? } reassign / reschedule an open task; letterText = this letter's own text
 //   setDoNotContact { companyId, on, reason? }       stops every campaign for the company
 //   emailName   { companyId, op: "use"|"set"|"keep", name? }  fix or confirm the name used in emails (26 Oct)
 //   pathsPreview { campaignId, paths?, steps? }      "Check who goes where": companies per path (27 Oct)
@@ -1129,7 +1129,7 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   return { ok: true, status: o.key === "skipped" ? "skipped" : "done", sequence: moved ? (branch?.action === "goto" ? "jumped" : "next") : "unchanged", activityId };
 }
 
-async function updateTask({ taskId, assignee, signer, dueAt, notes }, caller) {
+async function updateTask({ taskId, assignee, signer, dueAt, notes, letterText }, caller) {
   const ref = db().doc(`outreachTasks/${taskId || "_"}`);
   const snap = await ref.get();
   if (!snap.exists || snap.data().status !== "open") fail("failed-precondition", "task_closed", "This task is no longer open.");
@@ -1151,6 +1151,18 @@ async function updateTask({ taskId, assignee, signer, dueAt, notes }, caller) {
     upd.dueAt = Timestamp.fromDate(d);
   }
   if (notes !== undefined) upd.notes = String(notes || "").trim().slice(0, 2000);
+  // 29 Oct (switch outreach.letterTools): this letter's own text — {subject, body} replaces the template's
+  // for this one letter (edit anything before printing); null goes back to the template.
+  if (letterText !== undefined) {
+    if (snap.data().channel !== "letter") fail("failed-precondition", "not_a_letter", "Only a letter can have its own text.");
+    if (letterText === null) upd.letterText = FieldValue.delete();
+    else {
+      const subject = String(letterText?.subject ?? "").trim(), body = String(letterText?.body ?? "").trim();
+      if (!body) fail("invalid-argument", "empty_letter", "The letter text can't be empty.");
+      if (subject.length > 300 || body.length > 20000) fail("invalid-argument", "letter_too_long", "That letter is too long.");
+      upd.letterText = { subject, body, editedBy: caller, editedAt: FieldValue.serverTimestamp() };
+    }
+  }
   await ref.update(upd);
   return { ok: true };
 }
@@ -1361,6 +1373,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
     || (data.action === "save" && data.campaign?.startOrder && data.campaign.startOrder.mode !== "added")) await Feat.requireFeature(request, "outreach.paths"); // + who starts first (R10)
   if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
   if (data.action === "save" && Array.isArray(data.campaign?.cc) && data.campaign.cc.length) await Feat.requireFeature(request, "outreach.campaignCc"); // 28 Oct
+  if (data.action === "updateTask" && data.letterText !== undefined) await Feat.requireFeature(request, "outreach.letterTools"); // 29 Oct: a letter's own text
   if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
     let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
