@@ -61,6 +61,18 @@ function flags(state) { store.set("config/features", { flags: { "outreach.letter
   ok("null goes back to the template", !(await camp({ action: "updateTask", taskId: "L1", letterText: null })).err && store.get("outreachTasks/L1").letterText === undefined);
   ok("other task updates don't touch the letter text", (await camp({ action: "updateTask", taskId: "L1", letterText: { subject: "S", body: "B" } }), !(await camp({ action: "updateTask", taskId: "L1", notes: "n" })).err && store.get("outreachTasks/L1").letterText?.body === "B"));
 
+  // The envelope of one letter, and signed by both
+  const r2 = await camp({ action: "updateTask", taskId: "L1", letterText: { subject: "S", body: "B", address: " Empresa X \n\n Ao cuidado do Senhor Y\r\nRua Z " } });
+  ok("an envelope is saved line by line (trimmed, no empty lines)", !r2.err && store.get("outreachTasks/L1").letterText?.address === "Empresa X\nAo cuidado do Senhor Y\nRua Z");
+  await camp({ action: "updateTask", taskId: "L1", letterText: null }); // the test store merges maps; Firestore replaces the whole field
+  ok("no envelope given: none is stored (the record's address is used)", !(await camp({ action: "updateTask", taskId: "L1", letterText: { subject: "S", body: "B", address: "" } })).err && store.get("outreachTasks/L1").letterText?.address === undefined);
+  ok("an envelope of more than 8 lines is refused", (await camp({ action: "updateTask", taskId: "L1", letterText: { subject: "S", body: "B", address: "a\nb\nc\nd\ne\nf\ng\nh\ni" } })).err?.details?.reason === "address_too_long");
+  ok("a letter can be signed by both", !(await camp({ action: "updateTask", taskId: "L1", signer: "both" })).err && store.get("outreachTasks/L1").signer === "both");
+  ok("a call can't be signed by both", (await camp({ action: "updateTask", taskId: "C1", signer: "both" })).err?.details?.reason === "bad_signer");
+  flags("off");
+  ok("with the switch Off, both is refused", !!(await camp({ action: "updateTask", taskId: "L1", signer: "both" })).err);
+  flags("on");
+
   if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
   console.log("\nALL PASSED");
 })();

@@ -5399,9 +5399,12 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     function signerFor(t, c) {
       const camp = campaigns.find(x => x.id === t?.campaignId);
       const pick = t?.signer || (camp?.signer && camp.signer !== 'owner' ? camp.signer : null) || (t?.channel === 'call' ? t?.assignee : null) || c?.owner || 'andre';
+      if (pick === 'both' && t?.channel === 'letter') return 'both'; // 29 Oct: a letter signed by André & António
       return (window.teamDir || []).some(m => m.key === pick && m.active !== false) || OWNER_FULL[pick] ? pick : 'andre'; // someone who left doesn't sign
     }
     function coCtx(c, signer, camp = null) {
+      const both = signer === 'both'; if (both) signer = 'andre'; // both: André's phone and email, both names in the signature
+      const fullOf = (k) => ((window.teamDir || []).find(x => x.key === k) || {}).name || OWNER_FULL[k] || '';
       const m = (window.teamDir || []).find(x => x.key === signer) || {};
       const full = m.name || OWNER_FULL[signer] || '';
       return {
@@ -5410,7 +5413,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         campaign: { sector: camp?.sector || '' },
         contact: { firstName: c?._person ? String(c._person.name || '').split(' ')[0] : '' },
         ...teamContext(window.teamDir || [], signer || null),
-        sender: { firstName: full.split(' ')[0] || '', fullName: full, name: full, phone: m.contactPhone || '', email: m.contactEmail || '', bookingLink: m.bookingLink || '', signature: full ? `${full}\nDouro Partners` : 'Douro Partners' },
+        sender: { firstName: full.split(' ')[0] || '', fullName: full, name: full, phone: m.contactPhone || '', email: m.contactEmail || '', bookingLink: m.bookingLink || '', signature: both ? `${fullOf('andre')} & ${fullOf('antonio')}\nDouro Partners` : full ? `${full}\nDouro Partners` : 'Douro Partners' },
         unsubscribeUrl: '',
       };
     }
@@ -5465,26 +5468,40 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         return planLetter(document, layoutCfg(letterWindowSetting()), Lt.subject ? 'Assunto: ' + Lt.subject : '', texts, keepFlags(blocks, withSig)).pages.length;
       } catch (e) { return 1; }
     }
+    // 29 Oct: the lines that show in the envelope window: the company (or person) and address from the record,
+    // with "Ao cuidado de …" under the name. A letter can have its own (letterText.address, one line per line).
+    function letterAddressDefault(t, c) {
+      const lines = c._person ? [c._person.name, c._person.org, ...c._person.address.split(/\n+/)].filter(Boolean) : [c.name || t.companyName || '', c.hqAddress || '', [c.postcode, c.concelho].filter(Boolean).join(' ')].filter(Boolean);
+      const of = c._person ? '' : coCtx(c, signerFor(t, c)).owner.of;
+      return of ? [lines[0], `Ao cuidado ${of}`, ...lines.slice(1)] : lines;
+    }
+    const letterAddressOf = (t, c) => t.letterText?.address ? t.letterText.address.split('\n').filter(Boolean) : letterAddressDefault(t, c);
     function openLetterEditor(t) {
       if (!t) return;
       const c = taskCo(t), Lt = letterTextOf(t, c);
       if (!Lt) { toast('This step has no letter template.'); return; }
-      const signer = signerFor(t, c);
+      const signer = signerFor(t, c), addrDefault = letterAddressDefault(t, c).join('\n');
       openModal(`Letter — ${t.companyName || c.name || ''}`, `
         <p class="hint">${Lt.edited ? 'This letter has its own text, saved for this letter only.' : 'The template filled in for this company. Edit anything: the change applies to this letter only.'} ${(() => { const np = letterPageCount(Lt, c, t); return np > 1 ? `<b>It runs to ${np} pages</b> (paragraphs are never split; shorten the intro to fit one).` : 'It fits one page.'; })()}${Lt.missing.length ? ` <b>Fill in: ${esc(Lt.missing.join(', '))}</b> — shown as [name] below.` : ''}</p>
         <div class="field"><label for="lSubj">Subject (Assunto)</label><input type="text" id="lSubj" value="${esc(Lt.subject)}" maxlength="300"></div>
         <div class="field"><label for="lBody">Letter</label><textarea id="lBody" rows="22" style="font-family:inherit;">${esc(Lt.body)}</textarea></div>
-        <p class="hint">The date, the address, the signature (${esc(OWNER_LABEL[signer] || signer)}) and the legal line are added when printing.</p>
+        <div class="field"><label for="lAddr">Envelope (what shows in the window)</label><textarea id="lAddr" rows="5" style="font-family:inherit;">${esc(t.letterText?.address || addrDefault)}</textarea>
+          <span class="hint">One line per line: name, "Ao cuidado de …", street, postcode and city. Change anything that is wrong or awkward; it applies to this letter only. <button type="button" class="btn btn--ghost btn--sm" id="lAddrReset">Back to the record's address</button></span></div>
+        <p class="hint">The date and the signature (${esc(signer === 'both' ? 'André & António' : OWNER_LABEL[signer] || signer)}) are added when printing; the envelope is the box above.</p>
         ${Lt.edited ? '<button type="button" class="btn btn--ghost btn--sm" id="lReset">Back to the template</button>' : ''}`,
         async () => {
           const subject = $('lSubj').value.trim(), body = $('lBody').value.trim();
           if (/\[(company|owner|sender|contact|team|campaign|partner)\.[\w.]+\]/.test(subject + ' ' + body)) throw new Error('Replace the [field] markers with text before saving.');
-          const r = await campCall({ action: 'updateTask', taskId: t.id, letterText: { subject, body } }, 'Letter text saved.');
+          const typed = $('lAddr').value.replace(/\r/g, '').split('\n').map(s => s.trim()).filter(Boolean).join('\n');
+          const address = typed && typed !== addrDefault ? typed : ''; // the record's address needs no copy
+          if (typed.split('\n').length > 8 || typed.length > 600) throw new Error('The envelope is too long: 8 lines at most.');
+          const r = await campCall({ action: 'updateTask', taskId: t.id, letterText: { subject, body, address } }, 'Letter text saved.');
           if (!r) return false;
-          t.letterText = { subject, body };
+          t.letterText = { subject, body, ...(address ? { address } : {}) };
           renderLetters();
           return true;
         }, 'Save');
+      $('lAddrReset')?.addEventListener('click', () => { $('lAddr').value = addrDefault; });
       $('lReset')?.addEventListener('click', async () => {
         const r = await campCall({ action: 'updateTask', taskId: t.id, letterText: null }, 'Back to the template.');
         if (r) { delete t.letterText; closeModal(); renderLetters(); }
@@ -5678,14 +5695,14 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <thead><tr><th></th><th>To</th><th>Address</th><th>Campaign</th>${list.some(t => t.pathName) ? '<th>Path</th>' : ''}<th>Step</th><th>Template</th>${LT ? '<th>Letter</th>' : ''}<th>Signed by</th><th>Due</th></tr></thead>
             <tbody>${list.length ? list.map(t => {
               const c = taskCo(t);
-              const addr = [c.hqAddress, [c.postcode, c.concelho].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+              const addr = LT && t.letterText?.address ? t.letterText.address.split('\n').join(', ') : [c.hqAddress, [c.postcode, c.concelho].filter(Boolean).join(' ')].filter(Boolean).join(', ');
               return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}${LT && info(t)?.missing?.length ? ' disabled title="A field is missing — open the letter"' : ''}></td>
                 <td>${c._person ? `${esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
                 <td style="font-size:0.8rem;">${t.campaignId ? esc(t.campaignName || '') : 'Own task'}</td>${list.some(x => x.pathName) ? `<td style="font-size:0.8rem;">${esc(t.pathName || '—')}</td>` : ''}<td style="font-size:0.8rem;">${t.campaignId ? esc(t.stepName || '') : esc(t.instructions || '')}</td>
                 <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
                 ${LT ? (() => { const i = info(t); return `<td style="white-space:nowrap;font-size:0.8rem;">${(() => { const np = i && !i.missing?.length ? letterPageCount(i, taskCo(t), t) : 1; return np > 1 ? `<span class="pill pill--test" title="This letter runs to ${np} pages">${np} pages</span> ` : ''; })()}${i?.missing?.length ? `<span class="pill pill--bad" title="${esc(i.missing.join(', '))}">missing: ${esc(i.missing[0])}${i.missing.length > 1 ? ` +${i.missing.length - 1}` : ''}</span> ` : i?.edited ? '<span class="pill pill--info">edited</span> ' : ''}<button class="btn btn--ghost btn--sm" data-leted="${esc(t.id)}">Preview / edit</button></td>`; })() : ''}
-                <td style="white-space:nowrap;"><select data-lsigner="${esc(t.id)}" style="width:auto;padding:2px 6px;font-size:0.78rem;">${ownerOpts(signerFor(t, c))}</select>${(window.teamDir || []).find(m => m.key === signerFor(t, c))?.contactPhone ? '' : ' <span class="pill pill--warn" title="Add it in Team → Contact details">no phone</span>'}</td>
+                <td style="white-space:nowrap;"><select data-lsigner="${esc(t.id)}" style="width:auto;padding:2px 6px;font-size:0.78rem;">${ownerOpts(signerFor(t, c))}${LT ? `<option value="both"${signerFor(t, c) === 'both' ? ' selected' : ''}>André &amp; António</option>` : ''}</select>${(window.teamDir || []).find(m => m.key === (signerFor(t, c) === 'both' ? 'andre' : signerFor(t, c)))?.contactPhone ? '' : ' <span class="pill pill--warn" title="Add it in Team → Contact details">no phone</span>'}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
             }).join('') : '<tr><td colspan="8" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
           </table></div>
@@ -5694,7 +5711,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const sync = () => { $('letPrint').disabled = $('letPosted').disabled = !letterSel.size; $('letPrint').textContent = `Print selected (${num(letterSel.size)})`; };
       $('lettersView').querySelectorAll('[data-let]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) letterSel.add(cb.dataset.let); else letterSel.delete(cb.dataset.let); sync(); }));
       $('lettersView').querySelectorAll('[data-lsigner]').forEach(s => s.addEventListener('change', async () => {
-        const r = await campCall({ action: 'updateTask', taskId: s.dataset.lsigner, signer: s.value || null }, `Signed by ${OWNER_LABEL[s.value] || s.value}.`);
+        const r = await campCall({ action: 'updateTask', taskId: s.dataset.lsigner, signer: s.value || null }, `Signed by ${s.value === 'both' ? 'André & António' : OWNER_LABEL[s.value] || s.value}.`);
         if (r) { const t = tasks.find(x => x.id === s.dataset.lsigner); if (t) t.signer = s.value; renderLetters(); }
       }));
       $('lettersView').querySelectorAll('[data-leted]').forEach(b => b.addEventListener('click', () => openLetterEditor(list.find(x => x.id === b.dataset.leted))));
@@ -5733,7 +5750,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         if (LT) { // paragraphs go onto pages in the print window (buildLetters): never split inside a paragraph, real margins, continuation pages
           const blocks = parseBlocks(txt.body), withSig = !txt.signs;
           return `<div class="letter" data-name="${esc(c._person ? c._person.name : emailNameOf(c) || c.name || t.companyName || '')}" data-keep="${JSON.stringify(keepFlags(blocks, withSig))}">
-            <div class="first"><img class="logo" src="${esc(letterLogoUrl())}" alt=""><div class="addr">${(careOf ? [addrLines[0], careOf, ...addrLines.slice(1)] : addrLines).map(esc).join('<br>')}</div><p class="date">${esc(date)}</p></div>
+            <div class="first"><img class="logo" src="${esc(letterLogoUrl())}" alt=""><div class="addr">${letterAddressOf(t, c).map(esc).join('<br>')}</div><p class="date">${esc(date)}</p></div>
             ${txt.subject ? `<p class="subj"><b>Assunto:</b> ${esc(txt.subject)}</p>` : ''}
             <div class="src">${blocks.map(b => `<p class="blk">${esc(b.text)}</p>`).join('')}${withSig ? `<p class="blk sig">${esc(ctx.sender.signature)}</p>` : ''}</div>
           </div>`;

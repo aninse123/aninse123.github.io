@@ -21,7 +21,7 @@
 //   skipDraft   { messageId }                        drop the draft, redraft next working day
 //   completeTask { taskId, outcome, notes?, stopSequence?, profileUrl?, reopenAt? }
 //                                                    a manual step's result (Phase 2b)
-//   updateTask  { taskId, assignee?, dueAt?, notes?, letterText? } reassign / reschedule an open task; letterText = this letter's own text
+//   updateTask  { taskId, assignee?, dueAt?, notes?, letterText? } reassign / reschedule an open task; letterText = this letter's own text {subject, body, address?}
 //   setDoNotContact { companyId, on, reason? }       stops every campaign for the company
 //   emailName   { companyId, op: "use"|"set"|"keep", name? }  fix or confirm the name used in emails (26 Oct)
 //   pathsPreview { campaignId, paths?, steps? }      "Check who goes where": companies per path (27 Oct)
@@ -1141,7 +1141,9 @@ async function updateTask({ taskId, assignee, signer, dueAt, notes, letterText }
   }
   // T4: who signs this letter / script (null = the campaign's choice).
   if (signer !== undefined) {
-    const known = signer === null || (/^[a-z][a-z0-9-]{1,19}$/.test(String(signer)) && (["andre", "antonio"].includes(signer) || (await db().doc(`teamDirectory/${signer}`).get()).exists));
+    // 29 Oct: "both" (André & António) signs a letter, never a call script.
+    if (signer === "both" && snap.data().channel !== "letter") fail("invalid-argument", "bad_signer", "Only a letter can be signed by both.");
+    const known = signer === null || signer === "both" || (/^[a-z][a-z0-9-]{1,19}$/.test(String(signer)) && (["andre", "antonio"].includes(signer) || (await db().doc(`teamDirectory/${signer}`).get()).exists));
     if (!known) fail("invalid-argument", "bad_signer", "Choose someone on the team.");
     upd.signer = signer;
   }
@@ -1160,7 +1162,10 @@ async function updateTask({ taskId, assignee, signer, dueAt, notes, letterText }
       const subject = String(letterText?.subject ?? "").trim(), body = String(letterText?.body ?? "").trim();
       if (!body) fail("invalid-argument", "empty_letter", "The letter text can't be empty.");
       if (subject.length > 300 || body.length > 20000) fail("invalid-argument", "letter_too_long", "That letter is too long.");
-      upd.letterText = { subject, body, editedBy: caller, editedAt: FieldValue.serverTimestamp() };
+      // the envelope (what shows in the window), one line per line; none = the company record's address
+      const address = String(letterText?.address ?? "").replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
+      if (address.length > 8 || address.join("\n").length > 600) fail("invalid-argument", "address_too_long", "That address is too long.");
+      upd.letterText = { subject, body, ...(address.length ? { address: address.join("\n") } : {}), editedBy: caller, editedAt: FieldValue.serverTimestamp() };
     }
   }
   await ref.update(upd);
@@ -1373,7 +1378,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
     || (data.action === "save" && data.campaign?.startOrder && data.campaign.startOrder.mode !== "added")) await Feat.requireFeature(request, "outreach.paths"); // + who starts first (R10)
   if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
   if (data.action === "save" && Array.isArray(data.campaign?.cc) && data.campaign.cc.length) await Feat.requireFeature(request, "outreach.campaignCc"); // 28 Oct
-  if (data.action === "updateTask" && data.letterText !== undefined) await Feat.requireFeature(request, "outreach.letterTools"); // 29 Oct: a letter's own text
+  if (data.action === "updateTask" && (data.letterText !== undefined || data.signer === "both")) await Feat.requireFeature(request, "outreach.letterTools"); // 29 Oct: a letter's own text and envelope, signed by both
   if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
     let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
