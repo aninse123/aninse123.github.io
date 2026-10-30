@@ -29,7 +29,20 @@ function trustOf(entry) {
   return e.type === "email" && e.toolStatus === "verified" ? "tool" : "unverified";
 }
 
+// The general address of a company (searchCompanies.companyEmail), 30 Oct: it comes from the registry / Orbis
+// (tool-verified), a person can confirm it (companyEmailConfirmedAt, for that address) and a hard bounce is
+// recorded on the company (companyEmailBounce, for that address). Both facts belong to ONE address: change the
+// address and they no longer apply.
+const lc = (s) => String(s || "").trim().toLowerCase();
+function companyEmailEntry(c) {
+  const e = lc(c && c.companyEmail);
+  const bounced = !!(c && c.companyEmailBounce && lc(c.companyEmailBounce.email) === e);
+  const confirmed = !!(c && c.companyEmailConfirmedAt && lc(c.companyEmailConfirmedFor) === e);
+  return { origin: "database", type: "email", status: bounced ? "bounced" : "ok", confirmedAt: confirmed ? c.companyEmailConfirmedAt : null, confirmedBy: confirmed ? c.companyEmailConfirmedBy || null : null };
+}
+const companyEmailTrust = (c) => trustOf(companyEmailEntry(c));
+
 // Usable for sending: confirmed and tool-verified by default; not verified only when the campaign allows it.
 const usable = (key, includeUnverified = false) => key === "confirmed" || key === "tool" || (key === "unverified" && !!includeUnverified);
 
-module.exports = { STATUS, trustOf, usable };
+module.exports = { STATUS, trustOf, usable, companyEmailEntry, companyEmailTrust };

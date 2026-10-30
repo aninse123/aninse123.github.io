@@ -171,6 +171,7 @@ async function handleDeliveryEvent(type, data) {
     await store.addSuppression(recipient, { reason: "hard_bounce", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });
     await store.setCompanyOutreachStatus(companyId, "bounced", isTest);
+    await store.markCompanyEmailBounced(companyId, recipient, "hard bounce", isTest);
     await stopFor(companyId, thread, "Email bounced");
     await markPeopleBounced(recipient, isTest, "bounced");
   } else if (type === "email.complained") {
@@ -181,6 +182,7 @@ async function handleDeliveryEvent(type, data) {
   } else if (type === "email.suppressed") {
     await store.addSuppression(recipient, { reason: "provider_suppressed", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });
+    await store.markCompanyEmailBounced(companyId, recipient, "blocked by the provider", isTest);
     await markPeopleBounced(recipient, isTest, "blocked by the provider");
     await stopFor(companyId, thread, "Email suppressed by the provider");
   }

@@ -1371,7 +1371,7 @@ import { nameIssues, nameCheckOf } from './email-name-check.js'; // 26 Oct (sear
 import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-ui.js';
 import { summaryOf as contactSummaryOf, contactedHtml, flagsHtml, tipHtml as contactTipHtml, CT_CSS } from './contact-summary.js'; // 27 Oct (search.contactColumns)
 document.head.insertAdjacentHTML('beforeend', `<style>${CT_CSS}</style>`);
-import { trustOf, trustTitle, trustPillHtml, TRUST_CSS } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
+import { trustOf, trustTitle, trustPillHtml, TRUST_CSS, companyEmailTrust, companyEmailTitle } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
 document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
 import { stepsFor } from './campaign-paths.js'; // 27 Oct (outreach.paths)
 import { applyDirectory } from './team-dir.js';
@@ -3831,8 +3831,26 @@ async function fillMunHoliday(c){
     el.innerHTML = `${esc(d)} (${esc(M.munName(k))})${next === today ? ' <span class="badge badge-warn">today: campaign emails wait a day</span>' : ''}`;
   } catch(e){ console.error(e); }
 }
+// 30 Oct (contacts.trustLabels): the status of the company's general address: tool-verified (registry / Orbis),
+// confirmed by a person, or bounced (an email to exactly that address hard-bounced). Bounced replaces the others.
+let ovCompany = null; // the company the Overview shows, for the Confirm button next to its email
+const dayOfTs = (v) => { const d = tsToDate(v) || (v ? new Date(v) : null); return d && !isNaN(d) ? reachDay(d.toISOString()) : ''; };
+function companyEmailStatusHtml(c){
+  if (!isOn('contacts.trustLabels') || !c?.companyEmail) return '';
+  const k = companyEmailTrust(c), mine = !!c.companyEmailConfirmedAt && String(c.companyEmailConfirmedFor || '').trim().toLowerCase() === String(c.companyEmail).trim().toLowerCase();
+  return ` ${trustPillHtml(k, companyEmailTitle(c, dayOfTs), esc)}${k !== 'bounced' && canEditCompany(c) ? ` <button class="btn btn--ghost btn--sm" id="ovEmailConfirm"${mine ? ' data-undo="1"' : ''} title="${mine ? 'Take back your confirmation' : 'You have checked it: mark as Confirmed'}">${mine ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}`;
+}
+document.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('#ovEmailConfirm'); if (!b || !ovCompany) return;
+  const c = ovCompany, undo = !!b.dataset.undo; b.disabled = true;
+  const patch = undo ? { companyEmailConfirmedAt: null, companyEmailConfirmedBy: null, companyEmailConfirmedFor: null }
+    : { companyEmailConfirmedAt: new Date().toISOString(), companyEmailConfirmedBy: currentUser, companyEmailConfirmedFor: String(c.companyEmail).trim().toLowerCase() };
+  try { await updateDoc(doc(db, 'searchCompanies', c.id), patch); Object.assign(c, patch); renderOverview(c); }
+  catch (err) { alert('Error: ' + err.message); b.disabled = false; }
+});
 function renderOverview(c){
   fillMunHoliday(c);
+  ovCompany = c;
   if (isOn('search.sameEmail')) fillOverviewSameEmail(c);
   const regions = (c.regions||[]).map(r=>REGION_LABELS[r]||r).join(', ') || '—';
   // Reused for the "Based on Orbis financial data" caption below -- fitBreakdown(c)
@@ -3886,7 +3904,7 @@ function renderOverview(c){
         <div class="info-row"><span class="k">Multinational</span><span class="v">${c.isMultinational?'Yes — '+esc((c.countries||[]).join(', ')):'No'}</span></div>
         <div class="info-row"><span class="k">Website</span><span class="v">${c.website?`<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">${esc(c.website)}</a>`:'—'}</span></div>
         <div class="info-row"><span class="k">LinkedIn</span><span class="v">${c.linkedinUrl?`<a href="${esc(extUrl(c.linkedinUrl))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Profile</a>`:'—'}</span></div>
-        <div class="info-row"><span class="k">Email</span><span class="v">${esc(c.companyEmail||'—')}<span id="ovSameEmail" data-feature="search.sameEmail"></span></span></div>
+        <div class="info-row"><span class="k">Email</span><span class="v">${esc(c.companyEmail||'—')}${companyEmailStatusHtml(c)}<span id="ovSameEmail" data-feature="search.sameEmail"></span></span></div>
         <div class="info-row"><span class="k">Phone</span><span class="v">${esc(c.companyPhone||'—')}</span></div>
       </div>
     </div>

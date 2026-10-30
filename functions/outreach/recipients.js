@@ -145,7 +145,7 @@ async function companyRecipients(companyId, company, { usePeople = false, trust 
     const t = T ? given || "confirmed" : null;
     out.push({ ...rest, email, personal: isFreeMail(domainOf(email)), ...(T ? { trust: t, ...(Trust.usable(t, T.includeUnverified) ? {} : { blocked: true }) } : {}) });
   };
-  if (company?.companyEmail) add({ kind: "company", email: company.companyEmail, name: "", role: "Company address", rank: 0, trust: "tool" }); // from the registry / Orbis
+  if (company?.companyEmail) add({ kind: "company", email: company.companyEmail, name: "", role: "Company address", rank: 0, trust: Trust.companyEmailTrust(company) }); // registry / Orbis = tool-verified; confirmed or bounced when that address was
   // Typed contacts come after the People ranking (primary contact first), before the company address.
   (company?.contacts || []).forEach((ct) => add({ kind: "contact", email: ct.email, name: ct.name || "", role: ct.role || "", isPrimary: !!ct.isPrimary, rank: ct.isPrimary ? 20 : 10, trust: Trust.trustOf({ origin: ct.origin || "team", type: "email", status: ct.status, confirmedAt: ct.confirmedAt }) }));
   if (companyId) {

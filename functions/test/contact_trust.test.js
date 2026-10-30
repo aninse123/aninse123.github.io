@@ -63,6 +63,22 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   const none = await companyRecipients("co1", noContacts, { usePeople: true, trust: { on: true } });
   ok("no usable person address: Send to best person falls back to the company address", pickByPolicy(none, "best_person").email === "geral@empresa.pt");
 
+  // ── The company's general address (30 Oct) ──
+  const gen = { companyEmail: "Geral@Empresa.pt" };
+  ok("general address: from the registry / Orbis = tool-verified", T.companyEmailTrust(gen) === "tool");
+  ok("general address: confirmed by a person for THAT address = confirmed (any capitals)", T.companyEmailTrust({ ...gen, companyEmailConfirmedAt: "2026-10-30T10:00:00Z", companyEmailConfirmedFor: "geral@empresa.pt", companyEmailConfirmedBy: "andre.rocha@douropartners.pt" }) === "confirmed");
+  ok("general address: a bounce recorded for that address = bounced, and it replaces a confirmation", T.companyEmailTrust({ ...gen, companyEmailBounce: { email: "geral@empresa.pt" } }) === "bounced" && T.companyEmailTrust({ ...gen, companyEmailConfirmedAt: "x", companyEmailConfirmedFor: "geral@empresa.pt", companyEmailBounce: { email: "geral@empresa.pt" } }) === "bounced");
+  ok("general address: when the address is changed, the old confirmation and the old bounce no longer apply", T.companyEmailTrust({ companyEmail: "novo@empresa.pt", companyEmailConfirmedAt: "x", companyEmailConfirmedFor: "geral@empresa.pt", companyEmailBounce: { email: "geral@empresa.pt" } }) === "tool");
+  const bouncedCo = { name: "B, LDA", companyEmail: "geral@b.pt", companyEmailBounce: { email: "geral@b.pt" }, contacts: [] };
+  store.set("searchCompanies/cb", bouncedCo);
+  const rb = await companyRecipients("cb", bouncedCo, { usePeople: true, trust: { on: true, includeUnverified: true } });
+  ok("recipients: a bounced general address is Bounced and blocked, even when the campaign allows not-verified ones", rb.find((r) => r.email === "geral@b.pt").trust === "bounced" && rb.find((r) => r.email === "geral@b.pt").blocked === true && pickByPolicy(rb, "company") === null);
+  const Store = require("../outreach/store.js");
+  store.set("searchCompanies/cm", { name: "M, LDA", companyEmail: "geral@m.pt" });
+  ok("a bounce of the company address is recorded on the company, for that address", (await Store.markCompanyEmailBounced("cm", "GERAL@m.pt", "hard bounce", false)) === true && store.get("searchCompanies/cm").companyEmailBounce.email === "geral@m.pt" && store.get("searchCompanies/cm").companyEmailBounce.reason === "hard bounce");
+  store.set("searchCompanies/cn", { name: "N, LDA", companyEmail: "geral@n.pt" });
+  ok("a bounce of another address (a person's) leaves the company alone; so do test sends and a missing company", (await Store.markCompanyEmailBounced("cn", "ana@n.pt", "hard bounce", false)) === false && (await Store.markCompanyEmailBounced("cn", "geral@n.pt", "x", true)) === false && (await Store.markCompanyEmailBounced("nada", "a@b.pt", "x", false)) === false && store.get("searchCompanies/cn").companyEmailBounce === undefined);
+
   // ── The campaign option is saved ──
   const { normalizeCampaign } = require("../outreach/campaign_util.js");
   const n1 = normalizeCampaign ? normalizeCampaign({ name: "X", useUnverified: true, steps: [] }, null) : null;

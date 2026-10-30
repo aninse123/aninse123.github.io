@@ -181,6 +181,20 @@ async function setCompanyOutreachStatus(companyId, status, isTest) {
   await db().doc(`searchCompanies/${companyId}`).update({ outreachStatus: status, updatedAt: FieldValue.serverTimestamp() }).catch(() => {});
 }
 
+// 30 Oct (switch contacts.trustLabels shows it): a hard bounce on the company's own general address is recorded on
+// the company, for that address (suppression says "this address", the company status only says "a bounce happened").
+async function markCompanyEmailBounced(companyId, email, reason, isTest) {
+  if (!companyId || isTest) return false;
+  try {
+    const ref = db().doc(`searchCompanies/${companyId}`);
+    const snap = await ref.get();
+    const e = normEmail(email);
+    if (!snap.exists || !e || normEmail(snap.data().companyEmail) !== e) return false;
+    await ref.update({ companyEmailBounce: { email: e, at: FieldValue.serverTimestamp(), reason: String(reason || "bounced").slice(0, 120) } });
+    return true;
+  } catch (err) { return false; }
+}
+
 // Phase 5: a send to a person is logged where that person lives (spec §5):
 // Investor CRM → crmActivities, Network → networkActivities, portal investor
 // → activityLog. Test sends are never logged on real records.
@@ -231,5 +245,5 @@ module.exports = {
   logPersonSend, logPersonTask,
   db, FieldValue, Timestamp,
   getSettings, recordQuota, getTodayUsage, getTodayDaily, senderKey, bumpDaily,
-  findSuppression, addSuppression, writeActivity, touchCompany, setCompanyOutreachStatus,
+  findSuppression, addSuppression, writeActivity, touchCompany, setCompanyOutreachStatus, markCompanyEmailBounced,
 };

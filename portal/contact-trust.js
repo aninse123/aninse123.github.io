@@ -24,6 +24,26 @@ export function trustOf(entry) {
   return e.type === 'email' && e.toolStatus === 'verified' ? 'tool' : 'unverified';
 }
 
+// The general address of a company (searchCompanies.companyEmail), 30 Oct: from the registry / Orbis (tool-verified),
+// confirmed by a person (companyEmailConfirmedAt, for that address), bounced when that address hard-bounced
+// (companyEmailBounce). Both facts belong to ONE address: change the address and they no longer apply.
+const lc = (s) => String(s || '').trim().toLowerCase();
+export function companyEmailEntry(c) {
+  const e = lc(c && c.companyEmail);
+  const bounced = !!(c && c.companyEmailBounce && lc(c.companyEmailBounce.email) === e);
+  const confirmed = !!(c && c.companyEmailConfirmedAt && lc(c.companyEmailConfirmedFor) === e);
+  return { origin: 'database', type: 'email', status: bounced ? 'bounced' : 'ok', confirmedAt: confirmed ? c.companyEmailConfirmedAt : null, confirmedBy: confirmed ? c.companyEmailConfirmedBy || null : null };
+}
+export const companyEmailTrust = (c) => trustOf(companyEmailEntry(c));
+// `day` turns a stored date (ISO text or a Firestore timestamp) into text.
+export function companyEmailTitle(c, day = (v) => String(v || '').slice(0, 10)) {
+  const e = companyEmailEntry(c), bits = ['From the registry or the Orbis database'];
+  if (e.status === 'bounced') { const b = c.companyEmailBounce || {}; bits.push('an email to it bounced' + (b.at ? ' on ' + day(b.at) : '') + (b.reason ? ' (' + b.reason + ')' : '')); }
+  if (e.confirmedAt) bits.push('confirmed by ' + String(e.confirmedBy || '').split('@')[0] + ' on ' + day(e.confirmedAt));
+  else bits.push('not confirmed by a person');
+  return bits.join(' · ');
+}
+
 // Usable for sending: confirmed and tool-verified by default; not verified only when the campaign allows it.
 export const usable = (key, includeUnverified = false) => key === 'confirmed' || key === 'tool' || (key === 'unverified' && !!includeUnverified);
 
