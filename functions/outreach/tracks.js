@@ -147,7 +147,8 @@ async function restartCompany({ enrolmentId, includeReplier = false }, caller, n
     if (replier && !includeReplier) { skipped.push({ id: d.id, reason: "replier" }); continue; }
     if (s.recipient?.email && await store.findSuppression(s.recipient.email)) { skipped.push({ id: d.id, reason: "suppressed" }); continue; }
     const due = addWait(now, { days: 1, unit: "working" }, sendingDaysOf(camp, settings), true, null);
-    await d.ref.update({ status: "active", currentStep: s.resumeStep || 0, nextActionAt: ts(due), stopReason: null, endedAt: null, lockUntil: null,
+    // a reply from before this feature has no resumeStep: the step it was on is still there
+    await d.ref.update({ status: "active", currentStep: s.resumeStep ?? s.currentStep ?? 0, nextActionAt: ts(due), stopReason: null, endedAt: null, lockUntil: null,
       restartedAt: FieldValue.serverTimestamp(), restartedBy: caller, resumeStep: FieldValue.delete(), resumeStatus: FieldValue.delete() });
     if (!(camp.isTest)) await db().doc(`searchCompanies/${e0.companyId}`).update({ activeCampaignId: e0.campaignId, activeCampaignName: camp.name || "", activeEnrolmentId: rootOf(d.id, s) });
     restarted.push(d.id);

@@ -82,6 +82,13 @@ function seed() {
   store.set("searchCompanies/co1", { ...store.get("searchCompanies/co1"), doNotContact: { on: true } });
   ok("a company marked do not contact cannot be restarted", (await Tracks.restartCompany({ enrolmentId: "en1", includeReplier: true }, "andre")).skipped[0].reason === "do_not_contact");
 
+  // A company that replied before this feature (no resumeStep) comes back at the step it was on, not at email 1
+  store.set("outreachEnrolments/en1", { ...en("en1"), status: "replied", currentStep: 1 });
+  store.set("searchCompanies/co1", { ...store.get("searchCompanies/co1"), doNotContact: null });
+  const old = store.get("outreachEnrolments/en1"); delete old.resumeStep; store.set("outreachEnrolments/en1", old);
+  await Tracks.restartCompany({ enrolmentId: "en1", includeReplier: true }, "andre", new Date("2026-11-03T10:00:00Z"));
+  ok("an older reply with no remembered step restarts at the step it was on", en("en1").status === "active" && en("en1").currentStep === 1);
+
   // ── The tracks list for the company page ──
   const tl = await Tracks.tracksFor("en1__t1");
   ok("the list shows each conversation with its status", tl.root === "en1" && tl.tracks.length === 2 && tl.tracks.find((x) => x.id === "en1").status === "replied" && tl.tracks.find((x) => x.id === "en1").canRestart === true);
