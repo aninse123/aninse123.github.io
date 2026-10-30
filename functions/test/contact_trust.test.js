@@ -79,6 +79,19 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   store.set("searchCompanies/cn", { name: "N, LDA", companyEmail: "geral@n.pt" });
   ok("a bounce of another address (a person's) leaves the company alone; so do test sends and a missing company", (await Store.markCompanyEmailBounced("cn", "ana@n.pt", "hard bounce", false)) === false && (await Store.markCompanyEmailBounced("cn", "geral@n.pt", "x", true)) === false && (await Store.markCompanyEmailBounced("nada", "a@b.pt", "x", false)) === false && store.get("searchCompanies/cn").companyEmailBounce === undefined);
 
+  // ── Several general addresses on a company ──
+  const multi = { name: "M2, LDA", companyEmail: "geral@m2.pt", companyEmailBounce: { email: "geral@m2.pt" }, contacts: [], reach: [
+    { id: "g1", type: "email", value: "info@m2.pt", note: "orders", status: "ok", origin: "enrichment", toolStatus: "verified" },
+    { id: "g2", type: "email", value: "old@m2.pt", status: "bounced", origin: "team" },
+    { id: "g3", type: "email", value: "guess@m2.pt", status: "ok", origin: "enrichment", toolStatus: "unconfirmed" },
+    { id: "g4", type: "phone", value: "+351 220 000 000", status: "ok", origin: "team" }] };
+  store.set("searchCompanies/m2", multi);
+  const m2 = await companyRecipients("m2", multi, { usePeople: true, trust: { on: true } });
+  ok("company reach: the other general addresses are offered in order, with their status; a bounced entry and a phone are not", m2.filter((r) => r.kind === "company").map((r) => r.email).join() === "geral@m2.pt,info@m2.pt,guess@m2.pt" && m2.find((r) => r.email === "info@m2.pt").trust === "tool" && m2.find((r) => r.email === "guess@m2.pt").blocked === true && !m2.some((r) => r.email === "old@m2.pt"));
+  ok("company reach: when the registry address bounced, Send to company uses the next usable one", pickByPolicy(m2, "company").email === "info@m2.pt" && pickByPolicy(m2, "best_person").email === "info@m2.pt");
+  const m2off = await companyRecipients("m2", multi, { usePeople: true });
+  ok("company reach, switch off: exactly as before (the registry address only)", m2off.filter((r) => r.kind === "company").map((r) => r.email).join() === "geral@m2.pt");
+
   // ── A reply confirms the address it came from (d3) ──
   const RC = require("../outreach/reply_confirm.js");
   store.set("searchCompanies/cr", { name: "R, LDA", companyEmail: "geral@r.pt", contacts: [] });

@@ -3834,6 +3834,8 @@ async function fillMunHoliday(c){
 // 30 Oct (contacts.trustLabels): the status of the company's general address: tool-verified (registry / Orbis),
 // confirmed by a person, or bounced (an email to exactly that address hard-bounced). Bounced replaces the others.
 let ovCompany = null; // the company the Overview shows, for the Confirm button next to its email
+const ovMoreHtml = (c, t) => { const n = isOn('contacts.trustLabels') ? (c?.reach || []).filter(e => e && e.type === t).length : 0; return n ? ` <button class="link" data-ovmore="1" title="See them in Contacts" style="font-size:0.78rem;">+${n} more</button>` : ''; };
+document.addEventListener('click', (ev) => { if (ev.target.closest('[data-ovmore]')) { setActiveTab('contacts'); renderContacts(ovCompany || getCompany()); } });
 const dayOfTs = (v) => { const d = tsToDate(v) || (v ? new Date(v) : null); return d && !isNaN(d) ? reachDay(d.toISOString()) : ''; };
 function companyEmailStatusHtml(c){
   if (!isOn('contacts.trustLabels') || !c?.companyEmail) return '';
@@ -3902,10 +3904,10 @@ function renderOverview(c){
         <div class="info-row"><span class="k">NUTS III</span><span class="v">${esc(c.nuts3||'—')}</span></div>
         <div class="info-row"><span class="k">Regions</span><span class="v">${esc(regions)}</span></div>
         <div class="info-row"><span class="k">Multinational</span><span class="v">${c.isMultinational?'Yes — '+esc((c.countries||[]).join(', ')):'No'}</span></div>
-        <div class="info-row"><span class="k">Website</span><span class="v">${c.website?`<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">${esc(c.website)}</a>`:'—'}</span></div>
-        <div class="info-row"><span class="k">LinkedIn</span><span class="v">${c.linkedinUrl?`<a href="${esc(extUrl(c.linkedinUrl))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Profile</a>`:'—'}</span></div>
-        <div class="info-row"><span class="k">Email</span><span class="v">${esc(c.companyEmail||'—')}${companyEmailStatusHtml(c)}<span id="ovSameEmail" data-feature="search.sameEmail"></span></span></div>
-        <div class="info-row"><span class="k">Phone</span><span class="v">${esc(c.companyPhone||'—')}</span></div>
+        <div class="info-row"><span class="k">Website</span><span class="v">${c.website?`<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">${esc(c.website)}</a>`:'—'}${ovMoreHtml(c, 'website')}</span></div>
+        <div class="info-row"><span class="k">LinkedIn</span><span class="v">${c.linkedinUrl?`<a href="${esc(extUrl(c.linkedinUrl))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Profile</a>`:'—'}${ovMoreHtml(c, 'linkedin')}</span></div>
+        <div class="info-row"><span class="k">Email</span><span class="v">${esc(c.companyEmail||'—')}${companyEmailStatusHtml(c)}${ovMoreHtml(c, 'email')}<span id="ovSameEmail" data-feature="search.sameEmail"></span></span></div>
+        <div class="info-row"><span class="k">Phone</span><span class="v">${esc(c.companyPhone||'—')}${ovMoreHtml(c, 'phone')}</span></div>
       </div>
     </div>
     ${renderOverviewFinChart(c)}
@@ -4424,6 +4426,86 @@ function renderContacts(c){
 // the person page edits the rest. Corporate shareholders stay on Ownership.
 // The old Contacts list is shown folded until the migration (Stage 5).
 let companyPeopleShowPrev = false, companyPeopleAddFor = null, companyPeopleEditId = null;
+// ── Company contact details (30 Oct, contacts.trustLabels) ─────────────────────────────────────────────
+// The company's own emails, phones, LinkedIn pages, websites and addresses, listed like a person's: each with its status,
+// Confirm, edit, delete. Its single fields (email, phone, LinkedIn, website, address) stay as the first of each kind, from the
+// registry / Orbis; more are added here (searchCompanies.reach). A bounced general address is skipped by Outreach, which
+// uses the next one. Only someone who can edit the company can change them (the access rules say so).
+let companyReachEditId = null;
+const CR_SINGLES = { email: 'companyEmail', phone: 'companyPhone', linkedin: 'linkedinUrl', website: 'website', address: 'hqAddress' };
+function companyReachCardHtml(c){
+  const canEdit = canEditCompany(c), ICON = Object.fromEntries(REACH_TYPES.map(([t, , i]) => [t, i]));
+  const own = (c.reach || []).filter(Boolean), ed = companyReachEditId ? own.find(e => e.id === companyReachEditId) : null;
+  const groups = REACH_TYPES.map(([t, label]) => {
+    const single = c[CR_SINGLES[t]], mine = own.filter(e => e.type === t);
+    if (!single && !mine.length) return '';
+    let first = '';
+    if (single) {
+      const isMail = t === 'email', k = isMail ? companyEmailTrust(c) : 'tool', conf = isMail && c.companyEmailConfirmedAt && String(c.companyEmailConfirmedFor || '').trim().toLowerCase() === String(single).trim().toLowerCase();
+      first = `<div class="contact-detail reach-row${k === 'bounced' ? ' prev' : ''}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span aria-hidden="true">${ICON[t]}</span>${reachLinkHtml(t, single, k === 'bounced' ? 'text-decoration:line-through;' : '')}
+        ${trustPillHtml(k, isMail ? companyEmailTitle(c, dayOfTs) : 'From the registry or the Orbis database', esc)} <span class="badge badge-grey" title="From the company record (edit it in the company form)">Orbis</span>
+        ${isMail && canEdit && k !== 'bounced' ? `<button class="btn btn--ghost btn--sm" data-ceconfirm="1"${conf ? ' data-undo="1"' : ''} style="margin-left:auto;">${conf ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}</div>`;
+    }
+    return `<div style="margin-bottom:8px;"><div class="contact-detail" style="font-weight:600;">${label}</div>${first}${mine.map(e => reachRowHtml(e, canEdit, '', ICON[t])).join('')}</div>`;
+  }).join('');
+  return `<div class="card" id="companyReachCard"><style>#companyReachCard [data-reachprimary], #companyReachCard .reach-row .badge-blue { display: none; }</style>
+    <div class="sec-title">Company contact details</div>
+    <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">The company's own addresses, numbers and pages. The first of each kind comes from the registry or Orbis; add more here, for example another general email to use if the first one bounces.</div>
+    ${groups || '<div class="hint" style="margin-bottom:8px;">Nothing on file yet.</div>'}
+    ${canEdit ? `<div class="reach-add" style="display:grid;gap:8px;margin-top:6px;max-width:560px;">
+      <div class="form-group" style="margin:0;max-width:240px;"><label>Type</label><select class="field" id="crType"${ed ? ' disabled' : ''}>${REACH_TYPES.map(([t, l]) => `<option value="${t}"${ed?.type === t ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="form-group" style="margin:0;"><label>${ed ? 'Change' : 'Add'}</label><input class="field" id="crValue" value="${esc(ed?.value || '')}" placeholder="info@company.pt, +351 …, linkedin.com/company/…, www.…, Rua …"></div>
+      <div class="form-group" style="margin:0;"><label>Note <span class="opt">(optional)</span></label><input class="field" id="crNote" value="${esc(ed?.note || '')}" placeholder="e.g. orders, accounting"></div>
+      <div><button class="btn btn--primary btn--sm" id="crSave">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn btn--ghost btn--sm" id="crCancel">Cancel</button>' : ''}</div>
+    </div><div class="modal-err" id="crErr"></div>` : ''}</div>`;
+}
+async function saveCompanyReach(c, list, change){
+  const extra = list.filter(e => e.type === 'email' && (e.status || 'ok') === 'ok').map(e => ({ email: e.value }));
+  const emailKeys = companyEmailKeys({ ...c, contacts: [...(c.contacts || []), ...extra] }); // the same-email index includes the new addresses
+  await updateDoc(doc(db, 'searchCompanies', c.id), { reach: list, emailKeys, updatedAt: serverTimestamp(), updatedBy: currentUser });
+  c.reach = list; c.emailKeys = emailKeys; companyReachEditId = null;
+  try { await logAuto(c.id, 'company_edited', `Company contact details: ${change}`); } catch (e) {}
+}
+function wireCompanyReach(c){
+  const card = document.getElementById('companyReachCard'); if (!card) return;
+  const redo = () => { renderCompanyPeople(c); renderOverview(c); };
+  const run = async (list, change) => { const btn = document.getElementById('crSave'); if (btn) btn.disabled = true; try { await saveCompanyReach(c, list, change); redo(); } catch (err) { const er = document.getElementById('crErr'); if (er) { er.textContent = err.message; er.style.display = 'block'; } if (btn) btn.disabled = false; } };
+  card.addEventListener('click', async (ev) => {
+    const t = ev.target.closest('[data-ceconfirm],[data-reachconfirm],[data-reachedit],[data-reachdel],#crSave,#crCancel'); if (!t) return;
+    ev.stopPropagation(); const own = (c.reach || []).slice();
+    if (t.id === 'crCancel') { companyReachEditId = null; redo(); return; }
+    if (t.dataset.ceconfirm) {
+      const undo = !!t.dataset.undo; t.disabled = true;
+      const patch = undo ? { companyEmailConfirmedAt: null, companyEmailConfirmedBy: null, companyEmailConfirmedFor: null, companyEmailConfirmedVia: null } : { companyEmailConfirmedAt: new Date().toISOString(), companyEmailConfirmedBy: currentUser, companyEmailConfirmedFor: String(c.companyEmail).trim().toLowerCase(), companyEmailConfirmedVia: null };
+      try { await updateDoc(doc(db, 'searchCompanies', c.id), { ...patch, updatedAt: serverTimestamp() }); Object.assign(c, patch); redo(); } catch (err) { alert('Error: ' + err.message); t.disabled = false; }
+      return;
+    }
+    if (t.dataset.reachedit) { companyReachEditId = t.dataset.reachedit; renderCompanyPeople(c); return; }
+    if (t.dataset.reachconfirm) { const e = own.find(x => x.id === t.dataset.reachconfirm); if (e) await run(reachUpdate(own, e.id, reachConfirmPatch(t.dataset.undo)), `${e.value} ${t.dataset.undo ? 'is no longer confirmed' : 'confirmed'}`); return; }
+    if (t.dataset.reachdel) { const e = own.find(x => x.id === t.dataset.reachdel); if (e && confirm(`Delete ${e.value}?`)) await run(own.filter(x => x.id !== e.id), `removed ${e.value}`); return; }
+    if (t.id === 'crSave') {
+      const er = document.getElementById('crErr'); er.style.display = 'none';
+      const value = document.getElementById('crValue').value.trim(), note = document.getElementById('crNote').value.trim().slice(0, 200), ed = companyReachEditId ? own.find(x => x.id === companyReachEditId) : null;
+      if (ed) {
+        if (!reachValid(ed.type, value)) { er.textContent = 'Check the value.'; er.style.display = 'block'; return; }
+        if (own.some(x => x.id !== ed.id && x.type === ed.type && reachNorm(ed.type, x.value) === reachNorm(ed.type, value))) { er.textContent = 'Already in the list.'; er.style.display = 'block'; return; }
+        if (value !== ed.value && !(await confirmEmailElsewhere(ed.type, value, null, c.id))) return;
+        await run(reachUpdate(own, ed.id, { value, note }), value === ed.value ? `note on ${value}: ${note || '(cleared)'}` : `changed ${ed.value} → ${value}`); return;
+      }
+      const type = document.getElementById('crType').value, single = c[CR_SINGLES[type]];
+      if (single && reachNorm(type, single) === reachNorm(type, value)) { er.textContent = "That is already the company's own " + type + '.'; er.style.display = 'block'; return; }
+      const r = reachAdd(own, { type, value, note, by: currentUser, at: new Date().toISOString() });
+      if (r.error) { er.textContent = r.error; er.style.display = 'block'; return; }
+      r.entry.primary = false; // for a company the single field stays first; the entries are used after it, in order
+      if (!(await confirmEmailElsewhere(type, value, null, c.id))) return;
+      await run(r.list, `added ${r.entry.value}`);
+    }
+  });
+  card.addEventListener('change', async (ev) => {
+    const sel = ev.target.closest('[data-reachstatus]'); if (!sel) return; ev.stopPropagation();
+    const own = (c.reach || []).slice(), e = own.find(x => x.id === sel.dataset.reachstatus); if (e) await run(reachUpdate(own, e.id, { status: sel.value }), `${e.value} marked ${sel.value === 'ok' ? 'OK' : sel.value}`);
+  });
+}
 async function renderCompanyPeople(c){
   const el = document.getElementById('panel-contacts');
   if (!el.querySelector('[data-people-tab]')) el.innerHTML = '<div class="card" data-people-tab><div class="hint">Loading people…</div></div>';
@@ -4490,7 +4572,7 @@ async function renderCompanyPeople(c){
     </div>`;
   };
   const old = c.contacts || [];
-  el.innerHTML = `<div class="card" data-people-tab>
+  el.innerHTML = `${isOn('contacts.trustLabels') ? companyReachCardHtml(c) : ''}<div class="card" data-people-tab>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
         <div class="sec-title" style="margin:0;">Contacts</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -4504,6 +4586,7 @@ async function renderCompanyPeople(c){
       ${old.length ? `<details style="margin-top:14px;"><summary class="hint" style="cursor:pointer;">Old Contacts list (${old.length}) — moves into People in the migration</summary>${old.map(ct => `<div class="contact-detail" style="margin-top:4px;">${esc(ct.name || '—')}${ct.role ? ' · ' + esc(ct.role) : ''}${ct.email ? ' · ✉ ' + esc(ct.email) : ''}${ct.phone ? ' · 📞 ' + esc(ct.phone) : ''}</div>`).join('')}</details>` : ''}
     </div>`;
   document.getElementById('emailCompanyBtn')?.addEventListener('click', () => openSendEmail('company'));
+  if (isOn('contacts.trustLabels')) wireCompanyReach(c);
   el.oninput = (ev) => { if (ev.target.id === 'cpAddValue') followReachType(document.getElementById('cpAddType'), ev.target.value); };
   el.onchange = async (ev) => {
     if (ev.target.id === 'cpAddType') { ev.target.dataset.touched = '1'; return; }
@@ -6502,7 +6585,7 @@ function reachAdd(list, { type, value, note = '', source = 'manual', by = '', at
 }
 // 30 Oct (contacts.trustLabels): adding an email that already belongs to someone else. The same person: ignored (reachAdd says it is
 // already in the list). Another person or a company: say who, and ask. People: searchPeople.reachEmails; companies: emailKeys.
-async function emailUsedElsewhere(email, selfPersonId){
+async function emailUsedElsewhere(email, selfPersonId, selfCompanyId){
   const e = reachNorm('email', email), out = [];
   try {
     const [pp, cc] = await Promise.all([
@@ -6511,13 +6594,13 @@ async function emailUsedElsewhere(email, selfPersonId){
     ]);
     addReads(pp.size + cc.size);
     pp.docs.filter(d => d.id !== selfPersonId).forEach(d => out.push(`${d.data().name || d.id} (a person)`));
-    cc.docs.forEach(d => { const x = d.data(); if (String(x.companyEmail || '').toLowerCase() === e || (x.contacts || []).some(k => String(k?.email || '').toLowerCase() === e)) out.push(`${x.name || d.id} (a company)`); });
+    cc.docs.filter(d => d.id !== selfCompanyId).forEach(d => { const x = d.data(); if (String(x.companyEmail || '').toLowerCase() === e || (x.contacts || []).some(k => String(k?.email || '').toLowerCase() === e) || (x.reach || []).some(k => k?.type === 'email' && String(k.value || '').toLowerCase() === e)) out.push(`${x.name || d.id} (a company)`); });
   } catch (err) { console.warn('same email check', err); }
   return out;
 }
-const confirmEmailElsewhere = async (type, value, selfPersonId) => {
+const confirmEmailElsewhere = async (type, value, selfPersonId, selfCompanyId) => {
   if (!isOn('contacts.trustLabels') || type !== 'email') return true;
-  const who = await emailUsedElsewhere(value, selfPersonId);
+  const who = await emailUsedElsewhere(value, selfPersonId, selfCompanyId);
   return !who.length || confirm(`${String(value).trim()} is already used by ${who.slice(0, 3).join(', ')}${who.length > 3 ? ' and others' : ''}.
 
 Do you still want to add it?`);

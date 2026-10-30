@@ -146,6 +146,9 @@ async function companyRecipients(companyId, company, { usePeople = false, trust 
     out.push({ ...rest, email, personal: isFreeMail(domainOf(email)), ...(T ? { trust: t, ...(Trust.usable(t, T.includeUnverified) ? {} : { blocked: true }) } : {}) });
   };
   if (company?.companyEmail) add({ kind: "company", email: company.companyEmail, name: "", role: "Company address", rank: 0, trust: Trust.companyEmailTrust(company) }); // registry / Orbis = tool-verified; confirmed or bounced when that address was
+  // 30 Oct (switch contacts.trustLabels): the company's other general addresses (searchCompanies.reach), in order, after the
+  // registry one. A bounced address is skipped (status), so Send to company / the fallback uses the next one.
+  if (T) (company?.reach || []).filter((e) => e && e.type === "email" && (e.status || "ok") === "ok").forEach((e) => add({ kind: "company", email: e.value, name: "", role: e.note ? `Company address (${e.note})` : "Company address", rank: 0, trust: Trust.trustOf(e) }));
   // Typed contacts come after the People ranking (primary contact first), before the company address.
   (company?.contacts || []).forEach((ct) => add({ kind: "contact", email: ct.email, name: ct.name || "", role: ct.role || "", isPrimary: !!ct.isPrimary, rank: ct.isPrimary ? 20 : 10, trust: Trust.trustOf({ origin: ct.origin || "team", type: "email", status: ct.status, confirmedAt: ct.confirmedAt }) }));
   if (companyId) {
