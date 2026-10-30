@@ -835,7 +835,7 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'recipient.firstName|Olá', 'recipient.role|responsável', 'recipient.ligado', 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'recipient.firstName|Olá', 'recipient.role|responsável' 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
     // 9 Oct: what each team field means (button tooltips).
     const VAR_HELP = {
       'sender.fullName': 'Full name of whoever sends (the address owner)',
@@ -849,7 +849,7 @@
       'owner.names': 'The owners\' names only: "A ou B"',
       'recipient.firstName|Olá': 'First name of the person this email goes to (empty for a general company address, so the fallback is used)',
       'recipient.role|responsável': 'Their role at the company, when we know a real one',
-      'recipient.ligado': 'ligado / ligada / ligado(a) by gender (from the owners list or the first name)',
+      'recipient.isMale': 'Gender of the person: use {{?recipient.isMale|ligado}}{{?recipient.isFemale|ligada}}{{?recipient.isUnknown|ligado(a)}} for any word that agrees with it (from the owners list, else the first name)',
       'owner.greeting|Exmos. Senhores': 'A letter-style opening: "Exma. Senhora A e Exmo. Senhor B" (all owners named, with their gender). No names → "Exmos. Senhores"',
       'company.inCity|nas vossas instalações': '"em Setúbal", "no Porto", "na Maia" — the municipality with the right word before it (validated municipalities only). Otherwise the text after |',
       'company.toCity|às vossas instalações': 'After "deslocar-nos": "a Setúbal", "ao Porto", "à Maia", "às Caldas da Rainha" (validated municipalities only). Otherwise the text after |',

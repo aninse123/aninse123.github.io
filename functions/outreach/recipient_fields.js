@@ -1,7 +1,8 @@
 // Fields for who an email goes to (30 Oct 2026, plan step 5, switch outreach.multiRecipient):
 //   {{recipient.firstName}}  the person's first name; empty for a general company address
 //   {{recipient.role}}       their role at the company, when it is a real role (not "Shareholder 60%")
-//   {{recipient.ligado}}     "ligado" / "ligada" / "ligado(a)" by the person's gender
+//   {{recipient.isMale}} / {{recipient.isFemale}} / {{recipient.isUnknown}}   "1" for the one that applies, the others empty
+//                            any word that agrees with gender: {{?recipient.isMale|ligado}}{{?recipient.isFemale|ligada}}{{?recipient.isUnknown|ligado(a)}}
 //   {{recipient.isPerson}}   "1" for a named person, empty for a general address
 //   {{recipient.isCompany}}  "1" for a general address, empty for a named person
 // With {{?recipient.isPerson| … }} and {{?recipient.isCompany| … }} one template carries both wordings.
@@ -61,8 +62,8 @@ function recipientContext({ name = "", role = "", owners = [] } = {}) {
   const g = first ? genderOf(full, owners) : "";
   return {
     firstName: first, role: first ? cleanRole(role) : "",
-    ligado: g === "M" ? "ligado" : g === "F" ? "ligada" : "ligado(a)",
-    gender: g, isPerson: first ? "1" : "", isCompany: first ? "" : "1",
+    gender: g, isMale: g === "M" ? "1" : "", isFemale: g === "F" ? "1" : "", isUnknown: first && !g ? "1" : "",
+    isPerson: first ? "1" : "", isCompany: first ? "" : "1",
   };
 }
 

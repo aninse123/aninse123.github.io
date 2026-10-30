@@ -52,8 +52,8 @@ export function recipientContext({ name = "", role = "", owners = [] } = {}) {
   const g = first ? genderOf(full, owners) : "";
   return {
     firstName: first, role: first ? cleanRole(role) : "",
-    ligado: g === "M" ? "ligado" : g === "F" ? "ligada" : "ligado(a)",
-    gender: g, isPerson: first ? "1" : "", isCompany: first ? "" : "1",
+    gender: g, isMale: g === "M" ? "1" : "", isFemale: g === "F" ? "1" : "", isUnknown: first && !g ? "1" : "",
+    isPerson: first ? "1" : "", isCompany: first ? "" : "1",
   };
 }
 
