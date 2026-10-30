@@ -46,8 +46,8 @@ function genderOfFirstName(name) {
 const fullKey = (s) => strip(s).replace(/\s+/g, " ");
 // owners: company.emailOwners = [{ name, gender: "M" | "F" | "" }]
 function genderOf(name, owners = []) {
-  const k = fullKey(name), f = fullKey(String(name || "").trim().split(/\s+/)[0]);
-  const o = (Array.isArray(owners) ? owners : []).find((x) => x && (x.gender === "M" || x.gender === "F") && (fullKey(x.name) === k || (f && fullKey(x.name).split(" ")[0] === f)));
+  const k = fullKey(name); // the full name must match: the same first name can be someone else (and some names are unisex)
+  const o = (Array.isArray(owners) ? owners : []).find((x) => x && (x.gender === "M" || x.gender === "F") && fullKey(x.name) === k);
   return o ? o.gender : genderOfFirstName(name);
 }
 

@@ -30,6 +30,7 @@ const { LIVE_ENROLMENT: LIVE_STATUSES, ELSE_PATH, pathSteps, pathsOf, choosePath
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
+const RF = require("./recipient_fields"); // who it goes to: gender of a named person (30 Oct)
 const Tracks = require("./tracks"); // several recipients per company (30 Oct, switch outreach.multiRecipient)
 const Feat = require("../features"); // kill switches (Team & access → Features)
 const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, skipHolidaysOf, skipMunicipalOf, waitOptsOf, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
@@ -209,6 +210,15 @@ async function ownerPanelOnDraft(messageRef, e, campaign, variantBody) {
 // Email name check (26 Oct, switch "search.emailNameCheck"): a draft whose
 // company's email name looks wrong carries the warning to the approval card.
 // Best effort.
+// 30 Oct (outreach.multiRecipient): the email uses the gender of a named person and we could not tell it (not in the owners list,
+// not a name we know): the draft carries a warning so the wording (e.g. "ligado(a)") is checked in To approve.
+async function genderCheckOnDraft(messageRef, e, recipient, variantBody) {
+  try {
+    if (!recipient || recipient.kind === "company" || !recipient.name || !/recipient\.is(Male|Female|Unknown)/.test(variantBody || "")) return;
+    const co = e.companyId ? (await db().doc(`searchCompanies/${e.companyId}`).get()).data() || {} : {};
+    if (RF.recipientContext({ name: recipient.name, owners: co.emailOwners }).isUnknown) await messageRef.update({ genderCheck: { name: recipient.name } });
+  } catch (err) { logger.warn("outreachScheduler: gender check", { message: err.message }); }
+}
 async function nameCheckOnDraft(messageRef, e) {
   try {
     const snap = await db().doc(`searchCompanies/${e.companyId}`).get();
@@ -596,6 +606,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         await saveDraft(p, { campaign: campaignRef });
         if (allowed(ownerState, campaign) && e.companyId) await ownerPanelOnDraft(messageRef, e, campaign, variantBody);
         if (allowed(nameState, campaign) && e.companyId) await nameCheckOnDraft(messageRef, e); // 26 Oct (search.emailNameCheck)
+        if (allowed(multiState, campaign)) await genderCheckOnDraft(messageRef, e, recipient, variantBody); // 30 Oct (outreach.multiRecipient)
         await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id, senderId, [`variants.${step.id}`]: p.variantKey, lastError: null, ...(e.holdKind ? { holdKind: null, holdReason: null } : {}) });
         report.drafts++;
         continue;
@@ -654,4 +665,5 @@ exports.outreachScheduler = onSchedule({
 
 exports.runScheduler = runScheduler;
 exports.stepMessageId = stepMessageId;
+exports.genderCheckOnDraft = genderCheckOnDraft; // 30 Oct (outreach.multiRecipient)
 exports.ownerPanelOnDraft = ownerPanelOnDraft; // 28 Oct: the admin action "refreshOwnerPanels" redoes it

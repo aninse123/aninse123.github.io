@@ -1,6 +1,8 @@
 // Fields for who an email goes to (30 Oct 2026, plan step 5): {{recipient.firstName / role / ligado / isPerson / isCompany}},
 // gender by the owners list or the first name, and one template that reads differently for a person and a general address.
+const F = require("./fake_firebase.js");
 const R = require("../outreach/recipient_fields.js");
+const { genderCheckOnDraft } = require("../outreach/scheduler.js");
 const { buildContext, renderTemplate } = require("../outreach/render.js");
 
 let fail = 0;
@@ -36,5 +38,14 @@ const W = "{{?recipient.isMale|ligado}}{{?recipient.isFemale|ligada}}{{?recipien
   ok("a person who is one of the owners takes the gender typed for them", renderTemplate(W, buildContext({ company: { ...company, emailOwners: [{ name: "Ariel Sousa", gender: "F" }] }, contactName: "Ariel Sousa" })).text === "ligada");
 ok("older templates without these fields are unaffected", renderTemplate("{{contact.firstName|Olá}}, {{company.shortName}}", forCompany).text === "Olá, Dimexa");
 
-console.log(fail ? `\n${fail} FAILED` : "\nAll passed");
-process.exit(fail ? 1 : 0);
+(async () => {
+  F.store.clear();
+  F.store.set("searchCompanies/co1", { name: "X", emailOwners: [{ name: "Ariel Sousa", gender: "F" }] });
+  const body = "por estar {{?recipient.isMale|ligado}}{{?recipient.isFemale|ligada}}{{?recipient.isUnknown|ligado(a)}}";
+  const draft = async (name, kind, text = body) => { F.store.set("outreachMessages/m", { status: "draft" }); await genderCheckOnDraft({ update: async (u) => F.store.set("outreachMessages/m", { ...F.store.get("outreachMessages/m"), ...u }) }, { companyId: "co1" }, { name, kind }, text); return F.store.get("outreachMessages/m").genderCheck; };
+  ok("a draft to a person whose gender we cannot tell is flagged", (await draft("Ariel Costa", "person"))?.name === "Ariel Costa");
+  ok("no flag when the gender is known (name list, ending, or the owners list)", !(await draft("Rita Costa", "person")) && !(await draft("Ariel Sousa", "person")));
+  ok("no flag for a general address, or when the template does not use gender", !(await draft("", "company")) && !(await draft("Ariel Costa", "person", "Bom dia, {{recipient.firstName}},")));
+  console.log(fail ? `\n${fail} FAILED` : "\nAll passed");
+  process.exit(fail ? 1 : 0);
+})();

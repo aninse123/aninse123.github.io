@@ -835,7 +835,7 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'recipient.firstName|Olá', 'recipient.role|responsável' 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'recipient.firstName|Olá', 'recipient.role|responsável', 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
     // 9 Oct: what each team field means (button tooltips).
     const VAR_HELP = {
       'sender.fullName': 'Full name of whoever sends (the address owner)',
@@ -5205,7 +5205,8 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
           ${op.lead ? `<div class="hint" style="margin-top:4px;">Suggested lead company: ${leadText(op.lead)}</div>` : ''}</div>` : '';
       const ncHtml = isOn('search.emailNameCheck') && d.nameCheck ? nameCheckLine(d.nameCheck, d.companyId, canEditCompanies()) : ''; // 26 Oct
       const mentionHtml = isOn('outreach.ownerAware') && d.checkMention && !op?.related?.length ? '<div style="margin:0 0 6px;"><span class="pill pill--warn" title="The email names the related companies chosen when this company was added ({{owner.otherCompanies}})">Check the mention of the related companies</span></div>' : '';
-      return ncHtml + mentionHtml + opHtml + `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
+      const genderHtml = isOn('outreach.multiRecipient') && d.genderCheck ? `<div style="margin:0 0 6px;"><span class="pill pill--warn" title="The wording agrees with gender (e.g. ligado / ligada) and we could not tell it from the owners list or the first name, so the neutral form is used">Check the wording: gender of ${esc(d.genderCheck.name)} not known</span></div>` : '';
+      return ncHtml + genderHtml + mentionHtml + opHtml + `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
     }
     let approveCtxLoading = false;
     // 19 Oct (one inbox): companies whose first email waits because their address
