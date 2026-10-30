@@ -43,6 +43,8 @@ const cases = [
   C('Partner: link a person to a company', PARTNER, 'create', 'searchPersonLinks/l1', 'ALLOW', { companyId: 'c1', personId: 'p1' }),
   // ── People merge, Stage 2: "search.reach" (details and contact people only) ──
   C('Reach: add an email to any person', REACH, 'update', 'searchPeople/p1', 'ALLOW', { name: 'X', reach: [{ type: 'email', value: 'x@y.pt' }], reachEmails: ['x@y.pt'], updatedBy: REACH.email }, { name: 'X' }),
+  C('Reach: set the gender of any person (30 Oct)', REACH, 'update', 'searchPeople/p1', 'ALLOW', { name: 'X', gender: 'F', genderSource: 'typed', genderBy: REACH.email, genderAt: 'x', updatedBy: REACH.email }, { name: 'X' }),
+  C('View only: cannot set a gender', { email: 'x@douropartners.pt', perms: ['search.view'], key: 'x' }, 'update', 'searchPeople/p1', 'DENY', { name: 'X', gender: 'F' }, { name: 'X' }),
   C('Reach: cannot rename a person', REACH, 'update', 'searchPeople/p1', 'DENY', { name: 'Y' }, { name: 'X' }),
   C('Reach: rename a contact added by hand (21 Oct, F6)', REACH, 'update', 'searchPeople/m_1', 'ALLOW', { name: 'Rita Sousa', nameKey: 'RITA SOUSA', source: 'manual', updatedBy: REACH.email }, { name: 'Rita', nameKey: 'RITA', source: 'manual' }),
   C('Reach: cannot rename an Orbis person', REACH, 'update', 'searchPeople/u_1', 'DENY', { name: 'Y', source: 'orbis' }, { name: 'X', source: 'orbis' }),

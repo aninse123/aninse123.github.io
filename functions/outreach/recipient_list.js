@@ -66,7 +66,7 @@ async function setRecipients({ enrolmentId, emails, all }, caller, { deps, multi
     if (r.blocked) fail("failed-precondition", "blocked_address", `${em} is not verified and this campaign does not use unverified addresses.`);
     if (r.trust === "bounced") fail("failed-precondition", "bounced_address", `${em} has bounced.`);
   }
-  const extras = (list) => list.slice(1).map((x) => ({ email: x, name: byEmail.get(x).name, kind: byEmail.get(x).kind }));
+  const extras = (list) => list.slice(1).map((x) => ({ email: x, name: byEmail.get(x).name, kind: byEmail.get(x).kind, personId: byEmail.get(x).personId || null }));
   if (cur.locked) {
     if (!all || !want.length || want[0] !== normEmail(e.recipient?.email)) fail("failed-precondition", "already_started", "The first email has already gone out; its address can no longer change.");
     const r = await Tracks.syncTracks(enrolmentId, extras(want), caller, { late: true });
@@ -75,7 +75,7 @@ async function setRecipients({ enrolmentId, emails, all }, caller, { deps, multi
   }
   if (!want.length) { await Tracks.syncTracks(enrolmentId, [], caller); await ref.update({ recipient: null, recipientList: null, recipientListBy: caller, recipientListAt: FieldValue.serverTimestamp() }); return { ok: true, list: [] }; }
   const first = byEmail.get(want[0]);
-  const recipient = { email: first.email, name: first.name || "", kind: first.kind };
+  const recipient = { email: first.email, name: first.name || "", kind: first.kind, ...(first.personId ? { personId: first.personId } : {}) };
   await ref.update({ recipient, recipientList: want, recipientListBy: caller, recipientListAt: FieldValue.serverTimestamp() });
   const r = await Tracks.syncTracks(enrolmentId, all ? extras(want) : [], caller);
   return { ok: true, list: want, recipient, ...r };

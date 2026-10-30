@@ -116,7 +116,7 @@ service cloud.firestore {
     // 20 Oct (people merge, Stage 2): "search.reach" adds and edits any
     // person's emails / phones / LinkedIn and creates contact people (source
     // "manual"); nothing else on a person.
-    function reachFields() { return ['reach', 'hiddenOrbis', 'reachEmails', 'linkCount', 'currentLinkCount', 'updatedAt', 'updatedBy']; }
+    function reachFields() { return ['reach', 'hiddenOrbis', 'reachEmails', 'linkCount', 'currentLinkCount', 'updatedAt', 'updatedBy', 'gender', 'genderSource', 'genderBy', 'genderAt']; } // 30 Oct: + gender of the person (typed by the team, or a guess), edited like the contacts
     match /searchPeople/{id} {
       allow read: if can('search.view');
       allow create: if canAny(['search.edit', 'search.editall'])

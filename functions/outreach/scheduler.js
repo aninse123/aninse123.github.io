@@ -216,7 +216,9 @@ async function genderCheckOnDraft(messageRef, e, recipient, variantBody) {
   try {
     if (!recipient || recipient.kind === "company" || !recipient.name || !/recipient\.is(Male|Female|Unknown)/.test(variantBody || "")) return;
     const co = e.companyId ? (await db().doc(`searchCompanies/${e.companyId}`).get()).data() || {} : {};
-    if (RF.recipientContext({ name: recipient.name, owners: co.emailOwners }).isUnknown) await messageRef.update({ genderCheck: { name: recipient.name } });
+    const pers = recipient.personId ? (await db().doc(`searchPeople/${recipient.personId}`).get()).data() || {} : {};
+    const stored = pers.gender === "M" || pers.gender === "F" ? { gender: pers.gender, source: pers.genderSource || "" } : null;
+    if (RF.recipientContext({ name: recipient.name, owners: co.emailOwners, stored }).isUnknown) await messageRef.update({ genderCheck: { name: recipient.name } });
   } catch (err) { logger.warn("outreachScheduler: gender check", { message: err.message }); }
 }
 async function nameCheckOnDraft(messageRef, e) {
@@ -540,7 +542,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       if (!e.personEmail && !isFollowUp && !recipient && (campaign.recipientPolicy || "company") !== "company") {
         const co = await db().doc(`searchCompanies/${e.companyId}`).get();
         const pick = co.exists ? pickByPolicy(await companyRecipients(e.companyId, co.data(), { usePeople: allowed(peopleState, campaign), trust: { on: allowed(trustState, campaign), includeUnverified: !!campaign.useUnverified } }), campaign.recipientPolicy) : null;
-        if (pick) { recipient = { email: pick.email, name: pick.name || "", kind: pick.kind }; await doc.ref.update({ recipient }); }
+        if (pick) { recipient = { email: pick.email, name: pick.name || "", kind: pick.kind, ...(pick.personId ? { personId: pick.personId } : {}) }; await doc.ref.update({ recipient }); }
       }
       // One inbox (19 Oct, switch "outreach.oneInbox"): before a company's
       // first email, its address mustn't have had an email through another

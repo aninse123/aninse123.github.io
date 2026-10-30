@@ -23,4 +23,7 @@ const search = read('../../portal/search.html');
 ok('campaign list counts companies: the extra addresses are taken off live / to approve / replied', /where\('isExtra', '==', true\)/.test(outreach) && /k = \{ live: k\.live - x\.filter/.test(outreach));
 ok('Companies tab lists the extra addresses under their company, with a summary on the first', /tracksOf\.get\(e\.id\)/.test(outreach) && /addresses<\/b>/.test(outreach) && /↳ extra address/.test(outreach));
 ok('Search CRM company page: "Also written to" under the campaign timeline, behind the switch', /renderAlsoWrittenTo\(box, eSnap\.id, e\)/.test(search) && /Also written to/.test(search) && /isOn\('outreach\.multiRecipient'\)\) await renderAlsoWrittenTo/.test(search));
+const search2 = read('../../portal/search.html');
+ok('person page: gender control, editable, saved as typed; new people get a guess', /function personGenderHtml\(p\)/.test(search2) && /id="pGender"/.test(search2) && /genderSource: 'typed'/.test(search2) && /\.\.\.genderFieldsFor\(f\.name\)/.test(search2));
+ok('rules: gender fields are editable with search.reach', read('../../firestore.rules').includes("'gender', 'genderSource', 'genderBy', 'genderAt'"));
 console.log(fail ? `\n${fail} FAILED` : '\nAll passed'); process.exit(fail ? 1 : 0);

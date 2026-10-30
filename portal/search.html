@@ -1372,6 +1372,7 @@ import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-u
 import { summaryOf as contactSummaryOf, contactedHtml, flagsHtml, tipHtml as contactTipHtml, CT_CSS } from './contact-summary.js'; // 27 Oct (search.contactColumns)
 document.head.insertAdjacentHTML('beforeend', `<style>${CT_CSS}</style>`);
 import { trustOf, trustTitle, trustPillHtml, TRUST_CSS, companyEmailTrust, companyEmailTitle } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
+import { genderOfFirstName } from './recipient-fields.js'; // 30 Oct: gender of a person, for emails that agree with it (outreach.multiRecipient)
 document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
 import { stepsFor } from './campaign-paths.js'; // 27 Oct (outreach.paths)
 import { applyDirectory } from './team-dir.js';
@@ -5785,7 +5786,7 @@ async function pmAdd(c, f, similar){
     pid = 'm_' + doc(collection(db,'searchPeople')).id;
     await setDoc(doc(db,'searchPeople', pid), {
       name: f.name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey),
-      entityType: 'person', source: 'manual', reach, reachEmails: reachEmailsOf(reach), hiddenOrbis: [], ...(f.country ? { country: f.country } : {}),
+      entityType: 'person', source: 'manual', reach, reachEmails: reachEmailsOf(reach), hiddenOrbis: [], ...(f.country ? { country: f.country } : {}), ...genderFieldsFor(f.name),
       notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: 0,
       createdAt: serverTimestamp(), createdBy: currentUser, updatedAt: serverTimestamp(), updatedBy: currentUser,
     });
@@ -5796,7 +5797,7 @@ async function pmAdd(c, f, similar){
     for (const e of reach) { const r = reachAdd(list, { type: e.type, value: e.value, by: currentUser, at: e.addedAt }); if (!r.error) list = r.list; }
     const personData = { name: f.name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), entityType: 'person', updatedAt: serverTimestamp(),
       ...(f.country ? { country: f.country } : {}), ...(reach.length ? { reach: list, reachEmails: reachEmailsOf(list) } : {}) };
-    if (!existing) Object.assign(personData, { createdAt: serverTimestamp(), linkCount: 0, currentLinkCount: 0, notes: null, uci: null, matchedCompanyId: null });
+    if (!existing) Object.assign(personData, { createdAt: serverTimestamp(), linkCount: 0, currentLinkCount: 0, notes: null, uci: null, matchedCompanyId: null, ...genderFieldsFor(f.name) });
     await setDoc(doc(db,'searchPeople', pid), personData, { merge: true });
   }
   personDocCache.delete(pid);
@@ -5854,7 +5855,7 @@ async function bulkAddPeople(rows, onProgress){
     for (const [type, val] of [['email', pp.email], ['phone', pp.phone]]) { if (!val) continue; const x = reachAdd(reach, { type, value: val, source: 'import', by: currentUser, at }); if (!x.error) reach = x.list; }
     const pid = 'm_' + doc(collection(db,'searchPeople')).id;
     const role = pp.role || (pp.manager ? 'Director' : '');
-    batch.set(doc(db,'searchPeople', pid), { name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), entityType: 'person', source: 'manual',
+    batch.set(doc(db,'searchPeople', pid), { name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), entityType: 'person', source: 'manual', ...genderFieldsFor(name),
       reach, reachEmails: reachEmailsOf(reach), hiddenOrbis: [], notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: pp.manager ? 1 : 0,
       createdAt: serverTimestamp(), createdBy: currentUser, updatedAt: serverTimestamp(), updatedBy: currentUser });
     const f = pp.manager ? { manager: true, roles: [role], mgmtCurrent: true } : { other: true, role: role || null };
@@ -6093,6 +6094,27 @@ async function renderPersonActivities(p){
   el.innerHTML = `<div class="sec-title">Activities with them</div>${acts.map(a => `<div class="contact-item"><span class="hint">${esc(fmtDate(a.date))}</span> · ${esc(ACT[a.type]?.label || a.type)} · <span class="person-link" data-gotoco="${esc(a.companyId)}">${esc(companies.find(x => x.id === a.companyId)?.name || 'Company')}</span>${a.title ? ` — ${esc(a.title)}` : ''}${a.content ? `<div class="contact-detail">${esc(String(a.content).slice(0, 200))}</div>` : ''}</div>`).join('')}`;
   el.hidden = false;
 }
+// 30 Oct (outreach.multiRecipient): the gender of a person, for emails that agree with it (ligado / ligada). Set by the team
+// (typed), else the guess from the first name (stored when the person was added, or worked out here); edited like the contacts.
+function personGenderHtml(p){
+  if (p.entityType === 'entity' || !isOn('outreach.multiRecipient')) return '';
+  const canReach = window.pageAccess ? (window.pageAccess.can('search.reach') || window.pageAccess.can('search.editall')) : true;
+  const stored = p.gender === 'M' || p.gender === 'F' ? p.gender : '';
+  const guess = stored ? '' : genderOfFirstName(p.name);
+  const g = stored || guess, how = p.genderSource === 'typed' ? 'set by the team' : g ? 'guessed from the first name' : 'not known';
+  const label = g === 'M' ? '♂ Man' : g === 'F' ? '♀ Woman' : 'Gender not known';
+  if (!canReach) return `<span class="badge ${g ? 'badge-grey' : 'badge-warn'}" title="${esc(how)}">${label}${g && p.genderSource !== 'typed' ? ' (guess)' : ''}</span>`;
+  return `<span class="badge ${g ? 'badge-grey' : 'badge-warn'}" title="Used by emails that agree with gender (ligado / ligada). ${esc(how)}.">Gender <select id="pGender" aria-label="Gender" style="border:0;background:transparent;font:inherit;"><option value=""${!g ? ' selected' : ''}>not known</option><option value="M"${g === 'M' ? ' selected' : ''}>♂ Man</option><option value="F"${g === 'F' ? ' selected' : ''}>♀ Woman</option></select>${g && p.genderSource !== 'typed' ? ' <i>(guess)</i>' : ''}</span>`;
+}
+document.addEventListener('change', async (ev) => {
+  const sel = ev.target.closest && ev.target.closest('#pGender'); if (!sel || !currentPersonId) return;
+  try {
+    const v = sel.value === 'M' || sel.value === 'F' ? sel.value : '';
+    await updateDoc(doc(db, 'searchPeople', currentPersonId), v ? { gender: v, genderSource: 'typed', genderBy: currentUser, genderAt: new Date().toISOString(), updatedAt: serverTimestamp(), updatedBy: currentUser } : { gender: '', genderSource: '', genderBy: currentUser, genderAt: new Date().toISOString(), updatedAt: serverTimestamp(), updatedBy: currentUser });
+    try { const pc = personDocCache.get(currentPersonId); if (pc) { pc.gender = v; pc.genderSource = v ? 'typed' : ''; } } catch (e) {}
+    sel.parentElement.querySelector('i')?.remove();
+  } catch (e) { alert('Could not save: ' + (e.message || e)); }
+});
 function renderPersonView(p, links){
   document.getElementById('pName').textContent = p.name || '—';
   const current = links.filter(l => l.shCurrent === true || l.mgmtCurrent === true).length;
@@ -6109,6 +6131,7 @@ function renderPersonView(p, links){
       const cls = a.age >= 60 ? 'badge-warn' : 'badge-grey';
       return `<span class="badge ${cls}" title="${a.exact ? 'From Orbis birth date' : 'From the age Orbis gave at import, carried forward'}">🎂 ${a.age}${a.exact ? '' : ' approx.'}</span>`;
     })()}
+    ${personGenderHtml(p)}
     ${p.orbisRoleCount > links.length ? `<span class="badge badge-blue" title="Orbis knows of more roles than have been imported — export those companies to see the rest of the network">Orbis: ${p.orbisRoleCount} current roles</span>` : ''}`;
   const rows = [...links].sort((a,b) => ((b.shCurrent === true || b.mgmtCurrent === true) - (a.shCurrent === true || a.mgmtCurrent === true)) || String(a.companyName).localeCompare(String(b.companyName)))
     .map(l => {
@@ -6881,6 +6904,9 @@ function personAge(p){
 // particles that would flood a 2-char index (de, da, do, dos, e) are already
 // dropped as stopwords. ~24 entries per person, far inside Firestore's limit.
 const NAME_PREFIX_MIN = 2;
+// 30 Oct (outreach.multiRecipient): a new person gets a first guess of their gender from the first name, marked as a guess until the
+// team sets it (typed). Existing people are never overwritten here.
+function genderFieldsFor(name){ const g = genderOfFirstName(name); return g ? { gender: g, genderSource: 'guess' } : {}; }
 function namePrefixes(nameKey){
   const out = new Set();
   for (const t of personNameTokens(nameKey)){

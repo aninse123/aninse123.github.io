@@ -38,6 +38,10 @@ const W = "{{?recipient.isMale|ligado}}{{?recipient.isFemale|ligada}}{{?recipien
   ok("a person who is one of the owners takes the gender typed for them", renderTemplate(W, buildContext({ company: { ...company, emailOwners: [{ name: "Ariel Sousa", gender: "F" }] }, contactName: "Ariel Sousa" })).text === "ligada");
 ok("older templates without these fields are unaffected", renderTemplate("{{contact.firstName|Olá}}, {{company.shortName}}", forCompany).text === "Olá, Dimexa");
 
+ok("a gender typed on the person wins over the owners list and the name", R.genderOf("Ana Sousa", [{ name: "Ana Sousa", gender: "F" }], { gender: "M", source: "typed" }) === "M" && R.genderOf("Ariel Costa", [], { gender: "F", source: "typed" }) === "F");
+ok("a stored guess does not beat the owners list, but beats a fresh guess", R.genderOf("Ana Sousa", [{ name: "Ana Sousa", gender: "M" }], { gender: "F", source: "guess" }) === "M" && R.genderOf("Ariel Costa", [], { gender: "F", source: "guess" }) === "F");
+ok("a stored value that is not M or F is ignored", R.genderOf("Rita Costa", [], { gender: "", source: "typed" }) === "F" && R.recipientContext({ name: "Ariel Costa", stored: { gender: "M", source: "typed" } }).isMale === "1");
+
 (async () => {
   F.store.clear();
   F.store.set("searchCompanies/co1", { name: "X", emailOwners: [{ name: "Ariel Sousa", gender: "F" }] });
@@ -46,6 +50,14 @@ ok("older templates without these fields are unaffected", renderTemplate("{{cont
   ok("a draft to a person whose gender we cannot tell is flagged", (await draft("Ariel Costa", "person"))?.name === "Ariel Costa");
   ok("no flag when the gender is known (name list, ending, or the owners list)", !(await draft("Rita Costa", "person")) && !(await draft("Ariel Sousa", "person")));
   ok("no flag for a general address, or when the template does not use gender", !(await draft("", "company")) && !(await draft("Ariel Costa", "person", "Bom dia, {{recipient.firstName}},")));
+  F.store.set("searchPeople/p9", { name: "Ariel Costa", gender: "F", genderSource: "typed" });
+  const draftP = async (rec) => { F.store.set("outreachMessages/m", { status: "draft" }); await genderCheckOnDraft({ update: async (u) => F.store.set("outreachMessages/m", { ...F.store.get("outreachMessages/m"), ...u }) }, { companyId: "co1" }, rec, body); return F.store.get("outreachMessages/m").genderCheck; };
+  ok("a gender typed on the person (personId on the recipient) clears the flag", !(await draftP({ name: "Ariel Costa", kind: "person", personId: "p9" })) && !!(await draftP({ name: "Ariel Costa", kind: "person" })));
+  const { companyRecipients } = require("../outreach/recipients.js");
+  F.store.set("searchPersonLinks/p9__co1", { personId: "p9", companyId: "co1", personName: "Ariel Costa", personEntityType: "person", shCurrent: true, shDirectPct: 50 });
+  F.store.set("searchPeople/p9", { name: "Ariel Costa", email: "ariel@x.pt", gender: "F", genderSource: "typed" });
+  const rcp = (await companyRecipients("co1", { name: "X" }, { usePeople: true })).find((r) => r.personId === "p9");
+  ok("a person's recipient carries the stored gender to the email", rcp && rcp.gender === "F" && rcp.genderSource === "typed");
   console.log(fail ? `\n${fail} FAILED` : "\nAll passed");
   process.exit(fail ? 1 : 0);
 })();

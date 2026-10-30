@@ -12,7 +12,8 @@ nelia noemia odete paloma rafaela regina renata sabrina stella tatiana valentina
 alzira amalia antonia arminda augusta benedita berta brigida carlota carminda celeste cidalia conceicao deolinda dora edite eduarda
 elena estela ester etelvina felismina gloria guiomar herminia idalina ilda isaura ivone joaquina lena lilia lurdes mara mirian
 miriam nazare nidia noelia olivia ondina orlanda palmira piedade quiteria ramona rosalia rosana rosalina sandrina selma serafina
-sheila shirley soraia suzana tereza vilma violeta virginia yolanda zelia lisete lucilia odila ofelia otilia yasmin cecilia`);
+sheila shirley soraia suzana tereza vilma violeta virginia yolanda zelia lisete lucilia odila ofelia otilia yasmin cecilia
+elisabete amelie anna anne annette birgit brigitte carole caroline catherine charlotte christine christina claire corinne danielle dominique elisabeth elke emilie eva francoise gabrielle gisela heidi helga ingrid isabelle jacqueline jane jennifer jeanne julie karin katharina katrin laetitia laura lisa louise margaret margarete marie marianne martina michele monique nathalie nicole petra renate sabine sandrine sophie stephanie susanne sylvie ursula valerie veronique yvonne bibiana`);
 const MALE = set(`joao jose antonio manuel francisco carlos paulo pedro luis miguel rui nuno tiago diogo goncalo ricardo bruno andre
 fernando jorge sergio fabio hugo rafael daniel david eduardo filipe henrique vasco vitor victor tomas tome simao samuel ruben rodrigo
 ramiro mario marco marcelo mauricio lucas leonardo leandro julio joaquim jaime igor helder gustavo gabriel fernao emanuel duarte
@@ -21,7 +22,8 @@ alfredo americo amadeu aurelio baltasar belmiro camilo celso damiao delfim edgar
 evaristo fausto felix flavio florentino gaspar gil gilberto guilherme heitor horacio humberto ivo jacinto januario jeronimo jonas
 josue lauro lino lourenco luciano ludgero marcos martim matias mateus maximino nelson nicolau norberto octavio otavio orlando oscar
 osvaldo patricio placido raul reinaldo renato roberto rogerio romeu salvador saulo sebastiao severino silvio silvestre tadeu
-teodoro timoteo valdemar valentim vicente vladimir wilson xavier zacarias luca joshua nicola bautista baptista`);
+teodoro timoteo valdemar valentim vicente vladimir wilson xavier zacarias luca joshua nicola bautista baptista
+christian olivier stefan stephan thomas raphael didier matthias juan simon juergen jurgen patrick hans axel franck frank jean francois jacques georges john stephen peter christoph richard martin norbert dieter javier klaus davide jesus pascal eric roman edward cedric laurent yan karlheinz jean-luc jean-louis stephane yohann joachim hannes antoine sebastien florent karim gerard valter hernani asdrubal valtencir serafim jonatas gilson michael michel andreas alexander alex max paul peter marc mark marcus lars jens kai uwe wolfgang helmut gerhard herbert rainer ralf robert ronald rolf sven tim tobias tom ulrich walter werner william james david jose pierre philippe alain bernard christophe daniel dominique emmanuel fabrice guillaume hugues ivan jan jorge juan lucien luc marcel mathieu maurice nicolas olaf oliver oskar pablo pedro rene roger roland sergei serge vincent xavier yves kohei bo`);
 
 export function genderOfFirstName(name) {
   const first = strip(String(name || "").trim().split(/\s+/)[0]).replace(/[^a-z]/g, "");
@@ -35,10 +37,14 @@ export function genderOfFirstName(name) {
 
 const fullKey = (s) => strip(s).replace(/\s+/g, " ");
 // owners: company.emailOwners = [{ name, gender: "M" | "F" | "" }]
-export function genderOf(name, owners = []) {
+// stored: { gender, source } kept on the person (searchPeople.gender / genderSource). Typed by the team wins over everything;
+// then the company's owners list; then a stored guess; then a fresh guess from the first name.
+export function genderOf(name, owners = [], stored = null) {
   const k = fullKey(name); // the full name must match: the same first name can be someone else (and some names are unisex)
   const o = (Array.isArray(owners) ? owners : []).find((x) => x && (x.gender === "M" || x.gender === "F") && fullKey(x.name) === k);
-  return o ? o.gender : genderOfFirstName(name);
+  const st = stored && (stored.gender === "M" || stored.gender === "F") ? stored : null;
+  if (st && st.source === "typed") return st.gender;
+  return o ? o.gender : st ? st.gender : genderOfFirstName(name);
 }
 
 export function cleanRole(role) {
@@ -46,10 +52,10 @@ export function cleanRole(role) {
   return !r || /shareholder|^contact$|company address|%/i.test(r) ? "" : r;
 }
 
-export function recipientContext({ name = "", role = "", owners = [] } = {}) {
+export function recipientContext({ name = "", role = "", owners = [], stored = null } = {}) {
   const full = String(name || "").replace(/\s+/g, " ").trim();
   const first = full.split(" ")[0] || "";
-  const g = first ? genderOf(full, owners) : "";
+  const g = first ? genderOf(full, owners, stored) : "";
   return {
     firstName: first, role: first ? cleanRole(role) : "",
     gender: g, isMale: g === "M" ? "1" : "", isFemale: g === "F" ? "1" : "", isUnknown: first && !g ? "1" : "",

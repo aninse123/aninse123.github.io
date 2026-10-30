@@ -47,7 +47,7 @@ async function syncTracks(rootId, list, caller, { late = false } = {}) {
       status: "pending", stopReason: null, currentStep: 0, nextActionAt: null, senderId: root.senderId || null, threadId: null,
       variants: {}, history: [], isTest: !!root.isTest, createdAt: FieldValue.serverTimestamp(), enrolledBy: caller, endedAt: null,
       isTrack: true, isExtra: true, trackOf: rootId, trackIndex: n, // isExtra: an extra address of the same company (not a replacement after a bounce)
-      recipient: { email, name: r.name || "", kind: r.kind || "company" }, recipientList: [email],
+      recipient: { email, name: r.name || "", kind: r.kind || "company", ...(r.personId ? { personId: r.personId } : {}) }, recipientList: [email],
       ...(late ? { forceApproval: true } : {}),
     });
     added++;

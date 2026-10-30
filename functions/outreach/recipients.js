@@ -165,8 +165,9 @@ async function companyRecipients(companyId, company, { usePeople = false, trust 
         const p = s.data(), l = ranked[i].l;
         const role = l.isContact ? (l.contactRole || "Contact") : (l.mgmtRoles || []).join(", ") || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : "");
         const isMain = usePeople && company?.primaryContact?.personId === s.id;
-        if (T) personEmailsTrust(p, company, usePeople).forEach(({ email, trust: tr }) => add({ kind: "person", email, trust: tr, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank, ...(isMain ? { isMain: true } : {}) }));
-        else personEmailsFor(p, company, usePeople).forEach((email) => add({ kind: "person", email, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank, ...(isMain ? { isMain: true } : {}) }));
+        const g = p.gender === "M" || p.gender === "F" ? { gender: p.gender, genderSource: p.genderSource || "" } : {}; // 30 Oct: the person's stored gender
+        if (T) personEmailsTrust(p, company, usePeople).forEach(({ email, trust: tr }) => add({ kind: "person", email, trust: tr, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank, ...g, ...(isMain ? { isMain: true } : {}) }));
+        else personEmailsFor(p, company, usePeople).forEach((email) => add({ kind: "person", email, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank, ...g, ...(isMain ? { isMain: true } : {}) }));
       });
     }
   }

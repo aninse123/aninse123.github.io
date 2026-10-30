@@ -12,8 +12,9 @@ let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' :
 const names = ['Rita Costa', 'João Maria', 'Beatriz', 'Luca', 'Ariel Sousa', 'Zuleica', 'Aldemiro', 'Inês', 'Raquel Dias', 'Tomás', 'CLÁUDIA', '', '  ', 'X', 'Ana Cunha', 'Luís Pinho'];
 const roles = ['', 'Administradora', 'Shareholder 60%', 'Contact', 'Company address', 'Gerente'];
 const owners = [[], [{ name: 'Ana Cunha', gender: 'M' }, { name: 'Luís Pinho', gender: 'F' }], [{ name: 'Ariel Sousa', gender: 'F' }]];
+const stores = [null, { gender: 'M', source: 'typed' }, { gender: 'F', source: 'guess' }, { gender: '', source: '' }];
 let same = true, n = 0;
-for (const name of names) for (const role of roles) for (const o of owners) { n++; if (JSON.stringify(P.recipientContext({ name, role, owners: o })) !== JSON.stringify(S.recipientContext({ name, role, owners: o }))) same = false; }
+for (const name of names) for (const role of roles) for (const o of owners) for (const stored of stores) { n++; if (JSON.stringify(P.recipientContext({ name, role, owners: o, stored })) !== JSON.stringify(S.recipientContext({ name, role, owners: o, stored }))) same = false; }
 ok(`page and server give the same fields on ${n} combinations`, same);
 ok('same gender on every name', names.every((x) => P.genderOfFirstName(x) === S.genderOfFirstName(x)));
 ok('the server context carries recipient.* and Send passes the role of a person', /recipient: recipientContext\(/.test(render) && /recipientRole: recipient\?\.kind !== "company"/.test(send));

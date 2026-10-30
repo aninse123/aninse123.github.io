@@ -2757,7 +2757,7 @@
         owner: ownerContext(c),
         campaign: { sector: '' }, // Compose isn't part of a campaign — the fallback shows
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
-        recipient: (() => { const r = chosenRecipient(); return recipientContext(r && r.kind !== 'company' ? { name: r.name, role: r.role, owners: c?.emailOwners } : { owners: c?.emailOwners }); })(),
+        recipient: (() => { const r = chosenRecipient(); return recipientContext(r && r.kind !== 'company' ? { name: r.name, role: r.role, owners: c?.emailOwners, stored: r.gender ? { gender: r.gender, source: r.genderSource || '' } : null } : { owners: c?.emailOwners }); })(),
         ...teamContext(window.teamDir || [], s.owner || null),
         sender: { firstName: String(s.displayName || '').split(' ')[0], fullName: s.displayName || '', name: s.displayName || '', email: s.id || '', phone: (window.teamDir || []).find(m => m.key === s.owner)?.contactPhone || '', bookingLink: (window.teamDir || []).find(m => m.key === s.owner)?.bookingLink || '',
           // A template that signs itself: no address signature unless one is picked (same as the server).
