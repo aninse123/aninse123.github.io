@@ -40,6 +40,7 @@ const { companyRecipients, pickByPolicy } = require("./recipients");
 const store = require("./store");
 const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
 const Related = require("./related"); // owner-aware outreach (22 Oct, switch outreach.ownerAware)
+const RL = require("./recipient_list"); // recipient list per company (30 Oct, switch contacts.trustLabels)
 const EN = require("./email_name_check"); // email name check (26 Oct, switch search.emailNameCheck)
 const { addWait, sendingDaysOf, skipHolidaysOf, waitOptsOf, FINAL_GRACE } = require("./schedule_util");
 const { findOutcome, CHANNEL_LABEL } = require("./task_util");
@@ -1349,7 +1350,7 @@ async function pathsPreview({ campaignId, paths, steps }) {
 // Team access: the permission each action needs. Starting a campaign sends
 // emails, so it needs "approve" like approving drafts.
 const CAMPAIGN_ACTION_PERM = {
-  save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns", recipientsPreview: "out.campaigns",
+  save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns", recipientsPreview: "out.campaigns", recipientsFor: "out.campaigns", setRecipients: "out.campaigns",
   enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
   requestStart: "out.campaigns", returnStart: "out.approve", runNow: "out.approve", sendNow: "out.approve",
   approve: "out.approve", skipDraft: "out.approve", unapprove: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
@@ -1377,11 +1378,12 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
   // Campaign paths (27 Oct): saving more than one path, or checking them, needs the switch.
   if (data.action === "pathsPreview" || (data.action === "save" && Array.isArray(data.campaign?.paths) && data.campaign.paths.some((p) => p && p.id !== ELSE_PATH))
     || (data.action === "save" && data.campaign?.startOrder && data.campaign.startOrder.mode !== "added")) await Feat.requireFeature(request, "outreach.paths"); // + who starts first (R10)
+  if (data.action === "recipientsFor" || data.action === "setRecipients") await Feat.requireFeature(request, "contacts.trustLabels"); // 30 Oct
   if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
   if (data.action === "save" && Array.isArray(data.campaign?.cc) && data.campaign.cc.length) await Feat.requireFeature(request, "outreach.campaignCc"); // 28 Oct
   if (data.action === "updateTask" && (data.letterText !== undefined || data.signer === "both")) await Feat.requireFeature(request, "outreach.letterTools"); // 29 Oct: a letter's own text and envelope, signed by both
   if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
-    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
+    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "recipientsFor", "setRecipients", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
       let aud = data.campaign?.audienceType;
       if (!aud && data.campaignId) { const c = await db().doc(`outreachCampaigns/${data.campaignId}`).get(); aud = c.exists ? c.data().audienceType : null; }
@@ -1394,6 +1396,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
   if (!canApprove) {
     const targets = [];
     if (["save", "enrol", "enrolPeople"].includes(data.action)) targets.push(data.campaignId);
+    if (data.action === "setRecipients") { const en = data.enrolmentId ? await db().doc(`outreachEnrolments/${data.enrolmentId}`).get() : null; if (en?.exists) targets.push(en.data().campaignId); }
     if (data.action === "enrolment") {
       // Removing, pausing or moving someone in a running campaign is a change too.
       const en = data.enrolmentId ? await db().doc(`outreachEnrolments/${data.enrolmentId}`).get() : null;
@@ -1423,6 +1426,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
       case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware, nameCheck });
       case "related": return await relatedOf(data, { ownerAware });
       case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
+      case "recipientsFor": return await RL.recipientsFor(data);
+      case "setRecipients": return await RL.setRecipients(data, caller);
       case "runNow": return await runNow(data, caller);
       case "sendNow": return await sendNow(data, caller);
       case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware });
