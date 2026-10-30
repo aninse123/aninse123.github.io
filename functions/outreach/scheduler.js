@@ -30,6 +30,7 @@ const { LIVE_ENROLMENT: LIVE_STATUSES, ELSE_PATH, pathSteps, pathsOf, choosePath
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
+const Tracks = require("./tracks"); // several recipients per company (30 Oct, switch outreach.multiRecipient)
 const Feat = require("../features"); // kill switches (Team & access → Features)
 const { lisbonParts, isWindowOpen, addWait, sendingDaysOf, skipHolidaysOf, skipMunicipalOf, waitOptsOf, pickVariant, pickSender, FINAL_GRACE } = require("./schedule_util");
 const { isMunicipalHoliday } = require("./places");
@@ -316,7 +317,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState, burstState, ccState, trustState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths"), Feat.jobState("outreach.sendAllNow"), Feat.jobState("outreach.campaignCc"), Feat.jobState("contacts.trustLabels")]);
+  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState, burstState, ccState, trustState, multiState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths"), Feat.jobState("outreach.sendAllNow"), Feat.jobState("outreach.campaignCc"), Feat.jobState("contacts.trustLabels"), Feat.jobState("outreach.multiRecipient")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
@@ -362,7 +363,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   report.open = open.size;
   if (!open.size) return report;
 
-  for (const c of open.values()) await startPending(c, now, report);
+  for (const c of open.values()) { await startPending(c, now, report); if (allowed(multiState, c)) await Tracks.startTracks(c, now, report); }
 
   // Due enrolments of campaigns whose window is open. Pages on when a page is
   // taken up by campaigns outside their window, so those never hold the rest up.
@@ -466,7 +467,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     const approved = m?.status === "approved" ? m : null;
 
     const approval = (step.approval === "inherit" || !step.approval) ? campaign.approvalDefault : step.approval;
-    const wantsDraft = approval === "approval" && !approved;
+    const wantsDraft = (approval === "approval" || (e.forceApproval && !(e.currentStep > 0))) && !approved; // 30 Oct: a late-added address always waits for approval
     if (!wantsDraft && !canSend) {
       const why = !allowed(sendState, campaign) ? "Held: automatic sending is switched off (Team & access → Features). Sends again when it's back on."
         : report.stoppedSends ? report.stoppedSendsText

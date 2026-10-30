@@ -4137,13 +4137,13 @@ Optional note for them:`, '');
               const live = LIVE_ENROL.includes(e.status);
               const next = live ? waitingFor(e, c) : '';
               const note = e.lastError || e.stopReason || '';
-              const btns = !live ? '' : [
+              const btns = !live ? (e.status === 'replied' && e.companyId && isOn('outreach.multiRecipient') ? `<button class="btn btn--ghost btn--sm" data-eop="restart" data-perm="out.campaigns" data-eid="${esc(e.id)}" title="A reply stopped this company. Bring it back at the step it was on.">Restart company…</button>` : '') : [
                 e.status === 'paused' ? `<button class="btn btn--ghost btn--sm" data-eop="resume" data-perm="out.campaigns" data-eid="${esc(e.id)}">Resume</button>` : `<button class="btn btn--ghost btn--sm" data-eop="pause" data-perm="out.campaigns" data-eid="${esc(e.id)}">Pause</button>`,
                 `<button class="btn btn--ghost btn--sm" data-eop="move" data-perm="out.campaigns" data-eid="${esc(e.id)}">Move…</button>`,
                 `<button class="btn btn--danger btn--sm" data-eop="remove" data-perm="out.campaigns" data-eid="${esc(e.id)}">Remove</button>`,
               ].join(' ');
               return `<tr>
-                <td>${e.personEmail ? `<b>${esc(e.personName || e.personEmail)}</b>${e.org ? ` <span class="hint">· ${esc(e.org)}</span>` : ''}<div class="hint">${esc(e.personEmail)}${(e.refs || []).length ? ' · ' + e.refs.map(r => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[r.source] || r.source)).join(', ') : ''}</div>` : `<a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div>`}</td>
+                <td>${e.personEmail ? `<b>${esc(e.personName || e.personEmail)}</b>${e.org ? ` <span class="hint">· ${esc(e.org)}</span>` : ''}<div class="hint">${esc(e.personEmail)}${(e.refs || []).length ? ' · ' + e.refs.map(r => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[r.source] || r.source)).join(', ') : ''}</div>` : `<a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.trackOf ? (e.fallbackFrom ? `next address after ${esc(e.fallbackFrom)} bounced · ` : 'extra address · ') : ''}${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div>`}</td>
                 ${c.audienceType === 'people' ? '' : `<td style="font-size:0.78rem;">${goesTo(e, c)}${canChooseRecipients(e) ? ` <button class="btn btn--ghost btn--sm" data-eop="recipients" data-perm="out.campaigns" data-eid="${esc(e.id)}" title="Choose which addresses this company is written to, and in what order">Choose…</button>` : ''}</td>`}
                 <td>${e.status === 'completed' && /^Left out by the campaign's paths/.test(e.stopReason || '') ? '<span class="pill">Left out (paths)</span>' : pill(ENROL_PILL, e.status)}</td>
                 <td style="font-size:0.8rem;">${stepLabel(e, c)}</td>
@@ -4166,6 +4166,13 @@ Optional note for them:`, '');
         const e = curEnrols.find(x => x.id === eid);
         if (op === 'move') { openMoveCompany(e); return; }
         if (op === 'recipients') { openChooseRecipients(e); return; }
+        if (op === 'restart') {
+          if (!confirm(`${e.companyName || 'This company'} was stopped by a reply (${e.stopReason || 'replied'}). Restart it at the step it was on, from the next working day?`)) return;
+          let r = await campCall({ action: 'restartCompany', enrolmentId: eid });
+          if (r && (r.skipped || []).some(x => x.reason === 'replier') && confirm('The conversation that got the reply is still stopped. Restart that one too?')) r = await campCall({ action: 'restartCompany', enrolmentId: eid, includeReplier: true });
+          if (r) { toast(r.restarted.length ? `Restarted ${r.restarted.length} conversation${r.restarted.length > 1 ? 's' : ''}.` : ({ do_not_contact: 'Not restarted: the company is marked do not contact.', unsubscribed: 'Not restarted: they unsubscribed.' }[r.skipped?.[0]?.reason] || 'Nothing to restart.')); loadCampaignData(); }
+          return;
+        }
         let reason = null;
         if (op === 'remove') { reason = prompt(`Remove ${e?.companyName || 'this company'} from the campaign? Optional reason:`, ''); if (reason === null) return; }
         const unbusy = busyBtn(b, op === 'remove' ? 'Removing…' : op === 'pause' ? 'Pausing…' : 'Resuming…');
@@ -4206,37 +4213,51 @@ Optional note for them:`, '');
 
     // 30 Oct (contacts.trustLabels): choose the addresses a company is written to, and in which order. The first one gets
     // email 1; the others are kept in order for later (a bounce, or several people). The domain flag is advice only.
-    function canChooseRecipients(e) { return isOn('contacts.trustLabels') && e.companyId && !e.personEmail && !e.threadId && !(e.currentStep > 0) && LIVE_ENROL.includes(e.status); }
+    function canChooseRecipients(e) { return isOn('contacts.trustLabels') && e.companyId && !e.personEmail && !e.trackOf && LIVE_ENROL.includes(e.status) && ((!e.threadId && !(e.currentStep > 0)) || isOn('outreach.multiRecipient')); } // after email 1 only the extra addresses can change (several recipients)
     async function openChooseRecipients(e) {
       let r;
       try { r = (await callCampaign({ action: 'recipientsFor', enrolmentId: e.id })).data; } catch (err) { toast(errText(err)); return; }
-      let list = r.list.slice();
+      const camp = curCamp(), multiOn = isOn('outreach.multiRecipient');
+      let list = r.list.slice(), all = !!r.all, previews = {};
+      if (r.locked) { const f = list.findIndex(x => x.email === e.recipient?.email); if (f > 0) list.unshift(list.splice(f, 1)[0]); if (list[0]) list[0].selected = true; }
       const KIND = { company: 'company address', contact: 'contact', person: 'person' };
-      const DOM = { none: ['⚠ the domain does not seem to receive email', 'color:var(--danger)'], ok: ['', ''], unknown: ['', ''] };
+      const DOM = { none: ['⚠ the domain does not seem to receive email', 'color:var(--danger)'] };
       const draw = () => {
-        $('modalBody').innerHTML = `<p class="hint">Tick the addresses to write to, and put them in order: the first one gets email 1. Nothing is sent to an address that is not ticked. A ⚠ on the domain is advice only; it never blocks.</p>
-          <div style="display:grid;gap:6px;">${list.map((x, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--border);">
-            <input type="checkbox" data-rc="${i}" aria-label="Write to ${esc(x.email)}"${x.selected ? ' checked' : ''}${x.blocked ? ' disabled' : ''}>
+        const n = list.filter(x => x.selected).length;
+        $('modalBody').innerHTML = `<p class="hint">Tick the addresses to write to, and put them in order: the first one gets email 1.${r.locked ? ' Email 1 has already gone out to the first address, so it stays first; you can add or remove the others.' : ''} A ⚠ on the domain is advice only; it never blocks.</p>
+          ${multiOn ? `<label style="display:flex;gap:8px;align-items:center;margin:8px 0;"><input type="checkbox" id="rcAll"${all ? ' checked' : ''}> Write to every ticked address (separate emails, at most 3)</label>` : ''}
+          <div style="display:grid;gap:6px;">${list.map((x, i) => `<div style="padding:6px 0;border-bottom:1px solid var(--border);"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="checkbox" data-rc="${i}" aria-label="Write to ${esc(x.email)}"${x.selected ? ' checked' : ''}${x.blocked || (r.locked && i === 0) ? ' disabled' : ''}>
             <div style="flex:1;min-width:200px;"><b>${esc(x.name || x.email)}</b> <span class="hint">· ${esc(KIND[x.kind] || '')}${x.role ? ' · ' + esc(x.role) : ''}</span>${x.name ? `<div class="hint">${esc(x.email)}</div>` : ''}
-              <div>${trustPillHtml(x.trust, '', esc)}${x.blocked ? ' <span class="hint">not used by this campaign (not verified; see Settings)</span>' : ''}${DOM[x.domain]?.[0] ? ` <span style="font-size:0.76rem;${DOM[x.domain][1]}">${DOM[x.domain][0]}</span>` : ''}</div></div>
-            <button class="btn btn--ghost btn--sm" data-rcup="${i}" aria-label="Move up"${i === 0 ? ' disabled' : ''}>↑</button>
-            <button class="btn btn--ghost btn--sm" data-rcdown="${i}" aria-label="Move down"${i === list.length - 1 ? ' disabled' : ''}>↓</button></div>`).join('')}</div>
-          ${list.length ? '' : '<p class="hint">No address on file for this company.</p>'}`;
+              <div>${trustPillHtml(x.trust, '', esc)}${x.blocked ? ' <span class="hint">not used by this campaign (not verified; see Settings)</span>' : ''}${DOM[x.domain] ? ` <span style="font-size:0.76rem;${DOM[x.domain][1]}">${DOM[x.domain][0]}</span>` : ''}</div></div>
+            ${x.selected ? `<button class="btn btn--ghost btn--sm" data-rcprev="${i}">Preview</button>` : ''}
+            <button class="btn btn--ghost btn--sm" data-rcup="${i}" aria-label="Move up"${i === 0 || (r.locked && i === 1) ? ' disabled' : ''}>↑</button>
+            <button class="btn btn--ghost btn--sm" data-rcdown="${i}" aria-label="Move down"${i === list.length - 1 || (r.locked && i === 0) ? ' disabled' : ''}>↓</button></div>
+            ${previews[x.email] ? `<div style="margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:0.8rem;white-space:pre-wrap;">${previews[x.email].ok ? `<b>To:</b> ${esc(previews[x.email].to)}\n<b>Subject:</b> ${esc(previews[x.email].subject)}\n\n${esc(previews[x.email].text)}\n<span class="hint">${esc(previews[x.email].note)}</span>` : `<span style="color:var(--danger)">Cannot be previewed: ${esc(previews[x.email].error)}</span>`}</div>` : ''}</div>`).join('')}</div>
+          ${list.length ? '' : '<p class="hint">No address on file for this company.</p>'}
+          <p style="margin-top:10px;font-weight:600;">${n === 0 ? 'Back to the campaign setting (no choice saved).' : all && n > 1 ? `${n} emails will be sent, one to each address${r.locked ? ' (new ones wait in To approve)' : camp?.approvalDefault === 'auto' ? '' : ', each as its own draft in To approve'}.` : '1 email will be sent, to the first address. The others are kept in case it bounces.'}</p>
+          ${all && n > 1 && !r.locked && camp?.approvalDefault === 'auto' ? '<p class="hint" style="color:var(--danger);">This campaign sends without approval. Use Preview on each address before saving.</p>' : ''}
+          ${all && n > 1 ? '<p class="hint">If anyone replies, the others stop, and the company says who replied. Restart company brings it back.</p>' : ''}`;
       };
       const swap = (i, j) => { [list[i], list[j]] = [list[j], list[i]]; draw(); };
       openModal(`Who ${r.companyName || e.companyName || 'the company'} is written to`, '', async () => {
         const emails = list.filter(x => x.selected).map(x => x.email);
-        const res = (await callCampaign({ action: 'setRecipients', enrolmentId: e.id, emails })).data;
-        toast(emails.length ? `Saved. Email 1 goes to ${res.recipient?.email || emails[0]}.` : 'Back to the campaign setting.');
+        const res = (await callCampaign({ action: 'setRecipients', enrolmentId: e.id, emails, ...(multiOn && all ? { all: true } : {}) })).data;
+        toast(emails.length ? `Saved. ${emails.length > 1 && all ? emails.length + ' emails' : 'Email 1'} → ${res.recipient?.email || emails[0]}.` : 'Back to the campaign setting.');
         loadCampaignData();
         return true;
       }, 'Save');
       draw();
-      $('modalBody').onclick = (ev) => {
-        const t = ev.target.closest('[data-rcup],[data-rcdown],[data-rc]'); if (!t) return;
+      $('modalBody').onclick = async (ev) => {
+        const t = ev.target.closest('[data-rcup],[data-rcdown],[data-rc],[data-rcprev],#rcAll'); if (!t) return;
+        if (t.id === 'rcAll') { all = t.checked; draw(); return; }
         if (t.dataset.rcup) swap(+t.dataset.rcup, +t.dataset.rcup - 1);
         else if (t.dataset.rcdown) swap(+t.dataset.rcdown, +t.dataset.rcdown + 1);
-        else if (t.dataset.rc !== undefined) list[+t.dataset.rc].selected = t.checked;
+        else if (t.dataset.rcprev) {
+          const x = list[+t.dataset.rcprev]; t.disabled = true;
+          try { previews[x.email] = (await callCampaign({ action: 'previewRecipient', enrolmentId: e.id, email: x.email })).data; } catch (err) { previews[x.email] = { ok: false, error: errText(err) }; }
+          draw();
+        } else if (t.dataset.rc !== undefined) { list[+t.dataset.rc].selected = t.checked; draw(); }
       };
     }
 

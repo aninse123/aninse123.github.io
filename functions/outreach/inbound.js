@@ -15,6 +15,7 @@ const {
 const { getReceivedEmail, listReceivedAttachments } = require("./resend");
 const store = require("./store");
 const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
+const Tracks = require("./tracks"); // several recipients per company (30 Oct, switch outreach.multiRecipient)
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const Feat = require("../features"); // feature switches (one inbox, 19 Oct)
 const ReplyConfirm = require("./reply_confirm"); // 30 Oct: a reply confirms the address it came from
@@ -220,7 +221,10 @@ async function handleReceived(data) {
   }
   // Stop rule (Phase 2 §5.4): a human reply ends the company's campaign
   // sequence; out-of-office replies don't.
-  if (!autoReply && thread.companyId) await stopCompanyEnrolments(thread.companyId, "Replied", "replied");
+  // 30 Oct (outreach.multiRecipient): with several conversations running, say who replied
+  let why = "Replied";
+  if (!autoReply && thread.companyId) { try { if ((await Feat.jobState("outreach.multiRecipient")) !== "off" && await Tracks.hasTracks(thread.companyId)) why = `Stopped: ${from.name ? from.name + " " : ""}(${from.email}) replied`; } catch (e) { /* keep the plain reason */ } }
+  if (!autoReply && thread.companyId) await stopCompanyEnrolments(thread.companyId, why, "replied");
   else if (!autoReply && thread.enrolmentId) await stopEnrolmentById(thread.enrolmentId, "Replied", "replied");
 }
 

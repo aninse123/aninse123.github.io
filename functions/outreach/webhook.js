@@ -13,8 +13,10 @@ const { getEmail } = require("./resend");
 const { handleReceived } = require("./inbound");
 const store = require("./store");
 const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
+const Tracks = require("./tracks"); // several recipients per company (30 Oct, switch outreach.multiRecipient)
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
-const Feat = require("../features"); // People merge (Stage 6): bounces mark people's addresses
+const Feat = require("../features");
+const multiOn = async (isTest) => { const st = await Feat.jobState("outreach.multiRecipient"); return st === "on" || (st === "test" && !!isTest); }; // People merge (Stage 6): bounces mark people's addresses
 // People conversations (Phase 5) have no company: stop the conversation's own enrolment.
 // People merge, Stage 6 (21 Oct): the bounced address is marked on people's own lists
 // (production setting: On = always; Test = test emails only). Best effort.
@@ -170,9 +172,12 @@ async function handleDeliveryEvent(type, data) {
   if (permanentBounce) {
     await store.addSuppression(recipient, { reason: "hard_bounce", source: "webhook", companyId });
     if (threadRef) await threadRef.update({ status: "bounced" });
-    await store.setCompanyOutreachStatus(companyId, "bounced", isTest);
+    // 30 Oct (outreach.multiRecipient): another address takes over, or the company's other conversations carry on
+    let carry = "none";
+    if (companyId && thread?.enrolmentId && await multiOn(isTest)) { try { carry = await Tracks.onHardBounce(thread.enrolmentId, recipient); } catch (e) { logger.warn("outreach: bounce fallback failed", { message: e.message }); } }
+    if (carry === "none") await store.setCompanyOutreachStatus(companyId, "bounced", isTest);
     await store.markCompanyEmailBounced(companyId, recipient, "hard bounce", isTest);
-    await stopFor(companyId, thread, "Email bounced");
+    if (carry === "none") await stopFor(companyId, thread, "Email bounced");
     await markPeopleBounced(recipient, isTest, "bounced");
   } else if (type === "email.complained") {
     await store.addSuppression(recipient, { reason: "complaint", source: "webhook", companyId });
