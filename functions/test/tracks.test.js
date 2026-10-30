@@ -88,6 +88,7 @@ function seed() {
   const old = store.get("outreachEnrolments/en1"); delete old.resumeStep; store.set("outreachEnrolments/en1", old);
   await Tracks.restartCompany({ enrolmentId: "en1", includeReplier: true }, "andre", new Date("2026-11-03T10:00:00Z"));
   ok("an older reply with no remembered step restarts at the step it was on", en("en1").status === "active" && en("en1").currentStep === 1);
+  store.set("outreachEnrolments/en1", { ...en("en1"), status: "replied" });
 
   // ── The tracks list for the company page ──
   const tl = await Tracks.tracksFor("en1__t1");
