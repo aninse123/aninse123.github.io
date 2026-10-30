@@ -190,7 +190,7 @@ async function markCompanyEmailBounced(companyId, email, reason, isTest) {
     const snap = await ref.get();
     const e = normEmail(email);
     if (!snap.exists || !e || normEmail(snap.data().companyEmail) !== e) return false;
-    await ref.update({ companyEmailBounce: { email: e, at: FieldValue.serverTimestamp(), reason: String(reason || "bounced").slice(0, 120) } });
+    await ref.update({ companyEmailBounce: { email: e, at: FieldValue.serverTimestamp(), reason: String(reason || "bounced").slice(0, 120) }, updatedAt: FieldValue.serverTimestamp() }); // updatedAt: the Search CRM only re-reads companies whose updatedAt changed
     return true;
   } catch (err) { return false; }
 }

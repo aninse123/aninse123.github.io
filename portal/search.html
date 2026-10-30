@@ -3845,7 +3845,7 @@ document.addEventListener('click', async (ev) => {
   const c = ovCompany, undo = !!b.dataset.undo; b.disabled = true;
   const patch = undo ? { companyEmailConfirmedAt: null, companyEmailConfirmedBy: null, companyEmailConfirmedFor: null }
     : { companyEmailConfirmedAt: new Date().toISOString(), companyEmailConfirmedBy: currentUser, companyEmailConfirmedFor: String(c.companyEmail).trim().toLowerCase() };
-  try { await updateDoc(doc(db, 'searchCompanies', c.id), patch); Object.assign(c, patch); renderOverview(c); }
+  try { await updateDoc(doc(db, 'searchCompanies', c.id), { ...patch, updatedAt: serverTimestamp() }); Object.assign(c, patch); renderOverview(c); } // updatedAt: the list only re-reads companies whose updatedAt changed
   catch (err) { alert('Error: ' + err.message); b.disabled = false; }
 });
 function renderOverview(c){

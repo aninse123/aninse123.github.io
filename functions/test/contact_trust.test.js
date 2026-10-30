@@ -75,7 +75,7 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   ok("recipients: a bounced general address is Bounced and blocked, even when the campaign allows not-verified ones", rb.find((r) => r.email === "geral@b.pt").trust === "bounced" && rb.find((r) => r.email === "geral@b.pt").blocked === true && pickByPolicy(rb, "company") === null);
   const Store = require("../outreach/store.js");
   store.set("searchCompanies/cm", { name: "M, LDA", companyEmail: "geral@m.pt" });
-  ok("a bounce of the company address is recorded on the company, for that address", (await Store.markCompanyEmailBounced("cm", "GERAL@m.pt", "hard bounce", false)) === true && store.get("searchCompanies/cm").companyEmailBounce.email === "geral@m.pt" && store.get("searchCompanies/cm").companyEmailBounce.reason === "hard bounce");
+  ok("a bounce of the company address is recorded on the company, for that address", (await Store.markCompanyEmailBounced("cm", "GERAL@m.pt", "hard bounce", false)) === true && store.get("searchCompanies/cm").companyEmailBounce.email === "geral@m.pt" && store.get("searchCompanies/cm").companyEmailBounce.reason === "hard bounce" && !!store.get("searchCompanies/cm").updatedAt);
   store.set("searchCompanies/cn", { name: "N, LDA", companyEmail: "geral@n.pt" });
   ok("a bounce of another address (a person's) leaves the company alone; so do test sends and a missing company", (await Store.markCompanyEmailBounced("cn", "ana@n.pt", "hard bounce", false)) === false && (await Store.markCompanyEmailBounced("cn", "geral@n.pt", "x", true)) === false && (await Store.markCompanyEmailBounced("nada", "a@b.pt", "x", false)) === false && store.get("searchCompanies/cn").companyEmailBounce === undefined);
 
