@@ -800,6 +800,7 @@
     document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
     import { figuresOf } from './company-figures.js'; // 29 Oct: last-year figures + letterIntro for letters / call scripts
+    import { recipientContext } from './recipient-fields.js'; // 30 Oct (several recipients): {{recipient.*}} fields, same as the server
     import { trustOf, trustPillHtml, TRUST_CSS } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
     import { normalizeWindow, checkWindow, letterCss, calibrationCss, calibrationPage, FIT_SCRIPT, parseBlocks, keepFlags, planLetter, layoutCfg, LAYOUT_JS } from './letter-layout.js'; // 29 Oct: address window + page layout of the letters
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
@@ -834,7 +835,7 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'recipient.firstName|Olá', 'recipient.role|responsável', 'recipient.ligado', 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
     // 9 Oct: what each team field means (button tooltips).
     const VAR_HELP = {
       'sender.fullName': 'Full name of whoever sends (the address owner)',
@@ -846,6 +847,9 @@
       'owner.of|da gerência': 'After "à atenção" / "ao cuidado": "do Senhor A ou da Senhora B" (the company\'s owners in emails, up to 3 — Search CRM → Edit company). No names → "da gerência"',
       'owner.with|a gerência': 'After "com" / "para": "o Senhor A ou a Senhora B". No names → "a gerência"',
       'owner.names': 'The owners\' names only: "A ou B"',
+      'recipient.firstName|Olá': 'First name of the person this email goes to (empty for a general company address, so the fallback is used)',
+      'recipient.role|responsável': 'Their role at the company, when we know a real one',
+      'recipient.ligado': 'ligado / ligada / ligado(a) by gender (from the owners list or the first name)',
       'owner.greeting|Exmos. Senhores': 'A letter-style opening: "Exma. Senhora A e Exmo. Senhor B" (all owners named, with their gender). No names → "Exmos. Senhores"',
       'company.inCity|nas vossas instalações': '"em Setúbal", "no Porto", "na Maia" — the municipality with the right word before it (validated municipalities only). Otherwise the text after |',
       'company.toCity|às vossas instalações': 'After "deslocar-nos": "a Setúbal", "ao Porto", "à Maia", "às Caldas da Rainha" (validated municipalities only). Otherwise the text after |',
@@ -2753,6 +2757,7 @@
         owner: ownerContext(c),
         campaign: { sector: '' }, // Compose isn't part of a campaign — the fallback shows
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
+        recipient: (() => { const r = chosenRecipient(); return recipientContext(r && r.kind !== 'company' ? { name: r.name, role: r.role, owners: c?.emailOwners } : { owners: c?.emailOwners }); })(),
         ...teamContext(window.teamDir || [], s.owner || null),
         sender: { firstName: String(s.displayName || '').split(' ')[0], fullName: s.displayName || '', name: s.displayName || '', email: s.id || '', phone: (window.teamDir || []).find(m => m.key === s.owner)?.contactPhone || '', bookingLink: (window.teamDir || []).find(m => m.key === s.owner)?.bookingLink || '',
           // A template that signs itself: no address signature unless one is picked (same as the server).
@@ -5483,6 +5488,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         owner: ownerContext(c?._person ? {} : c),
         campaign: { sector: camp?.sector || '' },
         contact: { firstName: c?._person ? String(c._person.name || '').split(' ')[0] : '' },
+        recipient: recipientContext({ name: c?._person ? c._person.name : '' }),
         ...teamContext(window.teamDir || [], signer || null),
         sender: { firstName: full.split(' ')[0] || '', fullName: full, name: full, phone: m.contactPhone || '', email: m.contactEmail || '', bookingLink: m.bookingLink || '', signature: both ? `${fullOf('andre')} & ${fullOf('antonio')}\nDouro Partners` : full ? `${full}\nDouro Partners` : 'Douro Partners' },
         unsubscribeUrl: '',

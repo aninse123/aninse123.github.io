@@ -21,6 +21,7 @@ const ctx = {
 };
 vm.createContext(ctx);
 ctx.figuresOf = (await import('../../portal/company-figures.js')).figuresOf; // 29 Oct: coCtx adds the company figures
+ctx.recipientContext = (await import('../../portal/recipient-fields.js')).recipientContext; // 30 Oct: coCtx adds {{recipient.*}}
 vm.runInContext([
   line('    const OWNER_FULL ='), line('    const PT_SMALL_WORDS ='), lift('titleCasePt'), lift('shortName'), lift('emailNameOf'),
   lift('scanTemplate'), lift('signerFor'), lift('joinPt'), lift('teamContext'), page.slice(page.indexOf('function joinOu('), page.indexOf('// Same as the server (render.js teamContext).')), lift('coCtx'), lift('fillText'),

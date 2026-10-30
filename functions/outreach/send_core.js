@@ -209,7 +209,7 @@ async function prepareEmail(opts) {
   // {{sender.bookingLink}} (9 Oct) — their booking page, same place.
   let senderPhone = "", senderBooking = "";
   if (sender.owner) { try { const m = (await db().doc(`teamDirectory/${sender.owner}`).get()).data() || {}; senderPhone = m.contactPhone || ""; senderBooking = m.bookingLink || ""; } catch (e) { /* fields stay empty */ } }
-  const ctx = buildContext({ company: ctxCompany, contactName, sender: { ...sender, email: senderId, phone: senderPhone, bookingLink: senderBooking }, unsubscribeUrl, aiOpener: opts.aiOpener || "", team: await teamDirectory(), senderKey: sender.owner || null, campaign: opts.campaignFields || {}, otherCompanies: opts.otherCompanies || [] });
+  const ctx = buildContext({ company: ctxCompany, contactName, recipientRole: recipient?.kind !== "company" ? recipient?.role || "" : "", sender: { ...sender, email: senderId, phone: senderPhone, bookingLink: senderBooking }, unsubscribeUrl, aiOpener: opts.aiOpener || "", team: await teamDirectory(), senderKey: sender.owner || null, campaign: opts.campaignFields || {}, otherCompanies: opts.otherCompanies || [] });
 
   let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null, templateSigns = false;
   if (opts.templateId) {
