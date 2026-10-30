@@ -797,8 +797,10 @@
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
     import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
     document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
+    document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
     import { figuresOf } from './company-figures.js'; // 29 Oct: last-year figures + letterIntro for letters / call scripts
+    import { trustPillHtml, TRUST_CSS } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
     import { normalizeWindow, checkWindow, letterCss, calibrationCss, calibrationPage, FIT_SCRIPT, parseBlocks, keepFlags, planLetter, layoutCfg, LAYOUT_JS } from './letter-layout.js'; // 29 Oct: address window + page layout of the letters
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -4187,7 +4189,7 @@ Optional note for them:`, '');
       const p = e.recipientPreview?.[c.recipientPolicy || 'company'];
       if (e.recipientPreview && !p) return '<span style="color:var(--danger)">nobody (no address)</span>';
       if (!p) return '<span class="hint">—</span>';
-      return `<span style="opacity:0.75;" title="Preview — fixed when email 1 is sent">${esc(p.name || p.email)}</span> <span class="hint">· ${esc(KIND[p.kind] || '')}${p.personal ? ' · personal' : ''}</span>`;
+      return `<span style="opacity:0.75;" title="Preview — fixed when email 1 is sent">${esc(p.name || p.email)}</span> <span class="hint">· ${esc(KIND[p.kind] || '')}${p.personal ? ' · personal' : ''}</span>${p.trust && isOn('contacts.trustLabels') ? ' ' + trustPillHtml(p.trust, '', esc) : ''}`;
     }
 
     // Move one company to another campaign (2c): the target's rules apply.
@@ -6124,6 +6126,7 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
           <div class="row2">
             <div class="field"><label for="csAppr">Before emails go out (steps can override)<span class="info" title="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule." aria-label="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule.">i</span></label>
               ${isOn('outreach.campaignCc') ? `<div style="margin-top:6px;"><label for="csCc" style="text-transform:none;letter-spacing:normal;">Cc on every email <span class="hint">(Douro addresses only, up to 3)</span></label><input type="text" id="csCc" value="${esc((c.cc || []).join(', '))}" placeholder="antonio.carvalho@douropartners.pt"${dis}></div>` : ''}
+              ${isOn('contacts.trustLabels') ? `<label class="checkline" style="margin-top:6px;"><input type="checkbox" id="csUnverified"${c.useUnverified ? ' checked' : ''}${dis}> <span>Use not-verified addresses <span class="hint">(off: only Confirmed and Tool-verified addresses are used; a person whose only address is not verified is skipped, and the company address is used instead)</span></span></label>` : ''}
               ${isOn('outreach.sendAllNow') ? `<label class="checkline" style="margin-top:6px;"><input type="checkbox" id="csSendAll"${c.sendAllAtOnce ? ' checked' : ''}${dis}> <span>Send approved emails all at once <span class="hint">(no 10-minute spacing; "⚡ Send approved now" appears on the campaign; daily limits still apply)</span></span></label>` : ''}
               <select id="csAppr"${dis}><option value="approval"${c.approvalDefault !== 'auto' ? ' selected' : ''}>Each email waits for approval</option><option value="auto"${c.approvalDefault === 'auto' ? ' selected' : ''}>Emails go out automatically</option></select></div>
             <div class="field"${c.audienceType === 'people' ? ' hidden' : ''}><label for="csRecip">Emails go to</label>
@@ -6209,6 +6212,7 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
           const r = (await callCampaign({ action: 'recipientsPreview', campaignId: c.id })).data;
           const line = (k) => { const x = r.counts[k]; return [x.person && `${num(x.person)} to a person`, x.contact && `${num(x.contact)} to a contact`, x.company && `${num(x.company)} to the company address`, x.none && `<b>${num(x.none)} to nobody</b> (no address)`].filter(Boolean).join(', ') || '—'; };
           out.innerHTML = `<b>Company address:</b> ${line('company')}<br><b>Primary contact:</b> ${line('primary_contact')}<br><b>Best person:</b> ${line('best_person')}`
+            + (r.heldBack ? `<br><b>${num(r.heldBack)} compan${r.heldBack === 1 ? 'y has' : 'ies have'} a person with an address that is not verified</b> and ${c.useUnverified ? 'is used because the campaign allows it' : 'is skipped (tick "Use not-verified addresses" in Settings to use them)'}.` : '')
             + `<br>${num(r.checked)} of ${num(r.total)} companies checked${r.total > r.checked ? ' (the first 300)' : ''}${r.decided ? ` · ${num(r.decided)} already received email 1, so theirs is fixed` : ''}. See "Goes to" in Companies.`;
           loadCampaignData();
         } catch (e) { out.textContent = errText(e); }
@@ -6262,6 +6266,7 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
           exclusions: { contactedWithinDays: recent, allowedStages: stages, requireEmail: $('csReqEmail').checked, includeNotContactable: !!$('csInclNC')?.checked, ownerFilter: $('csOwner').value || null, peopleContactedWithinDays: $('csPeopleRecent') ? (parseInt($('csPeopleRecent').value, 10) || 0) : (c.exclusions?.peopleContactedWithinDays || 0) },
           audience: { mode: $('csAudMode').value },
           ...($('csSendAll') ? { sendAllAtOnce: $('csSendAll').checked } : {}),
+          ...($('csUnverified') ? { useUnverified: $('csUnverified').checked } : {}),
           ...($('csCc') ? { cc: $('csCc').value.split(/[,;\s]+/).map(x => x.trim()).filter(Boolean) } : {}),
           ...($('csStart') ? { startOrder: { mode: $('csStart').value, equal: $('csEqual').checked, perPath: Object.fromEntries([...root.querySelectorAll('[data-share]')].map(x => [x.dataset.share, parseInt(x.value, 10) || 0])) } } : {}),
         } }, 'Settings saved.');

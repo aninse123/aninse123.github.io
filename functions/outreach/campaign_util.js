@@ -214,6 +214,8 @@ function normalizeCampaign(input, existing = null) {
     footer: typeof src.footer === "boolean" ? src.footer : null,
     // 28 Oct (switch outreach.sendAllNow): approved emails leave together, not one per address every 10 minutes.
     sendAllAtOnce: !!src.sendAllAtOnce,
+    // 30 Oct (switch contacts.trustLabels): addresses that are not verified may be used by this campaign.
+    useUnverified: !!src.useUnverified,
     // 28 Oct (switch outreach.campaignCc): Douro addresses copied on every email.
     cc: normalizeCc(src.cc),
     sector: cleanText(src.sector, 120),

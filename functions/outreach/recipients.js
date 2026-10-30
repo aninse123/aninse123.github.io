@@ -7,6 +7,7 @@
 const { normEmail, isValidEmail, isFreeMail, domainOf } = require("./util");
 const store = require("./store");
 const { NOT_DECIDER_RE, SOCIO_RE } = require("./roles"); // 28 Oct: who counts as a decision-maker
+const Trust = require("./contact_trust"); // 30 Oct: trust status of an address (switch contacts.trustLabels)
 
 const { db } = store;
 
@@ -98,21 +99,55 @@ function personEmailsFor(p, company, usePeople) {
   return [...ok, ...personEmails(p).filter((e) => !notOk.has(normEmail(e)))];
 }
 
+// 30 Oct (switch contacts.trustLabels): the same list with a trust status per address, worked out from the
+// detail's origin, what the tool said and whether a person confirmed it (contact_trust.js). A person's own
+// emails: typed field = team, Orbis list = database, reach entries by their own fields. Bounced / old / hidden
+// ones stay out, as before.
+function personEmailsTrust(p, company, usePeople) {
+  const norm = (v) => normEmail(v);
+  const out = [];
+  const seen = new Set();
+  const push = (email, entry) => { const k = norm(email); if (!k || seen.has(k)) return; seen.add(k); out.push({ email, trust: Trust.trustOf(entry) }); };
+  const doms = companyDomains(company);
+  if (usePeople) {
+    const reach = (p?.reach || []).filter((e) => e && e.type === "email");
+    reach.filter((e) => (e.status || "ok") === "ok")
+      .sort((a, b) => (doms.has(domainOf(norm(b.value))) - doms.has(domainOf(norm(a.value)))) || ((b.primary ? 1 : 0) - (a.primary ? 1 : 0)))
+      .forEach((e) => push(e.value, e));
+    const notOk = new Set([...reach.filter((e) => (e.status || "ok") !== "ok").map((e) => norm(e.value)), ...(p?.hiddenOrbis || []).map((v) => norm(v))]);
+    if (p?.email && !notOk.has(norm(p.email))) push(p.email, { origin: "team", type: "email" });
+    const orb = Array.isArray(p?.orbisEmails) ? p.orbisEmails.filter(Boolean).slice().reverse() : p?.orbisEmails ? [p.orbisEmails] : (p?.orbisEmail ? [p.orbisEmail] : []);
+    orb.filter((e) => !notOk.has(norm(e))).forEach((e) => push(e, { origin: "database", type: "email" }));
+    return out;
+  }
+  if (p?.email) push(p.email, { origin: "team", type: "email" });
+  const orb = Array.isArray(p?.orbisEmails) ? p.orbisEmails.filter(Boolean).slice().reverse() : p?.orbisEmails ? [p.orbisEmails] : [];
+  orb.forEach((e) => push(e, { origin: "database", type: "email" }));
+  if (!out.length && p?.orbisEmail) push(p.orbisEmail, { origin: "database", type: "email" });
+  return out;
+}
+
 // Returns [{ kind: "company"|"contact"|"person", email, name, role, personId?, isPrimary?, isMain?, rank, personal }]
 // (only entries with a valid email), best person first among People.
 // opts.usePeople: the search.people switch (People merge, Stage 4).
-async function companyRecipients(companyId, company, { usePeople = false } = {}) {
+// opts.trust: { on, includeUnverified } (switch contacts.trustLabels): each address gets `trust`; one the
+// campaign may not use (not verified, unless includeUnverified) stays in the list with `blocked: true`
+// so a preview can say why, and pickByPolicy / the scheduler skip it.
+async function companyRecipients(companyId, company, { usePeople = false, trust = null } = {}) {
   const out = [];
   const seen = new Set();
+  const T = trust && trust.on ? trust : null;
   const add = (r) => {
     const email = normEmail(r.email);
     if (!isValidEmail(email) || seen.has(email)) return;
     seen.add(email);
-    out.push({ ...r, email, personal: isFreeMail(domainOf(email)) });
+    const { trust: given, ...rest } = r;
+    const t = T ? given || "confirmed" : null;
+    out.push({ ...rest, email, personal: isFreeMail(domainOf(email)), ...(T ? { trust: t, ...(Trust.usable(t, T.includeUnverified) ? {} : { blocked: true }) } : {}) });
   };
-  if (company?.companyEmail) add({ kind: "company", email: company.companyEmail, name: "", role: "Company address", rank: 0 });
+  if (company?.companyEmail) add({ kind: "company", email: company.companyEmail, name: "", role: "Company address", rank: 0, trust: "tool" }); // from the registry / Orbis
   // Typed contacts come after the People ranking (primary contact first), before the company address.
-  (company?.contacts || []).forEach((ct) => add({ kind: "contact", email: ct.email, name: ct.name || "", role: ct.role || "", isPrimary: !!ct.isPrimary, rank: ct.isPrimary ? 20 : 10 }));
+  (company?.contacts || []).forEach((ct) => add({ kind: "contact", email: ct.email, name: ct.name || "", role: ct.role || "", isPrimary: !!ct.isPrimary, rank: ct.isPrimary ? 20 : 10, trust: Trust.trustOf({ origin: ct.origin || "team", type: "email", status: ct.status, confirmedAt: ct.confirmedAt }) }));
   if (companyId) {
     const links = await db().collection("searchPersonLinks").where("companyId", "==", companyId).limit(60).get();
     // B5 (8 Oct): a company holder is stored as "entity" (People import); the
@@ -127,7 +162,8 @@ async function companyRecipients(companyId, company, { usePeople = false } = {})
         const p = s.data(), l = ranked[i].l;
         const role = l.isContact ? (l.contactRole || "Contact") : (l.mgmtRoles || []).join(", ") || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : "");
         const isMain = usePeople && company?.primaryContact?.personId === s.id;
-        personEmailsFor(p, company, usePeople).forEach((email) => add({ kind: "person", email, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank, ...(isMain ? { isMain: true } : {}) }));
+        if (T) personEmailsTrust(p, company, usePeople).forEach(({ email, trust: tr }) => add({ kind: "person", email, trust: tr, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank, ...(isMain ? { isMain: true } : {}) }));
+        else personEmailsFor(p, company, usePeople).forEach((email) => add({ kind: "person", email, name: p.name || l.personName || "", role, personId: s.id, rank: ranked[i].rank, ...(isMain ? { isMain: true } : {}) }));
       });
     }
   }
@@ -136,7 +172,8 @@ async function companyRecipients(companyId, company, { usePeople = false } = {})
 
 // Campaign "Send to" (spec 3b): company | primary_contact | best_person, each
 // falling back to the company address.
-function pickByPolicy(recipients, policy) {
+function pickByPolicy(all, policy) {
+  const recipients = all.filter((r) => !r.blocked); // 30 Oct: an address the campaign may not use (not verified) is never picked
   const company = recipients.find((r) => r.kind === "company") || null;
   if (policy === "primary_contact") {
     const main = recipients.find((r) => r.isMain); // People merge: the company's main contact first
@@ -151,4 +188,4 @@ function pickByPolicy(recipients, policy) {
   return company;
 }
 
-module.exports = { companyRecipients, pickByPolicy, rankPerson, isGuoPerson, personEmails, personValues, personEmailsFor, companyDomains, CORPORATE_HOLDER };
+module.exports = { companyRecipients, pickByPolicy, rankPerson, isGuoPerson, personEmails, personValues, personEmailsFor, personEmailsTrust, companyDomains, CORPORATE_HOLDER };

@@ -316,7 +316,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState, burstState, ccState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths"), Feat.jobState("outreach.sendAllNow"), Feat.jobState("outreach.campaignCc")]);
+  const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState, burstState, ccState, trustState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths"), Feat.jobState("outreach.sendAllNow"), Feat.jobState("outreach.campaignCc"), Feat.jobState("contacts.trustLabels")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
   const settings = await store.getSettings();
@@ -528,7 +528,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       let recipient = e.recipient || null;
       if (!e.personEmail && !isFollowUp && !recipient && (campaign.recipientPolicy || "company") !== "company") {
         const co = await db().doc(`searchCompanies/${e.companyId}`).get();
-        const pick = co.exists ? pickByPolicy(await companyRecipients(e.companyId, co.data(), { usePeople: allowed(peopleState, campaign) }), campaign.recipientPolicy) : null;
+        const pick = co.exists ? pickByPolicy(await companyRecipients(e.companyId, co.data(), { usePeople: allowed(peopleState, campaign), trust: { on: allowed(trustState, campaign), includeUnverified: !!campaign.useUnverified } }), campaign.recipientPolicy) : null;
         if (pick) { recipient = { email: pick.email, name: pick.name || "", kind: pick.kind }; await doc.ref.update({ recipient }); }
       }
       // One inbox (19 Oct, switch "outreach.oneInbox"): before a company's

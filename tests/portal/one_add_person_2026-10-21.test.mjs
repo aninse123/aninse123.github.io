@@ -67,7 +67,7 @@ ok('phone: a person\'s page shows their own list (all types, Orbis not hidden), 
 // 21 Oct (André): add forms one item per line; ☆ on the People tab picks the main entry
 ok('add forms: type, value, note and the button each on their own line (person page and People tab)', (page.match(/<div class="reach-add" style="display:grid;/g) || []).length === 2 && page.includes('<label>Type</label><select class="field" id="cpAddType"'));
 ok('Contacts tab: the same rows and controls as the person page — ★ to make it the main one, status, ✎, ✕, Hide for Orbis', page.includes("const row = (e) => reachRowHtml(e, canEdit);") && page.includes("reachRowHtml(e, canEdit, pp.id, ICON[e.type] || '')") && page.includes('data-reachprimary="${esc(e.id)}"${P}')
-  && page.includes('if (t.dataset.pid && (t.dataset.reachprimary || t.dataset.reachedit || t.dataset.reachdel || t.dataset.orbhide != null))') && page.includes("const sel = ev.target.closest('[data-reachstatus][data-pid]')") && page.includes('if (edE) { // ✎: change the value or the note, as on the person page'));
+  && page.includes('if (t.dataset.pid && (t.dataset.reachprimary || t.dataset.reachconfirm || t.dataset.reachedit || t.dataset.reachdel || t.dataset.orbhide != null))') && page.includes("const sel = ev.target.closest('[data-reachstatus][data-pid]')") && page.includes('if (edE) { // ✎: change the value or the note, as on the person page'));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');

@@ -1371,6 +1371,8 @@ import { nameIssues, nameCheckOf } from './email-name-check.js'; // 26 Oct (sear
 import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-ui.js';
 import { summaryOf as contactSummaryOf, contactedHtml, flagsHtml, tipHtml as contactTipHtml, CT_CSS } from './contact-summary.js'; // 27 Oct (search.contactColumns)
 document.head.insertAdjacentHTML('beforeend', `<style>${CT_CSS}</style>`);
+import { trustOf, trustTitle, trustPillHtml, TRUST_CSS } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
+document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
 import { stepsFor } from './campaign-paths.js'; // 27 Oct (outreach.paths)
 import { applyDirectory } from './team-dir.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
@@ -4495,18 +4497,19 @@ async function renderCompanyPeople(c){
     catch(err){ alert('Error: ' + err.message); }
   };
   el.onclick = async (ev) => {
-    const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink],[data-ctedit],[data-reachprimary],[data-reachedit],[data-reachdel],[data-orbhide]'); if (!t) return;
+    const t = ev.target.closest('[data-person],[data-cpadd],[data-cpaddsave],[data-cpaddcancel],[data-cpprev],[data-cpnewcontact],[data-mainct],[data-handcur],[data-rmlink],[data-ctedit],[data-reachprimary],[data-reachconfirm],[data-reachedit],[data-reachdel],[data-orbhide]'); if (!t) return;
     if (t.dataset.person) { openPerson(t.dataset.person, { type: 'company', id: c.id, tab: 'contacts' }); return; }
     if (t.dataset.ctedit) { openPersonModal(t.dataset.ctedit); return; }
-    if (t.dataset.pid && (t.dataset.reachprimary || t.dataset.reachedit || t.dataset.reachdel || t.dataset.orbhide != null)) { // the person-page controls
+    if (t.dataset.pid && (t.dataset.reachprimary || t.dataset.reachconfirm || t.dataset.reachedit || t.dataset.reachdel || t.dataset.orbhide != null)) { // the person-page controls
       const pp = people.get(t.dataset.pid); if (!pp) return;
       const own = pp.reach || [], hidden = [...(pp.hiddenOrbis || [])];
       if (t.dataset.reachedit) { companyPeopleAddFor = pp.id; companyPeopleEditId = t.dataset.reachedit; await renderCompanyPeople(c); document.getElementById('cpAddValue')?.focus(); return; }
-      const e = own.find(x => x.id === (t.dataset.reachprimary || t.dataset.reachdel));
+      const e = own.find(x => x.id === (t.dataset.reachprimary || t.dataset.reachdel || t.dataset.reachconfirm));
       if (t.dataset.reachdel && !confirm(`Delete ${e.value}?`)) return;
       t.disabled = true;
       try {
         if (t.dataset.reachprimary) await savePersonReach(pp, reachSetPrimary(own, e.id), hidden, `${e.value} is now the primary ${e.type}`);
+        else if (t.dataset.reachconfirm) await savePersonReach(pp, reachUpdate(own, e.id, reachConfirmPatch(t.dataset.undo)), hidden, `${e.value} ${t.dataset.undo ? 'is no longer confirmed' : 'confirmed'}`);
         else if (t.dataset.reachdel) await savePersonReach(pp, reachRemove(own, e.id), hidden, `removed ${e.value}`);
         else { const v = t.dataset.orbhide, isH = hidden.includes(v); await savePersonReach(pp, own, isH ? hidden.filter(x => x !== v) : [...hidden, v], `${isH ? 'showed' : 'hid'} the Orbis value ${v}`); }
         renderCompanyPeople(c);
@@ -5888,13 +5891,15 @@ const REACH_STATUS = { ok: ['OK', ''], bounced: ['Bounced', 'badge-red'], old: [
 const reachDay = (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
 function reachRowHtml(e, canEdit, pid = '', icon = ''){
   const P = pid ? ` data-pid="${esc(pid)}"` : '';
+  const TL = isOn('contacts.trustLabels'), tk = TL ? trustOf(e) : null; // 30 Oct: one status, Bounced replaces the others
   return `<div class="contact-detail reach-row${e.status === 'bounced' ? ' prev' : ''}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       ${icon ? `<span aria-hidden="true">${icon}</span>` : ''}${reachLinkHtml(e.type, e.value, e.status === 'bounced' ? 'text-decoration:line-through;' : '')}
       ${e.primary ? '<span class="badge badge-blue" title="Used first">★ primary</span>' : ''}
-      ${e.status && e.status !== 'ok' ? `<span class="badge ${REACH_STATUS[e.status][1]}">${REACH_STATUS[e.status][0]}</span>` : ''}
+      ${TL ? trustPillHtml(tk, trustTitle(e, reachDay), esc) : ''}${e.status && e.status !== 'ok' && !(TL && e.status === 'bounced') ? `<span class="badge ${REACH_STATUS[e.status][1]}">${REACH_STATUS[e.status][0]}</span>` : ''}
       ${e.note ? `<span class="hint">${esc(e.note)}</span>` : ''}
       <span class="hint">· ${esc(e.source === 'manual' ? 'you' : e.source)}${e.addedBy ? ', ' + esc(String(e.addedBy).split('@')[0]) : ''}${e.addedAt ? ', ' + esc(reachDay(e.addedAt)) : ''}</span>
       ${canEdit ? `<span style="margin-left:auto;display:inline-flex;gap:4px;">
+        ${TL && tk !== 'bounced' ? `<button class="btn btn--ghost btn--sm" data-reachconfirm="${esc(e.id)}"${e.confirmedAt ? ' data-undo="1"' : ''}${P} title="${e.confirmedAt ? 'Take back your confirmation' : 'You have checked it: mark as Confirmed'}">${e.confirmedAt ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}
         ${e.primary ? '' : `<button class="btn btn--ghost btn--sm" data-reachprimary="${esc(e.id)}"${P} title="Use this one first">★</button>`}
         <select class="field" data-reachstatus="${esc(e.id)}"${P} style="width:auto;padding:2px 6px;font-size:0.75rem;" aria-label="Status">${Object.entries(REACH_STATUS).map(([k, [l]]) => `<option value="${k}"${(e.status || 'ok') === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
         <button class="btn btn--icon btn--ghost" data-reachedit="${esc(e.id)}"${P} title="Edit">✎</button>
@@ -5904,7 +5909,7 @@ function reachRowHtml(e, canEdit, pid = '', icon = ''){
 function reachOrbisRowHtml(t, o, canEdit, pid = '', icon = ''){
   const P = pid ? ` data-pid="${esc(pid)}"` : '';
   return `<div class="contact-detail" style="display:flex;gap:8px;align-items:center;${o.hidden ? 'opacity:0.55;' : ''}">
-      ${icon ? `<span aria-hidden="true">${icon}</span>` : ''}${o.hidden ? `<s>${esc(o.value)}</s>` : reachLinkHtml(t, o.value)} <span class="badge badge-grey">Orbis</span>${o.hidden ? ' <span class="hint">hidden</span>' : ''}
+      ${icon ? `<span aria-hidden="true">${icon}</span>` : ''}${o.hidden ? `<s>${esc(o.value)}</s>` : reachLinkHtml(t, o.value)} <span class="badge badge-grey">Orbis</span>${isOn('contacts.trustLabels') ? ' ' + trustPillHtml('tool', trustTitle({ origin: 'database', type: t }, reachDay), esc) : ''}${o.hidden ? ' <span class="hint">hidden</span>' : ''}
       ${canEdit ? `<button class="btn btn--ghost btn--sm" data-orbhide="${esc(o.value)}"${P} style="margin-left:auto;">${o.hidden ? 'Show' : 'Hide'}</button>` : ''}</div>`;
 }
 function renderReachCard(p, links){
@@ -5940,11 +5945,12 @@ function renderReachCard(p, links){
     } catch(e){ const er = document.getElementById('reachErr'); if (er){ er.textContent = e.message; er.style.display = 'block'; } if (btn) btn.disabled = false; }
   };
   el.onclick = async (ev) => {
-    const t = ev.target.closest('[data-reachprimary],[data-reachedit],[data-reachdel],[data-orbhide],#reachSaveBtn,#reachCancelBtn'); if (!t) return;
+    const t = ev.target.closest('[data-reachprimary],[data-reachconfirm],[data-reachedit],[data-reachdel],[data-orbhide],#reachSaveBtn,#reachCancelBtn'); if (!t) return;
     const hidden = [...(p.hiddenOrbis || [])];
     if (t.id === 'reachCancelBtn'){ reachEditId = null; renderReachCard(p, links); return; }
     if (t.dataset.reachedit){ reachEditId = t.dataset.reachedit; renderReachCard(p, links); document.getElementById('reachValue')?.focus(); return; }
     if (t.dataset.reachprimary){ const e = own.find(x => x.id === t.dataset.reachprimary); await save(reachSetPrimary(own, e.id), hidden, `${e.value} is now the primary ${e.type}`); return; }
+    if (t.dataset.reachconfirm){ const e = own.find(x => x.id === t.dataset.reachconfirm); await save(reachUpdate(own, e.id, reachConfirmPatch(t.dataset.undo)), hidden, `${e.value} ${t.dataset.undo ? 'is no longer confirmed' : 'confirmed'}`); return; }
     if (t.dataset.reachdel){ const e = own.find(x => x.id === t.dataset.reachdel); if (!confirm(`Delete ${e.value}?`)) return; await save(reachRemove(own, e.id), hidden, `removed ${e.value}`); return; }
     if (t.dataset.orbhide != null){ const v = t.dataset.orbhide; const isH = hidden.includes(v); await save(own, isH ? hidden.filter(x => x !== v) : [...hidden, v], `${isH ? 'showed' : 'hid'} the Orbis value ${v}`); return; }
     if (t.id === 'reachSaveBtn'){
@@ -6474,6 +6480,8 @@ function reachAdd(list, { type, value, note = '', source = 'manual', by = '', at
   const entry = { id: reachNewId(), type, value: v, note: String(note || '').trim().slice(0, 200), source, status: 'ok', primary: !(list || []).some(e => e.type === type), addedBy: by, addedAt: at };
   return { list: [...(list || []), entry], entry };
 }
+// 30 Oct (contacts.trustLabels): a person checked a detail (or takes it back). Who and when stay on the detail.
+const reachConfirmPatch = (undo) => undo ? { confirmedBy: null, confirmedAt: null } : { confirmedBy: currentUser, confirmedAt: new Date().toISOString() };
 const reachUpdate = (list, id, patch) => (list || []).map(e => (e.id === id ? { ...e, ...patch } : e));
 function reachSetPrimary(list, id){ const t = (list || []).find(e => e.id === id)?.type; return (list || []).map(e => (e.type === t ? { ...e, primary: e.id === id } : e)); }
 function reachRemove(list, id){

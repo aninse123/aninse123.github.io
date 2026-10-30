@@ -436,18 +436,19 @@ async function recipientsPreview({ campaignId }, caller, opts = {}) {
   const live = snap.docs.filter((d) => d.data().companyId);
   const todo = live.slice(0, RECIP_PREVIEW_MAX);
   const counts = Object.fromEntries(POLICIES.map((p) => [p, { company: 0, contact: 0, person: 0, none: 0 }]));
-  let personal = 0;
+  let personal = 0, heldBack = 0; // heldBack: companies with a person address the campaign may not use (not verified)
   const updates = [];
   for (const group of chunks(todo, 10)) {
     const cos = await db().getAll(...group.map((d) => db().doc(`searchCompanies/${d.data().companyId}`)));
     await Promise.all(group.map(async (d, i) => {
       const co = cos[i].exists ? cos[i].data() : null;
-      const rs = co ? await companyRecipients(d.data().companyId, co, { usePeople: !!opts.usePeople }) : [];
+      const rs = co ? await companyRecipients(d.data().companyId, co, { usePeople: !!opts.usePeople, trust: { on: !!opts.trust, includeUnverified: !!campaign.useUnverified } }) : [];
       const preview = {};
+      if (rs.some((r) => r.blocked && (r.kind === "person" || r.kind === "contact"))) heldBack++;
       for (const p of POLICIES) {
         const pick = pickByPolicy(rs, p);
         counts[p][pick ? pick.kind : "none"]++;
-        preview[p] = pick ? { email: pick.email, kind: pick.kind, name: pick.name || "", personal: !!pick.personal } : null;
+        preview[p] = pick ? { email: pick.email, kind: pick.kind, name: pick.name || "", personal: !!pick.personal, ...(pick.trust ? { trust: pick.trust } : {}) } : null;
       }
       if (preview[campaign.recipientPolicy || "company"]?.personal) personal++;
       updates.push({ ref: d.ref, preview });
@@ -458,7 +459,7 @@ async function recipientsPreview({ campaignId }, caller, opts = {}) {
     group.forEach((u) => batch.update(u.ref, { recipientPreview: { ...u.preview, at: FieldValue.serverTimestamp() } }));
     await batch.commit();
   }
-  return { counts, checked: todo.length, total: live.length, decided: live.filter((d) => d.data().recipient).length, personal, policy: campaign.recipientPolicy || "company" };
+  return { counts, checked: todo.length, total: live.length, decided: live.filter((d) => d.data().recipient).length, personal, policy: campaign.recipientPolicy || "company", ...(opts.trust ? { heldBack } : {}) };
 }
 
 async function enrolOne(companyId, campaign, ctx, source, onConflict, caller, extra = {}) {
@@ -1421,7 +1422,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
       case "delete": return await remove(data, caller);
       case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware, nameCheck });
       case "related": return await relatedOf(data, { ownerAware });
-      case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople });
+      case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
       case "runNow": return await runNow(data, caller);
       case "sendNow": return await sendNow(data, caller);
       case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware });
