@@ -5917,7 +5917,7 @@ function reachRowHtml(e, canEdit, pid = '', icon = ''){
       ${e.note ? `<span class="hint">${esc(e.note)}</span>` : ''}
       <span class="hint">· ${esc(e.source === 'manual' ? 'you' : e.source)}${e.addedBy ? ', ' + esc(String(e.addedBy).split('@')[0]) : ''}${e.addedAt ? ', ' + esc(reachDay(e.addedAt)) : ''}</span>
       ${canEdit ? `<span style="margin-left:auto;display:inline-flex;gap:4px;">
-        ${TL && tk !== 'bounced' ? `<button class="btn btn--ghost btn--sm" data-reachconfirm="${esc(e.id)}"${e.confirmedAt ? ' data-undo="1"' : ''}${P} title="${e.confirmedAt ? 'Take back your confirmation' : 'You have checked it: mark as Confirmed'}">${e.confirmedAt ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}
+        ${TL && (e.confirmedAt || tk === 'tool' || tk === 'unverified') ? `<button class="btn btn--ghost btn--sm" data-reachconfirm="${esc(e.id)}"${e.confirmedAt ? ' data-undo="1"' : ''}${P} title="${e.confirmedAt ? 'Take back your confirmation' : 'You have checked it: mark as Confirmed'}">${e.confirmedAt ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}
         ${e.primary ? '' : `<button class="btn btn--ghost btn--sm" data-reachprimary="${esc(e.id)}"${P} title="Use this one first">★</button>`}
         <select class="field" data-reachstatus="${esc(e.id)}"${P} style="width:auto;padding:2px 6px;font-size:0.75rem;" aria-label="Status">${Object.entries(REACH_STATUS).map(([k, [l]]) => `<option value="${k}"${(e.status || 'ok') === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
         <button class="btn btn--icon btn--ghost" data-reachedit="${esc(e.id)}"${P} title="Edit">✎</button>
