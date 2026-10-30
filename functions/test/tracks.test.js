@@ -32,6 +32,7 @@ function seed() {
   const r = await RL.setRecipients({ enrolmentId: "en1", emails: ["joao@empresa.pt", "geral@empresa.pt"], all: true }, "andre", { deps: dns, multi: true });
   const t1 = en("en1__t1");
   ok("the first address stays on the company's enrolment; the second gets a track of its own", r.added === 1 && en("en1").recipient.email === "joao@empresa.pt" && t1 && t1.trackOf === "en1" && t1.isTrack === true && t1.recipient.email === "geral@empresa.pt" && t1.status === "pending" && !t1.forceApproval);
+  ok("an extra address is marked isExtra (a fallback after a bounce is not), so campaign counts can count companies", t1.isExtra === true);
   ok("a track has no enrolledAt, so the daily pacing of new companies never counts it", t1.enrolledAt === undefined);
 
   // ── Starting tracks ──
@@ -61,6 +62,7 @@ function seed() {
   const fb = await Tracks.onHardBounce("en1", "joao@empresa.pt");
   const fbT = en("en1__t1");
   ok("one address with a saved list: the next address takes over, from the start, in a conversation of its own", fb === "fallback" && fbT.recipient.email === "geral@empresa.pt" && fbT.status === "active" && fbT.currentStep === 0 && fbT.fallbackFrom === "joao@empresa.pt" && en("en1").status === "stopped");
+  ok("a fallback track is not an extra address", fbT.isExtra === undefined && fbT.isTrack === true);
   ok("the company keeps its campaign slot (now on the fallback)", store.get("searchCompanies/co1").activeEnrolmentId === "en1__t1");
   ok("and when that one bounces too, nothing is left", (await Tracks.onHardBounce("en1__t1", "geral@empresa.pt")) === "none");
 

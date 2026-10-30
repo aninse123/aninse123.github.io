@@ -307,6 +307,7 @@ async function preview({ campaignId, companyIds }, caller, opts = {}) {
   const ids = cleanCompanyIds(companyIds);
   const ctx = await evalContext(campaign);
   ctx.usePeople = !!opts.usePeople; // People merge (Stage 4)
+  ctx.trust = !!opts.trust; // 30 Oct (contacts.trustLabels): extra general addresses count as reachable
   const data = await readCompanies(ids, campaignId);
   await withInbox(ctx, ids.map((id) => data.get(id)?.company?.companyEmail), opts.oneInbox);
   const excluded = {};
@@ -536,6 +537,7 @@ async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices,
   const mode = onConflict === "move" ? "move" : "skip";
   const ctx = await evalContext(campaign);
   ctx.usePeople = !!opts.usePeople; // People merge (Stage 4)
+  ctx.trust = !!opts.trust; // 30 Oct (contacts.trustLabels): extra general addresses count as reachable
   if (opts.oneInbox) await withInbox(ctx, await companyEmails(ids), true);
   let enrolled = 0, moved = 0;
   const skipped = {};
@@ -1425,7 +1427,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
       case "returnStart": return await returnStart(data, caller);
       case "duplicate": return await duplicate(data, caller);
       case "delete": return await remove(data, caller);
-      case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware, nameCheck });
+      case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware, nameCheck, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
       case "related": return await relatedOf(data, { ownerAware });
       case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
       case "recipientsFor": return await RL.recipientsFor(data);
@@ -1435,7 +1437,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
       case "restartCompany": return await Tracks.restartCompany(data, caller);
       case "runNow": return await runNow(data, caller);
       case "sendNow": return await sendNow(data, caller);
-      case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware });
+      case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);
       case "previewPeople": return await previewPeople(data, caller);

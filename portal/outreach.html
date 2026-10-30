@@ -3757,7 +3757,15 @@
             getCountFromServer(query(col, where('campaignId', '==', c.id), where('status', '==', 'awaiting_approval'))),
             getCountFromServer(query(col, where('campaignId', '==', c.id), where('status', '==', 'replied'))),
           ]);
-          campCounts[c.id] = { live: live.data().count, approve: appr.data().count, replied: rep.data().count };
+          let k = { live: live.data().count, approve: appr.data().count, replied: rep.data().count };
+          // 30 Oct (several recipients): the counts are companies, not conversations: the extra addresses of a company are taken off
+          if (isOn('outreach.multiRecipient')) {
+            const ex = await getDocs(query(col, where('campaignId', '==', c.id), where('isExtra', '==', true)));
+            addReads(ex.size);
+            const x = ex.docs.map(d => d.data());
+            k = { live: k.live - x.filter(e => LIVE_ENROL.includes(e.status)).length, approve: k.approve - x.filter(e => e.status === 'awaiting_approval').length, replied: k.replied - x.filter(e => e.status === 'replied').length };
+          }
+          campCounts[c.id] = k;
         } catch (e) { console.warn('campaign counts', c.id, e); }
       }));
       addReads(list.length * 3); refreshReads();
@@ -4121,6 +4129,14 @@ Optional note for them:`, '');
       const inPath = (e) => audPath === 'all' || !pathsView || (audPath === 'left' ? isLeftOut(e) : audPath === 'none' ? !pathIdOf(e) : pathIdOf(e) === audPath && !isLeftOut(e));
       const rows = curEnrols.filter(e => inPath(e) && (audFilter === 'all' || (audFilter === 'live' ? LIVE_ENROL.includes(e.status) : e.status === audFilter))
         && (!q || norm(e.companyName).includes(q) || norm(e.contactEmail).includes(q) || norm(e.personName).includes(q)));
+      // 30 Oct (several recipients): the extra addresses of a company are listed right under it
+      const tracksOf = new Map();
+      curEnrols.filter(e => e.trackOf).forEach(e => { if (!tracksOf.has(e.trackOf)) tracksOf.set(e.trackOf, []); tracksOf.get(e.trackOf).push(e); });
+      if (tracksOf.size) {
+        const ids = new Set(rows.map(e => e.id)), ordered = [];
+        rows.forEach(e => { if (e.trackOf && ids.has(e.trackOf)) return; ordered.push(e); (tracksOf.get(e.id) || []).filter(t => ids.has(t.id)).forEach(t => ordered.push(t)); });
+        rows.splice(0, rows.length, ...ordered);
+      }
       const shown = rows.slice(0, 300);
       const canAdd = campEditable(c) && c.kind !== 'issue';
       $('cs-audience').innerHTML = `
@@ -4148,7 +4164,7 @@ Optional note for them:`, '');
                 `<button class="btn btn--danger btn--sm" data-eop="remove" data-perm="out.campaigns" data-eid="${esc(e.id)}">Remove</button>`,
               ].join(' ');
               return `<tr>
-                <td>${e.personEmail ? `<b>${esc(e.personName || e.personEmail)}</b>${e.org ? ` <span class="hint">· ${esc(e.org)}</span>` : ''}<div class="hint">${esc(e.personEmail)}${(e.refs || []).length ? ' · ' + e.refs.map(r => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[r.source] || r.source)).join(', ') : ''}</div>` : `<a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.trackOf ? (e.fallbackFrom ? `next address after ${esc(e.fallbackFrom)} bounced · ` : 'extra address · ') : ''}${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div>`}</td>
+                <td>${e.personEmail ? `<b>${esc(e.personName || e.personEmail)}</b>${e.org ? ` <span class="hint">· ${esc(e.org)}</span>` : ''}<div class="hint">${esc(e.personEmail)}${(e.refs || []).length ? ' · ' + e.refs.map(r => ({ crm: 'Investor CRM', network: 'Network', portal: 'Portal', broker: 'Brokers' }[r.source] || r.source)).join(', ') : ''}</div>` : `<a href="/portal/search.html?company=${encodeURIComponent(e.companyId)}" style="color:var(--primary);">${esc(e.companyName || e.companyId)}</a><div class="hint">${e.trackOf ? (e.fallbackFrom ? `↳ next address after ${esc(e.fallbackFrom)} bounced · ` : '↳ extra address · ') : ''}${(tracksOf.get(e.id) || []).length ? `<b>${(tracksOf.get(e.id) || []).length + 1} addresses</b> (${[(tracksOf.get(e.id) || []).filter(t => t.status === 'replied').length + (e.status === 'replied' ? 1 : 0) + ' replied', [e, ...tracksOf.get(e.id)].filter(t => LIVE_ENROL.includes(t.status)).length + ' in sequence', [e, ...tracksOf.get(e.id)].filter(t => t.status === 'stopped' && /bounce/i.test(t.stopReason || '')).length + ' bounced'].join(', ')}) · ` : ''}${e.recipient ? `${esc(e.recipient.name || '')} ${esc(e.recipient.email)}` : esc(e.contactEmail || 'no email')}</div>`}</td>
                 ${c.audienceType === 'people' ? '' : `<td style="font-size:0.78rem;">${goesTo(e, c)}${canChooseRecipients(e) ? ` <button class="btn btn--ghost btn--sm" data-eop="recipients" data-perm="out.campaigns" data-eid="${esc(e.id)}" title="Choose which addresses this company is written to, and in what order">Choose…</button>` : ''}</td>`}
                 <td>${e.status === 'completed' && /^Left out by the campaign's paths/.test(e.stopReason || '') ? '<span class="pill">Left out (paths)</span>' : pill(ENROL_PILL, e.status)}</td>
                 <td style="font-size:0.8rem;">${stepLabel(e, c)}</td>

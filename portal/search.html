@@ -11555,7 +11555,21 @@ async function renderCampaignTimeline(c){
     box.innerHTML = `<div class="sec-title">Campaign — ${esc(camp.name)} <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);">(${esc(TL_STATUS[e.status] || e.status)}${camp.status !== 'active' ? ', campaign ' + esc(camp.status) : ''})</span></div>
       <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.7;">${done.join('')}${future.join('') || '<li>All steps done — waiting for a reply.</li>'}</ul>
       <div style="font-size:0.75rem;color:var(--text-light);margin-top:6px;">Dates after the next step are estimates (working days; the sending window and daily limits can push them). <a href="/portal/outreach.html" style="color:var(--primary);">Open in Outreach</a></div>`;
+    if (isOn('outreach.multiRecipient')) await renderAlsoWrittenTo(box, eSnap.id, e);
   } catch (err) { box.innerHTML = '<div class="sec-title">Campaign</div><div style="font-size:0.85rem;color:var(--text-light);">Could not load the campaign.</div>'; }
+}
+// 30 Oct (outreach.multiRecipient): the other addresses this company is written to in the campaign, each with where it is.
+async function renderAlsoWrittenTo(box, enrolmentId, e){
+  try {
+    const root = e.trackOf || enrolmentId;
+    const rs = await getDoc(doc(db, 'outreachEnrolments', root));
+    const sib = await getDocs(query(collection(db, 'outreachEnrolments'), where('trackOf', '==', root)));
+    addReads(1 + sib.size); refreshReads();
+    const all = [rs, ...sib.docs].filter(d => d.exists && (typeof d.exists === 'function' ? d.exists() : d.exists)).map(d => ({ id: d.id, ...d.data() }));
+    if (all.length < 2) return;
+    const label = (t) => ({ pending: 'waiting to start', active: 'in sequence', awaiting_approval: 'email waiting for approval', awaiting_task: 'task open', paused: 'paused', replied: 'replied', stopped: 'stopped', removed: 'removed', completed: 'finished', moved: 'moved' }[t.status] || t.status);
+    box.insertAdjacentHTML('beforeend', `<div style="margin-top:10px;"><div class="sec-title" style="margin-bottom:4px;">Also written to</div><ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.7;">${all.map(t => `<li${t.id === enrolmentId ? ' style="font-weight:600;"' : ''}><span class="mono">${esc(t.recipient?.email || t.contactEmail || '—')}</span> — ${esc(label(t))}${t.currentStep ? ` · email ${t.currentStep + 1}` : ''}${t.stopReason ? ` <span style="color:var(--text-light);">(${esc(t.stopReason)})</span>` : ''}${t.fallbackFrom ? ` <span style="color:var(--text-light);">(next address after ${esc(t.fallbackFrom)} bounced)</span>` : ''}</li>`).join('')}</ul></div>`);
+  } catch (err) { /* best effort: the campaign box stays as it was */ }
 }
 
 // ── Do not contact (Phase 2 §10) ──

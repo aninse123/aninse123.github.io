@@ -427,7 +427,9 @@ function evaluateCompany(company, ctx) {
     const policy = ctx.recipientPolicy || "company";
     // People merge (Stage 4): with the switch on, a main contact with an email also makes the company reachable.
     const contactEmail = (company.contacts || []).some((ct) => isValidEmail(normEmail(ct.email))) || (!!ctx.usePeople && isValidEmail(normEmail(company.primaryContact?.email)));
-    const reachable = hasEmail || (policy !== "company" && (contactEmail || policy === "best_person"));
+    // 30 Oct (contacts.trustLabels): another general address of the company (searchCompanies.reach) makes it reachable too
+    const extraEmail = !!ctx.trust && (company.reach || []).some((r) => r && r.type === "email" && (r.status || "ok") === "ok" && isValidEmail(normEmail(r.value)));
+    const reachable = hasEmail || extraEmail || (policy !== "company" && (contactEmail || policy === "best_person"));
     if (ex.requireEmail && !reachable) return { ok: false, reason: "no_email" };
     if (policy === "company" && hasEmail && ctx.blockPersonalDomains && isFreeMail(domainOf(email))) return { ok: false, reason: "personal_domain" };
     // One inbox (19 Oct): the same address had an email exchange through

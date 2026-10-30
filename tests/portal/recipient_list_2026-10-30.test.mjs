@@ -19,4 +19,8 @@ ok('scheduler: starts tracks behind the switch; a late address always waits for 
 ok('webhook: a bounce moves on to another address and skips stopping the company when one exists', /Tracks\.onHardBounce/.test(webhook) && /carry === "none"/.test(webhook));
 ok('inbound: the reply says who replied when the company has several conversations', /Tracks\.hasTracks/.test(inbound) && /replied`/.test(inbound));
 ok('ending an enrolment remembers the step, for Restart', /resumeStep: e\.data\(\)\.currentStep/.test(campaigns));
+const search = read('../../portal/search.html');
+ok('campaign list counts companies: the extra addresses are taken off live / to approve / replied', /where\('isExtra', '==', true\)/.test(outreach) && /k = \{ live: k\.live - x\.filter/.test(outreach));
+ok('Companies tab lists the extra addresses under their company, with a summary on the first', /tracksOf\.get\(e\.id\)/.test(outreach) && /addresses<\/b>/.test(outreach) && /↳ extra address/.test(outreach));
+ok('Search CRM company page: "Also written to" under the campaign timeline, behind the switch', /renderAlsoWrittenTo\(box, eSnap\.id, e\)/.test(search) && /Also written to/.test(search) && /isOn\('outreach\.multiRecipient'\)\) await renderAlsoWrittenTo/.test(search));
 console.log(fail ? `\n${fail} FAILED` : '\nAll passed'); process.exit(fail ? 1 : 0);
