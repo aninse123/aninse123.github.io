@@ -4556,6 +4556,7 @@ async function renderCompanyPeople(c){
       }
       const r = reachAdd(pp.reach || [], { type: document.getElementById('cpAddType').value, value: document.getElementById('cpAddValue').value, note: document.getElementById('cpAddNote').value, by: currentUser, at: new Date().toISOString() });
       if (r.error) { er.textContent = r.error; er.style.display = 'block'; return; }
+      if (!(await confirmEmailElsewhere(r.entry.type, r.entry.value, pp.id))) return;
       t.disabled = true;
       try { await savePersonReach(pp, r.list, pp.hiddenOrbis || [], `added ${r.entry.value}`); companyPeopleAddFor = null; renderCompanyPeople(c); }
       catch(e){ er.textContent = e.message; er.style.display = 'block'; t.disabled = false; }
@@ -5983,6 +5984,7 @@ function renderReachCard(p, links){
       }
       const r = reachAdd(own, { type: document.getElementById('reachType').value, value, note, by: currentUser, at: new Date().toISOString() });
       if (r.error){ er.textContent = r.error; er.style.display = 'block'; return; }
+      if (!(await confirmEmailElsewhere(r.entry.type, r.entry.value, p.id))) return;
       await save(r.list, hidden, `added ${r.entry.value}`);
     }
   };
@@ -6498,6 +6500,28 @@ function reachAdd(list, { type, value, note = '', source = 'manual', by = '', at
   const entry = { id: reachNewId(), type, value: v, note: String(note || '').trim().slice(0, 200), source, status: 'ok', primary: !(list || []).some(e => e.type === type), addedBy: by, addedAt: at };
   return { list: [...(list || []), entry], entry };
 }
+// 30 Oct (contacts.trustLabels): adding an email that already belongs to someone else. The same person: ignored (reachAdd says it is
+// already in the list). Another person or a company: say who, and ask. People: searchPeople.reachEmails; companies: emailKeys.
+async function emailUsedElsewhere(email, selfPersonId){
+  const e = reachNorm('email', email), out = [];
+  try {
+    const [pp, cc] = await Promise.all([
+      getDocs(query(collection(db, 'searchPeople'), where('reachEmails', 'array-contains', e), limit(6))),
+      getDocs(query(collection(db, 'searchCompanies'), where('emailKeys', 'array-contains', e), limit(6))),
+    ]);
+    addReads(pp.size + cc.size);
+    pp.docs.filter(d => d.id !== selfPersonId).forEach(d => out.push(`${d.data().name || d.id} (a person)`));
+    cc.docs.forEach(d => { const x = d.data(); if (String(x.companyEmail || '').toLowerCase() === e || (x.contacts || []).some(k => String(k?.email || '').toLowerCase() === e)) out.push(`${x.name || d.id} (a company)`); });
+  } catch (err) { console.warn('same email check', err); }
+  return out;
+}
+const confirmEmailElsewhere = async (type, value, selfPersonId) => {
+  if (!isOn('contacts.trustLabels') || type !== 'email') return true;
+  const who = await emailUsedElsewhere(value, selfPersonId);
+  return !who.length || confirm(`${String(value).trim()} is already used by ${who.slice(0, 3).join(', ')}${who.length > 3 ? ' and others' : ''}.
+
+Do you still want to add it?`);
+};
 // 30 Oct (contacts.trustLabels): a person checked a detail (or takes it back). Who and when stay on the detail.
 const reachConfirmPatch = (undo) => undo ? { confirmedBy: null, confirmedAt: null } : { confirmedBy: currentUser, confirmedAt: new Date().toISOString() };
 const reachUpdate = (list, id, patch) => (list || []).map(e => (e.id === id ? { ...e, ...patch } : e));

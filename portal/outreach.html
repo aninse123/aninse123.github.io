@@ -800,7 +800,7 @@
     document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
     import { figuresOf } from './company-figures.js'; // 29 Oct: last-year figures + letterIntro for letters / call scripts
-    import { trustPillHtml, TRUST_CSS } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
+    import { trustOf, trustPillHtml, TRUST_CSS } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
     import { normalizeWindow, checkWindow, letterCss, calibrationCss, calibrationPage, FIT_SCRIPT, parseBlocks, keepFlags, planLetter, layoutCfg, LAYOUT_JS } from './letter-layout.js'; // 29 Oct: address window + page layout of the letters
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch, setOutreachBadge } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -2692,6 +2692,16 @@
       const notOk = new Set([...reach.filter(e => (e.status || 'ok') !== 'ok').map(e => norm(e.value)), ...(p?.hiddenOrbis || []).map(norm)]);
       return [...new Set([...ok, ...old.filter(v => !notOk.has(norm(v)))])];
     }
+    // 30 Oct (contacts.trustLabels): the status of one detail of a person, from the entry it came from (reach), the typed field
+    // (team) or Orbis (database). Bounced replaces the others.
+    function detailTrustKey(p, type, value) {
+      const n = (v) => type === 'phone' ? String(v || '').replace(/[^\d+]/g, '') : String(v || '').trim().toLowerCase();
+      const e = (p?.reach || []).find(x => x && x.type === type && n(x.value) === n(value));
+      if (e) return trustOf(e);
+      if (n(p?.[type]) === n(value)) return 'confirmed'; // typed by the team
+      return 'tool'; // an Orbis value
+    }
+    const pillOf = (k) => (k && isOn('contacts.trustLabels') ? ' ' + trustPillHtml(k, '', esc) : '');
     async function loadPeopleFor(companyIds) {
       for (const id of [...new Set(companyIds)].filter(x => x && !peopleCache.has(x))) {
         try {
@@ -2711,7 +2721,8 @@
             const p = people.get(l.personId) || {};
             const co = coCache.get(id) || (picked?.id === id ? picked : null);
             const emails = personDetails(p, 'email', co).map(e => String(e).trim().toLowerCase());
-            return { personId: l.personId, name: p.name || l.personName || '', role: l.isContact ? (l.contactRole || 'Contact') : (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personDetails(p, 'phone', co)[0] || '', linkedin: personDetails(p, 'linkedin', co)[0] || '', rank, isContact: !!l.isContact };
+            return { personId: l.personId, name: p.name || l.personName || '', role: l.isContact ? (l.contactRole || 'Contact') : (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personDetails(p, 'phone', co)[0] || '', linkedin: personDetails(p, 'linkedin', co)[0] || '', rank, isContact: !!l.isContact,
+              trusts: { emails: emails.map(v => detailTrustKey(p, 'email', v)), phone: personDetails(p, 'phone', co)[0] ? detailTrustKey(p, 'phone', personDetails(p, 'phone', co)[0]) : null, linkedin: personDetails(p, 'linkedin', co)[0] ? detailTrustKey(p, 'linkedin', personDetails(p, 'linkedin', co)[0]) : null } };
           }));
         } catch (e) { console.warn('people', id, e); peopleCache.set(id, []); }
       }
@@ -5538,9 +5549,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const mainId = isOn('search.people') ? c?.primaryContact?.personId : null; // People merge: the main contact first
       (peopleCache.get(t.companyId) || []).filter(p => p.rank >= 40 || p.phone || p.email).sort((a, b) => (b.personId === mainId) - (a.personId === mainId)).slice(0, 3).forEach(p => {
         const bits = [`👤 ${esc(p.name)}${mainId && p.personId === mainId ? ' <span class="pill pill--info">main contact</span>' : ''}`, p.role ? `<span class="hint">${esc(p.role)}</span>` : ''];
-        if (p.phone && ['call', 'whatsapp', 'visit', 'other'].includes(ch)) bits.push(`<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>${isMobilePt(p.phone) ? ' <span class="pill pill--warn" title="Probably a personal mobile (D3)">personal?</span>' : ''}`);
-        if (ch === 'linkedin') bits.push(p.linkedin ? `<a href="${esc(/^https?:/i.test(p.linkedin) ? p.linkedin : 'https://' + p.linkedin)}" target="_blank" rel="noopener noreferrer">LinkedIn profile</a>` : `<a href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(p.name + ' ' + cName)}" target="_blank" rel="noopener noreferrer">find on LinkedIn</a>`);
-        if (p.email) bits.push(esc(p.email));
+        if (p.phone && ['call', 'whatsapp', 'visit', 'other'].includes(ch)) bits.push(`<a href="${esc(telHref(p.phone))}">${esc(p.phone)}</a>${isMobilePt(p.phone) ? ' <span class="pill pill--warn" title="Probably a personal mobile (D3)">personal?</span>' : ''}${pillOf(p.trusts?.phone)}`);
+        if (ch === 'linkedin') bits.push(p.linkedin ? `<a href="${esc(/^https?:/i.test(p.linkedin) ? p.linkedin : 'https://' + p.linkedin)}" target="_blank" rel="noopener noreferrer">LinkedIn profile</a>${pillOf(p.trusts?.linkedin)}` : `<a href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(p.name + ' ' + cName)}" target="_blank" rel="noopener noreferrer">find on LinkedIn</a>`);
+        if (p.email) bits.push(esc(p.email) + pillOf(p.trusts?.emails?.[0]));
         lines.push(bits.filter(Boolean).join(' · '));
       });
       (c?.contacts || []).slice(0, 4).forEach(p => {

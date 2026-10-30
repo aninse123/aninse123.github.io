@@ -17,6 +17,7 @@ const store = require("./store");
 const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const Feat = require("../features"); // feature switches (one inbox, 19 Oct)
+const ReplyConfirm = require("./reply_confirm"); // 30 Oct: a reply confirms the address it came from
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -212,6 +213,11 @@ async function handleReceived(data) {
   // Received mail costs quota but must not eat into a sender's send cap, so no senderId here.
   await store.bumpDaily("received", { owner: thread.owner });
   await Usage.bump({ [`email.replies.${thread.isTest ? "test" : "real"}`]: 1 });
+  // 30 Oct (switch contacts.trustLabels): a real reply confirms the address it came from.
+  if (!autoReply && !thread.isTest && thread.companyId && from.email) {
+    try { if ((await Feat.jobState("contacts.trustLabels")) !== "off") await ReplyConfirm.confirmRepliedAddress(thread.companyId, from.email); }
+    catch (err) { logger.warn("outreach: confirming the address of a reply failed", { message: err.message }); }
+  }
   // Stop rule (Phase 2 §5.4): a human reply ends the company's campaign
   // sequence; out-of-office replies don't.
   if (!autoReply && thread.companyId) await stopCompanyEnrolments(thread.companyId, "Replied", "replied");

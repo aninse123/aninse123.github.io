@@ -79,6 +79,22 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   store.set("searchCompanies/cn", { name: "N, LDA", companyEmail: "geral@n.pt" });
   ok("a bounce of another address (a person's) leaves the company alone; so do test sends and a missing company", (await Store.markCompanyEmailBounced("cn", "ana@n.pt", "hard bounce", false)) === false && (await Store.markCompanyEmailBounced("cn", "geral@n.pt", "x", true)) === false && (await Store.markCompanyEmailBounced("nada", "a@b.pt", "x", false)) === false && store.get("searchCompanies/cn").companyEmailBounce === undefined);
 
+  // ── A reply confirms the address it came from (d3) ──
+  const RC = require("../outreach/reply_confirm.js");
+  store.set("searchCompanies/cr", { name: "R, LDA", companyEmail: "geral@r.pt", contacts: [] });
+  store.set("searchPeople/pr", { name: "Rita Reis", email: "rita.typed@r.pt", orbisEmails: ["rita.orbis@r.pt"], reach: [
+    { id: "e1", type: "email", value: "rita.tool@r.pt", status: "ok", origin: "enrichment", toolStatus: "unconfirmed" },
+    { id: "e2", type: "email", value: "rita.done@r.pt", status: "ok", origin: "enrichment", toolStatus: "verified", confirmedAt: "2026-10-01T00:00:00Z", confirmedBy: "andre.rocha@douropartners.pt" }] });
+  store.set("searchPersonLinks/pr__cr", { personId: "pr", companyId: "cr", personName: "Rita Reis", personEntityType: "person", shCurrent: true, shDirectPct: 60, mgmtCurrent: true, mgmtRoles: ["Administrador"] });
+  const co0 = store.get("searchCompanies/cr");
+  ok("reply from the company's general address: confirmed for that address, with the reply as the reason", (await RC.confirmRepliedAddress("cr", "GERAL@r.pt")) === "company" && T.companyEmailTrust(store.get("searchCompanies/cr")) === "confirmed" && store.get("searchCompanies/cr").companyEmailConfirmedVia === "reply" && !!store.get("searchCompanies/cr").updatedAt && co0.companyEmailConfirmedAt === undefined);
+  ok("a person's address the tool could not confirm: confirmed by the reply, on its own entry", (await RC.confirmRepliedAddress("cr", "rita.tool@r.pt")) === "person" && T.trustOf(store.get("searchPeople/pr").reach.find((x) => x.value === "rita.tool@r.pt")) === "confirmed" && store.get("searchPeople/pr").reach.find((x) => x.value === "rita.tool@r.pt").confirmedVia === "reply" && !!store.get("searchPeople/pr").updatedAt);
+  ok("an Orbis address has no entry: one is made (from the database, confirmed by the reply), and the email index is kept", (await RC.confirmRepliedAddress("cr", "rita.orbis@r.pt")) === "person" && store.get("searchPeople/pr").reachEmails.includes("rita.orbis@r.pt") && store.get("searchPeople/pr").reachEmails.includes("rita.tool@r.pt") && (() => { const x = store.get("searchPeople/pr").reach.find((y) => y.value === "rita.orbis@r.pt"); return x && x.origin === "database" && T.trustOf(x) === "confirmed"; })());
+  const before = JSON.stringify(store.get("searchPeople/pr").reach);
+  ok("typed by the team, already confirmed, or an address nobody here owns: nothing changes", (await RC.confirmRepliedAddress("cr", "rita.typed@r.pt")) === "person" && (await RC.confirmRepliedAddress("cr", "rita.done@r.pt")) === "person" && (await RC.confirmRepliedAddress("cr", "estranho@outro.pt")) === "none" && (await RC.confirmRepliedAddress("nada", "a@b.pt")) === "none" && JSON.stringify(store.get("searchPeople/pr").reach) === before);
+  const inboundSrc = require("fs").readFileSync(require("path").join(__dirname, "../outreach/inbound.js"), "utf8");
+  ok("the inbound handler confirms the address of a real reply only (not an auto-reply, not a test), behind the switch, and never fails the reply", /!autoReply && !thread\.isTest && thread\.companyId && from\.email/.test(inboundSrc) && /Feat\.jobState\("contacts\.trustLabels"\)\) !== "off"/.test(inboundSrc) && /catch \(err\) \{ logger\.warn\("outreach: confirming the address of a reply failed"/.test(inboundSrc));
+
   // ── The campaign option is saved ──
   const { normalizeCampaign } = require("../outreach/campaign_util.js");
   const n1 = normalizeCampaign ? normalizeCampaign({ name: "X", useUnverified: true, steps: [] }, null) : null;

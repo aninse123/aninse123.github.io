@@ -39,7 +39,7 @@ export const companyEmailTrust = (c) => trustOf(companyEmailEntry(c));
 export function companyEmailTitle(c, day = (v) => String(v || '').slice(0, 10)) {
   const e = companyEmailEntry(c), bits = ['From the registry or the Orbis database'];
   if (e.status === 'bounced') { const b = c.companyEmailBounce || {}; bits.push('an email to it bounced' + (b.at ? ' on ' + day(b.at) : '') + (b.reason ? ' (' + b.reason + ')' : '')); }
-  if (e.confirmedAt) bits.push('confirmed by ' + String(e.confirmedBy || '').split('@')[0] + ' on ' + day(e.confirmedAt));
+  if (e.confirmedAt) bits.push(c.companyEmailConfirmedVia === 'reply' ? 'confirmed: they replied from it on ' + day(e.confirmedAt) : 'confirmed by ' + String(e.confirmedBy || '').split('@')[0] + ' on ' + day(e.confirmedAt));
   else bits.push('not confirmed by a person');
   return bits.join(' · ');
 }
@@ -55,7 +55,7 @@ export function trustTitle(entry, day = (iso) => String(iso || '').slice(0, 10))
   bits.push(origin === 'database' ? 'From the Orbis database' : origin === 'enrichment' ? 'Found by an enrichment tool' : origin === 'person' ? 'Given by the person or company' : 'Typed by the team');
   if (origin === 'enrichment') bits.push(e.type === 'email' ? (e.toolStatus === 'verified' ? 'the tool says it is valid' : 'the tool could not confirm it') : 'the tool does not check this kind of detail');
   if (e.status === 'bounced') bits.push('an email to it bounced');
-  if (e.confirmedAt) bits.push('confirmed by ' + String(e.confirmedBy || '').split('@')[0] + (e.confirmedAt ? ' on ' + day(e.confirmedAt) : ''));
+  if (e.confirmedAt) bits.push(e.confirmedVia === 'reply' ? 'confirmed: they replied from it' + (e.confirmedAt ? ' on ' + day(e.confirmedAt) : '') : 'confirmed by ' + String(e.confirmedBy || '').split('@')[0] + (e.confirmedAt ? ' on ' + day(e.confirmedAt) : ''));
   else if (origin === 'enrichment' || origin === 'database') bits.push('not confirmed by a person'); // typed by the team counts as a person's work
   return bits.join(' · ');
 }
