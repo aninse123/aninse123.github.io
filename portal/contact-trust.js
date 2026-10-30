@@ -36,7 +36,7 @@ export function trustTitle(entry, day = (iso) => String(iso || '').slice(0, 10))
   if (origin === 'enrichment') bits.push(e.type === 'email' ? (e.toolStatus === 'verified' ? 'the tool says it is valid' : 'the tool could not confirm it') : 'the tool does not check this kind of detail');
   if (e.status === 'bounced') bits.push('an email to it bounced');
   if (e.confirmedAt) bits.push('confirmed by ' + String(e.confirmedBy || '').split('@')[0] + (e.confirmedAt ? ' on ' + day(e.confirmedAt) : ''));
-  else bits.push('not confirmed by a person');
+  else if (origin === 'enrichment' || origin === 'database') bits.push('not confirmed by a person'); // typed by the team counts as a person's work
   return bits.join(' · ');
 }
 

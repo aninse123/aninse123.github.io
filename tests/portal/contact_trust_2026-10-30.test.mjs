@@ -24,6 +24,7 @@ ok('the four labels, in words', P.STATUS.confirmed === 'Confirmed' && P.STATUS.t
 const t1 = P.trustTitle({ origin: 'enrichment', type: 'email', toolStatus: 'verified', confirmedAt: '2026-10-30T10:00:00Z', confirmedBy: 'andre.rocha@douropartners.pt' });
 ok('hover: where it came from, what the tool said, who confirmed it and when, never the tool\'s name', /enrichment tool/.test(t1) && /valid/.test(t1) && /confirmed by andre\.rocha on 2026-10-30/.test(t1) && !/clay/i.test(t1));
 ok('hover for a LinkedIn profile from a tool says the tool does not check it', /does not check this kind of detail/.test(P.trustTitle({ origin: 'enrichment', type: 'linkedin' })) && /not confirmed by a person/.test(P.trustTitle({ origin: 'enrichment', type: 'linkedin' })));
+ok('hover for something typed by the team does not say "not confirmed" (the pill says Confirmed)', P.trustTitle({ origin: 'team', type: 'email' }) === 'Typed by the team' && P.trustTitle({ type: 'email' }) === 'Typed by the team' && /not confirmed by a person/.test(P.trustTitle({ origin: 'database', type: 'email' })));
 ok('the pill carries the status and is escaped', P.trustPillHtml('tool', 'a "b"', (s) => String(s).replace(/"/g, '&quot;')) === '<span class="trust trust--tool" title="a &quot;b&quot;">Tool-verified</span>' && /trust--bounced/.test(P.TRUST_CSS));
 
 // The screens
