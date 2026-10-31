@@ -73,11 +73,11 @@ const PUBLIC = { orgName: "Example Fund", logoUrl: "https://example.test/logo.pn
   ok("instances/douro/instance.json passes validation", I.validateInstance(cfg.settings, cfg.public).length === 0);
   const d = I.normalizeInstance(cfg.settings, cfg.public);
   const P = require("../access/perms.js");
-  ok("Douro's seed = the lists hardcoded in perms.js today (admins, partners, keys)", JSON.stringify(d.adminEmails) === JSON.stringify(P.ADMIN_EMAILS)
-    && JSON.stringify(I.founderEmails(d)) === JSON.stringify(P.PARTNER_EMAILS)
-    && d.founders.every((f) => P.PARTNER_KEYS[f.email] === f.key));
-  const idx = fs.readFileSync(path.join(__dirname, "../index.js"), "utf8");
-  ok("Douro's contact line matches today's sign-in refusal wording", idx.includes("contact André (andre.rocha@douropartners.pt) or António (antonio.carvalho@douropartners.pt)") && I.contactLine(d) === "contact André (andre.rocha@douropartners.pt) or António (antonio.carvalho@douropartners.pt)");
+  P._resetIdentity();
+  const legacy = P.identity(); // nothing seeded: the temporary built-in Douro lists
+  ok("Douro's seed = the built-in Douro lists (admins, partners, keys, names, contacts)", JSON.stringify(d.adminEmails) === JSON.stringify(legacy.adminEmails)
+    && JSON.stringify(d.founders) === JSON.stringify(legacy.founders) && JSON.stringify(d.contacts) === JSON.stringify(legacy.contacts));
+  ok("Douro's contact line keeps today's sign-in refusal wording", I.contactLine(d) === "contact André (andre.rocha@douropartners.pt) or António (antonio.carvalho@douropartners.pt)");
 
   console.log(fail ? `\n${fail} FAILED` : "\nAll passed");
   process.exitCode = fail ? 1 : 0;

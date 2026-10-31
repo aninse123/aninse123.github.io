@@ -13,7 +13,7 @@ const tok = require(os.homedir() + '/.config/configstore/firebase-tools.json').t
 const src = fs.readFileSync(path.join(__dirname, '../../firestore.rules'), 'utf8');
 const P = require(path.join(__dirname, '../../functions/access/perms.js'));
 
-const ANDRE = { email: 'andre.rocha@douropartners.pt', perms: P.ALL };
+const ANDRE = { email: 'andre.rocha@douropartners.pt', role: 'admin', perms: P.ALL, key: 'andre' }; // the Admin: the sign-in functions put role 'admin' on the token
 const ANT = 'antonio.carvalho@douropartners.pt';
 const PARTNER = { email: ANT, perms: P.PARTNER_PERMS, key: 'antonio' };
 const PARTNER_NO_DELETE = { email: ANT, perms: P.PARTNER_PERMS.filter((p) => p !== 'search.delete'), key: 'antonio' };
@@ -32,6 +32,12 @@ const cases = [
   C('Admin: Outreach settings', ANDRE, 'update', 'outreachSettings/global', 'ALLOW', { testMode: false }, { testMode: true }),
   C('Admin: usage', ANDRE, 'get', 'usageDaily/2026-09-30', 'ALLOW', null, { a: 1 }),
   C('Admin: remove from suppression', ANDRE, 'delete', 'outreachSuppression/x', 'ALLOW', null, { email: 'x' }),
+  // The Admin is the 'admin' role on the token, never an email typed into the rules (Phase 0):
+  C('Not the Admin: the old admin email with no admin role cannot edit a team member', { email: 'andre.rocha@douropartners.pt', perms: P.PARTNER_PERMS }, 'update', 'team/maria@douropartners.pt', 'DENY', { key: 'maria', x: 1 }, { key: 'maria' }),
+  C('Not the Admin: the old admin email with an old token (no claims) cannot read usage', { email: 'andre.rocha@douropartners.pt' }, 'get', 'usageDaily/2026-09-30', 'DENY', null, { a: 1 }),
+  C('Not the Admin: role partner (even listing every permission) cannot change feature switches', { email: ANT, role: 'partner', perms: P.ALL }, 'update', 'config/features', 'DENY', { flags: {} }, { flags: {} }),
+  C('Not the Admin: a role named admin-like is not enough', { email: ANT, role: 'administrator', perms: [] }, 'update', 'outreachSettings/global', 'DENY', { testMode: false }, { testMode: true }),
+  C('Another team admin (any email, role admin) is the Admin there', { email: 'ana@example.test', role: 'admin', perms: P.ALL, key: 'ana' }, 'update', 'team/bo@example.test', 'ALLOW', { key: 'bo', x: 1 }, { key: 'bo' }),
 
   // ── Instance settings (Phase 0): public half readable by anyone, the rest Admin/server only ──
   { label: 'Instance: public settings readable signed out', tc: { expectation: 'ALLOW', request: { path: docPath('instance/public'), method: 'get' }, resource: { data: { orgName: 'X' } } } },
@@ -167,6 +173,8 @@ const cases = [
   const S = (label, who, method, p, expect) => ({ label, tc: { expectation: expect, request: { auth: { uid: 'u', token: who }, path: B + p, method } } });
   const sc = [
     S('Storage: Admin uploads a document', ANDRE, 'create', 'documents/a.pdf', 'ALLOW'),
+    S('Storage: the old admin email without the admin role is not the Admin', { email: 'andre.rocha@douropartners.pt' }, 'create', 'documents/a.pdf', 'DENY'),
+    S('Storage: another team admin uploads a document', { email: 'ana@example.test', role: 'admin', perms: P.ALL }, 'create', 'documents/a.pdf', 'ALLOW'),
     S('Storage: partner uploads a document (portal admin permission)', PARTNER, 'create', 'documents/a.pdf', 'ALLOW'),
     S('Storage: partner reads a budget file', PARTNER, 'get', 'budget/r.pdf', 'ALLOW'),
     S('Storage: partner reads an Outreach attachment', PARTNER, 'get', 'outreach/t/a.png', 'ALLOW'),

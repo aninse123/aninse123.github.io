@@ -30,7 +30,7 @@ const db = getFirestore();
 
 // Always allowed to sign in: the Admin. Partners are staff since 30 Sep —
 // they sign in through their team record (active, NDA recorded) like anyone.
-const ADMIN_EMAILS = require("./access/perms").ADMIN_EMAILS;
+const P = require("./access/perms"); // who is admin: instance settings (functions/instance.js)
 
 function sha256Hex(str) {
   return crypto.createHash("sha256").update(str).digest("hex");
@@ -39,7 +39,8 @@ function sha256Hex(str) {
 async function isAllowed(emailRaw) {
   const email = (emailRaw || "").trim().toLowerCase();
   if (!email) return false;
-  if (ADMIN_EMAILS.includes(email)) return true;
+  await P.loadIdentity();
+  if (P.isAdminEmail(email)) return true;
 
   // Preferred: scrambled list (config/allowedEmailHashes), same as login.html.
   const hashSnap = await db.doc("config/allowedEmailHashes").get();
@@ -58,9 +59,9 @@ async function isAllowed(emailRaw) {
 }
 
 // D3: neutral — the same words for investors and the team.
-const REJECTION_MESSAGE = "This email doesn't have access to the portal. If you think it should, contact André (andre.rocha@douropartners.pt) or António (antonio.carvalho@douropartners.pt).";
+const rejectionMessage = () => `This email doesn't have access to the portal. If you think it should, ${P.contactLine()}.`;
 // G2: a team member whose NDA isn't recorded yet can't sign in.
-const NDA_MESSAGE = "Your access starts once your NDA is recorded. Contact André (andre.rocha@douropartners.pt) or António (antonio.carvalho@douropartners.pt).";
+const ndaMessage = () => `Your access starts once your NDA is recorded. ${P.contactLine().replace(/^c/, "C")}.`;
 
 // Team access (Phase 1): a team member signs in with their role and
 // permissions as custom claims (read by the Firestore rules and callables).
@@ -75,13 +76,18 @@ async function decide(event) {
   // If the team lookup fails, fall back to today's behaviour (partners by
   // email, investors by the hash list) — a team-access problem must never
   // lock partners or investors out.
-  let team = null;
+  let team = null, lookupFailed = false;
   try { team = await onTeamSignIn(email, event.data?.uid); }
-  catch (e) { console.error("team sign-in lookup failed", e?.message || e); team = null; }
+  catch (e) { console.error("team sign-in lookup failed", e?.message || e); team = null; lookupFailed = true; }
   if (team?.allowed) return { customClaims: team.claims };
-  if (!(await isAllowed(email))) throw new HttpsError("permission-denied", team?.reason === "nda" ? NDA_MESSAGE : REJECTION_MESSAGE);
+  if (!(await isAllowed(email))) throw new HttpsError("permission-denied", team?.reason === "nda" ? ndaMessage() : rejectionMessage());
   // An investor (or a former team member who is also an investor): no team permissions.
-  return team ? { customClaims: NO_TEAM_CLAIMS } : undefined;
+  // Someone who is no longer on the team (or no longer the admin) must not keep an old role on their
+  // account: clear team claims that are still there. A former team member is cleared as before; an account
+  // without any claims is left exactly as it was, and so is everyone when the team lookup itself failed.
+  const had = event.data?.customClaims || {};
+  const stale = !!had.role || !!had.key || (Array.isArray(had.perms) && had.perms.length > 0);
+  return team || (!lookupFailed && stale) ? { customClaims: NO_TEAM_CLAIMS } : undefined;
 }
 
 exports.beforeSignIn = beforeUserSignedIn(decide);

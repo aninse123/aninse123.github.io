@@ -45,7 +45,8 @@ const keyCache = new Map();
 async function personKey(email) {
   const e = String(email || "").trim().toLowerCase();
   if (!e || !e.includes("@")) return safeKey(e || "automatic");
-  if (P.PARTNER_KEYS[e]) return P.PARTNER_KEYS[e];
+  await P.loadIdentity();
+  if (P.keyOf(e)) return P.keyOf(e);
   const hit = keyCache.get(e);
   if (hit && hit.at > Date.now() - 10 * 60000) return hit.key;
   let key = null;

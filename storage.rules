@@ -2,11 +2,12 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // The Admin (André, by email) keeps full access; everyone else — partners
+    // The Admin keeps full access (role = 'admin' on the sign-in token, set by
+    // the sign-in functions from instance/settings); everyone else — partners
     // included — goes by the permissions on their sign-in token (Partner is an
     // ordinary role since 30 Sep).
     function isAdmin() {
-      return request.auth != null && request.auth.token.email == 'andre.rocha@douropartners.pt';
+      return request.auth != null && request.auth.token.get('role', '') == 'admin';
     }
     // Team access: permissions from the sign-in token's claims.
     function can(p) {

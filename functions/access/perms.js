@@ -11,16 +11,52 @@
 // fixed. Partner is an ordinary, editable role (starts with everything except
 // the Admin-only permissions); partners are staff like anyone else. Nobody
 // but the Admin — no role, no extra permission — can hold an Admin-only
-// permission. PARTNER_EMAILS keeps only its business meaning (the founders:
+// permission. The founders list keeps only its business meaning (the founders:
 // approvers list, default signer…), never permissions.
 //
 // Keep in sync with portal/access.js (tests/portal/access_parity test).
 
 const { HttpsError } = require("firebase-functions/v2/https");
 
-const PARTNER_EMAILS = ["andre.rocha@douropartners.pt", "antonio.carvalho@douropartners.pt"];
-const ADMIN_EMAILS = ["andre.rocha@douropartners.pt"];
-const PARTNER_KEYS = { "andre.rocha@douropartners.pt": "andre", "antonio.carvalho@douropartners.pt": "antonio" };
+
+// Who the admin and the founders are comes from the instance settings
+// (functions/instance.js), not from this file: one codebase, one project per
+// team. Async entry points call `await loadIdentity()` once; everything below
+// then reads the primed copy synchronously.
+//
+// TEMPORARY (Phase 0, removed in WP10): until instance/settings has been
+// seeded, the Douro project falls back to its old built-in lists so no deploy
+// order can lock anyone out. Any other project fails closed (nobody is an
+// admin by email; the admin's token claim still works).
+const I = require("../instance");
+const LEGACY = I.normalizeInstance(
+  {
+    adminEmails: ["andre.rocha@douropartners.pt"],
+    founders: [
+      { email: "andre.rocha@douropartners.pt", key: "andre", name: "André Rocha" },
+      { email: "antonio.carvalho@douropartners.pt", key: "antonio", name: "António Carvalho" },
+    ],
+  },
+  { orgName: "Douro Partners", contacts: [{ name: "André", email: "andre.rocha@douropartners.pt" }, { name: "António", email: "antonio.carvalho@douropartners.pt" }] },
+);
+const legacyAllowed = () => { const proj = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || ""; return !proj || proj === "douro-partners"; };
+
+let primed = null, warned = false;
+function identity() {
+  if (primed && primed.configured) return primed;
+  if (legacyAllowed()) {
+    if (!warned) { warned = true; console.warn("instance/settings not seeded: using the built-in Douro lists (temporary)"); }
+    return LEGACY;
+  }
+  return primed || I.normalizeInstance(null, null);
+}
+async function loadIdentity(opts) { primed = await I.getInstance(opts); return identity(); }
+function _resetIdentity() { primed = null; warned = false; I._reset(); }
+const adminEmails = () => identity().adminEmails;
+const partnerEmails = () => I.founderEmails(identity());
+const keyOf = (email) => I.founderKey(identity(), email);
+const nameOf = (email) => I.founderName(identity(), email);
+const contactLine = () => I.contactLine(identity());
 
 // [code, tab, label] — the tab groups them in the Team & access matrix.
 const PERMS = [
@@ -122,7 +158,7 @@ function isActive(member, now = new Date()) {
 // everyone else — partners included — what their team record and role give.
 function claimsFor(email, member, role) {
   const e = String(email || "").trim().toLowerCase();
-  if (ADMIN_EMAILS.includes(e)) return { role: "admin", perms: ALL.slice(), key: member?.key || PARTNER_KEYS[e] };
+  if (isAdminEmail(e)) return { role: "admin", perms: ALL.slice(), key: member?.key || keyOf(e) };
   if (!isActive(member)) return { role: null, perms: [], key: null };
   return { role: member.roleId || null, perms: effectivePerms(member, role), key: member.key || null };
 }
@@ -133,12 +169,13 @@ function callerOf(request) {
 }
 function hasPerm(request, perm) {
   const email = callerOf(request);
-  if (ADMIN_EMAILS.includes(email)) return true;
+  // The Admin: the "admin" role on the sign-in token (set only by the sign-in functions), or their email.
+  if (request.auth?.token?.role === "admin" || isAdminEmail(email)) return true;
   if (ADMIN_ONLY.includes(perm)) return false; // whatever an old token says
   const perms = request.auth?.token?.perms;
   return Array.isArray(perms) && perms.includes(perm);
 }
-const isAdminEmail = (email) => ADMIN_EMAILS.includes(String(email || "").trim().toLowerCase());
+function isAdminEmail(email) { return adminEmails().includes(String(email || "").trim().toLowerCase()); }
 // Throws permission-denied unless the caller holds one of `perms`.
 function requirePerm(request, perms, message = "You don't have permission to do this.") {
   const list = Array.isArray(perms) ? perms : [perms];
@@ -147,4 +184,4 @@ function requirePerm(request, perms, message = "You don't have permission to do 
   return callerOf(request);
 }
 
-module.exports = { PARTNER_EMAILS, PARTNER_KEYS, ADMIN_EMAILS, ADMIN_ONLY, PARTNER_PERMS, isAdminEmail, PERMS, ALL, DEFAULT_ROLES, cleanList, effectivePerms, isActive, claimsFor, callerOf, hasPerm, requirePerm };
+module.exports = { loadIdentity, identity, _resetIdentity, adminEmails, partnerEmails, keyOf, nameOf, contactLine, ADMIN_ONLY, PARTNER_PERMS, isAdminEmail, PERMS, ALL, DEFAULT_ROLES, cleanList, effectivePerms, isActive, claimsFor, callerOf, hasPerm, requirePerm };

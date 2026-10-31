@@ -23,7 +23,7 @@
 
 const P = require("../access/perms"); // team access: who may call what
 const { onCall } = require("firebase-functions/v2/https");
-const { REGION, OWNER_BY_ADMIN, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET } = require("./config");
+const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET } = require("./config");
 const { normEmail } = require("./util");
 const { prepareEmail, deliverEmail, fail } = require("./send_core");
 const store = require("./store");
@@ -109,7 +109,8 @@ async function send(request, callerEmail) {
 
   const res = await deliverEmail(p);
   const stoppedCampaigns = await stopAfterReply(request, req, p, callerEmail);
-  return { ...res, stoppedCampaigns, sentBy: callerEmail, sentByOwner: request.auth?.token?.key || OWNER_BY_ADMIN[callerEmail] || null };
+  await P.loadIdentity();
+  return { ...res, stoppedCampaigns, sentBy: callerEmail, sentByOwner: request.auth?.token?.key || P.keyOf(callerEmail) || null };
 }
 
 // 19 Oct (one inbox, 1-manual): a reply written by hand can stop the

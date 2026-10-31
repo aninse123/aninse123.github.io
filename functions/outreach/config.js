@@ -9,12 +9,8 @@ const { defineSecret } = require("firebase-functions/params");
 
 const REGION = "us-central1"; // matches the /u/* rewrite in netlify.toml (the auth blocking functions run in us-east1)
 
-// Same two admins as index.js, firestore.rules and storage.rules — keep in sync.
-const ADMIN_EMAILS = ["andre.rocha@douropartners.pt", "antonio.carvalho@douropartners.pt"];
-const OWNER_BY_ADMIN = {
-  "andre.rocha@douropartners.pt": "andre",
-  "antonio.carvalho@douropartners.pt": "antonio",
-};
+// Who the admins and founders are (and their short keys) comes from the
+// instance settings: access/perms.js (P.adminEmails(), P.keyOf()).
 
 // Secrets live only in Secret Manager (set with `firebase functions:secrets:set`),
 // never in Firestore or client code — the notifySecret lesson (spec §11).
@@ -122,7 +118,7 @@ const RISKY_EXTENSIONS = new Set([
 ]);
 
 module.exports = {
-  REGION, ADMIN_EMAILS, OWNER_BY_ADMIN,
+  REGION,
   RESEND_SEND_KEY, RESEND_READ_KEY, RESEND_WEBHOOK_SECRET, UNSUBSCRIBE_SECRET,
   UNSUBSCRIBE_BASE_URL, TEST_RECIPIENTS, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP,
   SEED_SENDERS, SENDER_DOMAIN, RELATIONSHIP_DOMAIN, RELATIONSHIP_SENDERS, RELATIONSHIP_SENDER_CAP, FREE_MAIL_DOMAINS, MATCH_WINDOW_DAYS,
