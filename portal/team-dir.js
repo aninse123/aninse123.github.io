@@ -3,12 +3,10 @@
 // António. Read from teamDirectory (key, name, active; kept by the server),
 // with the two partners as a fallback until team access is set up.
 import { db, addReads } from './firebase-config.js';
+import { INSTANCE } from './instance-config.js';
 import { collection, getDocs } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
-const FALLBACK = [
-  { key: 'andre', name: 'André Rocha', partner: true, active: true },
-  { key: 'antonio', name: 'António Carvalho', partner: true, active: true },
-];
+const FALLBACK = INSTANCE.founders.map(f => ({ key: f.key, name: f.name, partner: true, active: true }));
 let cache = null;
 
 // [{ key, name, label, partner, active }] — partners first, then by name.

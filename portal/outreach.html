@@ -792,6 +792,7 @@
   <script type="module">
     import { auth, db, storage, addReads, updateDoc, setDoc, addDoc, deleteDoc } from './firebase-config.js';
     import { guardPage } from './access.js';
+    import { INSTANCE } from './instance-config.js';
     import { isOn, stateOf, currentFlags } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
@@ -812,9 +813,9 @@
     import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
 
     // ── Constants ──────────────────────────────────────────────
-    const OWNER_BY_EMAIL = { 'andre.rocha@douropartners.pt': 'andre', 'antonio.carvalho@douropartners.pt': 'antonio' };
+    const OWNER_BY_EMAIL = Object.fromEntries(INSTANCE.founders.map(f => [f.email, f.key]));
     const personName = (email) => { const e = String(email || '').toLowerCase(); const k = OWNER_BY_EMAIL[e]; return k ? (OWNER_LABEL[k] || k) : (e.split('@')[0] || 'someone'); };
-    const OWNER_LABEL = { andre: 'André', antonio: 'António' }; // + every team member (team-dir.js)
+    const OWNER_LABEL = Object.fromEntries(INSTANCE.founders.map(f => [f.key, f.shortName])); // + every team member (team-dir.js)
     // <option>s for owner / assignee selects: active team members, plus the current value.
     const ownerOpts = (sel) => (window.teamDir || [{ key: 'andre', label: 'André', active: true }, { key: 'antonio', label: 'António', active: true }])
       .filter(m => m.active || m.key === sel).map(m => `<option value="${esc(m.key)}"${m.key === sel ? ' selected' : ''}>${esc(m.label)}${m.active ? '' : ' (left)'}</option>`).join('');
@@ -6217,7 +6218,7 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
           </div>
           <div class="row2">
             <div class="field"><label for="csAppr">Before emails go out (steps can override)<span class="info" title="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule." aria-label="Approval: each email waits in Tasks → To approve. Automatic: emails go out on their own inside the sending window. A step can set its own rule.">i</span></label>
-              ${isOn('outreach.campaignCc') ? `<div style="margin-top:6px;"><label for="csCc" style="text-transform:none;letter-spacing:normal;">Cc on every email <span class="hint">(Douro addresses only, up to 3)</span></label><input type="text" id="csCc" value="${esc((c.cc || []).join(', '))}" placeholder="antonio.carvalho@douropartners.pt"${dis}></div>` : ''}
+              ${isOn('outreach.campaignCc') ? `<div style="margin-top:6px;"><label for="csCc" style="text-transform:none;letter-spacing:normal;">Cc on every email <span class="hint">(${esc(INSTANCE.orgName)} addresses only, up to 3)</span></label><input type="text" id="csCc" value="${esc((c.cc || []).join(', '))}" placeholder="${esc((INSTANCE.contacts[1] || INSTANCE.contacts[0] || {}).email || '')}"${dis}></div>` : ''}
               ${isOn('contacts.trustLabels') ? `<label class="checkline" style="margin-top:6px;"><input type="checkbox" id="csUnverified"${c.useUnverified ? ' checked' : ''}${dis}> <span>Use not-verified addresses <span class="hint">(off: only Confirmed and Tool-verified addresses are used; a person whose only address is not verified is skipped, and the company address is used instead)</span></span></label>` : ''}
               ${isOn('outreach.sendAllNow') ? `<label class="checkline" style="margin-top:6px;"><input type="checkbox" id="csSendAll"${c.sendAllAtOnce ? ' checked' : ''}${dis}> <span>Send approved emails all at once <span class="hint">(no 10-minute spacing; "⚡ Send approved now" appears on the campaign; daily limits still apply)</span></span></label>` : ''}
               <select id="csAppr"${dis}><option value="approval"${c.approvalDefault !== 'auto' ? ' selected' : ''}>Each email waits for approval</option><option value="auto"${c.approvalDefault === 'auto' ? ' selected' : ''}>Emails go out automatically</option></select></div>
@@ -6256,7 +6257,7 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
             <label class="checkline"><input type="radio" name="csSendMode" value="owner_rotation" ${sp.mode !== 'fixed' ? 'checked' : ''}${dis}> <span>The company owner's active addresses, least used first (any active address when the company has no owner)</span></label>
             <label class="checkline"><input type="radio" name="csSendMode" value="fixed" ${sp.mode === 'fixed' ? 'checked' : ''}${dis}> <span>Only these addresses:</span></label>
             <div class="stage-grid" id="csSenders" style="margin:6px 0 0 24px;">${senders.map(s => `<label class="checkline"><input type="checkbox" value="${esc(s.id)}" ${(sp.senderIds || []).includes(s.id) ? 'checked' : ''}${dis}> <span>${esc(s.kind === 'relationship' ? s.id : localPart(s.id))} <span class="hint">(${s.kind === 'relationship' ? 'your real address — replies go to Gmail' : `${esc(OWNER_LABEL[s.owner] || s.owner || '')}, ${esc(s.status)}`})</span></span></label>`).join('')}</div>
-            ${c.audienceType === 'people' ? '<span class="hint"><b>Campaigns to people need specific addresses</b> — e.g. andre.rocha@douropartners.pt for investors and press (replies to your Gmail), or an outreach address (replies in the portal Inbox).</span>' : ''}
+            ${c.audienceType === 'people' ? '<span class="hint"><b>Campaigns to people need specific addresses</b> — e.g. ' + esc((INSTANCE.contacts[0] || {}).email || 'your own address') + ' for investors and press (replies to your Gmail), or an outreach address (replies in the portal Inbox).</span>' : ''}
             <span class="hint">Follow-ups always go from the address that sent the first email.</span></div>
           <div class="field"><label>Sending window<span class="info" title="Days and hours (Lisbon) when emails may go out. Never on national holidays." aria-label="Days and hours (Lisbon) when emails may go out. Never on national holidays.">i</span></label>
             <label class="checkline"><input type="checkbox" id="csOwnWin" ${win ? 'checked' : ''}${dis}> <span>Use a different window from the global one (${esc(windowText(gw))})</span></label>

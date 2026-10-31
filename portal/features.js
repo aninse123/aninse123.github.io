@@ -8,6 +8,7 @@
 // anything missing uses the catalog default below.
 //
 // Keep FEATURES in sync with functions/features/catalog.js (parity test).
+import { INSTANCE } from './instance-config.js';
 import { db } from './firebase-config.js';
 import { doc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 
@@ -49,7 +50,7 @@ const BY_KEY = Object.fromEntries(FEATURES.map((f) => [f.key, f]));
 // Tabs that are a feature as a whole.
 export const PAGE_FEATURE = { outreach: 'outreach' };
 
-const PRODUCTION_HOSTS = new Set(['douropartners.pt', 'www.douropartners.pt']);
+const PRODUCTION_HOSTS = new Set(INSTANCE.productionHosts);
 export const siteOfHost = (host) => (PRODUCTION_HOSTS.has(String(host || '').toLowerCase()) ? 'production' : 'staging');
 export const SITE = typeof location !== 'undefined' ? siteOfHost(location.hostname) : 'staging';
 

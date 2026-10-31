@@ -6,6 +6,7 @@ import {
   writeBatch as _writeBatch, onSnapshot, increment, serverTimestamp as _serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import { getStorage }     from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
+import { INSTANCE } from "./instance-config.js";
 
 const firebaseConfig = {
   apiKey:            "AIzaSyAxdEIeLgCp1Eg6J3vMEMnwI6BaIeoyjnk",
@@ -31,10 +32,8 @@ export const db          = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
 });
 export const storage     = getStorage(app);
-export const ADMIN_EMAILS = [
-  'andre.rocha@douropartners.pt',
-  'antonio.carvalho@douropartners.pt'
-];
+// The founders (always on the login list) - from this team's instance config.
+export const ADMIN_EMAILS = INSTANCE.founders.map(f => f.email);
 
 // Firestore's free-tier daily quotas reset once a day at Pacific-time
 // midnight (Firebase's own docs: "Quotas are applied daily and reset around
@@ -158,7 +157,7 @@ const SHARED_FLUSH_MS = 5000;
 // Usage tab (30 Sep): each shared flush also says who (team short name) and
 // which site (production = douropartners.pt; else staging) the counts belong to.
 export const usageKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 60) || 'unknown';
-export const USAGE_SITE = (typeof location !== 'undefined' && ['douropartners.pt', 'www.douropartners.pt'].includes(String(location.hostname).toLowerCase())) ? 'production' : 'staging';
+export const USAGE_SITE = (typeof location !== 'undefined' && INSTANCE.productionHosts.includes(String(location.hostname).toLowerCase())) ? 'production' : 'staging';
 let usageWho = null;
 onAuthStateChanged(auth, (u) => {
   usageWho = null;

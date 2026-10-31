@@ -225,6 +225,7 @@
 
   <script type="module">
     import { auth, db } from './firebase-config.js';
+    import { INSTANCE, isAdminEmail } from './instance-config.js';
     import { getAccess, homeFor } from './access.js';
     import {
       sendSignInLinkToEmail,
@@ -319,7 +320,7 @@
     // so the real investor emails are never exposed publicly.
     async function isRegistered(email) {
       const norm = email.trim().toLowerCase();
-      if (norm === 'andre.rocha@douropartners.pt') return true; // the Admin; partners are in the team list like other staff
+      if (isAdminEmail(norm)) return true; // the Admin; partners are in the team list like other staff
       const hash = await sha256Hex(norm);
       // Team members (Team & access): their own scrambled list, kept by the server.
       const teamSnap = await getDoc(doc(db, 'config', 'teamEmailHashes')).catch(() => null);
@@ -364,7 +365,7 @@
         // D3: neutral — the same words for investors and the team.
         const noAccess = err.message === 'NO_ACCESS';
         errMsg.innerHTML = noAccess
-          ? 'This email doesn\'t have access to the portal. If you think it should, contact <a href="mailto:andre.rocha@douropartners.pt" style="color:#B33A3A;font-weight:600;">André</a> or <a href="mailto:antonio.carvalho@douropartners.pt" style="color:#B33A3A;font-weight:600;">António</a>.'
+          ? 'This email doesn\'t have access to the portal. If you think it should, contact ' + INSTANCE.contacts.map(c => '<a href="mailto:' + c.email + '" style="color:#B33A3A;font-weight:600;">' + c.name + '</a>').join(' or ') + '.'
           : (err.message || 'Something went wrong. Please try again.');
         errMsg.style.display = 'block';
       } finally {

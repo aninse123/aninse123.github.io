@@ -1,8 +1,8 @@
 // Team access (Phase 1) — what the signed-in person may see and do.
 //
 // Permissions come from the sign-in token's custom claims ({ role, perms, key }),
-// set by the server (functions/access). Partners (the two founders) have
-// everything, also by email. This module only HIDES what someone can't use —
+// set by the server (functions/access). The Admin has
+// everything (role 'admin' on the token). This module only HIDES what someone can't use —
 // the Firestore / Storage rules and the Cloud Functions are the real lock.
 //
 // Hiding is done with one generated style rule: any element with
@@ -10,6 +10,7 @@
 // the person lacks x, including elements rendered later (lists, dialogs).
 //
 // Keep PERMS in sync with functions/access/perms.js (tests/portal parity test).
+import { founderByEmail } from './instance-config.js';
 import { auth, db, addDoc } from './firebase-config.js';
 import { doc, onSnapshot, collection, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import { startFeatures, isOn, onFeaturesChange, PAGE_FEATURE, SITE, currentFlags } from './features.js';
@@ -66,13 +67,11 @@ export const PERMS = [
   ["access.manage", "Team & access", "Manage people, roles and access (Admin)"],
 ];
 export const ALL = PERMS.map(p => p[0]);
-const PARTNER_KEYS = { 'andre.rocha@douropartners.pt': 'andre', 'antonio.carvalho@douropartners.pt': 'antonio' };
 // Admin / Partner (30 Sep) — same as functions/access/perms.js: the Admin
 // (André) has everything; nobody else can hold these. Partner is an ordinary
 // role whose default is everything but these (PARTNER_PERMS).
 export const ADMIN_ONLY = ['access.manage', 'features.manage', 'usage.view', 'features.test', 'out.admin', 'search.import'];
 export const PARTNER_PERMS = ALL.filter(p => !ADMIN_ONLY.includes(p));
-const ADMIN_EMAIL = 'andre.rocha@douropartners.pt';
 
 // Which permission opens each tab, and the order used to pick someone's home tab.
 export const TAB_PERM = { investor: 'portal.viewas', admin: 'portal.admin', crm: 'icrm.view', search: 'search.view', outreach: 'out.view', network: 'net.view', budget: 'budget.view', log: 'log.view', team: 'access.manage' };
@@ -113,29 +112,30 @@ export function stopPreview() { try { sessionStorage.removeItem(PREVIEW_KEY); } 
 export async function getAccess(user, { force = false } = {}) {
   if (!user?.email) return null;
   const email = user.email.trim().toLowerCase();
-  if (email === ADMIN_EMAIL) {
-    const pv = readPreview();
-    if (pv && Array.isArray(pv.perms)) return { ...make(email, 'preview', pv.perms.filter(p => ALL.includes(p)), PARTNER_KEYS[email]), preview: String(pv.name || 'role') };
-    return make(email, 'admin', ALL, PARTNER_KEYS[email]);
-  }
-  // Everyone else — partners included (Partner is an ordinary role) — goes by
-  // the permissions on their sign-in token. A token from before team access
-  // (or before "Refresh everyone's access") has none: fetch a fresh one once.
+  // Everyone goes by the role and permissions on their sign-in token (set by the
+  // server). A token from before team access (or before "Refresh everyone's
+  // access") has none: fetch a fresh one once.
   let claims = {};
   try { claims = (await user.getIdTokenResult(force)).claims || {}; } catch (e) { claims = {}; }
   if (!force && !Array.isArray(claims.perms)) {
     try { claims = (await user.getIdTokenResult(true)).claims || {}; } catch (e) { /* keep what we have */ }
   }
+  // The Admin: everything, and can preview the portal as a role.
+  if (claims.role === 'admin') {
+    const key = claims.key || founderByEmail(email)?.key || null;
+    const pv = readPreview();
+    if (pv && Array.isArray(pv.perms)) return { ...make(email, 'preview', pv.perms.filter(p => ALL.includes(p)), key), preview: String(pv.name || 'role') };
+    return make(email, 'admin', ALL, key);
+  }
   return make(email, claims.role || null, Array.isArray(claims.perms) ? claims.perms : [], claims.key || null);
 }
 
 // "✎ edited by … · date" badge for a record stamped by firebase-config's stampEdit.
-const PARTNER_NAMES = { 'andre.rocha@douropartners.pt': 'André', 'antonio.carvalho@douropartners.pt': 'António' };
 export function editedBadge(rec) {
   if (!rec?.updatedBy) return '';
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const t = rec.updatedByAt?.toMillis ? rec.updatedByAt.toMillis() : rec.updatedByAt?.seconds ? rec.updatedByAt.seconds * 1000 : 0;
-  const who = PARTNER_NAMES[rec.updatedBy] || String(rec.updatedBy).split('@')[0];
+  const who = founderByEmail(rec.updatedBy)?.shortName || String(rec.updatedBy).split('@')[0];
   const when = t ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/Lisbon' }).format(new Date(t)) : '';
   const full = t ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Lisbon' }).format(new Date(t)) : '';
   return `<span class="badge badge-grey" title="Last edited by ${esc(rec.updatedBy)}${full ? ' · ' + esc(full) : ''}">✎ ${esc(who)}${when ? ' · ' + esc(when) : ''}</span>`;

@@ -10,7 +10,8 @@ const root = new URL('../../portal/', import.meta.url);
 
 // Load features.js without Firebase (strip imports; stub what it touches).
 const src = readFileSync(new URL('features.js', root), 'utf8').replace(/\r\n/g, '\n').replace(/^import .*$/gm, '').replace(/^export /gm, '');
-const ctx = { localStorage: { getItem: () => null, setItem() {} }, db: {}, doc: () => ({}), onSnapshot: () => {} };
+const { INSTANCE } = await import(new URL('instance-config.js', root));
+const ctx = { INSTANCE, localStorage: { getItem: () => null, setItem() {} }, db: {}, doc: () => ({}), onSnapshot: () => {} };
 vm.createContext(ctx);
 vm.runInContext(src + '\nglobalThis.X = { FEATURES, stateOf, isTester, available, siteOfHost, PAGE_FEATURE };', ctx);
 const X = ctx.X;

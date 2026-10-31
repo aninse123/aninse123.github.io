@@ -14,7 +14,9 @@ const line = (a) => { const i = page.indexOf(a); if (i < 0) throw new Error(a); 
 // Minimal elements: innerHTML is kept; queries return inert stubs.
 const el = () => { const e = { hidden: false, innerHTML: '', textContent: '', value: '', disabled: false, dataset: {}, style: {}, addEventListener() {}, querySelector: () => el(), querySelectorAll: () => [], closest: () => null }; return e; };
 const els = {};
+const { INSTANCE } = await import(new URL('../../portal/instance-config.js', import.meta.url));
 const ctx = {
+  INSTANCE,
   document: { activeElement: null, querySelectorAll: () => [] },
   $: (id) => (els[id] ||= el()),
   campaigns: [{ id: 'c1', name: 'Campanha', steps: [{ id: 's1', name: 'Email 1' }] },

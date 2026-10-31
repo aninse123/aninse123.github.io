@@ -150,8 +150,9 @@ let usageManager = false, usageSenders = [];
 async function startUsageAlerts() {
   try {
     const u = auth.currentUser; if (!u || usageManager) return;
-    const perms = (await u.getIdTokenResult()).claims.perms || [];
-    const isAdmin = String(u.email || '').toLowerCase() === 'andre.rocha@douropartners.pt';
+    const claims = (await u.getIdTokenResult()).claims || {};
+    const perms = claims.perms || [];
+    const isAdmin = claims.role === 'admin';
     if (!isAdmin && !perms.includes('usage.view')) return; // the Admin
     usageManager = true;
     onSnapshot(doc(db, 'usageAlerts', 'current'), (s) => { addReads(1); usageSenders = s.data()?.senders || []; renderUsageAlert(); }, () => {});

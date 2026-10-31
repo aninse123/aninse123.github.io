@@ -17,6 +17,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BASELINE = join(root, 'tests', 'identity_baseline.json');
 const PATTERN = /douropartners|douro-partners|andre\.rocha|antonio\.carvalho|valesintemporais|Douro Partners/gi;
 const SKIP = new Set(['node_modules', 'test', 'vendor', '.git']);
+// The per-team identity files are where these names are supposed to live.
+const TEAM_FILES = new Set(['portal/instance-config.js']);
 const EXT = /\.(js|mjs|cjs|html|css|json)$/;
 
 function walk(dir, out = []) {
@@ -33,6 +35,7 @@ const counts = {};
 for (const area of ['portal', 'functions']) {
   for (const f of walk(join(root, area))) {
     if (/package(-lock)?\.json$/.test(f)) continue;
+    if (TEAM_FILES.has(relative(root, f).split(String.fromCharCode(92)).join('/'))) continue;
     const n = (readFileSync(f, 'utf8').match(PATTERN) || []).length;
     if (n) counts[relative(root, f).split(String.fromCharCode(92)).join('/')] = n;
   }

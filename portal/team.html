@@ -141,6 +141,7 @@
 
   <script type="module">
     import { auth, db, addReads } from './firebase-config.js';
+    import { isAdminEmail } from './instance-config.js';
     import { guardPage, PERMS, ALL, TAB_PERM, startPreview, homeFor, ADMIN_ONLY, PARTNER_PERMS } from './access.js';
     import { FEATURES, stateOf, currentFlags, onFeaturesChange, SITE } from './features.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
@@ -164,8 +165,7 @@
     const errText = (e) => e?.message || String(e);
 
     // Admin / Partner split: Admin = everything (André); Partner = all but Admin-only.
-    const ADMIN_EMAIL = 'andre.rocha@douropartners.pt';
-    const isAdminRec = (p) => p.roleId === 'admin' || p.id === ADMIN_EMAIL;
+    const isAdminRec = (p) => p.roleId === 'admin' || isAdminEmail(p.id);
     // Partner is an ordinary role (30 Sep): until it's stored (Refresh everyone's
     // access, or its first Save), its default stands in.
     const allRoles = () => (roles.some(r => r.id === 'partner') ? roles : [{ id: 'partner', name: 'Partner', description: '', perms: PARTNER_PERMS, unsaved: true }, ...roles]);

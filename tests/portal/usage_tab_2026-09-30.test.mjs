@@ -9,7 +9,7 @@ let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' :
 
 ok('reads: shared counter also by person and by site', /count: increment\(n\), byUser: \{ \[usageWhoNow\(\)\]: increment\(n\) \}, bySite: \{ \[USAGE_SITE\]: increment\(n\) \}/.test(cfg));
 ok('writes / deletes: by person and by site', /payload\.byUserW = \{ \[who\]: increment\(w\) \}; payload\.bySiteW = \{ \[USAGE_SITE\]: increment\(w\) \}/.test(cfg) && /payload\.byUserD = \{ \[who\]: increment\(d\) \}; payload\.bySiteD/.test(cfg));
-ok('site: douropartners.pt (and www) = production, anything else = staging', /\['douropartners\.pt', 'www\.douropartners\.pt'\]\.includes\(String\(location\.hostname\)\.toLowerCase\(\)\)\) \? 'production' : 'staging'/.test(cfg));
+ok('site: douropartners.pt (and www) = production, anything else = staging', /INSTANCE\.productionHosts\.includes\(String\(location\.hostname\)\.toLowerCase\(\)\)\) \? 'production' : 'staging'/.test(cfg));
 ok('person: the team short name from the sign-in token, else the email\'s start', /usageWho = usageKey\(r\.claims\.key \|\| local\)/.test(cfg));
 
 ok('Team page: a Usage tab (Admin: usage.view) that loads on open (and via #usage / #usage-db / #usage-email / #usage-activity)', /data-view="usage" data-perm="usage\.view">Usage<\/button>/.test(team) && /if \(b\.dataset\.view === 'usage'\) renderUsage\(\);/.test(team) && /location\.hash\.match\(\/\^#usage\(\?:-\(db\|email\|activity\)\)\?\$\/\)/.test(team));
