@@ -1,0 +1,27 @@
+{
+  "alias": "douro",
+  "projectId": "douro-partners",
+  "settings": {
+    "adminEmails": ["andre.rocha@douropartners.pt"],
+    "founders": [
+      { "email": "andre.rocha@douropartners.pt", "key": "andre", "name": "André Rocha" },
+      { "email": "antonio.carvalho@douropartners.pt", "key": "antonio", "name": "António Carvalho" }
+    ],
+    "portalOrigins": [
+      "https://douropartners.pt",
+      "https://www.douropartners.pt",
+      "https://staging--douro-partners.netlify.app"
+    ],
+    "noreplyFrom": "Douro Partners <noreply@douropartners.pt>",
+    "productionHosts": ["douropartners.pt", "www.douropartners.pt"]
+  },
+  "public": {
+    "orgName": "Douro Partners",
+    "logoUrl": "https://douropartners.pt/assets/logo-transparent.png",
+    "portalUrl": "https://douropartners.pt/portal/",
+    "contacts": [
+      { "name": "André", "email": "andre.rocha@douropartners.pt" },
+      { "name": "António", "email": "antonio.carvalho@douropartners.pt" }
+    ]
+  }
+}

@@ -33,6 +33,18 @@ const cases = [
   C('Admin: usage', ANDRE, 'get', 'usageDaily/2026-09-30', 'ALLOW', null, { a: 1 }),
   C('Admin: remove from suppression', ANDRE, 'delete', 'outreachSuppression/x', 'ALLOW', null, { email: 'x' }),
 
+  // ── Instance settings (Phase 0): public half readable by anyone, the rest Admin/server only ──
+  { label: 'Instance: public settings readable signed out', tc: { expectation: 'ALLOW', request: { path: docPath('instance/public'), method: 'get' }, resource: { data: { orgName: 'X' } } } },
+  C('Instance: Admin edits the public settings', ANDRE, 'update', 'instance/public', 'ALLOW', { orgName: 'Y' }, { orgName: 'X' }),
+  C('Instance: Partner cannot edit the public settings', PARTNER, 'update', 'instance/public', 'DENY', { orgName: 'Y' }, { orgName: 'X' }),
+  C('Instance: Partner cannot create the public settings', PARTNER, 'create', 'instance/public', 'DENY', { orgName: 'Y' }),
+  { label: 'Instance: signed-out cannot write the public settings', tc: { expectation: 'DENY', request: { path: docPath('instance/public'), method: 'update' }, resource: { data: { orgName: 'X' } } } },
+  { label: 'Instance: server settings not readable signed out', tc: { expectation: 'DENY', request: { path: docPath('instance/settings'), method: 'get' }, resource: { data: { adminEmails: ['a@b.test'] } } } },
+  C('Instance: Partner cannot read the server settings', PARTNER, 'get', 'instance/settings', 'DENY', null, { adminEmails: ['a@b.test'] }),
+  C('Instance: Partner cannot write the server settings', PARTNER, 'update', 'instance/settings', 'DENY', { adminEmails: ['p@b.test'] }, { adminEmails: ['a@b.test'] }),
+  C('Instance: old token without permissions cannot read the server settings', NO_CLAIMS, 'get', 'instance/settings', 'DENY', null, { adminEmails: ['a@b.test'] }),
+  C('Instance: Admin reads the server settings', ANDRE, 'get', 'instance/settings', 'ALLOW', null, { adminEmails: ['a@b.test'] }),
+
   // ── Partner (default Partner role): the everyday work ──
   C('Partner: edit a company', PARTNER, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'B', owner: 'andre', updatedBy: me }, { name: 'A', owner: 'andre' }),
   C('Partner: change a company\'s stage (deal)', PARTNER, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', stage: 'nda', updatedBy: me }, { name: 'A', stage: 'universe' }),

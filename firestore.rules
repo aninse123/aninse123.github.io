@@ -30,6 +30,15 @@ service cloud.firestore {
       allow read: if true;
     }
 
+    // Instance settings (Phase 0 of the distribution plan): the public half —
+    // organisation name, logo, portal URL and who to contact — is readable before
+    // sign-in (login page, messages). Never written from the browser. The other
+    // half, instance/settings (admin emails etc.), has no rule here on purpose:
+    // only the Admin catch-all above and the Cloud Functions can touch it.
+    match /instance/public {
+      allow read: if true;
+    }
+
     // Investors can write their own activity log entries — but only the real
     // event types the portal emits. This stops arbitrary values (e.g. HTML
     // payloads) being stored in `type`, which the admin log renders.
