@@ -112,6 +112,8 @@ function validateInstance(settings, pub) {
   if (!ou.senderDomain) out.push("settings.outreach.senderDomain is required (the Resend sending domain)");
   if (!ou.relationshipDomain) out.push("settings.outreach.relationshipDomain is required");
   if (!ou.testRecipients.length) out.push("settings.outreach.testRecipients is empty: nothing can be sent in test mode until addresses are approved");
+  if (!/^https:\/\/[^\s/]+\/(?:[^\s?#]*\/)?$/.test(ou.unsubscribeBaseUrl)) out.push("settings.outreach.unsubscribeBaseUrl must be an https address ending in / (the unsubscribe link is always on; the token is appended to it)");
+  if (!/^https?:\/\/[^\s/]+(\/\S*)?$/.test(inst.portalUrl)) out.push("public.portalUrl is required (the web address of the team's portal, used in emails)");
   if (!ou.ccDomains.length) out.push("settings.outreach.ccDomains is empty: a campaign cannot copy anyone");
   if (!ou.relationshipSenders.length) out.push("settings.outreach.relationshipSenders needs at least one {email, owner, displayName}");
   for (const e of inst.adminEmails) if (!inst.founders.some((f) => f.email === e)) out.push(`admin ${e} should also be listed in settings.founders (it needs a key and a name)`);

@@ -4,6 +4,7 @@
 
 const { normEmail, domainOf, isFreeMail, isValidEmail } = require("./util");
 const { OUTCOMES } = require("./task_util");
+const { ccDomains } = require("./config");
 
 const CAMPAIGN_STATUSES = ["draft", "active", "paused", "finished", "archived"];
 
@@ -242,8 +243,8 @@ function normalizeCampaign(input, existing = null) {
 function normalizeCc(input) {
   const list = (Array.isArray(input) ? input : String(input || "").split(/[,;\s]+/)).map((e) => normEmail(e)).filter(Boolean);
   const out = [...new Set(list)];
-  const wrong = out.find((e) => !isValidEmail(e) || !require("./config").ccDomains().includes(String(e.split("@")[1] || "")));
-  if (wrong) bad("bad_cc", `Cc can only be one of this team's own addresses (${require("./config").ccDomains().map((d) => "@" + d).join(", ")}): not ${wrong}.`);
+  const wrong = out.find((e) => !isValidEmail(e) || !ccDomains().includes(String(e.split("@")[1] || "")));
+  if (wrong) bad("bad_cc", `Cc can only be one of this team's own addresses (${ccDomains().map((d) => "@" + d).join(", ")}): not ${wrong}.`);
   if (out.length > 3) bad("bad_cc", "Cc: at most 3 addresses.");
   return out;
 }

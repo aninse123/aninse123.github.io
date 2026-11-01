@@ -216,6 +216,7 @@ async function stopCompanyEnrolments(companyId, reason, status = "stopped") {
 // ── Actions ──────────────────────────────────────────────────────────────────
 
 async function save({ campaignId, campaign }, caller, opts = {}) {
+  await P.loadIdentity(); // this team's Cc domains (normalizeCampaign), on the edit path too
   if (!campaignId) {
     const settings = await store.getSettings();
     // 22 Oct (switch outreach.testCampaigns): a test campaign after go-live — fixed at creation.

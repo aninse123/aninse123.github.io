@@ -52,6 +52,8 @@ ok('staged portal: their identity, their Firebase project, none of Douro\'s', /E
 ok('staged portal: everything else is the same page code', readFileSync(join(staged, 'login.html'), 'utf8') === readFileSync(join(root, 'portal/login.html'), 'utf8'));
 const half = N.createInstanceFiles({ ...answers, alias: 'half', projectId: 'half-pilot', web: undefined }, tmp);
 ok('an alias without its Firebase web config is not ready to deploy', half.problems.some((p) => /apiKey/.test(p)));
+const odd = N.createInstanceFiles({ ...answers, alias: 'odd', projectId: 'Bad ID; rm' }, tmp);
+ok('a project id that is not a Firebase project id is not ready (it ends up in a shell command)', odd.problems.some((p) => /projectId/.test(p)));
 writeFileSync(join(tmp, '.firebaserc'), JSON.stringify({ projects: { default: 'douro-partners', douro: 'douro-partners' } }));
 ok('an alias that .firebaserc does not map to the same project is not ready', B.checkAlias('pilot', tmp).some((p) => /\.firebaserc/.test(p)));
 ok('the checklist names their project, domains and every manual step', (() => { const c = N.checklist('pilot', made.cfg).join('\n'); return /example-pilot/.test(c) && /mail\.example\.test/.test(c) && /Blaze/.test(c) && /RESEND_SEND_KEY/.test(c) && /seed-instance/.test(c) && /deploy\.cjs/.test(c); })());

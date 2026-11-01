@@ -72,7 +72,7 @@ function checkAlias(alias, root = ROOT) {
   try { inst = loadInstance(alias, root); } catch (e) { return [e.message]; }
   const { cfg, web } = inst;
   if (cfg.alias !== alias) out.push(`instance.json says alias "${cfg.alias}", expected "${alias}"`);
-  if (!cfg.projectId) out.push("instance.json needs a projectId");
+  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(String(cfg.projectId || ""))) out.push("instance.json needs a projectId (a Firebase project id: lowercase letters, digits, dashes)");
   out.push(...validateInstance(cfg.settings, cfg.public));
   if (!web) out.push("instances/" + alias + "/firebase-web.json is missing (the Firebase web config of the project)");
   else {

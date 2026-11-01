@@ -51,9 +51,9 @@ const OUTREACH = {
 
   // ── Seed a second team ──
   store.set("instance/settings", settingsFor(OUTREACH));
-  store.set("instance/public", { orgName: "Example Fund", contacts: [{ name: "Ana", email: "ana@example.test" }] });
+  store.set("instance/public", { orgName: "Example Fund", portalUrl: "https://example.test/portal/", contacts: [{ name: "Ana", email: "ana@example.test" }] });
   await P.loadIdentity({ force: true });
-  ok("valid: their settings pass validateInstance", I.validateInstance(settingsFor(OUTREACH), { orgName: "Example Fund", contacts: [{ name: "Ana", email: "ana@example.test" }] }).length === 0);
+  ok("valid: their settings pass validateInstance", I.validateInstance(settingsFor(OUTREACH), { orgName: "Example Fund", portalUrl: "https://example.test/portal/", contacts: [{ name: "Ana", email: "ana@example.test" }] }).length === 0);
   ok("accessors give their domains and addresses", C.senderDomain() === "mail.example.test" && C.relationshipDomain() === "example.test" && C.unsubscribeBaseUrl() === "https://example.test/u/" && C.testRecipients().includes("tester@gmail.com") && C.orgName() === "Example Fund");
 
   const sd = await fns.outreachAdmin({ ...ADMIN, data: { action: "seed" } });

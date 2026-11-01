@@ -35,8 +35,12 @@ const PUBLIC = { orgName: "Example Fund", logoUrl: "https://example.test/logo.pn
     && I.contactLine(none) === "contact the portal administrator");
 
   // ── validating (what the seed script checks before writing) ──
-  ok("a good file has no problems (admin listed as founder)", I.validateInstance({ ...SETTINGS, adminEmails: ["admin@example.test"], outreach: { senderDomain: "mail.example.test", relationshipDomain: "example.test", ccDomains: ["example.test"], testRecipients: ["admin@example.test"], relationshipSenders: [{ email: "admin@example.test", owner: "admin", displayName: "Admin" }] } }, PUBLIC).length === 0
+  ok("a good file has no problems (admin listed as founder)", I.validateInstance({ ...SETTINGS, adminEmails: ["admin@example.test"], outreach: { senderDomain: "mail.example.test", relationshipDomain: "example.test", unsubscribeBaseUrl: "https://example.test/u/", ccDomains: ["example.test"], testRecipients: ["admin@example.test"], relationshipSenders: [{ email: "admin@example.test", owner: "admin", displayName: "Admin" }] } }, PUBLIC).length === 0
     && I.validateInstance({ ...SETTINGS, adminEmails: ["admin@example.test"] }, PUBLIC).some((x) => /outreach/.test(x)));
+  const GOOD_OUT = { senderDomain: "mail.example.test", relationshipDomain: "example.test", unsubscribeBaseUrl: "https://example.test/u/", ccDomains: ["example.test"], testRecipients: ["admin@example.test"], relationshipSenders: [{ email: "admin@example.test", owner: "admin", displayName: "Admin" }] };
+  const vOut = (o, pub = PUBLIC) => I.validateInstance({ ...SETTINGS, adminEmails: ["admin@example.test"], outreach: { ...GOOD_OUT, ...o } }, pub);
+  ok("an unsubscribe base address that is empty, not https or lacks the final / is flagged", ["", "http://example.test/u/", "https://example.test/u", "example.test/u/"].every((u) => vOut({ unsubscribeBaseUrl: u }).some((m) => /unsubscribeBaseUrl/.test(m))));
+  ok("a missing portal address is flagged (the branded emails link to it)", vOut({}, { ...PUBLIC, portalUrl: "" }).some((m) => /portalUrl/.test(m)) && !vOut({}).some((m) => /portalUrl|unsubscribe/.test(m)));
   const bad = I.validateInstance({ adminEmails: [], founders: [], portalOrigins: [], productionHosts: [] }, {});
   ok("an empty file reports every missing part", bad.length >= 5 && bad.some((m) => /adminEmails/.test(m)) && bad.some((m) => /orgName/.test(m)) && bad.some((m) => /contacts/.test(m)));
   ok("an admin who is not a founder is flagged (no key or name to work with)", I.validateInstance({ ...SETTINGS, adminEmails: ["ghost@example.test"] }, PUBLIC).some((m) => /ghost@example.test/.test(m)));
