@@ -32,15 +32,7 @@ if (!cfg.projectId) die("instance.json needs a projectId");
 const problems = validateInstance(cfg.settings, cfg.public);
 if (problems.length) die("Not valid:\n - " + problems.join("\n - "));
 
-// Firestore REST value encoding for the plain JSON we use (strings, arrays, objects).
-function enc(v) {
-  if (Array.isArray(v)) return { arrayValue: { values: v.map(enc) } };
-  if (v && typeof v === "object") return { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, enc(x)])) } };
-  if (typeof v === "boolean") return { booleanValue: v };
-  if (typeof v === "number") return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
-  return { stringValue: String(v) };
-}
-const fields = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, enc(v)]));
+const { fields } = require("./lib/firestore-encode.cjs"); // Firestore REST value encoding (null stays null)
 
 const base = `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/(default)/documents`;
 const token = () => JSON.parse(fs.readFileSync(path.join(os.homedir(), ".config/configstore/firebase-tools.json"), "utf8")).tokens.access_token;

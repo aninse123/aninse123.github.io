@@ -58,5 +58,13 @@ writeFileSync(join(tmp, '.firebaserc'), JSON.stringify({ projects: { default: 'd
 ok('an alias that .firebaserc does not map to the same project is not ready', B.checkAlias('pilot', tmp).some((p) => /\.firebaserc/.test(p)));
 ok('the checklist names their project, domains and every manual step', (() => { const c = N.checklist('pilot', made.cfg).join('\n'); return /example-pilot/.test(c) && /mail\.example\.test/.test(c) && /Blaze/.test(c) && /RESEND_SEND_KEY/.test(c) && /seed-instance/.test(c) && /deploy\.cjs/.test(c); })());
 
+// seed script encoding keeps null as null (a noreply sender has owner: null)
+const E = require(join(root, 'scripts/lib/firestore-encode.cjs'));
+const encd = E.fields({ owner: null, n: 3, ok: true, s: 'x', arr: [null, 'a'], skipped: undefined });
+ok('seed encoding: null stays a Firestore null, not the text "null"; undefined is left out', 'nullValue' in encd.owner && !('stringValue' in encd.owner) && 'nullValue' in encd.arr.arrayValue.values[0] && !('skipped' in encd));
+const seedDoc = JSON.parse(readFileSync(join(root, 'instances/douro/instance.json'), 'utf8')).settings.outreach.relationshipSenders;
+ok('Douro seed: the noreply sender has no owner and is encoded as null', seedDoc.some((s) => s.owner === null) && E.fields({ x: seedDoc }).x.arrayValue.values.some((v) => 'nullValue' in v.mapValue.fields.owner));
+
+ok('new-team: keys keep accented letters as plain ones (André -> andre, João -> joao)', N.buildInstance({ ...answers, people: [{ name: 'André Rocha', email: 'a@x.test' }, { name: 'João Silva', email: 'j@x.test' }] }).settings.founders.map((f) => f.key).join() === 'andre,joao');
 console.log(fail ? `\n${fail} FAILED` : '\nall passed');
 process.exit(fail ? 1 : 0);

@@ -6,7 +6,8 @@ const path = require("path");
 const { ROOT, checkAlias } = require("./instance-build.cjs");
 const { normalizeInstance } = require("../../functions/instance");
 
-const slug = (s) => String(s || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+// A short key from a first name: accents dropped (João -> joao), not removed with their letter.
+const slug = (s) => String(s || "").trim().normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 const csv = (v) => (Array.isArray(v) ? v : String(v || "").split(/[,;\s]+/)).map((x) => x.trim()).filter(Boolean);
 
 // answers: alias, orgName, projectId, productionHost, portalPath?, logoUrl?, noreplyLocal?,
