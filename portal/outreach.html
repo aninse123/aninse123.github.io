@@ -644,7 +644,7 @@
                 <input type="text" inputmode="decimal" id="gMinGap" style="width:64px;"> <span>hours</span>
                 <span class="hint" style="flex-basis:100%;">A wait in sending days ends when the window opens on that day — at least this long after the company's previous email (e.g. sent at 17:50 with a 1-day wait: the next morning only if 12 hours have passed). Calendar days keep the time of day.</span>
               </div>
-              <label class="checkline" style="margin-top:8px;" data-feature="outreach.ownerAware"><input type="checkbox" id="gWeeklyReport"> <span>Email the Monday report to the partners <span class="hint">(last week overall and by owner, from noreply@douropartners.pt to André and António; always kept in Metrics)</span></span></label>
+              <label class="checkline" style="margin-top:8px;" data-feature="outreach.ownerAware"><input type="checkbox" id="gWeeklyReport"> <span>Email the Monday report to the partners <span class="hint">(last week overall and by owner, from the portal’s noreply address to the founders; always kept in Metrics)</span></span></label>
               <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gHolidays"> <span>Skip national holidays <span class="hint">(no campaign emails, drafts or task dates on them; a campaign can choose otherwise)</span></span></label>
               <details style="margin-top:4px;"><summary class="hint" style="cursor:pointer;">The national holidays</summary><div id="gHolList" class="hint" style="margin-top:6px;"></div></details>
               <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gMunHol"> <span>Skip each company's municipal holiday <span class="hint">(on its municipality's holiday a company's email waits for the next sending day — e.g. Lisboa 13 June, Porto 24 June, Maia the Monday after the 2nd Sunday of July; all 308 municipalities; a campaign can choose otherwise)</span></span></label>
@@ -2604,7 +2604,7 @@
       const el = $('cFrom'); if (!el) return;
       const cur = el.value;
       const preferOwner = picked?.owner || myOwner;
-      // Outreach addresses first; @douropartners.pt (relationship, Phase 5) listed but never the default.
+      // Outreach addresses first; the relationship addresses (Phase 5) listed but never the default.
       const usable = senders.filter(s => s.status === 'active' && s.kind !== 'relationship');
       const ordered = [...senders.filter(s => s.kind !== 'relationship'), ...senders.filter(s => s.kind === 'relationship')];
       el.innerHTML = ordered.map(s => `<option value="${esc(s.id)}"${s.status !== 'active' ? ' disabled' : ''}>${esc(s.displayName)} · ${esc(s.id)}${s.kind === 'relationship' ? ' (your real address — replies go to Gmail)' : ''}${s.status !== 'active' ? ` (${esc(s.status)})` : ''}</option>`).join('')

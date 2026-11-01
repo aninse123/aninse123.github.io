@@ -110,7 +110,7 @@ export function initNav(activeKey, opts = {}) {
   refreshWrites();
 }
 
-// Two letters from the email's local part (e.g. "andre.rocha" → "AR"),
+// Two letters from the email's local part (e.g. "maria.silva" → "MS"),
 // so different admins with the same first initial (André/António both
 // start with "A") are still distinguishable at a glance.
 function initials(email) {

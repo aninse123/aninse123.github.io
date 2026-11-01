@@ -1,13 +1,15 @@
 // This team's identity for the pages — who the admin and founders are, who to
-// contact, which hostnames are the live site. One file per team: Phase 0 keeps
-// Douro's here; the deploy script (WP8) builds it from instances/<alias>/
-// instance.json. It must say the same as that file (tests/portal checks).
+// contact, which hostnames are the live site. One file per team: GENERATED from
+// instances/<alias>/instance.json by scripts/build-instance.cjs (do not edit by
+// hand; a test fails if it drifts from the settings file).
 //
 // The pages decide who is Admin from the sign-in token (role === 'admin'); this
 // file only supplies the lists that need to exist before a token does (the
 // login screen) and the names shown next to people.
 export const INSTANCE = {
   orgName: 'Douro Partners',
+  noreplyEmail: 'noreply@douropartners.pt',
+  ownDomain: 'douropartners.pt',
   productionHosts: ['douropartners.pt', 'www.douropartners.pt'],
   adminEmails: ['andre.rocha@douropartners.pt'],
   // email, short key (owner / sender), first name for badges and labels

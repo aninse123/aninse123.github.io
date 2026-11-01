@@ -24,26 +24,22 @@ const { HttpsError } = require("firebase-functions/v2/https");
 // team. Async entry points call `await loadIdentity()` once; everything below
 // then reads the primed copy synchronously.
 //
-// TEMPORARY (Phase 0, removed in WP10): until instance/settings has been
-// seeded, the Douro project falls back to its old built-in lists so no deploy
-// order can lock anyone out. Any other project fails closed (nobody is an
-// admin by email; the admin's token claim still works).
+// Nothing seeded = nothing configured: nobody is an admin by email (the admin's
+// token claim still works) and sign-in refuses. There is no built-in fallback
+// for any team, Douro included: seed instance/settings first
+// (scripts/seed-instance.cjs).
 const I = require("../instance");
-const LEGACY_DOURO = require("../legacy_douro");
-const LEGACY = I.normalizeInstance(LEGACY_DOURO.settings, LEGACY_DOURO.public);
-const legacyAllowed = () => { const proj = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || ""; return !proj || proj === "douro-partners"; };
 
 let primed = null, warned = false;
 function identity() {
   if (primed && primed.configured) return primed;
-  if (legacyAllowed()) {
-    if (!warned) { warned = true; console.warn("instance/settings not seeded: using the built-in Douro lists (temporary)"); }
-    return LEGACY;
-  }
+  if (!warned) { warned = true; console.warn("instance/settings is not seeded: nobody is an admin by email until it is"); }
   return primed || I.normalizeInstance(null, null);
 }
 async function loadIdentity(opts) { primed = await I.getInstance(opts); return identity(); }
 function _resetIdentity() { primed = null; warned = false; I._reset(); }
+// Tests that call permission helpers directly (without an async entry point) start from a primed identity.
+function _prime(inst) { primed = inst; }
 const adminEmails = () => identity().adminEmails;
 const partnerEmails = () => I.founderEmails(identity());
 const keyOf = (email) => I.founderKey(identity(), email);
@@ -176,4 +172,4 @@ function requirePerm(request, perms, message = "You don't have permission to do 
   return callerOf(request);
 }
 
-module.exports = { loadIdentity, identity, _resetIdentity, adminEmails, partnerEmails, keyOf, nameOf, contactLine, ADMIN_ONLY, PARTNER_PERMS, isAdminEmail, PERMS, ALL, DEFAULT_ROLES, cleanList, effectivePerms, isActive, claimsFor, callerOf, hasPerm, requirePerm };
+module.exports = { loadIdentity, identity, _resetIdentity, _prime, adminEmails, partnerEmails, keyOf, nameOf, contactLine, ADMIN_ONLY, PARTNER_PERMS, isAdminEmail, PERMS, ALL, DEFAULT_ROLES, cleanList, effectivePerms, isActive, claimsFor, callerOf, hasPerm, requirePerm };

@@ -3422,7 +3422,7 @@ const ctEnrolCache = new Map();
 const ctExtra = new Map(); // 28 Oct: companies shown on the Ownership tab (group, ladder, subsidiaries), for the hover
 function ctNameOf(x){
   const e = String(x || '').toLowerCase(), local = e.split('@')[0];
-  // A key ("andre"), a team address ("andre.rocha@…", its contactEmail) → the first name.
+  // A key ("andre"), a team address ("firstname.lastname@…", its contactEmail) → the first name.
   const m = (window.teamDir || []).find(t => t.key === e || String(t.contactEmail || '').toLowerCase() === e || (e.includes('@') && t.key === local.split('.')[0]));
   return OWNER_LABELS[x] || (m ? (m.label || String(m.name || '').split(' ')[0]) : local);
 }

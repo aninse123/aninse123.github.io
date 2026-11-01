@@ -17,7 +17,6 @@ const P = require("../access/perms.js");
 const C = require("../outreach/config.js");
 const U = require("../outreach/campaign_util.js");
 const store = F.store;
-const legacy = require("../legacy_douro.js");
 const I = require("../instance.js");
 
 let fail = 0;
@@ -40,7 +39,6 @@ const OUTREACH = {
 (async () => {
   // ── The Douro fallback equals the seed file (so Douro behaves as before) ──
   const seed = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "..", "instances", "douro", "instance.json"), "utf8"));
-  ok("the built-in Douro fallback is the same as instances/douro/instance.json", JSON.stringify(legacy.settings) === JSON.stringify(seed.settings) && JSON.stringify(legacy.public) === JSON.stringify(seed.public));
   ok("the seed file is a valid instance (validateInstance finds nothing)", I.validateInstance(seed.settings, seed.public).length === 0);
 
   // ── Not seeded, not Douro's project: nothing configured, nothing from Douro ──

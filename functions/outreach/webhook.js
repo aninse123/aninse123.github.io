@@ -61,7 +61,7 @@ async function findOurMessage(data) {
 async function maybeRecordGmailReply(data) {
   const fromEmail = normEmail(data.from);
   const senderSnap = await db().doc(`outreachSenders/${fromEmail}`).get();
-  // Relationship senders (@douropartners.pt, Phase 5) also send investor
+  // Relationship senders (the team's own domain, Phase 5) also send investor
   // emails outside the portal — those aren't outreach replies.
   if (!senderSnap.exists || ["warming", "retired"].includes(senderSnap.data().status) || senderSnap.data().kind === "relationship") return false;
   const to = normEmail((data.to || [])[0]);

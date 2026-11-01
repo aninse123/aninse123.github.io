@@ -50,7 +50,7 @@ const docs = (coll) => [...store.entries()].filter(([p]) => p.startsWith(coll + 
   ok("own task done → closed, activity 'Call — Connected' on the company", r.ok && r.sequence === "none" && store.get(`outreachTasks/${callId}`).status === "done" && act.companyId === "co1" && act.type === "call_connected" && act.title === "Call — Connected" && act.content === "Falei com a Ana" && act.campaignId === null);
   // Call back keeps it open with a new date.
   r = await camp(ADMIN, { action: "createTask", companyId: "co1", channel: "call" });
-  const cb = await camp(ADMIN, { action: "completeTask", taskId: r.taskId, outcome: "callback", reopenAt: "2026-10-20T09:00:00Z" });
+  const cb = await camp(ADMIN, { action: "completeTask", taskId: r.taskId, outcome: "callback", reopenAt: new Date(Date.now() + 5 * 86400000).toISOString() });
   ok("call back on an own task → stays open with the new date", cb.ok && store.get(`outreachTasks/${r.taskId}`).status === "open");
   const sk = await camp(ADMIN, { action: "completeTask", taskId: r.taskId, outcome: "skipped" });
   ok("cancel (skip) an own task → closed without activity", sk.ok && store.get(`outreachTasks/${r.taskId}`).status === "skipped" && !sk.activityId);

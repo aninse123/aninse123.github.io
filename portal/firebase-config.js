@@ -155,7 +155,7 @@ export function getTodayDeletes(){
 // window regardless of how many operations happened inside it.
 const SHARED_FLUSH_MS = 5000;
 // Usage tab (30 Sep): each shared flush also says who (team short name) and
-// which site (production = douropartners.pt; else staging) the counts belong to.
+// which site (production = the team's live host; else staging) the counts belong to.
 export const usageKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 60) || 'unknown';
 export const USAGE_SITE = (typeof location !== 'undefined' && INSTANCE.productionHosts.includes(String(location.hostname).toLowerCase())) ? 'production' : 'staging';
 let usageWho = null;

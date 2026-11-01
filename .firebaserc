@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "douro-partners"
+    "default": "douro-partners",
+    "douro": "douro-partners"
   }
 }

@@ -187,4 +187,19 @@ Module._load = function (req, parent, isMain) {
   return origLoad.apply(this, arguments);
 };
 
+// Tests of Douro's behaviour start from Douro's settings, as seeded in production
+// (instances/douro/instance.json). A test of another team sets GCLOUD_PROJECT to
+// something else before requiring this file and starts with nothing seeded.
+{
+  const proj = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || "";
+  if (!proj || proj === "douro-partners") {
+    const seed = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "..", "instances", "douro", "instance.json"), "utf8"));
+    const plant = () => { store.set("instance/settings", JSON.parse(JSON.stringify(seed.settings))); store.set("instance/public", JSON.parse(JSON.stringify(seed.public))); };
+    plant();
+    require("../access/perms")._prime(require("../instance").normalizeInstance(seed.settings, seed.public));
+    const clear = store.clear.bind(store);
+    store.clear = () => { clear(); plant(); }; // tests that reset the store keep the seeded team
+  }
+}
+
 module.exports = { store, storageFiles, authCalls, Timestamp, FieldValue, HttpsError, fakeDb, resetIds: () => { autoId = 0; } };

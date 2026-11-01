@@ -18,7 +18,7 @@ ok("free mail detected", u.isFreeMail("sapo.pt") && u.isFreeMail("GMAIL.com") &&
 ok("valid email", u.isValidEmail("geral@empresa.pt") && !u.isValidEmail("geral@") && !u.isValidEmail("n.a."));
 
 console.log("\n=== test-mode allow list ===");
-const list = cfg.testRecipients(); // from the instance settings (Douro fallback outside a project)
+const list = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "..", "instances", "douro", "instance.json"), "utf8")).settings.outreach.testRecipients; // Douro's approved list (instance settings)
 ok("approved gmail passes", u.isTestRecipient("AndreNoRocha@gmail.com", list));
 ok("António's gmail passes", u.isTestRecipient("amobnc92@gmail.com", list));
 ok("resend simulator with +label passes", u.isTestRecipient("bounced+v4@resend.dev", list));

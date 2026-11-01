@@ -43,6 +43,7 @@ const PUBLIC = { orgName: "Example Fund", logoUrl: "https://example.test/logo.pn
   ok("an invalid entry is flagged, not silently dropped", I.validateInstance({ ...SETTINGS, adminEmails: ["admin@example.test", "nope"] }, PUBLIC).some((m) => /invalid or duplicate/.test(m)));
 
   // ── loading ──
+  store.delete(I.SETTINGS_PATH); store.delete(I.PUBLIC_PATH); // the fake starts with Douro seeded
   I._reset();
   const errs = []; const origErr = console.error; console.error = (...a) => errs.push(a.join(" "));
   const empty = await I.getInstance();
@@ -75,9 +76,7 @@ const PUBLIC = { orgName: "Example Fund", logoUrl: "https://example.test/logo.pn
   const d = I.normalizeInstance(cfg.settings, cfg.public);
   const P = require("../access/perms.js");
   P._resetIdentity();
-  const legacy = P.identity(); // nothing seeded: the temporary built-in Douro lists
-  ok("Douro's seed = the built-in Douro lists (admins, partners, keys, names, contacts)", JSON.stringify(d.adminEmails) === JSON.stringify(legacy.adminEmails)
-    && JSON.stringify(d.founders) === JSON.stringify(legacy.founders) && JSON.stringify(d.contacts) === JSON.stringify(legacy.contacts));
+  ok("with nothing seeded there is no built-in fallback, not even for Douro", P.adminEmails().length === 0 && P.partnerEmails().length === 0 && !P.isAdminEmail("andre.rocha@douropartners.pt"));
   ok("Douro's contact line keeps today's sign-in refusal wording", I.contactLine(d) === "contact André (andre.rocha@douropartners.pt) or António (antonio.carvalho@douropartners.pt)");
 
   console.log(fail ? `\n${fail} FAILED` : "\nAll passed");

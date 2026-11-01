@@ -18,7 +18,7 @@ const BASELINE = join(root, 'tests', 'identity_baseline.json');
 const PATTERN = /douropartners|douro-partners|andre\.rocha|antonio\.carvalho|valesintemporais|Douro Partners/gi;
 const SKIP = new Set(['node_modules', 'test', 'vendor', '.git']);
 // The per-team identity files are where these names are supposed to live.
-const TEAM_FILES = new Set(['portal/instance-config.js', 'functions/legacy_douro.js']); // legacy_douro.js is temporary (deleted in WP10)
+const TEAM_FILES = new Set(['portal/instance-config.js']);
 const EXT = /\.(js|mjs|cjs|html|css|json)$/;
 
 function walk(dir, out = []) {

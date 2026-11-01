@@ -205,7 +205,7 @@
         </div>
         <div class="sent-notice__spam">
           Don't see it? Check your <strong>SPAM</strong> folder.<br>
-          The email comes from <strong>noreply@douropartners.pt</strong>.
+          The email comes from <strong id="sentFrom"></strong>.
         </div>
       </div>
       <button class="btn" id="resendBtn" style="margin-top:20px;">Resend link</button>
@@ -249,7 +249,7 @@
     let sentToEmail = '';
 
     function showForm()       { document.getElementById('formView').style.display       = 'block'; document.getElementById('sentView').style.display        = 'none';  document.getElementById('processingView').style.display = 'none'; }
-    function showSent(email)  { document.getElementById('formView').style.display       = 'none';  document.getElementById('sentView').style.display        = 'block'; document.getElementById('processingView').style.display = 'none'; document.getElementById('sentEmail').textContent = email; }
+    function showSent(email)  { document.getElementById('formView').style.display       = 'none';  document.getElementById('sentView').style.display        = 'block'; document.getElementById('processingView').style.display = 'none'; document.getElementById('sentEmail').textContent = email; document.getElementById('sentFrom').textContent = INSTANCE.noreplyEmail; }
     function showProcessing() { document.getElementById('formView').style.display       = 'none';  document.getElementById('sentView').style.display        = 'none';  document.getElementById('processingView').style.display = 'block'; }
 
     // Where a signed-in person lands: team members (not partners) on their

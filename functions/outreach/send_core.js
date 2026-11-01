@@ -345,7 +345,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
   // ── Send ──
   let result;
   try {
-    // The sending key only covers the outreach subdomain; @douropartners.pt
+    // The sending key only covers the outreach subdomain; the team's own domain
     // (relationship senders, Phase 5) goes out with the full-access key.
     const sendKey = sender.kind === "relationship" || domainOf(senderId) !== senderDomain() ? RESEND_READ_KEY.value() : RESEND_SEND_KEY.value();
     result = await sendEmail(sendKey, {
