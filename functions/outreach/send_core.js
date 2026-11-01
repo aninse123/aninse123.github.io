@@ -15,7 +15,7 @@
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, UNSUBSCRIBE_BASE_URL, DEFAULT_SENDER_CAP, SENDER_DOMAIN } = require("./config");
+const { RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, DEFAULT_SENDER_CAP, senderDomain, unsubscribeBaseUrl } = require("./config");
 const { normEmail, domainOf, isFreeMail, isValidEmail, isTestRecipient, checkMx, makeUnsubToken, parseAddress } = require("./util");
 const { buildContext, renderTemplate, buildPlainEmail, buildQuote, replySubject, wantsFooter, footerSource } = require("./render");
 const { sendEmail, ResendError } = require("./resend");
@@ -40,7 +40,7 @@ function fail(code, reason, message, extra = {}) {
 // Our outreach addresses and the inbound forwarding addresses (*.resend.app,
 // kept private) — never a reply recipient.
 const MAX_REPLY_RECIPIENTS = 10;
-const isOurAddress = (e) => { const d = domainOf(e); return d === SENDER_DOMAIN || d.endsWith(".resend.app"); };
+const isOurAddress = (e) => { const d = domainOf(e); return d === senderDomain() || d.endsWith(".resend.app"); };
 
 // opts:
 //   callerEmail, settings, messageRef
@@ -159,7 +159,7 @@ async function prepareEmail(opts) {
     : isReply && (["contact", "person", "people"].includes(thread.recipientKind) || !countsAsOutreach);
   const personalAddress = isFreeMail(domainOf(intended));
   if (settings.blockPersonalDomains && isFreeMail(toDomain) && !testAllowed && !personLevel) {
-    fail("failed-precondition", "personal_domain", `${toDomain} is a personal email domain — blocked while personal domains are off (legal rule for natural persons).`);
+    fail("failed-precondition", "personal_domain", `${toDomain} is a personal email domain — blocked while the personal-domains rule is on (Settings → General).`);
   }
 
   const mx = await checkMx(toDomain);
@@ -198,7 +198,7 @@ async function prepareEmail(opts) {
   }
 
   // ── Content ──
-  const unsubscribeUrl = UNSUBSCRIBE_BASE_URL + makeUnsubToken(messageId, UNSUBSCRIBE_SECRET.value());
+  const unsubscribeUrl = unsubscribeBaseUrl() + makeUnsubToken(messageId, UNSUBSCRIBE_SECRET.value());
   // A person's organisation stands in for the company in {{company.*}}.
   // B10: a test send without a company fills company fields with visible
   // placeholders ("[Empresa]") instead of refusing; live sends still refuse.
@@ -347,7 +347,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
   try {
     // The sending key only covers the outreach subdomain; @douropartners.pt
     // (relationship senders, Phase 5) goes out with the full-access key.
-    const sendKey = sender.kind === "relationship" || domainOf(senderId) !== SENDER_DOMAIN ? RESEND_READ_KEY.value() : RESEND_SEND_KEY.value();
+    const sendKey = sender.kind === "relationship" || domainOf(senderId) !== senderDomain() ? RESEND_READ_KEY.value() : RESEND_SEND_KEY.value();
     result = await sendEmail(sendKey, {
       from: `${sender.displayName} <${senderId}>`,
       to: p.toList || [to],

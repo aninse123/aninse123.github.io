@@ -624,7 +624,7 @@
                 <span class="hint">Batches and sequences (Phase 2) stop here. Manual sends and replies never do.</span>
               </div>
             </div>
-            <label class="checkline"><input type="checkbox" id="gPersonal"> <span>Block personal email domains (gmail, sapo, hotmail…) for the company address — the legal rule for natural persons (emails to a chosen person may use any address)</span></label>
+            <label class="checkline"><input type="checkbox" id="gPersonal"> <span>Block personal email domains (gmail, sapo, hotmail…) for the company address — an optional rule, off by default (emails to a chosen person may use any address)</span></label>
             <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="gTrack"> <span>Track opens and clicks <span class="hint">(switches Resend's tracking on for mail.douropartners-team.pt right away — adds a tracking pixel and rewrites links, which can hurt deliverability; needed for "if they clicked a link" rules)</span></span></label>
             <div class="field" style="margin-top:14px;">
               <label>Sending window<span class="info" title="Days and hours (Lisbon) when emails may go out. Never on national holidays." aria-label="Days and hours (Lisbon) when emails may go out. Never on national holidays.">i</span> (Lisbon time)</label>
@@ -3206,7 +3206,7 @@
       if (!s || generalDirty) return;
       $('gTarget').value = s.dailyTarget ?? 100;
       $('gAuto').value = s.automationBudget ?? 80;
-      $('gPersonal').checked = s.blockPersonalDomains !== false;
+      $('gPersonal').checked = s.blockPersonalDomains === true; // optional rule, off unless switched on
       $('gTrack').checked = !!s.trackOpensClicks;
       $('gAiOn').checked = !!s.aiEnabled;
       $('gAiModel').value = s.aiModel || 'claude-opus-5';
@@ -6288,7 +6288,7 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
               <option value="dynamic"${c.audience?.mode === 'dynamic' ? ' selected' : ''}>Dynamic — also add companies that start matching the Search CRM filter</option>
             </select>
             <span class="hint">Dynamic: every day from 07:00, companies changed in the Search CRM that match the campaign's latest filter (${(c.audience?.sources || []).some(x => x.type === 'filters') ? 'set' : '<b>none yet — add companies from the Search CRM filters first</b>'}) are added, with the rules above. Companies in another campaign are left there.</span></div>
-          <p class="hint" style="margin-top:10px;">Always excluded: the suppression list, companies marked do not contact, unsubscribed or bounced${settings?.blockPersonalDomains !== false ? ', personal email domains (Settings → General)' : ''}. These rules apply when companies are added.</p>
+          <p class="hint" style="margin-top:10px;">Always excluded: the suppression list, companies marked do not contact, unsubscribed or bounced${settings?.blockPersonalDomains === true ? ', personal email domains (Settings → General)' : ''}. These rules apply when companies are added.</p>
         </div>
         <div class="banner banner--bad" id="csErr" hidden style="margin-top:12px;"></div>
         ${editable ? `<div class="actions" style="margin-top:14px;"><button class="btn btn--primary" id="csSave" data-perm="out.campaigns">Save settings</button>${csetDirty ? '<button class="btn btn--ghost" id="csDiscard" data-perm="out.campaigns">Discard changes</button>' : ''}</div>` : ''}`;

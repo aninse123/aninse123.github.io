@@ -2,15 +2,17 @@
 // functions (data model: spec §5).
 
 const { getFirestore, FieldValue, Timestamp } = require("firebase-admin/firestore");
-const { DEFAULT_SETTINGS } = require("./config");
+const { DEFAULT_SETTINGS, testRecipients } = require("./config");
+const P = require("../access/perms");
 const { utcDayKey, normEmail, domainOf } = require("./util");
 const CS = require("./contact_summary"); // Contacted column (27 Oct)
 
 const db = () => getFirestore();
 
 async function getSettings() {
+  await P.loadIdentity(); // this team's domains and approved test addresses (instance settings)
   const snap = await db().doc("outreachSettings/global").get();
-  return { ...DEFAULT_SETTINGS, ...(snap.exists ? snap.data() : {}) };
+  return { ...DEFAULT_SETTINGS, testRecipients: testRecipients(), ...(snap.exists ? snap.data() : {}) };
 }
 
 // Account-wide Resend usage from the response headers (spec §7.6). Only send

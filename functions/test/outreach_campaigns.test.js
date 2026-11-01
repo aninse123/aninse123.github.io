@@ -95,6 +95,7 @@ const DAY = 86400000;
   ok("own campaign id on the company isn't a conflict", why({ activeCampaignId: "C1" }).ok);
 
   // ── outreachCampaign callable ──
+  store.set("outreachSettings/global", { blockPersonalDomains: true }); // the rule is optional and off by default: this suite tests it on
   const seedCo = (id, o = {}) => store.set(`searchCompanies/${id}`, { name: "Empresa " + id, stage: "universe", companyEmail: `geral@${id}.pt`, owner: "andre", ...o });
   ["a", "b", "c", "d", "e", "f", "g"].forEach((id) => seedCo(id));
   seedCo("nomail", { companyEmail: null });

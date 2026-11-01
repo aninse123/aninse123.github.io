@@ -15,7 +15,8 @@
 const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getStorage } = require("firebase-admin/storage");
-const { REGION, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, SEED_SENDERS, SENDER_DOMAIN, RESEND_READ_KEY, RELATIONSHIP_DOMAIN, RELATIONSHIP_SENDERS, RELATIONSHIP_SENDER_CAP } = require("./config");
+const C = require("./config");
+const { REGION, DEFAULT_SETTINGS, DEFAULT_SENDER_CAP, RESEND_READ_KEY, RELATIONSHIP_SENDER_CAP } = C;
 const { listDomains, updateDomain } = require("./resend");
 const { normEmail } = require("./util");
 const store = require("./store");
@@ -24,32 +25,34 @@ const { endEnrolment } = require("./campaigns");
 const { db, FieldValue } = store;
 
 async function seed(callerEmail) {
+  await P.loadIdentity();
+  const SENDER_DOMAIN = C.senderDomain(), RELATIONSHIP_DOMAIN = C.relationshipDomain();
   const created = [];
   const settingsRef = db().doc("outreachSettings/global");
   if (!(await settingsRef.get()).exists) {
-    await settingsRef.set({ ...DEFAULT_SETTINGS, updatedAt: FieldValue.serverTimestamp(), updatedBy: callerEmail });
+    await settingsRef.set({ ...DEFAULT_SETTINGS, testRecipients: C.testRecipients(), updatedAt: FieldValue.serverTimestamp(), updatedBy: callerEmail });
     created.push("outreachSettings/global");
   }
-  for (const s of SEED_SENDERS) {
+  for (const s of C.seedSenders()) {
     const email = `${s.local}@${SENDER_DOMAIN}`;
     const ref = db().doc(`outreachSenders/${email}`);
     if ((await ref.get()).exists) continue;
     await ref.set({
       email, displayName: s.displayName, owner: s.owner, domain: SENDER_DOMAIN,
       status: s.status, dailyCap: DEFAULT_SENDER_CAP, inboundAlias: s.local,
-      signature: `${s.displayName}\nDouro Partners\nwww.douropartners.pt`, notes: "",
+      signature: [s.displayName, ...C.signatureLines()].join("\n"), notes: "",
       updatedAt: FieldValue.serverTimestamp(), updatedBy: callerEmail,
     });
     created.push(`outreachSenders/${email}`);
   }
-  // Phase 5: relationship senders (@douropartners.pt) — active from the start.
-  for (const r of RELATIONSHIP_SENDERS) {
+  // Phase 5: relationship senders (the team's own domain) — active from the start.
+  for (const r of C.relationshipSenders()) {
     const ref = db().doc(`outreachSenders/${r.email}`);
     if ((await ref.get()).exists) continue;
     await ref.set({
       email: r.email, displayName: r.displayName, owner: r.owner, domain: RELATIONSHIP_DOMAIN, kind: "relationship",
       status: "active", dailyCap: RELATIONSHIP_SENDER_CAP, inboundAlias: null,
-      signature: r.owner ? `${r.displayName}\nDouro Partners` : "Douro Partners", notes: "Replies go to Gmail",
+      signature: r.owner ? `${r.displayName}\n${C.orgName()}` : C.orgName(), notes: "Replies go to Gmail",
       updatedAt: FieldValue.serverTimestamp(), updatedBy: callerEmail,
     });
     created.push(`outreachSenders/${r.email}`);
@@ -101,6 +104,8 @@ async function clearTestData() {
 }
 
 async function setTracking(on, callerEmail) {
+  await P.loadIdentity();
+  const SENDER_DOMAIN = C.senderDomain();
   const key = RESEND_READ_KEY.value();
   const { data } = await listDomains(key);
   const dom = (data?.data || []).find((d) => d.name === SENDER_DOMAIN);

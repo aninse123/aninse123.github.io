@@ -33,7 +33,7 @@
 const P = require("../access/perms"); // team access: who may call what
 const Feat = require("../features"); // feature switches (Team & access → Features)
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { REGION, TEST_RECIPIENTS, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET } = require("./config");
+const { REGION, testRecipients, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET } = require("./config");
 const { ANTHROPIC_API_KEY } = require("./ai");
 const { normEmail } = require("./util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
@@ -817,7 +817,7 @@ async function setStatus({ campaignId, status, testRecipient }, caller) {
     // the general test address (Settings → General).
     if (testRecipient !== undefined) {
       const settings = await store.getSettings();
-      const approved = (settings.testRecipients || TEST_RECIPIENTS).map(normEmail);
+      const approved = (settings.testRecipients || testRecipients()).map(normEmail);
       const want = normEmail(testRecipient);
       upd.testRecipient = want && approved.includes(want) ? want : null;
     }

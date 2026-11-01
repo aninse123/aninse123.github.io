@@ -35,7 +35,8 @@ const PUBLIC = { orgName: "Example Fund", logoUrl: "https://example.test/logo.pn
     && I.contactLine(none) === "contact the portal administrator");
 
   // ── validating (what the seed script checks before writing) ──
-  ok("a good file has no problems (admin listed as founder)", I.validateInstance({ ...SETTINGS, adminEmails: ["admin@example.test"] }, PUBLIC).length === 0);
+  ok("a good file has no problems (admin listed as founder)", I.validateInstance({ ...SETTINGS, adminEmails: ["admin@example.test"], outreach: { senderDomain: "mail.example.test", relationshipDomain: "example.test", ccDomains: ["example.test"], testRecipients: ["admin@example.test"], relationshipSenders: [{ email: "admin@example.test", owner: "admin", displayName: "Admin" }] } }, PUBLIC).length === 0
+    && I.validateInstance({ ...SETTINGS, adminEmails: ["admin@example.test"] }, PUBLIC).some((x) => /outreach/.test(x)));
   const bad = I.validateInstance({ adminEmails: [], founders: [], portalOrigins: [], productionHosts: [] }, {});
   ok("an empty file reports every missing part", bad.length >= 5 && bad.some((m) => /adminEmails/.test(m)) && bad.some((m) => /orgName/.test(m)) && bad.some((m) => /contacts/.test(m)));
   ok("an admin who is not a founder is flagged (no key or name to work with)", I.validateInstance({ ...SETTINGS, adminEmails: ["ghost@example.test"] }, PUBLIC).some((m) => /ghost@example.test/.test(m)));

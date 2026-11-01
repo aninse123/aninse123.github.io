@@ -22,7 +22,7 @@
 const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, SENDER_DOMAIN } = require("./config");
+const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, senderDomain } = require("./config");
 const { normEmail, domainOf } = require("./util");
 const { sendEmail } = require("./resend");
 const { listPeople } = require("./lists");
@@ -339,7 +339,7 @@ async function testIssue({ issueId, subject, body }, caller) {
     countsAsOutreach: false, confirmOverTarget: true,
   });
   const headers = Object.fromEntries(Object.entries(p.headers || {}).filter(([k]) => !/^List-Unsubscribe/i.test(k)));
-  const key = p.sender.kind === "relationship" || domainOf(p.senderId) !== SENDER_DOMAIN ? RESEND_READ_KEY.value() : RESEND_SEND_KEY.value();
+  const key = p.sender.kind === "relationship" || domainOf(p.senderId) !== senderDomain() ? RESEND_READ_KEY.value() : RESEND_SEND_KEY.value();
   const res = await sendEmail(key, { from: `${p.sender.displayName} <${p.senderId}>`, to: [caller], subject: `[Test] ${p.subject}`, text: p.text, html: p.html, headers });
   await store.recordQuota(res.quota, "issue_test");
   return { sentTo: caller, filledWith: sample.email || null };

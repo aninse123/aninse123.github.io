@@ -32,7 +32,7 @@ function seed({ real = true } = {}) {
   store.set("outreachTemplates/t1", { name: "Intro", status: "active", variants: [{ key: "A", subject: "Olá {{company.shortName}}", body: "{{contact.firstName|Bom dia}}, escrevo sobre a {{company.shortName}}." }] });
   store.set("outreachTemplates/t2", { name: "Follow", status: "active", variants: [{ key: "A", subject: "x", body: "Seguimento, {{contact.firstName|olá}}." }] });
   if (real) {
-    store.set("outreachSettings/global", { testMode: false, complianceBlockId: "cb" });
+    store.set("outreachSettings/global", { testMode: false, complianceBlockId: "cb", blockPersonalDomains: true });
     store.set("outreachCompliance/cb", { legalEntityLine: "Douro Partners, Lda", footerText: "Remover: {{unsubscribeUrl}}" });
   }
   store.set("searchCompanies/co1", {

@@ -1,4 +1,4 @@
-// outreachUnsubscribe — douropartners.pt/u/<token> (Netlify rewrite).
+// outreachUnsubscribe — <team site>/u/<token> (a hosting rewrite; the base address is instance/settings.outreach.unsubscribeBaseUrl).
 //
 // GET never unsubscribes: company security scanners open every link in an
 // email, so a GET only shows a confirm button. The actual opt-out is a POST —
@@ -7,7 +7,8 @@
 
 const { onRequest } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { REGION, UNSUBSCRIBE_SECRET } = require("./config");
+const { REGION, UNSUBSCRIBE_SECRET, orgName } = require("./config");
+const P = require("../access/perms");
 const { verifyUnsubToken, normEmail, escapeHtml } = require("./util");
 const store = require("./store");
 const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
@@ -17,7 +18,7 @@ const { db, FieldValue } = store;
 
 function page(title, bodyHtml) {
   return `<!DOCTYPE html><html lang="pt"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>${escapeHtml(title)} — Douro Partners</title>
+<meta name="robots" content="noindex"><title>${escapeHtml(title)} — ${escapeHtml(orgName())}</title>
 <style>body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f6f6f4;color:#222}
 main{max-width:480px;margin:12vh auto;padding:32px 28px;background:#fff;border:1px solid #e4e3de;border-radius:8px}
 h1{font-size:20px;margin:0 0 12px}p{font-size:15px;line-height:1.5;margin:0 0 16px}
@@ -28,6 +29,7 @@ button:focus-visible{outline:3px solid #9cc3e6;outline-offset:2px}small{color:#7
 
 exports.outreachUnsubscribe = onRequest({ region: REGION, secrets: [UNSUBSCRIBE_SECRET] }, async (req, res) => {
   res.set("Cache-Control", "no-store");
+  await P.loadIdentity();
   const token = decodeURIComponent(String(req.path || "").split("/").filter(Boolean).pop() || "");
   const messageId = verifyUnsubToken(token, UNSUBSCRIBE_SECRET.value());
   if (!messageId) {
@@ -37,7 +39,7 @@ exports.outreachUnsubscribe = onRequest({ region: REGION, secrets: [UNSUBSCRIBE_
 
   if (req.method === "GET") {
     res.status(200).send(page("Remover contacto", `<h1>Deixar de receber emails</h1>
-<p>Confirme que não pretende receber mais emails da Douro Partners neste endereço.</p>
+<p>Confirme que não pretende receber mais emails da ${escapeHtml(orgName())} neste endereço.</p>
 <form method="POST"><button type="submit">Confirmar remoção</button></form>`));
     return;
   }
@@ -61,7 +63,7 @@ exports.outreachUnsubscribe = onRequest({ region: REGION, secrets: [UNSUBSCRIBE_
       if (msg.threadId) await db().doc(`outreachThreads/${msg.threadId}`).update({ status: "closed", closedReason: "unsubscribed", unsubscribedAt: FieldValue.serverTimestamp() });
       if (thread?.enrolmentId) await stopEnrolmentById(thread.enrolmentId, "Unsubscribed");
       const what = rec?.name ? `«${escapeHtml(rec.name)}»` : "estes emails";
-      res.status(200).send(page("Removido", `<h1>Pedido registado</h1><p>Não voltará a receber ${what} neste endereço.</p><p><small>Douro Partners</small></p>`));
+      res.status(200).send(page("Removido", `<h1>Pedido registado</h1><p>Não voltará a receber ${what} neste endereço.</p><p><small>${escapeHtml(orgName())}</small></p>`));
       return;
     }
 
@@ -72,7 +74,7 @@ exports.outreachUnsubscribe = onRequest({ region: REGION, secrets: [UNSUBSCRIBE_
     if (thread?.companyId) await stopCompanyEnrolments(thread.companyId, "Unsubscribed");
     else if (thread?.enrolmentId) await stopEnrolmentById(thread.enrolmentId, "Unsubscribed");
 
-    res.status(200).send(page("Removido", "<h1>Pedido registado</h1><p>Não voltará a receber emails nossos neste endereço.</p><p><small>Douro Partners</small></p>"));
+    res.status(200).send(page("Removido", `<h1>Pedido registado</h1><p>Não voltará a receber emails nossos neste endereço.</p><p><small>${escapeHtml(orgName())}</small></p>`));
   } catch (e) {
     logger.error("outreachUnsubscribe failed", { messageId, message: e.message });
     res.status(500).send(page("Erro", "<h1>Não foi possível concluir</h1><p>Tente novamente mais tarde, ou responda ao email com a palavra \"remover\".</p>"));

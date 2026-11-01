@@ -31,8 +31,8 @@ const { RESEND_READ_KEY } = require("../outreach/config");
 const { buildOutreachHtml } = require("../outreach/branded");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
-// Where an invitation may point people to sign in (the page that invited them).
-const PORTAL_ORIGINS = ["https://douropartners.pt", "https://www.douropartners.pt", "https://staging--douro-partners.netlify.app"];
+// Where an invitation may point people to sign in (the page that invited them):
+// the origins in the instance settings; the first one is the default.
 
 const db = () => getFirestore();
 const REGION = "us-central1";
@@ -71,12 +71,13 @@ async function audit(by, action, target, before, after) {
 // Keep the public login list (hashes only) and the team directory in step
 // with the team. The directory (teamDirectory/{key}: key, name, active) is
 // what every team member reads to show owners and task assignees — it holds
-// no roles or permissions, and no sign-in email except a @douropartners.pt
-// one used as the contact printed on letters (T4: contactPhone / contactEmail).
+// no roles or permissions, and no sign-in email except one on the team's own
+// domain (instance settings), used as the contact printed on letters (T4: contactPhone / contactEmail).
 async function syncLoginHashes() {
   await P.loadIdentity();
   const snap = await db().collection("team").get();
   const now = new Date();
+  const ownDomain = P.identity().outreach.relationshipDomain;
   const hashes = snap.docs.filter((d) => P.isActive(d.data(), now) || P.isAdminEmail(d.id)).map((d) => sha256(d.id));
   await db().doc("config/teamEmailHashes").set({ hashes, updatedAt: FieldValue.serverTimestamp() });
   const dir = await db().collection("teamDirectory").get();
@@ -89,7 +90,7 @@ async function syncLoginHashes() {
     batch.set(db().doc(`teamDirectory/${m.key}`), {
       key: m.key, name: m.name || m.key, partner: m.roleId === "admin" || m.roleId === "partner",
       contactPhone: m.contactPhone || null,
-      contactEmail: m.contactEmail || (/@douropartners\.pt$/.test(d.id) ? d.id : null),
+      contactEmail: m.contactEmail || (ownDomain && d.id.endsWith("@" + ownDomain) ? d.id : null),
       bookingLink: m.bookingLink || null, // 9 Oct: {{sender.bookingLink}}
       active: P.isAdminEmail(d.id) || P.isActive(m, now), updatedAt: FieldValue.serverTimestamp(),
     });
@@ -173,19 +174,19 @@ async function seed(by) {
   return { created };
 }
 
-// "You've been given access" — from noreply@douropartners.pt, replies to the
+// "You've been given access" — from the team's noreply address (instance settings), replies to the
 // partner who invited. One language (G3: pt or en, chosen when inviting),
 // and only once the NDA is recorded (G2) — partners excepted.
-function inviteMessage(lang, { first, roleName, endsAt, url, email }) {
+function inviteMessage(lang, { first, roleName, endsAt, url, email, org }) {
   const fmt = (loc) => (endsAt ? new Intl.DateTimeFormat(loc, { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Lisbon" }).format(endsAt.toDate()) : null);
   if (lang === "en") {
     const until = fmt("en-GB");
     return {
-      subject: "Your access to the Douro Partners portal",
+      subject: `Your access to the ${org} portal`,
       message: [
         `Hi ${first},`,
         "",
-        `You've been given access to the Douro Partners portal${roleName ? ` (role: ${roleName})` : ""}${until ? `, until ${until}` : ""}.`,
+        `You've been given access to the ${org} portal${roleName ? ` (role: ${roleName})` : ""}${until ? `, until ${until}` : ""}.`,
         "",
         `To sign in: open ${url}, enter this address (${email}) and follow the link we email you. No password needed.`,
         "",
@@ -195,11 +196,11 @@ function inviteMessage(lang, { first, roleName, endsAt, url, email }) {
   }
   const until = fmt("pt-PT");
   return {
-    subject: "Acesso ao portal Douro Partners",
+    subject: `Acesso ao portal ${org}`,
     message: [
       `Olá ${first},`,
       "",
-      `Já tens acesso ao portal da Douro Partners${roleName ? ` (função: ${roleName})` : ""}${until ? `, até ${until}` : ""}.`,
+      `Já tens acesso ao portal da ${org}${roleName ? ` (função: ${roleName})` : ""}${until ? `, até ${until}` : ""}.`,
       "",
       `Para entrares: abre ${url}, escreve este endereço (${email}) e segue o link que vais receber por email. Não há palavra-passe.`,
       "",
@@ -216,13 +217,15 @@ async function sendInvite(email, by, origin, lang) {
   if (!P.isActive(m)) fail("failed-precondition", "not_active", "This person's access isn't active.");
   if (!isFixed(m.roleId) && !P.isAdminEmail(email) && !m.ndaSigned) fail("failed-precondition", "nda_missing", "Tick \"NDA signed\" first — the invitation can only be sent once the NDA is recorded.");
   const role = m.roleId ? await readRole(m.roleId) : null;
-  const base = PORTAL_ORIGINS.includes(origin) ? origin : "https://douropartners.pt";
+  const I = P.identity();
+  if (!I.noreplyFrom || !I.portalOrigins.length) fail("failed-precondition", "not_configured", "The portal's sender address and web address are not set up yet (instance settings).");
+  const base = I.portalOrigins.includes(origin) ? origin : I.portalOrigins[0];
   const url = `${base}/portal/login.html`;
   const first = String(m.name || "").trim().split(/\s+/)[0] || "";
   const language = ["pt", "en"].includes(lang) ? lang : (m.inviteLang === "en" ? "en" : "pt");
-  const { subject, message } = inviteMessage(language, { first, roleName: role?.name || "", endsAt: m.endsAt || null, url, email });
+  const { subject, message } = inviteMessage(language, { first, roleName: role?.name || "", endsAt: m.endsAt || null, url, email, org: I.orgName });
   const res = await sendEmail(RESEND_READ_KEY.value(), {
-    from: "Douro Partners <noreply@douropartners.pt>",
+    from: I.noreplyFrom,
     to: [email],
     reply_to: by,
     subject,

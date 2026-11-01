@@ -26,9 +26,13 @@ async function getFlags({ force = false } = {}) {
 }
 function _reset() { cache = null; cachedAt = 0; }
 
-const PRODUCTION_HOSTS = new Set(["douropartners.pt", "www.douropartners.pt"]);
+// This team's production hosts come from the instance settings (primed by
+// isOnFor / requireFeature); with none configured every origin counts as the
+// stricter production site.
 function siteOfOrigin(origin) {
-  try { return PRODUCTION_HOSTS.has(new URL(origin).hostname) ? "production" : "staging"; }
+  const hosts = P.identity().productionHosts;
+  if (!hosts.length) return "production";
+  try { return hosts.includes(new URL(origin).hostname.toLowerCase()) ? "production" : "staging"; }
   catch (e) { return "production"; } // unknown: the stricter site
 }
 function siteOf(request) {
@@ -51,6 +55,7 @@ function isTester(request, flags, key) {
   return !!email && (flags?.[key]?.testers || []).includes(email);
 }
 async function isOnFor(request, key) {
+  await P.loadIdentity(); // this team's production hosts
   const flags = await getFlags();
   const st = stateOf(flags, key, siteOf(request));
   return st === "on" || (st === "test" && isTester(request, flags, key));

@@ -23,7 +23,7 @@ const { logger } = require("firebase-functions");
 const { db, FieldValue, Timestamp } = require("./store");
 const { lisbonParts, lisbonAt } = require("./schedule_util");
 const resend = require("./resend");
-const { RESEND_READ_KEY, RELATIONSHIP_SENDERS } = require("./config");
+const { RESEND_READ_KEY, relationshipSenders, orgName } = require("./config");
 const Related = require("./related");
 const Feat = require("../features"); // feature switches (Team & access → Features)
 
@@ -196,10 +196,10 @@ async function maybeRunWeekly(now, settings, { onlyTest = false, force = false }
   const text = reportText(r, { weekKey: fromKey, toKey: new Date(to - 12 * 3600000).toISOString().slice(0, 10) });
   let emailed = [];
   if (settings?.weeklyReportEmail !== false) {
-    const partners = RELATIONSHIP_SENDERS.filter((s) => s.owner).map((s) => s.email);
-    const from = (RELATIONSHIP_SENDERS.find((s) => !s.owner) || {}).email || "noreply@douropartners.pt";
-    try {
-      await resend.sendEmail(RESEND_READ_KEY.value(), { from: `Douro Partners <${from}>`, to: partners, subject: `Outreach — semana de ${fromKey}${onlyTest ? " (teste)" : ""}`, text }, `weekly-report-${fromKey}${onlyTest ? "-test" : ""}`);
+    const partners = relationshipSenders().filter((s) => s.owner).map((s) => s.email);
+    const from = (relationshipSenders().find((s) => !s.owner) || {}).email;
+    if (from && partners.length) try {
+      await resend.sendEmail(RESEND_READ_KEY.value(), { from: `${orgName()} <${from}>`, to: partners, subject: `Outreach — semana de ${fromKey}${onlyTest ? " (teste)" : ""}`, text }, `weekly-report-${fromKey}${onlyTest ? "-test" : ""}`);
       emailed = partners;
     } catch (e) { logger.warn("weekly report email failed", { message: e.message }); }
   }

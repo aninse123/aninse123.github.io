@@ -20,7 +20,7 @@
 const P = require("../access/perms"); // team access: who may call what
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-const { REGION, RESEND_READ_KEY } = require("./config");
+const { REGION, RESEND_READ_KEY, relationshipSenders } = require("./config");
 const { normEmail, isValidEmail } = require("./util");
 const store = require("./store");
 const resend = require("./resend");
@@ -32,11 +32,13 @@ const { db, FieldValue } = store;
 const MAX_RECIPIENTS = 250;
 const BATCH = 100; // Resend batch limit
 // Server-side allow-list: the page sends a key, never an address.
-const SENDERS = {
-  andre: { email: "andre.rocha@douropartners.pt", name: "André Rocha" },
-  antonio: { email: "antonio.carvalho@douropartners.pt", name: "António Carvalho" },
-  noreply: { email: "noreply@douropartners.pt", name: "Douro Partners" },
-};
+// Built from this team's relationship senders (instance settings): one per
+// person (keyed by their short name) and one without an owner ("noreply").
+function sendersOf() {
+  const out = {};
+  for (const s of relationshipSenders()) out[s.owner || "noreply"] = { email: s.email, name: s.displayName };
+  return out;
+}
 const NOTICE_BLOCKING = ["hard_bounce", "complaint", "provider_suppressed"];
 
 function fail(code, reason, message) { throw new HttpsError(code, message, { reason }); }
@@ -48,9 +50,14 @@ async function peopleSend(data, caller) {
   const bad = recipients.find((r) => !isValidEmail(normEmail(r?.email)));
   if (bad) fail("invalid-argument", "bad_email", `Invalid recipient email: ${bad?.email || "(missing)"}`);
 
+  await P.loadIdentity();
+  const SENDERS = sendersOf();
+  const owners = Object.keys(SENDERS).filter((k) => k !== "noreply");
   const isOutreach = kind === "outreach";
   const sender = SENDERS[from] || SENDERS.noreply;
-  const other = isOutreach ? (from === "andre" ? SENDERS.antonio : from === "antonio" ? SENDERS.andre : null) : null;
+  if (!sender) fail("failed-precondition", "no_sender", "No sending address is set up for this team (instance settings).");
+  // The other person of a two-person team is copied on outreach.
+  const other = isOutreach && owners.length === 2 && owners.includes(from) ? SENDERS[owners.find((k) => k !== from)] : null;
   const doc = { docName, docCategory, docDescription, docUrl };
   const subj = String(subject).trim(), msg = String(message).trim();
 

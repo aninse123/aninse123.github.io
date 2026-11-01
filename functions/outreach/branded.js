@@ -4,12 +4,21 @@
 //   buildHtml         — investor portal notice (greeting, document card, portal button)
 //   buildOutreachHtml — free-form email in the same shell (optional document card)
 
-const PORTAL_URL = "https://douropartners.pt/portal/investor.html";
-// Always the production domain: the asset only needs to exist on main.
-const LOGO_URL = "https://douropartners.pt/assets/logo-transparent.png";
+const P = require("../access/perms");
+
+// Organisation name, logo, portal address and who to contact come from this
+// team's instance settings (instance/public + instance/settings.founders),
+// primed by the caller (people_send awaits P.loadIdentity()).
+function brand() {
+  const i = P.identity();
+  let site = "", host = "", portal = "";
+  try { const u = new URL(i.portalUrl); site = u.origin; host = u.host; portal = new URL("investor.html", i.portalUrl).href; } catch (e) { /* no portal address set */ }
+  return { org: i.orgName, logo: i.logoUrl, site, host, portal, people: i.founders.map((f) => f.name), contacts: i.contacts };
+}
 
 // ── Email HTML template ────────────────────────────────────────────────────────
 function buildHtml({ investorName, message, docName, docCategory, docDescription }) {
+  const B = brand();
   const greeting = investorName
     ? `<p style="margin:0 0 20px;font-size:15px;color:#2C2C2C;">Dear <strong>${esc(investorName)}</strong> team,</p>`
     : '';
@@ -44,7 +53,7 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>${esc(docName || 'Update')} — Douro Partners</title>
+  <title>${esc(docName || 'Update')} — ${esc(B.org)}</title>
 </head>
 <body style="margin:0;padding:0;background:#F7F3EC;font-family:'Helvetica Neue',Arial,sans-serif;-webkit-text-size-adjust:100%;">
 
@@ -60,7 +69,7 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
              inside the dark header banner below) ── -->
         <tr>
           <td style="padding:0 4px 14px;text-align:left;">
-            <img src="${LOGO_URL}" alt="Douro Partners" width="110" style="display:block;border:0;">
+            ${B.logo ? `<img src="${esc(B.logo)}" alt="${esc(B.org)}" width="110" style="display:block;border:0;">` : ''}
           </td>
         </tr>
 
@@ -69,7 +78,7 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
           <td style="background:#1E2A38;padding:28px 40px;border-radius:8px 8px 0 0;text-align:center;">
             <p style="margin:0;font-family:Georgia,'Times New Roman',serif;
                       font-size:22px;color:#FFFFFF;font-weight:bold;letter-spacing:0.02em;">
-              Douro Partners
+              ${esc(B.org)}
             </p>
             <p style="margin:6px 0 0;font-size:11px;color:rgba(255,255,255,0.5);
                       letter-spacing:0.1em;text-transform:uppercase;">
@@ -95,7 +104,7 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
             <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
               <tr>
                 <td align="center">
-                  <a href="${PORTAL_URL}"
+                  <a href="${esc(B.portal)}"
                      style="display:inline-block;background:#4A6B8A;color:#FFFFFF;
                             text-decoration:none;font-size:14px;font-weight:600;
                             padding:14px 32px;border-radius:8px;letter-spacing:0.02em;">
@@ -113,17 +122,14 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
           <td style="background:#F7F3EC;padding:20px 40px;border-radius:0 0 8px 8px;text-align:center;
                      border-top:1px solid #D8D3C8;">
             <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.8;">
-              <a href="https://douropartners.pt" style="color:#9CA3AF;text-decoration:none;">
-                douropartners.pt
+              <a href="${esc(B.site)}" style="color:#9CA3AF;text-decoration:none;">
+                ${esc(B.host)}
               </a>
               &nbsp;&middot;&nbsp;
               You are receiving this as a registered investor.<br>
               To update your contact details, reach us at
-              <a href="mailto:andre.rocha@douropartners.pt"
-                 style="color:#9CA3AF;">andre.rocha@douropartners.pt</a>
-              or
-              <a href="mailto:antonio.carvalho@douropartners.pt"
-                 style="color:#9CA3AF;">antonio.carvalho@douropartners.pt</a>
+              ${B.contacts.slice(0, 2).map((c) => `<a href="mailto:${esc(c.email)}"
+                 style="color:#9CA3AF;">${esc(c.email)}</a>`).join('\n              or\n              ')}
             </p>
           </td>
         </tr>
@@ -148,6 +154,7 @@ function buildHtml({ investorName, message, docName, docCategory, docDescription
 // since buildHtml needs one investorName per recipient and combined sends
 // have no single recipient to address.
 function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescription, legalLines = [] }) {
+  const B = brand();
   const messageHtml = esc(message).replace(/\n/g, '<br>');
 
   const docDescRow = docDescription
@@ -180,7 +187,7 @@ function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescripti
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>Douro Partners</title>
+  <title>${esc(B.org)}</title>
 </head>
 <body style="margin:0;padding:0;background:#F7F3EC;font-family:'Helvetica Neue',Arial,sans-serif;-webkit-text-size-adjust:100%;">
 
@@ -194,7 +201,7 @@ function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescripti
         <!-- ── Logo strip (outside the branded card — see buildHtml's comment) ── -->
         <tr>
           <td style="padding:0 4px 14px;text-align:left;">
-            <img src="${LOGO_URL}" alt="Douro Partners" width="110" style="display:block;border:0;">
+            ${B.logo ? `<img src="${esc(B.logo)}" alt="${esc(B.org)}" width="110" style="display:block;border:0;">` : ''}
           </td>
         </tr>
 
@@ -203,7 +210,7 @@ function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescripti
           <td style="background:#1E2A38;padding:28px 40px;border-radius:8px 8px 0 0;text-align:center;">
             <p style="margin:0;font-family:Georgia,'Times New Roman',serif;
                       font-size:22px;color:#FFFFFF;font-weight:bold;letter-spacing:0.02em;">
-              Douro Partners
+              ${esc(B.org)}
             </p>
           </td>
         </tr>
@@ -224,9 +231,9 @@ function buildOutreachHtml({ message, docName, docCategory, docUrl, docDescripti
           <td style="background:#F7F3EC;padding:20px 40px;border-radius:0 0 8px 8px;text-align:center;
                      border-top:1px solid #D8D3C8;">
             <p style="margin:0;font-size:12px;color:#9CA3AF;line-height:1.8;">
-              André Rocha &middot; António Carvalho<br>
-              <a href="https://douropartners.pt" style="color:#9CA3AF;text-decoration:none;">
-                douropartners.pt
+              ${B.people.map(esc).join(' &middot; ')}<br>
+              <a href="${esc(B.site)}" style="color:#9CA3AF;text-decoration:none;">
+                ${esc(B.host)}
               </a>${legalLines.length ? `<br>${legalLines.map(esc).join('<br>')}` : ''}
             </p>
           </td>

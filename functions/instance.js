@@ -53,6 +53,29 @@ function cleanOrigins(list) {
   return uniq((Array.isArray(list) ? list : []).map((o) => strOr(o).replace(/\/+$/, "")).filter((o) => /^https?:\/\/[^\s/]+$/.test(o)));
 }
 
+const cleanDomain = (d) => strOr(d).toLowerCase().replace(/^@/, "");
+const cleanSeedSenders = (list) => (Array.isArray(list) ? list : [])
+  .map((x) => ({ local: strOr(x?.local).toLowerCase(), owner: strOr(x?.owner).toLowerCase() || null, displayName: strOr(x?.displayName), status: ["active", "paused", "warming"].includes(x?.status) ? x.status : "paused" }))
+  .filter((x) => /^[a-z0-9._+-]+$/.test(x.local) && x.displayName);
+const cleanRelSenders = (list) => (Array.isArray(list) ? list : [])
+  .map((x) => ({ email: normEmail(x?.email), owner: strOr(x?.owner).toLowerCase() || null, displayName: strOr(x?.displayName) }))
+  .filter((x) => isEmail(x.email) && x.displayName);
+// Outreach: sending domains, the approved test addresses and the sender seeds.
+// Empty = nothing configured: test mode then refuses every send (fails safe).
+function cleanOutreach(o) {
+  const x = o && typeof o === "object" ? o : {};
+  return {
+    senderDomain: cleanDomain(x.senderDomain),
+    relationshipDomain: cleanDomain(x.relationshipDomain),
+    unsubscribeBaseUrl: strOr(x.unsubscribeBaseUrl),
+    ccDomains: uniq((Array.isArray(x.ccDomains) ? x.ccDomains : []).map(cleanDomain).filter(Boolean)),
+    testRecipients: cleanEmails(x.testRecipients),
+    seedSenders: cleanSeedSenders(x.seedSenders),
+    relationshipSenders: cleanRelSenders(x.relationshipSenders),
+    signatureLines: (Array.isArray(x.signatureLines) ? x.signatureLines : []).map((l) => strOr(l)).filter(Boolean),
+  };
+}
+
 // Turns the two raw documents into the one object the rest of the code uses.
 // Pure: also used by the seed script to check a file before it is written.
 function normalizeInstance(settings, pub) {
@@ -67,6 +90,7 @@ function normalizeInstance(settings, pub) {
     portalOrigins: cleanOrigins(s.portalOrigins),
     noreplyFrom: strOr(s.noreplyFrom),
     productionHosts: cleanHosts(s.productionHosts),
+    outreach: cleanOutreach(s.outreach),
     orgName: strOr(p.orgName),
     logoUrl: strOr(p.logoUrl),
     portalUrl: strOr(p.portalUrl),
@@ -84,6 +108,12 @@ function validateInstance(settings, pub) {
   if (!inst.productionHosts.length) out.push("settings.productionHosts needs at least one host");
   if (!inst.orgName) out.push("public.orgName is required");
   if (!inst.contacts.length) out.push("public.contacts needs at least one {name, email}");
+  const ou = inst.outreach;
+  if (!ou.senderDomain) out.push("settings.outreach.senderDomain is required (the Resend sending domain)");
+  if (!ou.relationshipDomain) out.push("settings.outreach.relationshipDomain is required");
+  if (!ou.testRecipients.length) out.push("settings.outreach.testRecipients is empty: nothing can be sent in test mode until addresses are approved");
+  if (!ou.ccDomains.length) out.push("settings.outreach.ccDomains is empty: a campaign cannot copy anyone");
+  if (!ou.relationshipSenders.length) out.push("settings.outreach.relationshipSenders needs at least one {email, owner, displayName}");
   for (const e of inst.adminEmails) if (!inst.founders.some((f) => f.email === e)) out.push(`admin ${e} should also be listed in settings.founders (it needs a key and a name)`);
   return out;
 }

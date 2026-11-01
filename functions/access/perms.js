@@ -29,16 +29,8 @@ const { HttpsError } = require("firebase-functions/v2/https");
 // order can lock anyone out. Any other project fails closed (nobody is an
 // admin by email; the admin's token claim still works).
 const I = require("../instance");
-const LEGACY = I.normalizeInstance(
-  {
-    adminEmails: ["andre.rocha@douropartners.pt"],
-    founders: [
-      { email: "andre.rocha@douropartners.pt", key: "andre", name: "André Rocha" },
-      { email: "antonio.carvalho@douropartners.pt", key: "antonio", name: "António Carvalho" },
-    ],
-  },
-  { orgName: "Douro Partners", contacts: [{ name: "André", email: "andre.rocha@douropartners.pt" }, { name: "António", email: "antonio.carvalho@douropartners.pt" }] },
-);
+const LEGACY_DOURO = require("../legacy_douro");
+const LEGACY = I.normalizeInstance(LEGACY_DOURO.settings, LEGACY_DOURO.public);
 const legacyAllowed = () => { const proj = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || ""; return !proj || proj === "douro-partners"; };
 
 let primed = null, warned = false;

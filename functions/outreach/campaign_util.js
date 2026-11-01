@@ -237,14 +237,13 @@ function normalizeCampaign(input, existing = null) {
 }
 
 // ── Cc on every email (28 Oct, switch outreach.campaignCc) ─────────────────
-// Only Douro addresses (…@douropartners.pt, the team's sending domain), at most 3:
+// Only this team's own addresses (its domains, instance settings), at most 3:
 // a campaign can't copy outsiders by mistake.
-const CC_DOMAINS = ["douropartners.pt", "mail.douropartners-team.pt"];
 function normalizeCc(input) {
   const list = (Array.isArray(input) ? input : String(input || "").split(/[,;\s]+/)).map((e) => normEmail(e)).filter(Boolean);
   const out = [...new Set(list)];
-  const wrong = out.find((e) => !isValidEmail(e) || !CC_DOMAINS.includes(String(e.split("@")[1] || "")));
-  if (wrong) bad("bad_cc", `Cc can only be a Douro address (…@douropartners.pt): not ${wrong}.`);
+  const wrong = out.find((e) => !isValidEmail(e) || !require("./config").ccDomains().includes(String(e.split("@")[1] || "")));
+  if (wrong) bad("bad_cc", `Cc can only be one of this team's own addresses (${require("./config").ccDomains().map((d) => "@" + d).join(", ")}): not ${wrong}.`);
   if (out.length > 3) bad("bad_cc", "Cc: at most 3 addresses.");
   return out;
 }
@@ -356,7 +355,7 @@ function pathValueText(field, c) {
 function activationProblems(campaign, templatesById) {
   const problems = [];
   if (campaign.audienceType === "people" && campaign.senderPolicy?.mode !== "fixed" && (campaign.steps || []).some((s) => (s.channel || "email") === "email")) {
-    problems.push('Choose who sends it (Settings → "From which addresses" → specific addresses — e.g. andre.rocha@douropartners.pt).');
+    problems.push('Choose who sends it (Settings → "From which addresses" → specific addresses).');
   }
   if (campaign.audience?.mode === "dynamic" && !latestFilterSpec(campaign)) {
     problems.push("A dynamic audience needs companies added from the Search CRM filters first — that's the filter it keeps applying.");
@@ -555,7 +554,7 @@ function matchesFilterSpec(c, spec, now = Date.now()) {
 module.exports = {
   CHANNELS, MANUAL_CHANNELS, TEMPLATE_KIND, templateKind,
   CAMPAIGN_STATUSES, LIVE_ENROLMENT, STAGE_KEYS, DEFAULT_ALLOWED_STAGES, VARIANT_KEYS, MAX_STEPS,
-  DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems, evaluateCompany,
+  DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, normalizeCc, activationProblems, evaluateCompany,
   EXCLUSION_LABELS, enrolmentId, tsMillis, latestFilterSpec, matchesFilterSpec, tierOf, TIERS, personKey, personEnrolmentId, evaluatePerson,
   ELSE_PATH, MAX_PATHS, PATH_FIELDS, PATH_OPS, PATH_FIELD_LABEL, pathsOf, pathSteps, viewFor, choosePath, pathValueText, normalizePaths,
   START_MODES, normalizeStartOrder, splitShares, plannedPath, pathsUseTier,

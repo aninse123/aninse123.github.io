@@ -23,7 +23,7 @@
 
 const P = require("../access/perms"); // team access: who may call what
 const { onCall } = require("firebase-functions/v2/https");
-const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET } = require("./config");
+const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, orgName } = require("./config");
 const { normEmail } = require("./util");
 const { prepareEmail, deliverEmail, fail } = require("./send_core");
 const store = require("./store");
@@ -193,10 +193,10 @@ async function forwardThread(request, callerEmail) {
     .filter((m) => !NOT_SENT.includes(m.status)).sort((a, b) => ms(a.createdAt) - ms(b.createdAt));
   const fmt = (t) => (ms(t) ? new Date(ms(t)).toLocaleString("pt-PT", { timeZone: "Europe/Lisbon" }) : "");
   const parts = msgs.map((m) => `— ${fmt(m.createdAt)} · ${m.direction === "in" ? `From ${m.from || ""}` : `To ${(m.to || []).join(", ")}`}\nSubject: ${m.subject || ""}\n\n${String(m.text || m.snippet || "").trim()}`);
-  const text = `${String(note || "").trim() ? String(note).trim().slice(0, 2000) + "\n\n" : ""}Forwarded from the Douro Outreach inbox by ${callerEmail}.\nCompany: ${th.companyName || "—"} · Contact: ${th.contactEmail || "—"}\n\n${parts.join("\n\n") || "(no messages)"}\n`;
+  const text = `${String(note || "").trim() ? String(note).trim().slice(0, 2000) + "\n\n" : ""}Forwarded from the ${orgName()} Outreach inbox by ${callerEmail}.\nCompany: ${th.companyName || "—"} · Contact: ${th.contactEmail || "—"}\n\n${parts.join("\n\n") || "(no messages)"}\n`;
   const sender = (await db().doc(`outreachSenders/${th.senderId || "_"}`).get()).data();
   if (!sender) fail("failed-precondition", "sender_missing", "The conversation's sending address is no longer set up.");
-  await sendEmail(RESEND_SEND_KEY.value(), { from: `${sender.displayName || "Douro Partners"} <${th.senderId}>`, to: [want], subject: `Fwd: ${th.subject || ""}`.slice(0, 300), text }, `fwd_${threadId}_${Date.now()}`);
+  await sendEmail(RESEND_SEND_KEY.value(), { from: `${sender.displayName || orgName()} <${th.senderId}>`, to: [want], subject: `Fwd: ${th.subject || ""}`.slice(0, 300), text }, `fwd_${threadId}_${Date.now()}`);
   await ref.update({ forwards: FieldValue.arrayUnion({ to: want, by: callerEmail, at: Timestamp.now() }) });
   return { ok: true, to: want, messages: msgs.length };
 }
