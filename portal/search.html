@@ -1872,7 +1872,8 @@ const CT_RULES = [
   { id: 'r8',  name: 'Ultimate owner type, listing, name',   params: [], hint: 'Cut: owner is PE / VC / state / insurance / foundation / hedge / pension-nominee-trust / bank, or listed (a ticker; "Delisted" is fine), or has a fund-like or non-profit name (names ending in LDA are fine). Never when the owner name has a person title (MR / MRS / MS).' },
   { id: 'r9',  name: 'Ultimate owner size / group',          params: [['ownerMaxEmployees', 'owner under', 'employees'], ['ownerMaxRevenueEurM', 'and under €', 'M revenue'], ['groupMaxCompanies', 'fewer than', 'companies in the CRM'], ['groupMaxEmployees', 'group under', 'employees'], ['groupMaxRevenueEurM', 'and under €', 'M'], ['foreignFamilyMaxCompanies', 'foreign family under', 'companies']], hint: 'For company or financial owners (never a person title): the owner\'s own size (Orbis, USD converted at the EUR/USD rate below), how many companies it owns in the CRM, and those companies\' total employees / revenue. A foreign family owner (owner country not PT; if blank, its family shareholders\' country) with too many companies is also cut.' },
   { id: 'r10', name: 'Shareholders',                         params: [['maxShareholders', 'at most', '']] },
-  { id: 'r11', name: 'Not controlled by a foreign company',  params: [['personMaxHoldings', 'keep when a person holds it through at most', 'foreign companies (0 = no exception)'], ['personMaxCompanies', 'and owns at most', 'companies in the CRM'], ['ownerCountryForeign', 'also cut when a company owner\'s stored country is not Portugal', '(1 = yes, 0 = no)']], hint: 'Cut: Orbis says "Controlled subsidiary" and the control chain includes a foreign company (GmbH, SAS, B.V., Inc., Ltd, S.L., S.R.L., A/S… or an Orbis "(HQ)" group) — e.g. Royal Canin via Mars, Incorporated (HQ). Kept: a person (not a "… family", no "(HQ)") holding it through a few foreign holdings, with few companies in the CRM. The country option (30 Oct) also cuts a controlled subsidiary whose ultimate owner is a company (corporate, financial company…) with a stored country other than PT, for owners whose legal form isn\'t recognised by name (e.g. "… SA" in Switzerland); a missing country never cuts.' },
+  { id: 'r11', name: 'Not controlled by a foreign company',  params: [['personMaxHoldings', 'keep when a person holds it through at most', 'foreign companies (0 = no exception)'], ['personMaxCompanies', 'and owns at most', 'companies in the CRM'], ['ownerCountryForeign', 'also use the stored countries: a majority corporate shareholder or a company owner outside Portugal', '(1 = yes, 0 = no)']], hint: 'Cut: Orbis says "Controlled subsidiary" and the control chain includes a foreign company (GmbH, SAS, B.V., Inc., Ltd, S.L., S.R.L., A/S… or an Orbis "(HQ)" group) — e.g. Royal Canin via Mars, Incorporated (HQ). Kept: a person (not a "… family", no "(HQ)") holding it through a few foreign holdings, with few companies in the CRM. Order of evidence (2 Nov): 1) with the country option, a current corporate shareholder with more than 50% whose stored country isn\'t PT, then a company ultimate owner whose stored country isn\'t PT; 2) a foreign legal form anywhere in the control chain ("by name"; sees a foreign parent above a Portuguese vehicle). Only controlled subsidiaries (Orbis: a single majority holder). A missing country never cuts.' },
+  { id: 'r12', name: 'Not owned by foreign companies together', params: [['minForeignPct', 'cut when current corporate shareholders with a stored country outside Portugal together hold more than', '% (off by default)']], hint: 'For companies where no single holder controls but foreign corporate holders hold the company between them (e.g. two 50% Spanish holders). Shareholders without a stored country and foreign individuals are not counted. Uses the ownership summary (ownForeignPct).' },
 ];
 const CT_DEFAULTS = {
   rateYear: 2025,
@@ -1884,7 +1885,8 @@ const CT_DEFAULTS = {
     r7: { on: true, missing: 'keep' }, r8: { on: true, missing: 'keep' },
     r9: { on: true, missing: 'keep', ownerMaxEmployees: 1000, ownerMaxRevenueEurM: 200, groupMaxCompanies: 10, groupMaxEmployees: 1000, groupMaxRevenueEurM: 200, foreignFamilyMaxCompanies: 4 },
     r10: { on: true, missing: 'keep', maxShareholders: 10 },
-    r11: { on: true, missing: 'keep', personMaxHoldings: 0, personMaxCompanies: 2, ownerCountryForeign: 0 }, // 13 Oct, André: no exception — cut them all
+    r11: { on: true, missing: 'keep', personMaxHoldings: 0, personMaxCompanies: 2, ownerCountryForeign: 0 },
+    r12: { on: false, missing: 'keep', minForeignPct: 50 }, // 2 Nov: off until you turn it on and read the preview // 13 Oct, André: no exception — cut them all
   },
 };
 // Stored settings on top of the defaults, rule by rule (a rule added later
@@ -2001,8 +2003,11 @@ function contactableVerdicts(list, cfg){
     if (/controlled subs/i.test(om.entityType || '')){
       const chain = om.cshNames || [];
       // 30 Oct (option on rule 11): a corporate owner whose stored country isn't PT is foreign, whatever its legal form is called
-      const byCountry = Number(R.r11?.ownerCountryForeign) === 1 && gt && !CT_PERSONLIKE.has(gt) && om.guoCountry && om.guoCountry !== 'PT';   // any company owner (corporate, financial company…), never a person / family
-      if (byCountry && !chain.some(ctForeignCo)) check('r11', { fail: true, text: `Rule 11: controlled by a company in ${om.guoCountry} (${gname || chain[0] || 'owner'})` });
+      const countryOn = Number(R.r11?.ownerCountryForeign) === 1;
+      const byCountry = countryOn && gt && !CT_PERSONLIKE.has(gt) && om.guoCountry && om.guoCountry !== 'PT';   // any company owner (corporate, financial company…), never a person / family
+      // 2 Nov: first the stored country of a MAJORITY corporate shareholder (ownership summary), then the company owner's country, then the legal form in the chain
+      if (countryOn && Number(c.ownForeignTopPct) > 50 && c.ownForeignTopCountry) check('r11', { fail: true, text: `Rule 11: controlled by a company in ${c.ownForeignTopCountry} (${c.ownForeignTopName || 'shareholder'}, ${c.ownForeignTopPct}%)` });
+      else if (byCountry && !chain.some(ctForeignCo)) check('r11', { fail: true, text: `Rule 11: controlled by a company in ${om.guoCountry} (${gname || chain[0] || 'owner'})` });
       else if (!chain.length) check('r11', { missing: true, missingText: 'Rule 11: controlled subsidiary, no control chain' });
       else {
         const foreign = chain.filter(ctForeignCo);
@@ -2010,10 +2015,12 @@ function contactableVerdicts(list, cfg){
           const P = R.r11, maxH = Number(P?.personMaxHoldings) || 0, owns = ownerCount.get(ctOwnerKey(om) || om.guoName) || 0;
           const personKept = maxH > 0 && CT_PERSONLIKE.has(gt) && !/\b(FAMILY|FAMILIE|FAMILIA)\b/i.test(gname)
             && !chain.some(n => /\(HQ\)/i.test(n)) && foreign.length <= maxH && owns <= Number(P?.personMaxCompanies ?? 2);
-          check('r11', { fail: !personKept, text: `Rule 11: controlled by a foreign company (${foreign[0]})` });
+          check('r11', { fail: !personKept, text: `Rule 11: controlled by a foreign company (${foreign[0]}) — by name` });
         }
       }
     }
+    // Rule 12 (2 Nov, off by default): foreign corporate shareholders together hold more than the threshold
+    check('r12', Number(c.ownForeignPct) > Number(R.r12?.minForeignPct ?? 50) ? { fail: true, text: `Rule 12: foreign companies together hold ${c.ownForeignPct}% (${c.ownForeignList || 'foreign shareholders'})` } : null);
     out.set(c.id, { fails });
   }
   return out;
@@ -2048,7 +2055,10 @@ function contactableBadge(c, extraStyle = ''){
   if (c?.contactable !== false) return '';
   const rule = c.contactableSource === 'rules';
   const why = c.contactableNote || (rule ? '' : 'No reason given');
-  return `<span class="badge badge-grey" data-feature="search.tier" style="${extraStyle}${rule ? 'opacity:0.65;' : ''}" title="Not contactable${rule ? ' — from the contactable rules' : ' — set by hand'}${why ? ': ' + esc(why) : ''}">not contactable · screening${rule ? ' <small>(rule)</small>' : ''}</span>`;
+  // 2 Nov: a company that fails several rules shows all the reasons (the first one is the rule counted in the preview)
+  const all = rule && Array.isArray(c.contactableRules?.reasons) && c.contactableRules.reasons.length > 1 ? c.contactableRules.reasons : null;
+  const tip = all ? `: ${all[0]} (first rule failed). Also: ${all.slice(1).join('; ')}` : (why ? ': ' + why : '');
+  return `<span class="badge badge-grey" data-feature="search.tier" style="${extraStyle}${rule ? 'opacity:0.65;' : ''}" title="Not contactable${rule ? ' — from the contactable rules' : ' — set by hand'}${esc(tip)}">not contactable · screening${rule ? ' <small>(rule)</small>' : ''}</span>`;
 }
 
 // 14 Oct: the three "don't email" concepts, explained wherever they show (ⓘ).
