@@ -60,5 +60,9 @@ ok('opening the same company again (refresh) adds no entry and keeps the new tab
 
 ok('page wiring: openDetail / openPerson / setActiveTab record history; both Back buttons go one level; backToList starts the history over', search.includes("navPush('c', id, tab);") && search.includes("navPush('p', personId);") && search.includes('function setActiveTab(name){\n  navTab(name);') && search.includes("addEventListener('click', () => navBack(backToList))") && search.includes("addEventListener('click', () => navBack(backFromPerson))") && search.includes('function showListView()'));
 
+// Layout (2 Nov): the campaigns toolbar has two rows — New campaign sits on the title row, before the search and filters
+ok('Campaigns toolbar: New campaign is on the title row, the search and filters on their own row', out.indexOf('id="campNew"') < out.indexOf('id="campFind"') && out.indexOf('id="campShowArchived"') < out.indexOf('id="campFind"'));
+ok('Add to campaign: rows with the whole name and a status · creator · companies line, active first, arrows and Enter work', search.includes('id="addCampList"') && search.includes("const ORDER = { active: 0") || search.includes('ORDER = { active: 0, draft: 1, paused: 2 }') && search.includes("ev.key === 'ArrowDown'") && search.includes("ev.key === 'Enter'") && search.includes('companies</div></div>'));
+
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');

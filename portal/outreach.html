@@ -501,14 +501,16 @@
           <div class="card" style="padding:0;">
             <div class="toolbar">
               <h2 class="camp-h2">Campaigns</h2>
+              <label class="checkline"><input type="checkbox" id="campShowArchived"> <span>Show archived</span></label>
+              <button class="btn btn--ghost btn--sm" id="campRefresh">Refresh counts</button>
+              <button class="btn btn--primary btn--sm" id="campNew" data-perm="out.campaigns" style="margin-left:auto;">New campaign</button>
+            </div>
+            <div class="toolbar" style="border-top:0;padding-top:0;">
               <input type="search" id="campFind" class="field" placeholder="Search campaigns…" aria-label="Search campaigns" style="width:190px;padding:3px 8px;">
               <select id="campStatusF" class="field" aria-label="Status" style="width:auto;padding:3px 6px;"><option value="">Any status</option><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option><option value="finished">Finished</option></select>
               <select id="campCreatorF" class="field" aria-label="Created by" style="width:auto;padding:3px 6px;"><option value="">Anyone</option></select>
               <select id="campTypeF" class="field" aria-label="Type" style="width:auto;padding:3px 6px;"><option value="">Companies and people</option><option value="companies">Companies</option><option value="people">People</option><option value="test">Test campaigns</option></select>
               <label class="checkline" title="Drafts waiting for approval, or nobody left to contact"><input type="checkbox" id="campAttn"> <span>Needs attention</span></label>
-              <label class="checkline"><input type="checkbox" id="campShowArchived"> <span>Show archived</span></label>
-              <button class="btn btn--ghost btn--sm" id="campRefresh">Refresh counts</button>
-              <button class="btn btn--primary btn--sm" id="campNew" data-perm="out.campaigns" style="margin-left:auto;">New campaign</button>
             </div>
             <div class="table-wrap">
               <table>

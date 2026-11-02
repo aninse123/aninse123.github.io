@@ -11492,22 +11492,47 @@ async function openAddToCampaign(opts){
   body.innerHTML = intro + `
     <div class="form-group"><label for="addCampFind">Campaign</label>
       <input type="search" class="field" id="addCampFind" placeholder="Type to search ${campList.length} campaign${campList.length === 1 ? '' : 's'}…" autocomplete="off" style="margin-bottom:6px;">
-      <select class="field" id="addCampSel" ${campList.length > 6 ? `size="${Math.min(8, campList.length)}"` : ''} aria-label="Campaign"></select></div>
+      <input type="hidden" id="addCampSel" value="">
+      <div id="addCampList" role="listbox" aria-label="Campaign" style="max-height:290px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface,#fff);"></div></div>
     <p style="font-size:0.78rem;color:var(--text-light);">The campaign's rules decide who can be added (stage, owner, last touch, email, suppression list). You see the result before anything is added.</p>`;
   // 2 Nov: the list filters as you type (name, creator or status); the first match stays selected
   const sel = document.getElementById('addCampSel'), find = document.getElementById('addCampFind');
   const creatorName = (c) => String(c.createdBy || '').split('@')[0];
+  // Rows of two lines: the whole name, then status · creator · companies. Active first, then draft, then paused; by name inside each.
+  const listEl = document.getElementById('addCampList'), ORDER = { active: 0, draft: 1, paused: 2 };
+  const ordered = [...campList].sort((a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9) || (a.name || '').localeCompare(b.name || ''));
+  let shownList = [];
+  const pick = (id) => {
+    sel.value = id || '';
+    listEl.querySelectorAll('[data-camp-opt]').forEach(el => {
+      const on = el.dataset.campOpt === id;
+      el.setAttribute('aria-selected', on ? 'true' : 'false');
+      el.style.background = on ? 'rgba(74,107,138,0.14)' : 'transparent';
+      if (on) el.scrollIntoView({ block: 'nearest' });
+    });
+    next.disabled = !id;
+  };
   const fillCampSel = () => {
     const q = find.value.trim().toLowerCase(), keep = sel.value;
-    const shown = campList.filter(c => !q || `${c.name || ''} ${statusLabel[c.status] || ''} ${c.isTest ? 'test' : ''} ${creatorName(c)}`.toLowerCase().includes(q));
-    sel.innerHTML = shown.length ? shown.map(c => `<option value="${esc(c.id)}"${c.id === keep ? ' selected' : ''}>${esc(c.name)} (${statusLabel[c.status]}${c.isTest ? ', test' : ''}${creatorName(c) ? ', ' + esc(creatorName(c)) : ''})</option>`).join('') : '<option value="" disabled>No campaign matches</option>';
-    if (shown.length && !shown.some(c => c.id === keep)) sel.selectedIndex = 0;
-    next.disabled = !shown.length;
+    shownList = ordered.filter(c => !q || `${c.name || ''} ${statusLabel[c.status] || ''} ${c.isTest ? 'test' : ''} ${creatorName(c)}`.toLowerCase().includes(q));
+    listEl.innerHTML = shownList.length ? shownList.map(c => `<div role="option" data-camp-opt="${esc(c.id)}" tabindex="-1" style="padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer;">
+        <div style="font-size:0.88rem;line-height:1.3;overflow-wrap:anywhere;">${esc(c.name)}</div>
+        <div style="font-size:0.74rem;color:var(--text-light);margin-top:2px;">${esc(statusLabel[c.status] || c.status)}${c.isTest ? ' · <b style="color:#B45309;">TEST</b>' : ''}${creatorName(c) ? ' · ' + esc(creatorName(c)) : ''} · ${fmt(c.stats?.enrolled || 0)} companies</div></div>`).join('')
+      : '<div style="padding:10px;font-size:0.85rem;color:var(--text-light);">No campaign matches.</div>';
+    pick(shownList.some(c => c.id === keep) ? keep : (shownList[0]?.id || ''));
   };
+  listEl.addEventListener('click', (ev) => { const o = ev.target.closest('[data-camp-opt]'); if (o) pick(o.dataset.campOpt); });
+  listEl.addEventListener('dblclick', (ev) => { if (ev.target.closest('[data-camp-opt]') && !next.disabled) next.click(); });
   find.addEventListener('input', fillCampSel);
+  find.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      const i = shownList.findIndex(c => c.id === sel.value), j = Math.max(0, Math.min(shownList.length - 1, i + (ev.key === 'ArrowDown' ? 1 : -1)));
+      if (shownList[j]) pick(shownList[j].id);
+    } else if (ev.key === 'Enter') { ev.preventDefault(); if (!next.disabled) next.click(); }
+  });
   fillCampSel();
   find.focus();
-  next.disabled = !sel.value;
 
   let preview = null, campaignId = null;
   next.onclick = async () => {
