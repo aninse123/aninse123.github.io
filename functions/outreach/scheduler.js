@@ -202,8 +202,8 @@ async function ownerPanelOnDraft(messageRef, e, campaign, variantBody) {
     const entry = (await Related.relatedFor([e.companyId])).get(e.companyId);
     const flags = Related.flagsFor(entry, { campaignId: campaign.id, windowDays: campaign.exclusions?.contactedWithinDays || 30 });
     const related = entry.related.slice(0, 6).map((r) => ({ companyId: r.companyId, name: r.name, why: r.why, campaignName: r.campaignName, lastOutreachAt: r.lastOutreachAt, lastReplyAt: r.lastReplyAt, saidNo: r.saidNo, doNotContact: r.doNotContact, email: r.email }));
-    const checkMention = !!(e.mention || []).length && /\{\{\s*\??owner\.otherCompan/.test(variantBody || "");
-    const mention = (e.mention || []).map((x) => x.name).filter(Boolean); // D6: "This email mentions: X"
+    const checkMention = !!((e.mention || []).length || (e.known || []).length) && /\{\{\s*\??owner\.(otherCompan|knownCompan)/.test(variantBody || "");
+    const mention = [...(e.mention || []), ...(e.known || [])].map((x) => x.name).filter(Boolean); // D6: "This email mentions: X" (2 Nov: also the ones it only knows of)
     if (related.length || checkMention) await messageRef.update({ ownerPanel: { related, flags, lead: entry.lead, mention }, ...(checkMention ? { checkMention: true } : {}) });
   } catch (err) { logger.warn("outreachScheduler: owner panel", { message: err.message }); }
 }
@@ -230,14 +230,14 @@ async function nameCheckOnDraft(messageRef, e) {
   } catch (err) { logger.warn("outreachScheduler: name check", { message: err.message }); }
 }
 // Owner-aware outreach, Stage 4: when a company gets its first email, its related
-// companies (up to 9) get "Group contacted via X" in their history — an automatic
+// companies (up to 9) get "Related company contacted via X" in their history — an automatic
 // entry, never a touch. Real emails only.
 async function groupContacted(e, campaign, step) {
   try {
     const entry = (await Related.relatedFor([e.companyId])).get(e.companyId);
     for (const r of entry.related.slice(0, 9)) {
       await db().collection("searchActivities").add({ companyId: r.companyId, type: "outreach_group", date: Timestamp.now(), title: null,
-        content: `Group contacted via ${e.companyName || "a related company"} (${step.name || "Email 1"}, campaign "${campaign.name}") — ${r.why.join("; ")}`,
+        content: `Related company contacted via ${e.companyName || "a related company"} (${step.name || "Email 1"}, campaign "${campaign.name}") — ${r.why.join("; ")}`,
         relatedCompanyId: e.companyId, campaignId: campaign.id, status: null, createdAt: FieldValue.serverTimestamp(), createdBy: "scheduler" });
     }
   } catch (err) { logger.warn("outreachScheduler: group contacted", { message: err.message }); }
@@ -591,6 +591,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         campaignFields: { sector: campaign.sector || "" }, // {{campaign.sector}}
         // 22 Oct (owner-aware): the related companies chosen to be mentioned ({{owner.otherCompanies}}).
         otherCompanies: allowed(ownerState, campaign) ? (e.mention || []).map((x) => x.name) : [],
+        // 2 Nov: the related companies the email only says it knows of ({{owner.knownCompanyNames}}), not written to
+        knownCompanies: allowed(ownerState, campaign) ? (e.known || []).map((x) => x.name) : [],
         // Approved drafts go out as approved (edited subject/body included);
         // every check still runs again now.
         ...(approved ? { subject: approved.isReply ? null : approved.subject, body: approved.draftBody } : {}),

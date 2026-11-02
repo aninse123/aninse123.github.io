@@ -78,6 +78,13 @@ async function makeCampaign(campaign, ids, activate = true) {
   ok("…the approval card's panel lists X2 with why and status, and asks to check the mention", draft.ownerPanel?.related?.[0]?.companyId === "x2" && draft.ownerPanel.flags.length >= 1 && draft.checkMention === true);
   const d5 = docs("outreachMessages").find((m) => m.companyId === "x5" && m.status === "draft");
   ok("draft for X5: no mention, the fallback leaves the sentence out; no panel", d5 && /^Escrevo\. Corpo/.test(d5.draftBody) && !d5.ownerPanel && !d5.checkMention);
+  // 2 Nov: "aware only" — the email names a related company it is not writing to ({{owner.knownCompanyNames}}); chosen apart from "also writing"
+  const kc = buildContext({ company: { name: "A" }, knownCompanies: ["RGP 316", "Polipaul"] });
+  ok("render: owner.knownCompanyNames = \"RGP 316 e Polipaul\", knownCompanies = \"da RGP 316 e da Polipaul\", empty by default", kc.owner.knownCompanyNames === "RGP 316 e Polipaul" && kc.owner.knownCompanies === "da RGP 316 e da Polipaul" && buildContext({ company: {} }).owner.knownCompanyNames === "" && kc.owner.otherCompanies === "");
+  const k3 = await makeCampaign({ name: "Conhecidas", approvalDefault: "approval", steps: [{ templateId: "t1" }] }, null, false);
+  const en3 = await camp({ action: "enrol", campaignId: k3, companyIds: ["x1"], onConflict: "move", ownerChoices: { x1: "mention" }, ownerMentions: {}, ownerKnown: { x1: ["x2"] } });
+  const e3 = get(`outreachEnrolments/${k3}_x1`);
+  ok("enrol: X1 keeps the company it only knows of (known), not as a mention, and its history says it is not written to", en3.enrolled === 1 && JSON.stringify((e3.known || []).map((x) => x.companyId)) === '["x2"]' && !(e3.mention || []).length && docs("searchActivities").some((a) => a.companyId === "x1" && a.type === "outreach_owner" && /knows of EMPRESA X2.*not writing to it/i.test(a.content)));
   const ctx = buildContext({ company: { name: "A" }, otherCompanies: ["Fillwork", "Flexitrab"] });
   ok("render: owner.otherCompanies = \"da Fillwork e da Flexitrab\", owner.otherCompanyNames = \"Fillwork e Flexitrab\"", ctx.owner.otherCompanies === "da Fillwork e da Flexitrab" && ctx.owner.otherCompanyNames === "Fillwork e Flexitrab" && renderTemplate("{{owner.otherCompanies|—}}", buildContext({ company: {} })).text === "—");
 
@@ -86,7 +93,7 @@ async function makeCampaign(campaign, ids, activate = true) {
   const kA = await makeCampaign({ name: "Auto", approvalDefault: "auto", steps: [{ templateId: "t1" }] }, ["x1"]);
   await run(TUE);
   const g = docs("searchActivities").filter((a) => a.type === "outreach_group");
-  ok("X1's first email → X2 gets \"Group contacted via EMPRESA X1, LDA\" (automatic, not a touch)", g.length === 1 && g[0].companyId === "x2" && /Group contacted via EMPRESA X1, LDA/.test(g[0].content) && g[0].relatedCompanyId === "x1");
+  ok("X1's first email → X2 gets \"Related company contacted via EMPRESA X1, LDA\" (automatic, not a touch)", g.length === 1 && g[0].companyId === "x2" && /Related company contacted via EMPRESA X1, LDA/.test(g[0].content) && g[0].relatedCompanyId === "x1");
 
   // ── Switch Off: as before ──
   seed(); flags("off");

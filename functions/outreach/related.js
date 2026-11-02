@@ -1,7 +1,7 @@
 // Owner-aware outreach, Stage 3 (22 Oct 2026, switch "outreach.ownerAware"):
 // the companies related to a company and what is happening with them, used by
 // the owner panel (adding companies, the approval card), the "In conversation
-// via X" lines, the "Group contacted via X" history and the weekly report.
+// via X" lines, the "Related company contacted via X" history and the weekly report.
 //
 // Related = a shared decision-maker, a parent or a subsidiary (a CRM
 // company holding shares in the other), the same ultimate owner (ownGroupKey), or
@@ -184,7 +184,8 @@ function flagsFor(entry, { campaignId = null, windowDays = 30, batch = null, now
   for (const r of entry?.related || []) {
     if (r.doNotContact || r.saidNo) flags.push({ kind: "said_no", companyId: r.companyId, text: `${r.name}: ${r.doNotContact ? "do not contact" : "said no"}` });
     if (r.lastReplyAt) flags.push({ kind: "in_conversation", companyId: r.companyId, text: `in conversation via ${r.name} (reply ${day(r.lastReplyAt)})` });
-    else if (r.lastOutreachAt && r.lastOutreachAt >= since) flags.push({ kind: "group_contacted", companyId: r.companyId, text: `group contacted via ${r.name} (${day(r.lastOutreachAt)})` });
+    // 2 Nov: no window — like the "contacted before" warning of a single company, it stays; the reason is in the related list
+    else if (r.lastOutreachAt) flags.push({ kind: "group_contacted", companyId: r.companyId, text: `related company contacted via ${r.name} (${day(r.lastOutreachAt)})` });
     if (r.campaignId && r.campaignId !== campaignId) flags.push({ kind: "other_campaign", companyId: r.companyId, text: `${r.name} is in campaign "${r.campaignName || "another campaign"}"` });
     if (batch && batch.has(r.companyId) && r.companyId !== selfId) flags.push({ kind: "same_batch", companyId: r.companyId, text: `${r.name} is being added too` });
   }

@@ -1366,7 +1366,7 @@
 import { auth, db, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES, FIRESTORE_PROJECT_ID } from './firebase-config.js';
 import { guardPage, logExport, editedBadge } from './access.js';
 import { isOn, onFeaturesChange } from './features.js';
-import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, relatedLine, leadText, isRelatedDecider } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
+import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText, isRelatedDecider } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
 import { nameIssues, nameCheckOf } from './email-name-check.js'; // 26 Oct (search.emailNameCheck)
 import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-ui.js';
 import { summaryOf as contactSummaryOf, contactedHtml, flagsHtml, tipHtml as contactTipHtml, CT_CSS } from './contact-summary.js'; // 27 Oct (search.contactColumns)
@@ -1465,7 +1465,7 @@ const ACT = {
   // through another company. Not a touch.
   outreach_hold:    { label:'Held: same email address', icon:'⏸', outreach:false },
   outreach_owner:   { label:'Owner-aware choice', icon:'🧭', outreach:false }, // 22 Oct: Skip for now / Proceed / mention
-  outreach_group:   { label:'Group contacted', icon:'🔗', outreach:false },    // 22 Oct: a related company got its first email
+  outreach_group:   { label:'Related company contacted', icon:'🔗', outreach:false },    // 22 Oct: a related company got its first email
 };
 // Set on searchCompanies by the Outreach Cloud Functions (spec §5).
 const OUTREACH_BADGE = {
@@ -1595,6 +1595,32 @@ let sendCtIdx = null;
 // People & Ownership state
 let currentPersonId = null;
 let personBackTarget = null;      // {type:'company', id} | {type:'list'} — where "← Back" returns to
+
+// 2 Nov: navigation history. Every company or person you open is a history entry, so ← Back (and the browser's Back button)
+// goes one level at a time: RGP 316 → Polipaul's Ownership tab → the list. The company entry remembers its active tab.
+let navDepth = 0, navRestoring = false;
+try { history.replaceState({ v: 'l', d: 0 }, ''); } catch (e) { /* no history API: Back keeps going to the list */ }
+function navLabel(){ const b = document.getElementById('backBtn'); if (b) b.textContent = navDepth > 1 ? '← Back' : '← Back to list'; }
+function navPush(kind, id, tab){
+  if (navRestoring) return;
+  const cur = history.state;
+  try {
+    if (cur && cur.v === kind && cur.id === id) { history.replaceState({ ...cur, ...(tab ? { tab } : {}) }, ''); return; }   // the same page again (a refresh): no new entry
+    navDepth++;
+    history.pushState({ v: kind, id, ...(kind === 'c' ? { tab: tab || 'overview' } : {}), d: navDepth }, '');
+  } catch (e) { return; }
+  navLabel();
+}
+function navTab(name){ const cur = history.state; if (cur && cur.v === 'c') { try { history.replaceState({ ...cur, tab: name }, ''); } catch (e) {} } }
+function navBack(fallback){ if (navDepth > 0) history.back(); else fallback(); }
+window.addEventListener('popstate', (ev) => {
+  const s = ev.state; navDepth = s?.d || 0; navLabel(); navRestoring = true;
+  try {
+    if (s?.v === 'c' && s.id) openDetail(s.id, s.tab);
+    else if (s?.v === 'p' && s.id) openPerson(s.id);
+    else showListView();
+  } finally { navRestoring = false; }
+});
 let editLinkId = null;            // searchPersonLinks doc id being edited in the person modal, null = add mode
 const companyLinksCache = new Map(); // companyId -> links[] (session cache, invalidated on writes)
 const personLinksCache  = new Map(); // personId  -> links[]
@@ -3715,6 +3741,7 @@ async function saveMapList(){
 
 // ── Detail view ──────────────────────────────────────────────────────────────
 async function openDetail(id, tab){
+  navPush('c', id, tab);
   currentCoId = id;
   currentPersonId = null;
   showEl('listView', false); showEl('personView', false); showEl('detailView', true);
@@ -3748,7 +3775,11 @@ async function openDetail(id, tab){
   if (currentCoId !== id) return;   // moved on while the activities were loading
   renderActivityLog();
 }
-function backToList(){ showEl('detailView', false); showEl('personView', false); showEl('listView', true); currentCoId = null; currentPersonId = null; renderSummary(); renderList(); }
+function showListView(){ showEl('detailView', false); showEl('personView', false); showEl('listView', true); currentCoId = null; currentPersonId = null; renderSummary(); renderList(); }
+function backToList(){   // the list again (after a delete, …): the history starts over from it
+  navDepth = 0; try { history.replaceState({ v: 'l', d: 0 }, ''); } catch (e) {} navLabel();
+  showListView();
+}
 
 async function loadActivities(companyId){
   const snap = await getDocs(query(collection(db,'searchActivities'), where('companyId','==',companyId)));
@@ -5929,6 +5960,7 @@ async function copyLinkToContacts(linkId, role){
 
 // ── Person profile view ──────────────────────────────────────────────────────
 async function openPerson(personId, backTarget){
+  navPush('p', personId);
   personBackTarget = backTarget || (currentCoId
     ? { type:'company', id: currentCoId, tab: document.querySelector('#detailTabs .tab.active')?.dataset.tab }
     : { type:'list' });
@@ -11011,6 +11043,7 @@ async function renderNetworkGraph(container, focusType, focusId){
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 function setActiveTab(name){
+  navTab(name);
   document.querySelectorAll('#detailTabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id==='panel-'+name));
 }
@@ -11457,10 +11490,24 @@ async function openAddToCampaign(opts){
 
   const statusLabel = { draft: 'draft', active: 'active', paused: 'paused' };
   body.innerHTML = intro + `
-    <div class="form-group"><label for="addCampSel">Campaign</label>
-      <select class="field" id="addCampSel">${campList.map(c => `<option value="${esc(c.id)}">${esc(c.name)} (${statusLabel[c.status]}${c.isTest ? ', test' : ''})</option>`).join('')}</select></div>
+    <div class="form-group"><label for="addCampFind">Campaign</label>
+      <input type="search" class="field" id="addCampFind" placeholder="Type to search ${campList.length} campaign${campList.length === 1 ? '' : 's'}…" autocomplete="off" style="margin-bottom:6px;">
+      <select class="field" id="addCampSel" ${campList.length > 6 ? `size="${Math.min(8, campList.length)}"` : ''} aria-label="Campaign"></select></div>
     <p style="font-size:0.78rem;color:var(--text-light);">The campaign's rules decide who can be added (stage, owner, last touch, email, suppression list). You see the result before anything is added.</p>`;
-  next.disabled = false;
+  // 2 Nov: the list filters as you type (name, creator or status); the first match stays selected
+  const sel = document.getElementById('addCampSel'), find = document.getElementById('addCampFind');
+  const creatorName = (c) => String(c.createdBy || '').split('@')[0];
+  const fillCampSel = () => {
+    const q = find.value.trim().toLowerCase(), keep = sel.value;
+    const shown = campList.filter(c => !q || `${c.name || ''} ${statusLabel[c.status] || ''} ${c.isTest ? 'test' : ''} ${creatorName(c)}`.toLowerCase().includes(q));
+    sel.innerHTML = shown.length ? shown.map(c => `<option value="${esc(c.id)}"${c.id === keep ? ' selected' : ''}>${esc(c.name)} (${statusLabel[c.status]}${c.isTest ? ', test' : ''}${creatorName(c) ? ', ' + esc(creatorName(c)) : ''})</option>`).join('') : '<option value="" disabled>No campaign matches</option>';
+    if (shown.length && !shown.some(c => c.id === keep)) sel.selectedIndex = 0;
+    next.disabled = !shown.length;
+  };
+  find.addEventListener('input', fillCampSel);
+  fillCampSel();
+  find.focus();
+  next.disabled = !sel.value;
 
   let preview = null, campaignId = null;
   next.onclick = async () => {
@@ -11502,7 +11549,7 @@ async function openAddToCampaign(opts){
       const leaveOut = document.getElementById('addCampLeaveOut')?.checked ? new Set(preview.contacted?.ids || []) : null;
       const toAdd = leaveOut ? ids.filter(id => !leaveOut.has(id)) : ids;
       if (!toAdd.length) throw new Error('Every company was left out.');
-      const r = (await callOutreachCampaign({ action: 'enrol', campaignId, companyIds: toAdd, source, onConflict, ownerChoices: readOwnerChoices(body), ownerMentions: readOwnerMentions(body) })).data;
+      const r = (await callOutreachCampaign({ action: 'enrol', campaignId, companyIds: toAdd, source, onConflict, ownerChoices: readOwnerChoices(body), ownerMentions: readOwnerMentions(body), ownerKnown: readOwnerKnown(body) })).data;
       const camp = campList.find(c => c.id === campaignId);
       body.innerHTML = `<p style="font-size:0.9rem;"><b>${fmt(r.enrolled)}</b> compan${r.enrolled === 1 ? 'y' : 'ies'} added to "${esc(camp?.name || '')}"${r.moved ? ` (${fmt(r.moved)} moved from another campaign)` : ''}${r.skippedTotal ? ` · ${fmt(r.skippedTotal)} skipped: ${Object.entries(r.skipped || {}).map(([k, x]) => `${fmt(x)} ${esc(CAMP_EXCL_LABELS[k] || k)}`).join(', ')}` : ''}.</p>
         <p style="font-size:0.82rem;color:var(--text-light);margin-top:8px;">${camp?.status === 'draft' ? 'The campaign is still a draft — start it in Outreach → Campaigns.' : 'The scheduler starts them at the campaign\'s daily pace, inside the sending window.'} <a href="/portal/outreach.html" style="color:var(--primary);">Open Outreach</a></p>`;
@@ -13213,11 +13260,11 @@ document.getElementById('addActivityBtn').addEventListener('click', () => openAc
 document.getElementById('deleteCompanyBtn').addEventListener('click', openDeleteCompany);
 document.getElementById('deleteCancelBtn').addEventListener('click', () => showEl('deleteModal', false));
 document.getElementById('deleteConfirmBtn').addEventListener('click', confirmDelete);
-document.getElementById('backBtn').addEventListener('click', backToList);
+document.getElementById('backBtn').addEventListener('click', () => navBack(backToList));
 document.getElementById('contactCancelBtn').addEventListener('click', () => showEl('contactModal', false));
 document.getElementById('contactSaveBtn').addEventListener('click', saveContact);
 // People & Ownership
-document.getElementById('personBackBtn').addEventListener('click', backFromPerson);
+document.getElementById('personBackBtn').addEventListener('click', () => navBack(backFromPerson));
 // 20 Oct (people merge, switch search.people): People view panels.
 document.getElementById('peopleHandBtn').addEventListener('click', showHandPeople);
 document.getElementById('peopleReviewBtn').addEventListener('click', showPeopleReviews);

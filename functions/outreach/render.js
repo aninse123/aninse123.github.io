@@ -108,7 +108,8 @@ function teamContext(members = [], senderKey = null) {
 // and mention"), by their email name: {{owner.otherCompanies}} = "da X e da Y",
 // {{owner.otherCompanyNames}} = "X e Y". Empty when none were chosen — the
 // template's fallback is used ({{owner.otherCompanies|…}} or {{?owner.otherCompanies|…}}).
-function buildContext({ company = {}, contactName = "", recipientRole = "", recipientGender = null, sender = {}, unsubscribeUrl = "", aiOpener = "", team = [], senderKey = null, campaign = {}, otherCompanies = [] }) {
+function buildContext({ company = {}, contactName = "", recipientRole = "", recipientGender = null, sender = {}, unsubscribeUrl = "", aiOpener = "", team = [], senderKey = null, campaign = {}, otherCompanies = [], knownCompanies = [] }) {
+  const known = (Array.isArray(knownCompanies) ? knownCompanies : []).map((n) => String(n || "").trim()).filter(Boolean).slice(0, 3);
   const others = (Array.isArray(otherCompanies) ? otherCompanies : []).map((n) => String(n || "").trim()).filter(Boolean).slice(0, 3);
   return {
     company: {
@@ -121,7 +122,7 @@ function buildContext({ company = {}, contactName = "", recipientRole = "", reci
       toCity: toCityOf(company), // 13 Oct: "a Setúbal" / "ao Porto" / "à Maia" — after "deslocar-nos"
       ...figuresOf(company), // 29 Oct: finYear, revenue, ebitda, ebitdaMargin, employees, financialsSentence, growthSentence, letterIntro
     },
-    owner: { ...ownerContext(company), otherCompanies: joinPt(others.map((n) => `da ${n}`)), otherCompanyNames: joinPt(others) },
+    owner: { ...ownerContext(company), otherCompanies: joinPt(others.map((n) => `da ${n}`)), otherCompanyNames: joinPt(others), knownCompanies: joinPt(known.map((n) => `da ${n}`)), knownCompanyNames: joinPt(known) }, // 2 Nov: known = we know of the link, we are not writing to it
     campaign: { sector: String(campaign?.sector || "").trim() },
     contact: { firstName: firstName(contactName) },
     recipient: recipientContext({ name: contactName, role: recipientRole, owners: company.emailOwners, stored: recipientGender }), // 30 Oct: who it goes to — a named person or a general address

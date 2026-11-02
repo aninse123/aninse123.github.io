@@ -45,12 +45,12 @@ const DAY = 86400000, NOW = Date.parse("2026-10-22T10:00:00Z");
   const flags = R.flagsFor(a, { campaignId: "k1", windowDays: 30, now: NOW, batch: new Set(["a", "c"]), selfId: "a" });
   const kinds = flags.map((f) => f.kind).sort().join(",");
   ok("flags for A in campaign k1: P contacted 5 days ago + in another campaign; C in conversation, said no, in the same batch", kinds === "group_contacted,in_conversation,other_campaign,said_no,same_batch");
-  ok("…texts name the company and date", flags.some((f) => f.text === "in conversation via C, LDA (reply 2026-10-19)") && flags.some((f) => f.text.startsWith("group contacted via P, LDA (2026-10-17)")));
+  ok("…texts name the company and date", flags.some((f) => f.text === "in conversation via C, LDA (reply 2026-10-19)") && flags.some((f) => f.text.startsWith("related company contacted via P, LDA (2026-10-17)")));
   ok("default choice: Skip for now when a related company said no; else Proceed", R.defaultChoice(flags) === "skip" && R.defaultChoice([{ kind: "group_contacted" }]) === "proceed");
   const men = R.mentionFrom(a, flags);
   ok("mention: the companies the conversation can lean on (contacted / in conversation / in a campaign), at most two, by email name", men.length === 2 && men.map((x) => x.companyId).sort().join(",") === "c,p" && men.every((x) => x.name));
   ok("mention with nothing contacted: the parent", R.mentionFrom(a, []).map((x) => x.companyId).join() === "p");
-  ok("flags outside the window: no \"group contacted\"", !R.flagsFor(a, { campaignId: "k2", windowDays: 3, now: NOW }).some((f) => f.kind === "group_contacted" || f.kind === "other_campaign"));
+  ok("flags outside the window: \"related company contacted\" stays (2 Nov, like the contacted-before warning); the other campaign flag does not", R.flagsFor(a, { campaignId: "k2", windowDays: 3, now: NOW }).some((f) => f.kind === "group_contacted") && !R.flagsFor(a, { campaignId: "k2", windowDays: 3, now: NOW }).some((f) => f.kind === "other_campaign"));
 
   console.log(fail ? `${fail} owner-related test(s) FAILED` : "all owner-related tests passed");
   process.exit(fail ? 1 : 0);

@@ -70,13 +70,13 @@ export function ownerPanelHtml(owner) {
     const suggested = new Set((f.mention || []).map((m) => m.companyId));
     const related = f.related || [];
     const picks = related.length ? `<div class="op-mention" style="margin:4px 0 0 20px;font-size:0.8rem;"${f.choice === 'mention' ? '' : ' hidden'}>
-        <div style="color:#64748B;margin-bottom:2px;">Which companies may the email name? Tick up to ${MAX_MENTION} — none ticked = Proceed.</div>
-        ${related.map((r) => `<label style="display:flex;gap:6px;align-items:baseline;cursor:pointer;padding:1px 0;${PLAIN}"><input type="checkbox" data-opmention="${esc(r.companyId)}"> <span>${relatedLine(r)}${suggested.has(r.companyId) ? ' <span style="font-size:0.72rem;color:#1D4ED8;">suggested</span>' : ''}</span></label>`).join('')}
+        <div style="color:#64748B;margin-bottom:2px;">For each company the email may name: <b>Also writing</b> (we are writing to it too: “Escrevemos também a propósito da X”) or <b>Aware only</b> (we only know of the link, we are not writing to it). Up to ${MAX_MENTION} of each — none ticked = Proceed.</div>
+        ${related.map((r) => `<div style="display:flex;gap:10px;align-items:baseline;padding:1px 0;${PLAIN}"><span style="white-space:nowrap;"><label style="cursor:pointer;margin-right:8px;"><input type="checkbox" data-opmention="${esc(r.companyId)}"> Also writing</label><label style="cursor:pointer;"><input type="checkbox" data-opknown="${esc(r.companyId)}"> Aware only</label></span> <span>${relatedLine(r)}${suggested.has(r.companyId) ? ' <span style="font-size:0.72rem;color:#1D4ED8;">suggested</span>' : ''}</span></div>`).join('')}
       </div>` : '';
     return `<div class="op-row" data-opid="${esc(f.companyId)}" style="padding:8px 0;border-top:1px solid #E2E8F0;">
       <div style="font-size:0.85rem;"><b>${esc(f.companyName || f.companyId)}</b></div>
-      <ul style="margin:3px 0 4px;padding-left:18px;font-size:0.8rem;">${f.flags.map((x) => `<li>${KIND_ICON[x.kind] || '•'} ${esc(x.text)}</li>`).join('')}</ul>
-      ${related.length ? `<details style="font-size:0.78rem;margin-bottom:4px;"><summary style="cursor:pointer;color:#475569;">Related companies (${related.length})${f.lead ? ` · suggested lead: ${leadText(f.lead)}` : ''}</summary><ul style="margin:4px 0 0;padding-left:18px;">${related.map((r) => `<li>${relatedLine(r)}</li>`).join('')}</ul></details>` : ''}
+      ${f.flags.length ? `<ul style="margin:3px 0 4px;padding-left:18px;font-size:0.8rem;">${f.flags.map((x) => `<li>${KIND_ICON[x.kind] || '•'} ${esc(x.text)}</li>`).join('')}</ul>` : '<div style="font-size:0.8rem;color:#64748B;margin:3px 0 4px;">No flag: nothing is happening with its related companies.</div>'}
+      ${related.length ? `<details style="font-size:0.78rem;margin-bottom:4px;"${f.flags.length ? '' : ' open'}><summary style="cursor:pointer;color:#475569;">Related companies (${related.length})${f.lead ? ` · suggested lead: ${leadText(f.lead)}` : ''}</summary><ul style="margin:4px 0 0;padding-left:18px;">${related.map((r) => `<li>${relatedLine(r)}</li>`).join('')}</ul></details>` : ''}
       <div>${ch('proceed', 'Proceed')}${ch('skip', 'Skip for now')}${related.length ? ch('mention', 'Proceed and mention…') : ''}</div>
       ${picks}
     </div>`;
@@ -86,7 +86,7 @@ export function ownerPanelHtml(owner) {
       <b style="font-size:0.88rem;">Related companies (${owner.count})</b>
       <span style="display:inline-flex;gap:6px;"><button type="button" class="btn btn--ghost btn--sm" data-opall="proceed">Proceed with all</button><button type="button" class="btn btn--ghost btn--sm" data-opall="skip">Skip all</button></span>
     </div>
-    <div style="font-size:0.78rem;color:#64748B;margin-top:2px;">Companies whose owner or group is already in outreach, or is being added together. Each starts on its suggested choice; “Proceed and mention” lets you tick which related companies the email may name ({{owner.otherCompanies}}). Every choice is kept in the company's Activities.</div>
+    <div style="font-size:0.78rem;color:#64748B;margin-top:2px;">Companies that have related companies: a shared owner or manager (any stake), a parent or subsidiary, the same group. Flagged ones are already in outreach, contacted, or being added together. Each starts on its suggested choice; “Proceed and mention” lets you name a related company: <i>also writing</i> ({{owner.otherCompanies}}) or <i>aware only</i> ({{owner.knownCompanyNames}}). Every choice is kept in the company's Activities.</div>
     ${rows}${owner.flagged.length < owner.count ? `<div style="font-size:0.78rem;color:#64748B;margin-top:6px;">Showing ${owner.flagged.length} of ${owner.count}; the others go ahead (Proceed).</div>` : ''}
   </div>`;
 }
@@ -99,12 +99,22 @@ export function wireOwnerPanel(root) {
     box.hidden = row.querySelector('input[type="radio"]:checked')?.value !== 'mention';
     const ticks = [...box.querySelectorAll('[data-opmention]')], n = ticks.filter((t) => t.checked).length;
     ticks.forEach((t) => { t.disabled = !t.checked && n >= MAX_MENTION; });
+    const kn = [...box.querySelectorAll('[data-opknown]')], k = kn.filter((t) => t.checked).length;
+    kn.forEach((t) => { t.disabled = !t.checked && k >= MAX_MENTION; });
   };
   root.querySelectorAll('[data-opall]').forEach((b) => b.addEventListener('click', () => {
     root.querySelectorAll('.op-row input[type="radio"]').forEach((r) => { if (r.value === b.dataset.opall) r.checked = true; });
     root.querySelectorAll('.op-row').forEach(sync);
   }));
-  root.querySelectorAll('.op-row').forEach((row) => { row.addEventListener('change', () => sync(row)); sync(row); });
+  root.querySelectorAll('.op-row').forEach((row) => {
+    row.addEventListener('change', (ev) => {
+      // a company is either written about or only known of, never both
+      const t = ev.target, id = t?.dataset?.opmention || t?.dataset?.opknown;
+      if (id && t.checked) { const other = row.querySelector(t.dataset.opmention ? `[data-opknown="${id}"]` : `[data-opmention="${id}"]`); if (other) other.checked = false; }
+      sync(row);
+    });
+    sync(row);
+  });
 }
 
 // { companyId: 'proceed' | 'skip' | 'mention' } for every flagged company shown;
@@ -113,7 +123,7 @@ export function readOwnerChoices(root) {
   const out = {};
   root?.querySelectorAll('.op-row').forEach((row) => {
     let v = row.querySelector('input[type="radio"]:checked')?.value;
-    if (v === 'mention' && !row.querySelector('[data-opmention]:checked')) v = 'proceed';
+    if (v === 'mention' && !row.querySelector('[data-opmention]:checked, [data-opknown]:checked')) v = 'proceed';
     if (v) out[row.dataset.opid] = v;
   });
   return out;
@@ -124,6 +134,16 @@ export function readOwnerMentions(root) {
   root?.querySelectorAll('.op-row').forEach((row) => {
     if (row.querySelector('input[type="radio"]:checked')?.value !== 'mention') return;
     const ids = [...row.querySelectorAll('[data-opmention]:checked')].map((t) => t.dataset.opmention).slice(0, MAX_MENTION);
+    if (ids.length) out[row.dataset.opid] = ids;
+  });
+  return out;
+}
+// { companyId: [related companyIds the email only says it knows of] } for the companies on "Proceed and mention" (2 Nov).
+export function readOwnerKnown(root) {
+  const out = {};
+  root?.querySelectorAll('.op-row').forEach((row) => {
+    if (row.querySelector('input[type="radio"]:checked')?.value !== 'mention') return;
+    const ids = [...row.querySelectorAll('[data-opknown]:checked')].map((t) => t.dataset.opknown).slice(0, MAX_MENTION);
     if (ids.length) out[row.dataset.opid] = ids;
   });
   return out;

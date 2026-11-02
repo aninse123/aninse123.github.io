@@ -373,7 +373,7 @@ async function ownerPanel(ids, data, campaign, ctx) {
   for (const id of ids) {
     const entry = rel.get(id);
     const flags = Related.flagsFor(entry, { campaignId: campaign.id, windowDays: ctx.exclusions.contactedWithinDays || 30, batch, selfId: id, now: ctx.now });
-    if (!flags.length) continue;
+    if (!flags.length && !entry.related.length) continue; // 2 Nov: a company with related companies is listed even with no flag, so you can choose to mention them
     flagged.push({ companyId: id, companyName: companies.get(id).name || "", flags, related: entry.related.slice(0, 6).map(slimRelated), lead: entry.lead, choice: Related.defaultChoice(flags), mention: Related.mentionFrom(entry, flags) });
   }
   return { count: flagged.length, flagged: flagged.slice(0, OWNER_PANEL_MAX) };
@@ -530,7 +530,7 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller, ex
   });
 }
 
-async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices, ownerMentions }, caller, opts = {}) {
+async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices, ownerMentions, ownerKnown }, caller, opts = {}) {
   const campaign = await getCampaign(campaignId);
   assertEnrollable(campaign); assertCompanies(campaign);
   let ids = cleanCompanyIds(companyIds);
@@ -558,7 +558,8 @@ async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices,
       const entry = rel.get(id);
       const flags = Related.flagsFor(entry, { campaignId, windowDays: ctx.exclusions.contactedWithinDays || 30, batch, selfId: id, now: ctx.now });
       const picked = ownerMentions && typeof ownerMentions === "object" ? Related.mentionPicked(entry, ownerMentions[id]) : Related.mentionFrom(entry, flags); // no ticks sent (older page) = the suggestion
-      plan.set(id, { choice: choices[id], flags, mention: choices[id] === "mention" ? picked : [] });
+      const known = choices[id] === "mention" && ownerKnown && typeof ownerKnown === "object" ? Related.mentionPicked(entry, ownerKnown[id]) : []; // 2 Nov: "aware only" — named, not written to
+      plan.set(id, { choice: choices[id], flags, mention: choices[id] === "mention" ? picked : [], known });
     }
     for (const id of chosen.filter((x) => choices[x] === "skip")) {
       skipped.owner_skip = (skipped.owner_skip || 0) + 1;
@@ -567,7 +568,7 @@ async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices,
     ids = ids.filter((x) => choices[x] !== "skip");
   }
   for (const group of chunks(ids, TX_PARALLEL)) {
-    const res = await Promise.all(group.map((id) => enrolOne(id, campaign, ctx, src, mode, caller, plan.get(id)?.mention?.length ? { mention: plan.get(id).mention } : {})));
+    const res = await Promise.all(group.map((id) => enrolOne(id, campaign, ctx, src, mode, caller, { ...(plan.get(id)?.mention?.length ? { mention: plan.get(id).mention } : {}), ...(plan.get(id)?.known?.length ? { known: plan.get(id).known } : {}) })));
     for (let i = 0; i < res.length; i++) {
       const r = res[i], id = group[i];
       if (r.result === "enrolled") enrolled++;
@@ -576,7 +577,7 @@ async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices,
       const pl = plan.get(id);
       if (pl && (r.result === "enrolled" || r.result === "moved")) {
         const what = pl.flags.map((f) => f.text).join("; ");
-        await ownerActivity(id, pl.mention.length ? `Added to "${campaign.name}", the email mentions ${pl.mention.map((x) => x.name).join(" and ")} — related companies: ${what || "none flagged"}` : `Added to "${campaign.name}" knowing about the related companies: ${what || "related companies in outreach"}`, caller, ctx.isTest);
+        await ownerActivity(id, pl.mention.length || pl.known.length ? `Added to "${campaign.name}"${pl.mention.length ? `, the email mentions ${pl.mention.map((x) => x.name).join(" and ")}` : ""}${pl.known.length ? `, the email says it knows of ${pl.known.map((x) => x.name).join(" and ")} (not writing to ${pl.known.length > 1 ? "them" : "it"})` : ""} — related companies: ${what || "none flagged"}` : `Added to "${campaign.name}" knowing about the related companies: ${what || "related companies in outreach"}`, caller, ctx.isTest);
       }
     }
   }
