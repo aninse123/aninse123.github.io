@@ -122,7 +122,9 @@ function buildContext({ company = {}, contactName = "", recipientRole = "", reci
       toCity: toCityOf(company), // 13 Oct: "a Setúbal" / "ao Porto" / "à Maia" — after "deslocar-nos"
       ...figuresOf(company), // 29 Oct: finYear, revenue, ebitda, ebitdaMargin, employees, financialsSentence, growthSentence, letterIntro
     },
-    owner: { ...ownerContext(company), otherCompanies: joinPt(others.map((n) => `da ${n}`)), otherCompanyNames: joinPt(others), knownCompanies: joinPt(known.map((n) => `da ${n}`)), knownCompanyNames: joinPt(known) }, // 2 Nov: known = we know of the link, we are not writing to it
+    owner: { ...ownerContext(company), otherCompanies: joinPt(others.map((n) => `da ${n}`)), otherCompanyNames: joinPt(others), knownCompanies: joinPt(known.map((n) => `da ${n}`)), knownCompanyNames: joinPt(known),
+      // 2 Nov: "uma ligação com a X e a Y" (a = a empresa) and "ambas" for one related company, "todas" for more
+      knownWith: known.length ? `com ${joinPt(known.map((n) => `a ${n}`))}` : "", knownAll: known.length > 1 ? "todas" : "ambas" }, // 2 Nov: known = we know of the link, we are not writing to it
     campaign: { sector: String(campaign?.sector || "").trim() },
     contact: { firstName: firstName(contactName) },
     recipient: recipientContext({ name: contactName, role: recipientRole, owners: company.emailOwners, stored: recipientGender }), // 30 Oct: who it goes to — a named person or a general address
