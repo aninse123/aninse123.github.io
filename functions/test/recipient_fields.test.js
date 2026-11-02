@@ -58,6 +58,16 @@ ok("a stored value that is not M or F is ignored", R.genderOf("Rita Costa", [], 
   F.store.set("searchPeople/p9", { name: "Ariel Costa", email: "ariel@x.pt", gender: "F", genderSource: "typed" });
   const rcp = (await companyRecipients("co1", { name: "X" }, { usePeople: true })).find((r) => r.personId === "p9");
   ok("a person's recipient carries the stored gender to the email", rcp && rcp.gender === "F" && rcp.genderSource === "typed");
+  // 2 Nov 2026: Orbis names without accents ("Jose" → "José"), André on JOBASI
+  {
+    const { accentName, recipientContext: rc } = require("../outreach/recipient_fields.js");
+    ok("accents are restored on the given name: Jose → José, Joao → João, Luis → Luís, Ines → Inês (always)", accentName("Jose Eurico Baptista da Silva") === "José Eurico Baptista da Silva" && accentName("Joao") === "João" && accentName("Luis Miguel Pereira Jorge") === "Luís Miguel Pereira Jorge" && accentName("Luis Fernandez") === "Luís Fernandez" && accentName("Ines Costa") === "Inês Costa");
+    ok("António, André, Mário, Natália… only with a Portuguese-looking surname; foreign spellings stay", accentName("Antonio Manuel Sampaio") === "António Manuel Sampaio" && accentName("Andre Silva") === "André Silva" && accentName("Natalia Sequeira") === "Natália Sequeira" && accentName("Mario Rossi") === "Mario Rossi" && accentName("Natalia Malysheva") === "Natalia Malysheva" && accentName("Antonio Valsecchi") === "Antonio Valsecchi");
+    ok("the second given name too after Maria, Ana, José, João, António, Luís (Maria José, José Luís); capitals stay capitals", accentName("Maria Jose Costa") === "Maria José Costa" && accentName("Jose Luis Mesquita de Araujo") === "José Luís Mesquita de Araujo" && accentName("JOSE LUIS PINTO") === "JOSÉ LUÍS PINTO" && accentName("Carlos Andre Lopes") === "Carlos Andre Lopes");
+    ok("a name that already has its accent, or that is not on the list, is left alone", accentName("José Pedro") === "José Pedro" && accentName("Rui Pereira") === "Rui Pereira" && accentName("") === "");
+    ok("recipient.firstName and contact.firstName come out accented", rc({ name: "Jose Eurico Baptista da Silva" }).firstName === "José" && renderTemplate("Bom dia, {{contact.firstName}},", buildContext({ company: {}, contactName: "Joao Silva" })).text === "Bom dia, João,");
+    ok("the owners' names in owner.greeting / owner.of are accented too", buildContext({ company: { emailOwners: [{ name: "Jose Peres", gender: "M" }] } }).owner.greeting === "Exmo. Senhor José Peres" && buildContext({ company: { emailOwners: [{ name: "Jose Peres", gender: "M" }] } }).owner.of === "do Senhor José Peres");
+  }
   console.log(fail ? `\n${fail} FAILED` : "\nAll passed");
   process.exit(fail ? 1 : 0);
 })();

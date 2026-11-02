@@ -19,4 +19,6 @@ ok(`page and server give the same fields on ${n} combinations`, same);
 ok('same gender on every name', names.every((x) => P.genderOfFirstName(x) === S.genderOfFirstName(x)));
 ok('the server context carries recipient.* and Send passes the role of a person', /recipient: recipientContext\(/.test(render) && /recipientRole: recipient\?\.kind !== "company"/.test(send));
 ok('the compose preview and the template editor offer the fields', /import \{ recipientContext \} from '\.\/recipient-fields\.js'/.test(outreach) && /'recipient\.firstName\|Olá'/.test(outreach) && /'recipient\.isMale'/.test(outreach) && /recipient: \(\(\) => \{ const r = chosenRecipient\(\)/.test(outreach));
+const accNames = ['Jose Eurico Baptista da Silva', 'JOSE LUIS', 'Maria Jose Costa', 'Ana Antonio', 'José Pedro', 'Joao', 'Rui Pereira', 'Antonio Manuel Sampaio', 'Ines Costa', '', 'Tomas Silva', 'Fabio Lanzi'];
+ok('page and server restore the same accents (2 Nov: Jose → José)', accNames.every((x) => P.accentName(x) === S.accentName(x)) && P.accentName('Jose Eurico') === 'José Eurico');
 console.log(fail ? `\n${fail} FAILED` : '\nAll passed'); process.exit(fail ? 1 : 0);

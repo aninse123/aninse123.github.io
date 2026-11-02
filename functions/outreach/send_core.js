@@ -121,7 +121,7 @@ async function prepareEmail(opts) {
     if (!recipient) fail("invalid-argument", "recipient_not_found", `${want} isn't this company's address, one of its contacts or a person linked to it.`);
   }
   const person = !isReply && opts.person?.email ? { email: normEmail(opts.person.email), name: String(opts.person.name || ""), org: String(opts.person.org || ""), refs: Array.isArray(opts.person.refs) ? opts.person.refs.slice(0, 10) : [] } : null;
-  const contactName = isReply ? (thread.contactName || "") : person ? person.name : (recipient?.kind !== "company" ? (recipient?.name || "") : "");
+  const contactName = isReply ? (thread.contactName || "") : require("./recipient_fields").accentName(person ? person.name : (recipient?.kind !== "company" ? (recipient?.name || "") : "")); // 2 Nov: "Jose" → "José"
 
   // ── Reply recipients (12 Oct): Reply / Reply all / edited To and Cc from the
   // Inbox. Without them a reply goes to the conversation's address, as before

@@ -49,9 +49,9 @@ function emailNameOf(company = {}) {
   return shortCompanyName(company.name);
 }
 
-const { recipientContext } = require("./recipient_fields");
+const { recipientContext, accentName } = require("./recipient_fields");
 function firstName(full) {
-  return String(full || "").trim().split(/\s+/)[0] || "";
+  return accentName(String(full || "").trim()).split(/\s+/)[0] || ""; // 2 Nov: "Jose" → "José"
 }
 
 // "A", "A e B", "A, B e C".
@@ -74,7 +74,7 @@ function joinOu(list) {
 // fallback is used ({{owner.of|da gerência}}, {{owner.with|a gerência}}).
 function ownerContext(company = {}) {
   const list = (Array.isArray(company.emailOwners) ? company.emailOwners : [])
-    .map((o) => ({ name: String(o?.name || "").replace(/\s+/g, " ").trim(), gender: o?.gender === "M" || o?.gender === "F" ? o.gender : "" }))
+    .map((o) => ({ name: accentName(String(o?.name || "").replace(/\s+/g, " ").trim()), gender: o?.gender === "M" || o?.gender === "F" ? o.gender : "" }))
     .filter((o) => o.name).slice(0, 3);
   const of = (o) => (o.gender === "M" ? `do Senhor ${o.name}` : o.gender === "F" ? `da Senhora ${o.name}` : `de ${o.name}`);
   const withO = (o) => (o.gender === "M" ? `o Senhor ${o.name}` : o.gender === "F" ? `a Senhora ${o.name}` : o.name);
