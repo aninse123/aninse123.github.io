@@ -44,11 +44,11 @@ function weekStart(now) {
 }
 
 // Pure: the report from the week's documents (tested on synthetic data).
-function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions = [], activities = [], tasks = [], enrolments = [], liveEnrolments = [], companies = new Map(), drafts = [], campaigns = new Map(), onlyTest = false, sameEmail = null }) {
+function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions = [], activities = [], tasks = [], enrolments = [], liveEnrolments = [], companies = new Map(), drafts = [], campaigns = new Map(), onlyTest = false, sameEmail = null, companyCounts = false }) {
   const inWeek = (t) => { const x = ms(t); return x >= from && x < to; };
   const keep = (x) => (onlyTest ? !!x.isTest : !x.isTest);
   const sent = messages.filter((m) => m.direction === "out" && keep(m) && inWeek(m.createdAt) && !NOT_SENT.includes(m.status) && m.via !== "gmail");
-  const week = { sent: sent.length, byCampaign: {}, byCampaignPath: {}, bySender: {}, delivered: 0, bounced: 0, replies: 0, byCategory: {}, unsubscribes: 0, meetings: 0, tasksDone: 0, tasksByChannel: {}, started: 0, held: 0 };
+  const week = { sent: sent.length, byCampaign: {}, byCampaignPath: {}, bySender: {}, delivered: 0, bounced: 0, replies: 0, byCategory: {}, unsubscribes: 0, meetings: 0, meetingsHeld: 0, tasksDone: 0, tasksByChannel: {}, started: 0, held: 0 };
   for (const m of sent) {
     inc(week.byCampaign, m.campaignId ? (campaigns.get(m.campaignId)?.name || "Campaign") : "Written by hand");
     if (m.campaignId && m.pathName) inc(((week.byCampaignPath[campaigns.get(m.campaignId)?.name || "Campaign"] ||= { sent: {}, replies: {} }).sent), m.pathName);
@@ -56,7 +56,21 @@ function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions
     if (["delivered", "complained", "opened", "clicked"].includes(m.status)) week.delivered++;
     if (m.status === "bounced") week.bounced++;
   }
-  for (const t of threads.filter((x) => keep(x) && inWeek(x.repliedAt))) {
+  if (companyCounts) {
+    // 3 Nov (outreach.companyCounts): one reply per company — an email, or an answer by phone / in person (otherReplyAt) — with the
+    // company's most positive classification.
+    const POS = ["interested", "callback_later", "referred"], groups = new Map();
+    for (const t of threads.filter((x) => keep(x) && (inWeek(x.repliedAt) || inWeek(x.otherReplyAt)))) {
+      const k = t.companyId || t.id;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(t);
+    }
+    for (const list of groups.values()) {
+      const t = list.find((x) => POS.includes(x.responseCategory)) || list.find((x) => x.responseCategory) || list[0];
+      week.replies++; inc(week.byCategory, CATS[t.responseCategory] || (t.responseCategory ? t.responseCategory : "Not classified"));
+      if (t.campaignId && t.pathName) inc(((week.byCampaignPath[campaigns.get(t.campaignId)?.name || "Campaign"] ||= { sent: {}, replies: {} }).replies), t.pathName);
+    }
+  } else for (const t of threads.filter((x) => keep(x) && inWeek(x.repliedAt))) {
     week.replies++; inc(week.byCategory, CATS[t.responseCategory] || (t.responseCategory ? t.responseCategory : "Not classified"));
     if (t.campaignId && t.pathName) inc(((week.byCampaignPath[campaigns.get(t.campaignId)?.name || "Campaign"] ||= { sent: {}, replies: {} }).replies), t.pathName);
   }
@@ -64,6 +78,7 @@ function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions
     + threads.filter((t) => keep(t) && inWeek(t.unsubscribedAt)).length;
   for (const a of activities.filter((x) => inWeek(x.createdAt) && keep(x))) {
     if (a.type === "meeting_scheduled") week.meetings++;
+    if (a.type === "meeting_done") week.meetingsHeld++;
     if (a.type === "outreach_hold") week.held++;
   }
   for (const t of tasks.filter((x) => x.status === "done" && inWeek(x.completedAt) && keep(x))) { week.tasksDone++; inc(week.tasksByChannel, t.channel); }
@@ -133,7 +148,7 @@ function reportText(r, { weekKey, toKey }) {
     "1. A semana", "",
     `Emails enviados: ${w.sent} (entregues ${w.delivered}, devolvidos ${w.bounced})`, "Por campanha:", campaignList, "Por endereço:", list(w.bySender), "",
     `Respostas: ${w.replies}`, list(w.byCategory), "",
-    `Pedidos de remoção: ${w.unsubscribes}`, `Reuniões marcadas: ${w.meetings}`,
+    `Pedidos de remoção: ${w.unsubscribes}`, `Reuniões marcadas: ${w.meetings}`, `Reuniões realizadas: ${w.meetingsHeld || 0}`,
     `Tarefas feitas: ${w.tasksDone}`, list(w.tasksByChannel), "",
     `Empresas que começaram uma campanha: ${w.started}`, `Empresas em espera (mesmo endereço): ${w.held}`, "",
     "2. Por dono", "",
@@ -170,9 +185,10 @@ async function maybeRunWeekly(now, settings, { onlyTest = false, force = false }
   const ex = await ref.get();
   if (!force && ex.exists && (ex.data().status === "done" || ms(ex.data().createdAt) > now.getTime() - 30 * 60000)) return null;
   await ref.set({ status: "building", weekFrom: fromKey, weekTo: thisMonday, createdAt: FieldValue.serverTimestamp() }, { merge: true });
+  const companyCounts = (await Feat.jobState("outreach.companyCounts")) !== "off"; // 3 Nov
   const [messages, threads, suppressions, activities, tasks, enrolments, liveSnap, draftSnap, campSnap] = await Promise.all([
     docsInRange("outreachMessages", "createdAt", from, to),
-    docsInRange("outreachThreads", "repliedAt", from, to).then(async (a) => [...a, ...(await docsInRange("outreachThreads", "unsubscribedAt", from, to))]),
+    docsInRange("outreachThreads", "repliedAt", from, to).then(async (a) => [...a, ...(await docsInRange("outreachThreads", "unsubscribedAt", from, to)), ...(companyCounts ? await docsInRange("outreachThreads", "otherReplyAt", from, to) : [])]),
     docsInRange("outreachSuppression", "at", from, to),
     docsInRange("searchActivities", "createdAt", from, to),
     docsInRange("outreachTasks", "completedAt", from, to),
@@ -192,7 +208,7 @@ async function maybeRunWeekly(now, settings, { onlyTest = false, force = false }
   let sameEmail = null;
   if ((await Feat.jobState("search.sameEmail")) !== "off") { try { sameEmail = await newSameEmailPairs(from, to); } catch (e) { logger.warn("weekly report: same email", { message: e.message }); } }
   const seen = new Set();
-  const r = buildWeeklyReport({ from, to, messages, threads: threads.filter((t) => (seen.has(t.id) ? false : seen.add(t.id))), suppressions, activities, tasks, enrolments, liveEnrolments, companies, drafts: draftSnap.docs.map((d) => d.data()), campaigns, onlyTest, sameEmail });
+  const r = buildWeeklyReport({ from, to, messages, threads: threads.filter((t) => (seen.has(t.id) ? false : seen.add(t.id))), suppressions, activities, tasks, enrolments, liveEnrolments, companies, drafts: draftSnap.docs.map((d) => d.data()), campaigns, companyCounts, onlyTest, sameEmail });
   const text = reportText(r, { weekKey: fromKey, toKey: new Date(to - 12 * 3600000).toISOString().slice(0, 10) });
   let emailed = [];
   if (settings?.weeklyReportEmail !== false) {

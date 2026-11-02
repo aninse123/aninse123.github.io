@@ -1958,6 +1958,30 @@
       const more = isOn('outreach.oneInbox') ? (t.addresses || []).filter(a => a && a !== t.contactEmail) : [];
       return more.length ? `<span title="Every address used in this conversation, the first one first">${esc([t.contactEmail, ...more].filter(Boolean).join(' → '))}</span>` : `<span>${esc(t.contactEmail || '')}</span>`;
     }
+    // 3 Nov (outreach.multiRecipient): who else at this company was written to, with their state — so Carlos's conversation shows João
+    // (and a general address that was never written to, because a reply stopped the company).
+    const sibEnrolCache = new Map();
+    async function updateSibLine(t) {
+      const el = $('sibLine'); if (!el) return;
+      try {
+        let ens = sibEnrolCache.get(t.companyId);
+        if (!ens) {
+          const snap = await getDocs(query(collection(db, 'outreachEnrolments'), where('companyId', '==', t.companyId), limit(20)));
+          addReads(snap.size || 1); ens = snap.docs.map(d => ({ id: d.id, ...d.data() })); sibEnrolCache.set(t.companyId, ens);
+        }
+        if (selectedId !== t.id || !$('sibLine')) return;
+        const sibs = threads.filter(x => x.id !== t.id && x.companyId === t.companyId);
+        const seen = new Set([t.contactEmail, ...sibs.map(x => x.contactEmail)].map(x => String(x || '').toLowerCase()));
+        const bits = sibs.map(x => `<a href="#" data-sib="${esc(x.id)}">${esc(x.contactName || x.contactEmail || 'Conversation')}</a> <span class="hint">(${esc([x.status, x.responseCategory ? catLabel(x.responseCategory) : ''].filter(Boolean).join(', '))})</span>`);
+        ens.forEach(e => {
+          const mail = String(e.recipient?.email || e.personEmail || '').toLowerCase();
+          if (!mail || seen.has(mail)) return; seen.add(mail);
+          bits.push(`${esc(e.recipient?.name || mail)} <span class="hint">(${e.status === 'stopped' ? 'not written to, ' + esc(String(e.stopReason || 'stopped')).slice(0, 70) : esc(e.status || '')})</span>`);
+        });
+        el.innerHTML = bits.length ? `Also contacted at this company: ${bits.join(' · ')}` : '';
+        el.querySelectorAll('[data-sib]').forEach(a => a.addEventListener('click', ev => { ev.preventDefault(); openThread(a.dataset.sib); }));
+      } catch (e) { console.warn('sibling line', e); }
+    }
     function renderThreadHead() {
       const t = threads.find(x => x.id === selectedId); if (!t || !$('viewHead')) return;
       const company = t.companyId
@@ -1969,11 +1993,13 @@
           <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
           ${threadPill(t)}${t.campaignId ? `<button type="button" class="pill pill--info" id="campInfoBtn" style="border:0;cursor:pointer;" title="Show the campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}${t.pathName ? ' · ' + esc(t.pathName) : ''}</button>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
         ${t.recipientIssue ? `<div class="banner banner--warn" style="margin:8px 0 4px;"><span>An email in this conversation to several people bounced for one of them (Resend doesn't say which), so nobody was put on the suppression list. Addresses: ${esc((t.recipientIssue.addresses || []).join(', '))}.</span></div>` : ''}
+        <div class="hint" id="sibLine" style="margin:6px 0 0;"></div>
         <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button>
           <button class="btn btn--ghost btn--sm" id="taskBtn" data-perm="out.tasks" title="Plan a call or other task for this company — or record one that already happened">＋ Task or activity</button></div>
         <div class="classify"><span class="classify__label">Classify</span>${CATEGORIES.map(([k, l]) =>
-          `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}" data-perm="out.write">${esc(l)}</button>`).join('')}</div>`;
+          `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}" data-perm="out.write">${esc(l)}</button>`).join('')}${t.responseCategory && t.responseCategory !== 'excluded' && isOn('outreach.multiRecipient') ? '<button class="chip" data-cat="" data-perm="out.write" title="Remove the classification">Clear</button>' : ''}</div>`;
       $('viewHead').querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => classify(t, b.dataset.cat)));
+      if (isOn('outreach.multiRecipient') && t.companyId) updateSibLine(t);
       $('assignBtn')?.addEventListener('click', () => assignCompany(t));
       $('viewHead').querySelectorAll('[data-addaddr]').forEach(b => b.addEventListener('click', () => openAddToCompany(t, b.dataset.addaddr)));
       $('fwdBtn')?.addEventListener('click', () => openForward(t));
@@ -2281,6 +2307,7 @@
 
     async function classify(t, cat) {
       try {
+        cat = cat || null; // 3 Nov: Clear removes the classification
         await updateDoc(doc(db, 'outreachThreads', t.id), { responseCategory: cat, ...(cat === 'excluded' ? { status: 'closed' } : {}) });
         // Mirror on the latest inbound activity, so the Search CRM's response stats see it.
         const lastIn = [...threadMessages].reverse().find(m => m.direction === 'in');
@@ -2290,7 +2317,7 @@
           if (!snap.empty) await updateDoc(snap.docs[0].ref, { responseCategory: cat });
         }
         if (cat === 'excluded') await suppressThreadContact(t, 'manual', true);
-        toast(`Marked "${catLabel(cat)}".`);
+        toast(cat ? `Marked "${catLabel(cat)}".` : 'Classification cleared.');
       } catch (e) { toast('Could not save: ' + e.message); }
     }
 
@@ -2917,6 +2944,20 @@
     }
 
     function threadStats(list) {
+      if (isOn('outreach.companyCounts')) {
+        // 3 Nov: once per company, not once per conversation. Replied = an email came in, or an answer by phone / visit (otherReplyAt),
+        // or you classified a conversation positive; positive = any of the company's conversations is.
+        const groups = new Map();
+        list.forEach(t => { const k = t.companyId || t.id; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
+        const g = [...groups.values()], pos = (t) => POSITIVE.includes(t.responseCategory);
+        return {
+          started: g.length,
+          replied: g.filter(l => l.some(t => t.repliedAt || t.otherReplyAt || pos(t))).length,
+          positive: g.filter(l => l.some(pos)).length,
+          bounced: g.filter(l => l.every(t => t.status === 'bounced')).length,
+          unsub: g.filter(l => l.some(t => t.unsubscribedAt || t.responseCategory === 'excluded')).length,
+        };
+      }
       const replied = list.filter(t => t.repliedAt).length;
       const positive = list.filter(t => POSITIVE.includes(t.responseCategory)).length;
       const bounced = list.filter(t => t.status === 'bounced').length;
@@ -4038,9 +4079,15 @@ Optional note for them:`, '');
       const total = curEnrols.length;
       // Contacted = any step done (email or task), or answered.
       const contacted = curEnrols.filter(e => (e.history || []).length || e.status === 'replied').length;
-      const replied = by.replied || 0;
+      let replied = by.replied || 0;
       const repliedIds = new Set(curEnrols.filter(e => e.status === 'replied').map(e => e.id));
-      const positive = curThreads.filter(t => POSITIVE.includes(t.responseCategory)).length;
+      let positive = curThreads.filter(t => POSITIVE.includes(t.responseCategory)).length;
+      if (isOn('outreach.companyCounts') && c.audienceType !== 'people') {
+        // 3 Nov: once per company — answered by email (enrolment), by phone / visit, or classified positive; positive once per company.
+        const rc = new Set(curEnrols.filter(e => e.status === 'replied' && e.companyId).map(e => e.companyId)), pc = new Set();
+        curThreads.forEach(t => { if (!t.companyId) return; if (t.repliedAt || t.otherReplyAt || POSITIVE.includes(t.responseCategory)) rc.add(t.companyId); if (POSITIVE.includes(t.responseCategory)) pc.add(t.companyId); });
+        replied = rc.size; positive = pc.size;
+      }
       const sent = curEnrols.reduce((a, e) => a + (e.history || []).filter(h => h.result === 'sent').length, 0);
       const kpi = (label, value, sub = '') => `<div class="kpi"><div class="kpi__label">${label}</div><div class="kpi__value">${value}</div>${sub ? `<div class="kpi__sub">${sub}</div>` : ''}</div>`;
       const steps = c.steps || [];
@@ -4120,7 +4167,7 @@ Optional note for them:`, '');
             ${c.status === 'draft' ? '<p class="note" style="margin-top:8px;">Nothing is sent while the campaign is a draft.</p>' : ''}
           </div>
         </div>
-        <p class="hint" style="margin-top:10px;" data-ov-end>Reply rate counts companies that answered by email; "positive" comes from the classification in the Inbox.${repliedIds.size ? '' : ''} Numbers refresh when you open the campaign.</p>`;
+        <p class="hint" style="margin-top:10px;" data-ov-end>Reply rate counts companies that answered ${isOn('outreach.companyCounts') ? 'by email, phone or visit' : 'by email'}; "positive" comes from the classification in the Inbox.${repliedIds.size ? '' : ''} Numbers refresh when you open the campaign.</p>`;
       wireOverview();
     }
 

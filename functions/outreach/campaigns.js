@@ -1068,11 +1068,12 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     const type = String(o.activity).startsWith("call") ? "call" : o.key === "met" ? "meeting_done" : "other";
     activityId = await store.logPersonTask({ refs: t.refs, channel: t.channel, type, title, content: [note, linkedinUrl].filter(Boolean).join("\n") || null, taskId, campaignId: t.campaignId, createdBy: caller, isTest: t.isTest });
   } else if (o.activity) {
+    const visitMeet = !t.isTest && t.channel === "visit" && o.key === "met" && await visitMeetingsOn(); // 3 Nov: a visit that happened is a meeting done
     const title = `${t.isTest ? "[TEST] " : ""}${CHANNEL_LABEL[t.channel]} — ${o.label}${campaign.name ? ` (${campaign.name} · ${t.stepName})` : ""}`;
     const ref = await db().collection("searchActivities").add({
       companyId: t.companyId,
       // Test-mode rehearsals never count as a touch on a real company.
-      type: t.isTest ? "task_test" : o.activity,
+      type: t.isTest ? "task_test" : visitMeet ? "meeting_done" : o.activity,
       date: Timestamp.now(), title, content: note || null, via: t.channel, direction: "out",
       outcome: o.key, responseCategory: null, status: null, isTest: !!t.isTest,
       campaignId: t.campaignId || null, stepId: t.stepId || null, enrolmentId: t.enrolmentId || null, taskId, channel: t.channel,
@@ -1080,11 +1081,14 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     });
     activityId = ref.id;
     await store.touchCompany(t.companyId, { direction: "out", isTest: t.isTest, outreach: t.channel !== "other", channel: t.channel, by: caller, outcome: o.key });
-    if (o.reply) await store.touchCompany(t.companyId, { direction: "in", isTest: t.isTest, channel: t.channel });
+    if (o.reply) { await store.touchCompany(t.companyId, { direction: "in", isTest: t.isTest, channel: t.channel }); await markOtherReply(t.companyId, t.isTest); }
+    if (visitMeet && t.meetingActivityId) await db().doc(`searchActivities/${t.meetingActivityId}`).update({ status: "happened", closedAt: FieldValue.serverTimestamp(), closedBy: caller }).catch(() => {});
   }
 
   // 2. Call back / reschedule: the same task stays open for the new date.
   if (reopen) {
+    // 3 Nov (outreach.visitMeetings): a rescheduled visit moves its meeting.
+    if (t.channel === "visit" && t.meetingActivityId && await visitMeetingsOn()) await db().doc(`searchActivities/${t.meetingActivityId}`).update({ date: Timestamp.fromDate(reopen) }).catch(() => {});
     await taskRef.update({
       dueAt: Timestamp.fromDate(reopen), notes: note, lastOutcome: o.key,
       attempts: FieldValue.arrayUnion({ at: Timestamp.now(), outcome: o.key, by: caller, notes: note || null, activityId }),
@@ -1194,6 +1198,18 @@ async function updateTask({ taskId, assignee, signer, dueAt, notes, letterText }
 // other) for a company — from Outreach → Tasks or from a conversation — and a
 // touch recorded straight away (what a task's outcome would write). Both on
 // the company; a conversation's company when started from one.
+// 3 Nov (switch outreach.visitMeetings): a visit is a meeting. Booking one logs "meeting scheduled" for the visit date, "Met" logs
+// "meeting done" and closes the scheduled one, "Reschedule…" moves the scheduled date (the Monday report counts booked and held).
+const visitMeetingsOn = async () => (await Feat.jobState("outreach.visitMeetings")) !== "off";
+// 3 Nov (switch outreach.companyCounts): an answer by phone or in person marks the company's conversations (otherReplyAt), so the
+// metrics count the company as replied even though no email came in.
+async function markOtherReply(companyId, isTest) {
+  if (!companyId || isTest || (await Feat.jobState("outreach.companyCounts")) === "off") return;
+  try {
+    const snap = await db().collection("outreachThreads").where("companyId", "==", companyId).get();
+    await Promise.all(snap.docs.filter((d) => !d.data().otherReplyAt).map((d) => d.ref.update({ otherReplyAt: Timestamp.now() })));
+  } catch (err) { /* best effort: the replies stay counted by their category */ }
+}
 const OWN_CHANNELS = ["call", "linkedin", "whatsapp", "letter", "visit", "other"];
 async function taskTarget({ companyId, threadId }) {
   let thread = null;
@@ -1233,6 +1249,16 @@ async function createTask({ companyId, threadId, channel, dueAt, assignee, instr
     source: "own", threadId: thread?.id || null, isTest: !!thread?.isTest,
     createdAt: FieldValue.serverTimestamp(), createdBy: caller, completedAt: null, completedBy: null,
   });
+  // 3 Nov (outreach.visitMeetings): booking a visit books a meeting.
+  if (channel === "visit" && !thread?.isTest && await visitMeetingsOn()) {
+    const m = await db().collection("searchActivities").add({
+      companyId: cid, type: "meeting_scheduled", date: Timestamp.fromDate(due), title: "Visit — scheduled", content: String(instructions || "").trim().slice(0, 2000) || null,
+      via: "visit", direction: "out", outcome: "scheduled", responseCategory: null, status: "open", isTest: false,
+      channel: "visit", taskId: ref.id, threadId: thread?.id || null, source: "outreach",
+      createdAt: FieldValue.serverTimestamp(), createdBy: caller,
+    });
+    await ref.update({ meetingActivityId: m.id });
+  }
   return { ok: true, taskId: ref.id };
 }
 
@@ -1245,15 +1271,16 @@ async function logActivity({ companyId, threadId, channel, outcome, notes, date 
   if (!when || when.getTime() > Date.now() + 86400000) fail("invalid-argument", "bad_date", "The date can't be in the future.");
   const isTest = !!thread?.isTest;
   const note = String(notes || "").trim().slice(0, 2000);
+  const asMeeting = !isTest && channel === "visit" && o.key === "met" && await visitMeetingsOn(); // 3 Nov: a visit that happened is a meeting done
   const ref = await db().collection("searchActivities").add({
-    companyId: cid, type: isTest ? "task_test" : o.activity, date: Timestamp.fromDate(when),
+    companyId: cid, type: isTest ? "task_test" : asMeeting ? "meeting_done" : o.activity, date: Timestamp.fromDate(when),
     title: `${isTest ? "[TEST] " : ""}${CHANNEL_LABEL[channel]} — ${o.label}`, content: note || null,
     via: channel, direction: "out", outcome: o.key, responseCategory: null, status: null, isTest,
     channel, threadId: thread?.id || null, source: "outreach",
     createdAt: FieldValue.serverTimestamp(), createdBy: caller,
   });
   await store.touchCompany(cid, { direction: "out", isTest, outreach: channel !== "other", channel, by: caller, outcome: o.key });
-  if (o.reply) await store.touchCompany(cid, { direction: "in", isTest, channel });
+  if (o.reply) { await store.touchCompany(cid, { direction: "in", isTest, channel }); await markOtherReply(cid, isTest); }
   return { ok: true, activityId: ref.id };
 }
 
