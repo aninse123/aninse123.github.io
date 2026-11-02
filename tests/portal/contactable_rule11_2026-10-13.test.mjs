@@ -50,13 +50,15 @@ const ptsa = co('ptsa', { entityType: 'Controlled subs.', guoType: 'Corporate', 
 const nocountry = co('nocountry', { entityType: 'Controlled subs.', guoType: 'Corporate', guoName: 'FOO SA', guoBvdId: 'X9', guoCountry: null, cshNames: ['FOO SA'] });
 const famCh = co('famch', { entityType: 'Controlled subs.', guoType: fam, guoName: 'MR HANS', guoBvdId: 'P8', guoCountry: 'CH', cshNames: ['MR HANS'] });
 const indepCh = co('indepch', { entityType: 'Independent co', guoType: 'Corporate', guoName: 'BAR SA', guoBvdId: 'CH2', guoCountry: 'CH', cshNames: ['BAR SA'] });
-const country = [rgp, ptsa, nocountry, famCh, indepCh];
+const hgt = co('hgt', { entityType: 'Controlled subs.', guoType: 'Financial company', guoName: 'COMPAGNIE FINANCIERE RUPERT', guoBvdId: 'CH3', guoCountry: 'CH', cshNames: ['COMPAGNIE FINANCIERE RUPERT', 'COMPAGNIE FINANCIERE RICHEMONT SA'] });
+const country = [rgp, ptsa, nocountry, famCh, indepCh, hgt];
 ok('country option defaults to off', ctConfig({}).rules.r11.ownerCountryForeign === 0);
 const defOff = contactableVerdicts(country, ctConfig({}));
 ok("option off: a Swiss SA owner is not caught (today's behaviour unchanged)", country.every((c) => !has11(defOff, c.id)));
 const onC = contactableVerdicts(country, ctConfig({ rules: { r11: { ownerCountryForeign: 1 } } }));
 ok('option on: RAOUL GUYOT SA (CH) is cut, with the country in the reason', has11(onC, 'rgp') && onC.get('rgp').fails.find((f) => f.id === 'r11').text === 'Rule 11: controlled by a company in CH (RAOUL GUYOT SA)');
 ok('option on: a Portuguese S.A. owner is kept', !has11(onC, 'ptsa'));
+ok('option on: a financial-company owner abroad (HGT Portugal, Compagnie Financiere Rupert, CH) is cut too', has11(onC, 'hgt') && !has11(defOff, 'hgt'));
 ok('option on: a missing country never cuts', !has11(onC, 'nocountry'));
 ok('option on: a family owner is left to the existing rules', !has11(onC, 'famch'));
 ok('option on: not a controlled subsidiary, not cut', !has11(onC, 'indepch'));
