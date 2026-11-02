@@ -36,7 +36,7 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { REGION, testRecipients, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET } = require("./config");
 const { ANTHROPIC_API_KEY } = require("./ai");
 const { normEmail } = require("./util");
-const { companyRecipients, pickByPolicy } = require("./recipients");
+const { companyRecipients, pickByPolicy, pickAddresses } = require("./recipients");
 const store = require("./store");
 const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
 const Related = require("./related"); // owner-aware outreach (22 Oct, switch outreach.ownerAware)
@@ -437,8 +437,11 @@ async function recipientsPreview({ campaignId }, caller, opts = {}) {
   const campaign = await getCampaign(campaignId);
   assertCompanies(campaign);
   const snap = await db().collection("outreachEnrolments").where("campaignId", "==", campaignId).where("status", "in", LIVE_ENROLMENT).limit(2000).get();
-  const live = snap.docs.filter((d) => d.data().companyId);
+  // 2 Nov: an extra address of a company (a track) is not another company: only each company's first enrolment is counted
+  const live = snap.docs.filter((d) => d.data().companyId && !d.data().trackOf);
   const todo = live.slice(0, RECIP_PREVIEW_MAX);
+  const mode = opts.multi ? (campaign.addressMode || "one") : "one";
+  const addr = { mode, companies: 0, multi: 0, emails: 0 }; // what "addresses per company" would do: companies, those with 2+, emails in all
   const counts = Object.fromEntries(POLICIES.map((p) => [p, { company: 0, contact: 0, person: 0, none: 0 }]));
   let personal = 0, heldBack = 0; // heldBack: companies with a person address the campaign may not use (not verified)
   const updates = [];
@@ -455,6 +458,11 @@ async function recipientsPreview({ campaignId }, caller, opts = {}) {
         preview[p] = pick ? { email: pick.email, kind: pick.kind, name: pick.name || "", personal: !!pick.personal, ...(pick.trust ? { trust: pick.trust } : {}) } : null;
       }
       if (preview[campaign.recipientPolicy || "company"]?.personal) personal++;
+      if (mode !== "one") {
+        const chosen = Array.isArray(d.data().recipientList) ? d.data().recipientList.length : 0; // chosen by hand: that list stands
+        const n = chosen || pickAddresses(rs, { mode, max: campaign.addressMax, policy: campaign.recipientPolicy || "company" }).length;
+        addr.companies++; addr.emails += n; if (n > 1) addr.multi++;
+      }
       updates.push({ ref: d.ref, preview });
     }));
   }
@@ -463,7 +471,9 @@ async function recipientsPreview({ campaignId }, caller, opts = {}) {
     group.forEach((u) => batch.update(u.ref, { recipientPreview: { ...u.preview, at: FieldValue.serverTimestamp() } }));
     await batch.commit();
   }
-  return { counts, checked: todo.length, total: live.length, decided: live.filter((d) => d.data().recipient).length, personal, policy: campaign.recipientPolicy || "company", ...(opts.trust ? { heldBack } : {}) };
+  const sent = live.filter((d) => d.data().threadId || (d.data().currentStep || 0) > 0).length;          // email 1 has gone out: the address is fixed
+  const byHand = live.filter((d) => !(d.data().threadId || (d.data().currentStep || 0) > 0) && Array.isArray(d.data().recipientList) && d.data().recipientList.length).length; // addresses chosen with Choose…
+  return { counts, checked: todo.length, total: live.length, decided: sent, sent, byHand, addresses: addr, personal, policy: campaign.recipientPolicy || "company", ...(opts.trust ? { heldBack } : {}) };
 }
 
 async function enrolOne(companyId, campaign, ctx, source, onConflict, caller, extra = {}) {
@@ -1431,7 +1441,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
       case "delete": return await remove(data, caller);
       case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware, nameCheck, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
       case "related": return await relatedOf(data, { ownerAware });
-      case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
+      case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople, trust: await Feat.isOnFor(request, "contacts.trustLabels"), multi: await Feat.isOnFor(request, "outreach.multiRecipient") });
       case "recipientsFor": return await RL.recipientsFor(data);
       case "setRecipients": return await RL.setRecipients(data, caller, { multi: await Feat.isOnFor(request, "outreach.multiRecipient") });
       case "previewRecipient": return await RL.previewRecipient(data);

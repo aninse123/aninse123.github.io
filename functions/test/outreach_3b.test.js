@@ -137,6 +137,17 @@ function seed({ real = true } = {}) {
     && rp.counts.best_person.person === 1 && rp.counts.best_person.contact === 1 && rp.counts.best_person.company === 1
     && rp.counts.primary_contact.contact === 2 && rp.counts.primary_contact.company === 1);
   ok("I2: each company's pick kept on its enrolment for the Companies list", get(`outreachEnrolments/${cb2}_co1`).recipientPreview?.best_person?.email === "joao.silva@gmail.com" && get(`outreachEnrolments/${cb2}_co3`).recipientPreview?.company === null);
+  // 2 Nov: "Check who it reaches" counts companies, not extra addresses, and says what is really fixed
+  store.set(`outreachEnrolments/${cb2}_co1__t1`, { campaignId: cb2, companyId: "co1", companyName: "X", status: "pending", isTrack: true, isExtra: true, trackOf: `${cb2}_co1`, trackIndex: 1, recipient: { email: "geral@x.pt", kind: "company" }, recipientList: ["geral@x.pt"] });
+  store.set(`outreachEnrolments/${cb2}_co2`, { ...get(`outreachEnrolments/${cb2}_co2`), recipient: { email: "a@x.pt", kind: "person" }, recipientList: ["a@x.pt", "b@x.pt"] }); // chosen by hand: nothing has been sent
+  const rp2 = await camp({ action: "recipientsPreview", campaignId: cb2 });
+  ok("Check who it reaches: an extra address is not another company", rp2.total === 3 && rp2.checked === 3);
+  ok("…\"already received email 1\" counts only addresses whose email 1 went out; chosen by hand is counted apart", rp2.sent === 0 && rp2.byHand === 1);
+  const ra = await camp({ action: "save", campaign: { name: "Muitos", recipientPolicy: "best_person", addressMode: "person_company", steps: [{ templateId: "t1" }] } });
+  await camp({ action: "enrol", campaignId: ra.campaignId, companyIds: ["co1", "co2"], onConflict: "move" });
+  store.set("config/features", { flags: { "outreach.multiRecipient": { staging: "on", production: "on" } } }); require("../features")._reset();
+  const rp3 = await camp({ action: "recipientsPreview", campaignId: ra.campaignId });
+  ok("Check who it reaches: with addresses per company, how many companies would get 2+ addresses and how many first emails in all", rp3.addresses.mode === "person_company" && rp3.addresses.companies === 2 && rp3.addresses.emails >= 2 && rp3.addresses.multi <= 2);
   // I2+: contacted before.
   store.set("outreachThreads/old1", { companyId: "co2", contactEmail: "lopes.geral@gmail.com", lastMessageAt: new Date("2026-06-01T10:00:00Z"), campaignId: "OLDCAMP", isTest: false });
   store.set("outreachCampaigns/OLDCAMP", { name: "Primavera 2026", status: "finished" });

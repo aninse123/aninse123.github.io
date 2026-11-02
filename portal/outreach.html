@@ -6339,7 +6339,8 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
           const line = (k) => { const x = r.counts[k]; return [x.person && `${num(x.person)} to a person`, x.contact && `${num(x.contact)} to a contact`, x.company && `${num(x.company)} to the company address`, x.none && `<b>${num(x.none)} to nobody</b> (no address)`].filter(Boolean).join(', ') || '—'; };
           out.innerHTML = `<b>Company address:</b> ${line('company')}<br><b>Primary contact:</b> ${line('primary_contact')}<br><b>Best person:</b> ${line('best_person')}`
             + (r.heldBack ? `<br><b>${num(r.heldBack)} compan${r.heldBack === 1 ? 'y has' : 'ies have'} a person with an address that is not verified</b> and ${c.useUnverified ? 'is used because the campaign allows it' : 'is skipped (tick "Use not-verified addresses" in Settings to use them)'}.` : '')
-            + `<br>${num(r.checked)} of ${num(r.total)} companies checked${r.total > r.checked ? ' (the first 300)' : ''}${r.decided ? ` · ${num(r.decided)} already received email 1, so theirs is fixed` : ''}. See "Goes to" in Companies.`;
+            + (r.addresses && r.addresses.mode !== 'one' ? `<br><b>Addresses per company:</b> ${num(r.addresses.multi)} of ${num(r.addresses.companies)} compan${r.addresses.companies === 1 ? 'y' : 'ies'} would get 2 or more addresses, ${num(r.addresses.emails)} first emails in all.` : '')
+            + `<br>${num(r.checked)} of ${num(r.total)} companies checked${r.total > r.checked ? ' (the first 300)' : ''}${r.sent ? ` · ${num(r.sent)} already received email 1 (their address is fixed)` : ''}${r.byHand ? ` · ${num(r.byHand)} with addresses you chose by hand (kept as chosen)` : ''}. The checks above show what each setting would pick; extra addresses are not counted as companies. See "Goes to" in Companies.`;
           loadCampaignData();
         } catch (e) { out.textContent = errText(e); }
         finally { b.disabled = false; }
