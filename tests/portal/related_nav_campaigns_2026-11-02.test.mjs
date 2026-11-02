@@ -64,5 +64,8 @@ ok('page wiring: openDetail / openPerson / setActiveTab record history; both Bac
 ok("Campaigns toolbar: New campaign on the title row; search, filters and Show archived on their own row", out.indexOf("id=\"campNew\"") < out.indexOf("id=\"campFind\"") && out.indexOf("id=\"campAttn\"") < out.indexOf("id=\"campShowArchived\""));
 ok('Add to campaign: rows with the whole name and a status · creator · companies line, active first, arrows and Enter work', search.includes('id="addCampList"') && search.includes("const ORDER = { active: 0") || search.includes('ORDER = { active: 0, draft: 1, paused: 2 }') && search.includes("ev.key === 'ArrowDown'") && search.includes("ev.key === 'Enter'") && search.includes('companies</div></div>'));
 
+// Addresses per company (2 Nov): campaign settings, shown with the switch on, company campaigns only, saved with the campaign
+ok('campaign settings: addresses per company, the maximum and the two start delays; saved with the campaign', out.includes('id="csAddrMode"') && out.includes('id="csAddrMax"') && out.includes('id="csDelayPerson"') && out.includes('id="csDelayCompany"') && out.includes("isOn('outreach.multiRecipient') && c.audienceType !== 'people'") && out.includes("addressMode: $('csAddrMode').value") && out.includes("startDelayCompany: Number($('csDelayCompany').value)"));
+
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');

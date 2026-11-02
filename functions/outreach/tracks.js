@@ -9,6 +9,7 @@ const store = require("./store");
 const { addWait, sendingDaysOf } = require("./schedule_util");
 const { normEmail } = require("./util");
 const { LIVE_ENROLMENT } = require("./campaign_util");
+const { companyRecipients, pickAddresses } = require("./recipients");
 
 const { db, FieldValue, Timestamp } = store;
 const MAX_TRACKS = 3;
@@ -49,6 +50,8 @@ async function syncTracks(rootId, list, caller, { late = false } = {}) {
       isTrack: true, isExtra: true, trackOf: rootId, trackIndex: n, // isExtra: an extra address of the same company (not a replacement after a bounce)
       recipient: { email, name: r.name || "", kind: r.kind || "company", ...(r.personId ? { personId: r.personId } : {}) }, recipientList: [email],
       ...(late ? { forceApproval: true } : {}),
+      // 2 Nov: the related companies chosen to be mentioned are a company-level choice: every address carries them
+      ...(root.mention?.length ? { mention: root.mention } : {}), ...(root.known?.length ? { known: root.known } : {}),
     });
     added++;
   }
@@ -67,9 +70,12 @@ async function startTracks(campaign, now, report = {}) {
       await campaigns().endEnrolment(d.ref, "removed", "The company's first email will not go out"); continue;
     }
     if (!root.threadId && !((root.currentStep || 0) > 0)) continue; // email 1 to the first address has not gone out yet
-    const days = Math.min(t.trackIndex || 1, 3);
-    const due = addWait(now, { days, unit: "working" }, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart);
+    // 2 Nov: another person can be written to the same day; a general address next to a person waits (it may reach the same person).
+    // Campaign settings startDelayPerson (default 0) / startDelayCompany (default 1), in working days after email 1 of the first address.
+    const days = t.recipient?.kind === "company" ? (campaign.startDelayCompany ?? 1) : (campaign.startDelayPerson ?? 0);
+    const due = days > 0 ? addWait(now, { days, unit: "working" }, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitStart) : now;
     await d.ref.update({ status: "active", currentStep: 0, nextActionAt: ts(due), startedAt: ts(now), senderId: root.senderId || t.senderId || null,
+      ...(root.mention?.length && !t.mention?.length ? { mention: root.mention } : {}), ...(root.known?.length && !t.known?.length ? { known: root.known } : {}),
       ...(root.pathId ? { pathId: root.pathId, pathName: root.pathName || null, plannedPathId: root.plannedPathId || null } : {}) });
     report.tracksStarted = (report.tracksStarted || 0) + 1;
   }
@@ -117,6 +123,26 @@ async function onHardBounce(enrolmentId, bouncedEmail, now = new Date()) {
   await campaigns().endEnrolment(ref, "stopped", `Email bounced (${bounced}); trying ${pick}`);
   if (!camp.isTest) await db().doc(`searchCompanies/${e.companyId}`).update({ activeCampaignId: e.campaignId, activeCampaignName: camp.name || "", activeEnrolmentId: trackId(root, n) });
   return "fallback";
+}
+
+// 2 Nov (campaign setting "addresses per company"): when a company starts, choose its addresses by the campaign's mode and
+// make the extra ones tracks. A company whose addresses were chosen by hand (Choose…, recipientList) is left as chosen.
+async function applyAddressMode(campaign, ref) {
+  const mode = campaign.addressMode || "one";
+  if (mode === "one") return { skipped: "mode_one" };
+  const e = (await ref.get()).data();
+  if (!e || !e.companyId || e.trackOf) return { skipped: "not_a_company_first_track" };
+  if (Array.isArray(e.recipientList) && e.recipientList.length) return { skipped: "chosen_by_hand" };
+  const co = await db().doc(`searchCompanies/${e.companyId}`).get();
+  if (!co.exists) return { skipped: "no_company" };
+  const all = await companyRecipients(e.companyId, co.data(), { usePeople: true, trust: { on: true, includeUnverified: !!campaign.useUnverified } });
+  const picked = pickAddresses(all, { mode, max: campaign.addressMax, policy: campaign.recipientPolicy || "company" });
+  if (!picked.length) return { skipped: "no_address" };
+  const rec = (r) => ({ email: r.email, name: r.name || "", kind: r.kind, ...(r.personId ? { personId: r.personId } : {}), ...(r.gender ? { gender: r.gender, genderSource: r.genderSource || "" } : {}) });
+  await ref.update({ recipient: rec(picked[0]), recipientList: picked.map((r) => r.email), recipientListBy: "campaign setting", recipientListAt: FieldValue.serverTimestamp() });
+  let r = { added: 0 };
+  if (picked.length > 1) r = await syncTracks(ref.id, picked.slice(1).map((x) => ({ email: x.email, name: x.name, kind: x.kind, personId: x.personId || null })), "campaign setting");
+  return { ok: true, addresses: picked.length, ...r };
 }
 
 // Why a reply stopped the company, when several tracks ran.
@@ -169,4 +195,4 @@ async function tracksFor(enrolmentId) {
   };
 }
 
-module.exports = { syncTracks, startTracks, onHardBounce, hasTracks, restartCompany, tracksFor, rootOf, MAX_TRACKS };
+module.exports = { syncTracks, startTracks, applyAddressMode, onHardBounce, hasTracks, restartCompany, tracksFor, rootOf, MAX_TRACKS };

@@ -166,7 +166,11 @@ async function startPending(campaign, now, report) {
       tx.update(d.ref, { status: "active", currentStep: 0, nextActionAt: dueFor(steps), startedAt: ts(now), ...(usePaths ? { pathId: path.id, pathName: path.name, pathWhy: why } : {}) });
       return true;
     });
-    if (started) { n++; if (usePaths) byPathToday[path.id] = (byPathToday[path.id] || 0) + 1; }
+    if (started) {
+      n++; if (usePaths) byPathToday[path.id] = (byPathToday[path.id] || 0) + 1;
+      // 2 Nov (outreach.multiRecipient): the campaign's "addresses per company" picks this company's addresses before its first email
+      if (campaign._multiOn && (campaign.addressMode || "one") !== "one") { try { await Tracks.applyAddressMode(campaign, d.ref); } catch (err) { logger.warn("outreachScheduler: address mode", { message: err.message }); } }
+    }
   }
   if (n) {
     await db().doc(`outreachCampaigns/${campaign.id}`).update({ startedToday: { day, count: already + n, ...(usePaths ? { byPath: byPathToday } : {}) } });
@@ -370,6 +374,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
     c._waitOpts = allowed(waitState, c) ? waitOptsOf(c, settings) : null;
     c._waitStart = c._waitOpts ? waitOptsOf(c, settings, { gap: false }) : null;
     c._pathsOn = allowed(pathsState, c); // 27 Oct (outreach.paths): companies starting now take a path
+    c._multiOn = allowed(multiState, c); // 2 Nov (outreach.multiRecipient): the "addresses per company" setting applies
     if (ignoreWindow || isWindowOpen(now, c.sendWindow || globalWindow, c._skipHolidays)) open.set(c.id, c);
   }
   report.open = open.size;

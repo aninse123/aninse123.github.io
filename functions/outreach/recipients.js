@@ -192,4 +192,30 @@ function pickByPolicy(all, policy) {
   return company;
 }
 
-module.exports = { companyRecipients, pickByPolicy, rankPerson, isGuoPerson, personEmails, personValues, personEmailsFor, personEmailsTrust, companyDomains, CORPORATE_HOLDER };
+// Addresses per company (2 Nov 2026, switch outreach.multiRecipient). mode:
+//   one              the policy's one address (as before)
+//   person_company   the best person, then the company's general address (a company with no person: its address only)
+//   people           the best people, one address each (several people at a company), up to `max`
+//   all              those people, then the company's general address, up to `max`
+// Blocked and bounced addresses are never listed, a person is listed once (their best address), and the result never
+// exceeds `max` (1 to 3). Returns the recipients in the order they will be written to (the first is the first track).
+const ADDRESS_MODES = ["one", "person_company", "people", "all"];
+function pickAddresses(all, { mode = "one", max = 3, policy = "company" } = {}) {
+  const usable = all.filter((r) => !r.blocked && r.trust !== "bounced");
+  const cap = Math.max(1, Math.min(3, Number(max) || 3));
+  if (!ADDRESS_MODES.includes(mode) || mode === "one") { const one = pickByPolicy(all, policy); return one ? [one] : []; }
+  const company = usable.find((r) => r.kind === "company") || null;
+  const seenPerson = new Set();
+  const people = usable.filter((r) => r.kind === "person" || r.kind === "contact")
+    .sort((a, b) => b.rank - a.rank)
+    .filter((r) => { const k = r.personId || r.email; if (seenPerson.has(k)) return false; seenPerson.add(k); return true; });
+  const out = [];
+  if (mode === "person_company") { if (people[0]) out.push(people[0]); if (company) out.push(company); }
+  else if (mode === "people") out.push(...people);
+  else { out.push(...people.slice(0, Math.max(1, cap - (company ? 1 : 0)))); if (company) out.push(company); }
+  const uniq = []; const seen = new Set();
+  for (const r of out) { if (seen.has(r.email)) continue; seen.add(r.email); uniq.push(r); }
+  return uniq.slice(0, mode === "person_company" ? Math.min(2, cap) : cap);
+}
+
+module.exports = { ADDRESS_MODES, pickAddresses, companyRecipients, pickByPolicy, rankPerson, isGuoPerson, personEmails, personValues, personEmailsFor, personEmailsTrust, companyDomains, CORPORATE_HOLDER };

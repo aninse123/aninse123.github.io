@@ -6249,6 +6249,19 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
                 <option value="best_person"${c.recipientPolicy === 'best_person' ? ' selected' : ''}>The best person (owner / gerente)</option>
               </select><span class="hint">Best person = owners first (the Orbis ultimate owner when it's a person, then majority shareholders, sócios-gerentes, other shareholders), then gerentes and managers, then your typed contacts — current data only, holdings and estates never. When a company has nobody with an email, its company address is used. Chosen at the first email and kept for the follow-ups. People on personal addresses (gmail, sapo…) are allowed and flagged.</span>
               ${c.audienceType !== 'people' ? `<div style="margin-top:6px;"><button type="button" class="btn btn--ghost btn--sm" id="csRecipCheck"${curEnrols.length ? '' : ' disabled title="Add companies first"'}>Check who it reaches</button> <span class="hint" id="csRecipOut">${curEnrols.length ? '' : 'Add companies first.'}</span></div>` : ''}</div>
+            ${isOn('outreach.multiRecipient') && c.audienceType !== 'people' ? `<div class="field"><label for="csAddrMode">Addresses per company<span class="hint"> (2 Nov)</span></label>
+              <select id="csAddrMode"${dis}>
+                <option value="one"${(c.addressMode || 'one') === 'one' ? ' selected' : ''}>One address — the one chosen above</option>
+                <option value="person_company"${c.addressMode === 'person_company' ? ' selected' : ''}>The best person and the company's general address</option>
+                <option value="people"${c.addressMode === 'people' ? ' selected' : ''}>The best people (owners and managers), one address each</option>
+                <option value="all"${c.addressMode === 'all' ? ' selected' : ''}>The best people and the company's general address</option>
+              </select>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px;font-size:0.85rem;">
+                <label style="text-transform:none;letter-spacing:normal;">At most <select id="csAddrMax"${dis} style="width:auto;display:inline-block;">${[1, 2, 3].map(n => `<option value="${n}"${(c.addressMax || 3) === n ? ' selected' : ''}>${n}</option>`).join('')}</select> addresses per company</label>
+                <label style="text-transform:none;letter-spacing:normal;">Another person starts <select id="csDelayPerson"${dis} style="width:auto;display:inline-block;">${[0, 1, 2, 3].map(n => `<option value="${n}"${(c.startDelayPerson ?? 0) === n ? ' selected' : ''}>${n === 0 ? 'the same day' : n + ' working day' + (n > 1 ? 's' : '') + ' later'}</option>`).join('')}</select></label>
+                <label style="text-transform:none;letter-spacing:normal;">The general address starts <select id="csDelayCompany"${dis} style="width:auto;display:inline-block;">${[0, 1, 2, 3].map(n => `<option value="${n}"${(c.startDelayCompany ?? 1) === n ? ' selected' : ''}>${n === 0 ? 'the same day' : n + ' working day' + (n > 1 ? 's' : '') + ' later'}</option>`).join('')}</select></label>
+              </div>
+              <span class="hint">Each address gets its own email and conversation, never one email to several people. They are chosen when the company starts, from its current people (best person ladder), skipping addresses that are blocked or have bounced. A company whose addresses you chose by hand (Choose…) keeps them. The first address goes out first; the others start after email 1 has gone out, on the days above. A reply from anyone stops the whole company.</span></div>` : ''}
             <div class="field"><label for="csAssignee">Tasks (calls, LinkedIn, letters…) go to</label>
               <select id="csAssignee"${dis}><option value="owner"${(c.assignee || 'owner') === 'owner' ? ' selected' : ''}>The company's owner</option>${ownerOpts(c.assignee)}</select></div>
             <div class="field"><label for="csSigner">Letters and call scripts signed by</label>
@@ -6371,6 +6384,7 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
         const r = await campCall({ action: 'save', campaignId: c.id, campaign: {
           name: $('csName').value, description: $('csDesc').value, sector: $('csSector').value, priority: Number($('csPrio').value),
           approvalDefault: $('csAppr').value, pacing: { newPerDay: pace, maxPerDay: maxDay }, assignee: $('csAssignee').value, signer: $('csSigner').value, recipientPolicy: $('csRecip').value,
+          ...($('csAddrMode') ? { addressMode: $('csAddrMode').value, addressMax: Number($('csAddrMax').value), startDelayPerson: Number($('csDelayPerson').value), startDelayCompany: Number($('csDelayCompany').value) } : {}),
           footer: $('csFooter').value === 'on' ? true : $('csFooter').value === 'off' ? false : null,
           senderPolicy: { mode, senderIds: mode === 'fixed' ? fixed : [] },
           sendWindow: own ? { days, from: $('csFrom').value, to: $('csTo').value } : null,

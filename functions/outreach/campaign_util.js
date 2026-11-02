@@ -63,6 +63,11 @@ const DEFAULT_CAMPAIGN = {
   steps: [],
   lockedStepIds: [],           // steps that have already run for someone (C8)
   recipientPolicy: "company",  // Phase 3b: company | primary_contact | best_person
+  // 2 Nov (switch outreach.multiRecipient): how many addresses of a company get an email, and when the extra ones start
+  addressMode: "one",          // one | person_company | people | all (recipients.pickAddresses)
+  addressMax: 3,               // most addresses per company (1 to 3)
+  startDelayPerson: 0,         // working days after email 1 of the first address: another person (0 = the same day)
+  startDelayCompany: 1,        // … a company's general address next to a person (1 = the next working day)
   audienceType: "companies",   // Phase 5: companies | people (investors, brokers, press…)
   footer: null,                // CCSL (9 Oct): true / false = add the email footer or not; null = Settings default
   sector: "",                  // 9 Oct: {{campaign.sector}} — the sector as written in the emails ("do trabalho temporário")
@@ -204,6 +209,10 @@ function normalizeCampaign(input, existing = null) {
     signer: src.signer === "owner" || TEAM_KEY_RE.test(src.signer || "") ? src.signer : "owner",
     approvalDefault: src.approvalDefault === "auto" ? "auto" : "approval",
     recipientPolicy: ["primary_contact", "best_person"].includes(src.recipientPolicy) ? src.recipientPolicy : "company",
+    addressMode: ["person_company", "people", "all"].includes(src.addressMode) ? src.addressMode : "one",
+    addressMax: intIn(src.addressMax, 1, 3, 3),
+    startDelayPerson: intIn(src.startDelayPerson, 0, 3, 0),
+    startDelayCompany: intIn(src.startDelayCompany, 0, 3, 1),
     senderPolicy,
     sendWindow: normalizeWindow(src.sendWindow),
     skipHolidays: typeof src.skipHolidays === "boolean" ? src.skipHolidays : null,
