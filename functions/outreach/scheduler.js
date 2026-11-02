@@ -216,6 +216,18 @@ async function ownerPanelOnDraft(messageRef, e, campaign, variantBody) {
 // Best effort.
 // 30 Oct (outreach.multiRecipient): the email uses the gender of a named person and we could not tell it (not in the owners list,
 // not a name we know): the draft carries a warning so the wording (e.g. "ligado(a)") is checked in To approve.
+// 2 Nov (outreach.multiRecipient): who the draft is for, shown on the approval card — their level in the company (the best-person
+// ladder) and a warning when no role is recorded or the person is below manager level. Best effort.
+async function recipientCheckOnDraft(messageRef, e, recipient) {
+  try {
+    if (!recipient || recipient.kind === "company" || !recipient.personId || !e.companyId) return;
+    const snap = await db().collection("searchPersonLinks").where("companyId", "==", e.companyId).where("personId", "==", recipient.personId).limit(1).get();
+    const l = snap.empty ? null : snap.docs[0].data();
+    const co = (await db().doc(`searchCompanies/${e.companyId}`).get()).data() || {};
+    const rank = l ? require("./recipients").rankPerson(l, co.guoName) : 0;
+    await messageRef.update({ recipientCheck: { rank, level: Related.levelText(rank) || "", role: l ? (l.mgmtRoles || []).join(", ").slice(0, 80) : "", noRole: rank <= 0, belowManager: rank < 60 } });
+  } catch (err) { logger.warn("outreachScheduler: recipient check", { message: err.message }); }
+}
 async function genderCheckOnDraft(messageRef, e, recipient, variantBody) {
   try {
     if (!recipient || recipient.kind === "company" || !recipient.name || !/recipient\.is(Male|Female|Unknown)/.test(variantBody || "")) return;
@@ -465,6 +477,14 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       continue;
     }
     if (step.channel !== "email") {
+      // 2 Nov: letters, calls, LinkedIn… happen once per company, for the first address only: an extra address of the
+      // same company (isExtra) skips them and goes on to its next step (a replacement after a bounce still does them).
+      if (e.isExtra) {
+        const nextIdx = (e.currentStep || 0) + 1, nextStep = campaign.steps?.[nextIdx];
+        await unlock(doc.ref, { currentStep: nextIdx, nextActionAt: ts(nextStep ? addWait(now, nextStep.wait, campaign._sendingDays, campaign._skipHolidays !== false, campaign._waitOpts) : now) });
+        report.skippedForExtra = (report.skippedForExtra || 0) + 1;
+        continue;
+      }
       if (report.tasks >= MAX_TASKS_PER_RUN) { await unlock(doc.ref); report.deferred++; continue; }
       await createTask(doc.ref, e, campaign, step, now, rand);
       report.tasks++;
@@ -615,7 +635,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         await saveDraft(p, { campaign: campaignRef });
         if (allowed(ownerState, campaign) && e.companyId) await ownerPanelOnDraft(messageRef, e, campaign, variantBody);
         if (allowed(nameState, campaign) && e.companyId) await nameCheckOnDraft(messageRef, e); // 26 Oct (search.emailNameCheck)
-        if (allowed(multiState, campaign)) await genderCheckOnDraft(messageRef, e, recipient, variantBody); // 30 Oct (outreach.multiRecipient)
+        if (allowed(multiState, campaign)) { await genderCheckOnDraft(messageRef, e, recipient, variantBody); await recipientCheckOnDraft(messageRef, e, recipient); } // 30 Oct / 2 Nov (outreach.multiRecipient)
         await unlock(doc.ref, { status: "awaiting_approval", draftMessageId: messageRef.id, senderId, [`variants.${step.id}`]: p.variantKey, lastError: null, ...(e.holdKind ? { holdKind: null, holdReason: null } : {}) });
         report.drafts++;
         continue;

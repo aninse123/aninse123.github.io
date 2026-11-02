@@ -186,7 +186,8 @@ function pickByPolicy(all, policy) {
     return c || company;
   }
   if (policy === "best_person") {
-    const p = recipients.filter((r) => r.kind === "person" || r.kind === "contact").sort((a, b) => b.rank - a.rank)[0];
+    // 2 Nov: a person with no role recorded (rank 0) is never "the best person" — the company address is used instead (or choose them by hand)
+    const p = recipients.filter((r) => (r.kind === "person" || r.kind === "contact") && r.rank > 0).sort((a, b) => b.rank - a.rank)[0];
     return p || company;
   }
   return company;
@@ -206,7 +207,7 @@ function pickAddresses(all, { mode = "one", max = 3, policy = "company" } = {}) 
   if (!ADDRESS_MODES.includes(mode) || mode === "one") { const one = pickByPolicy(all, policy); return one ? [one] : []; }
   const company = usable.find((r) => r.kind === "company") || null;
   const seenPerson = new Set();
-  const people = usable.filter((r) => r.kind === "person" || r.kind === "contact")
+  const people = usable.filter((r) => (r.kind === "person" || r.kind === "contact") && (r.rank > 0 || r.isMain)) // 2 Nov: no role recorded = not picked (the main contact, chosen by hand, still is)
     .sort((a, b) => b.rank - a.rank)
     .filter((r) => { const k = r.personId || r.email; if (seenPerson.has(k)) return false; seenPerson.add(k); return true; });
   const out = [];

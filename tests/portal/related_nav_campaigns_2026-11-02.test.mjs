@@ -67,5 +67,8 @@ ok('Add to campaign: rows with the whole name and a status · creator · compani
 // Addresses per company (2 Nov): campaign settings, shown with the switch on, company campaigns only, saved with the campaign
 ok('campaign settings: addresses per company, the maximum and the two start delays; saved with the campaign', out.includes('id="csAddrMode"') && out.includes('id="csAddrMax"') && out.includes('id="csDelayPerson"') && out.includes('id="csDelayCompany"') && out.includes("isOn('outreach.multiRecipient') && c.audienceType !== 'people'") && out.includes("addressMode: $('csAddrMode').value") && out.includes("startDelayCompany: Number($('csDelayCompany').value)"));
 
+// Approval card (2 Nov): who the person is, with a warning when no role is recorded
+ok("approval card: the recipient's level, and a warning when no role is recorded or below manager level", out.includes('const rc = d.recipientCheck') && out.includes('⚠ no role recorded') && out.includes('${rcTag}${personalTag}'));
+
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');

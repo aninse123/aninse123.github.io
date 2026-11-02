@@ -5298,7 +5298,9 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
           const who = d.recipient?.name ? `${esc(d.recipient.name)} ` : '';
           const personalTag = d.recipient?.personal || d.personalAddress ? ' <span class="pill pill--warn" title="Personal address — Lei 41/2004 consent question (CCSL)">personal</span>' : '';
           const ccTxt = (d.cc || []).length ? ` · Cc: ${esc(d.cc.join(', '))}` : ''; // 28 Oct (outreach.campaignCc)
-          const test = d.redirectedFrom ? `<span class="pill pill--test">TEST</span> goes to ${esc((d.to || [])[0])} instead of ${who}${esc(d.redirectedFrom)}${personalTag}${ccTxt}` : `to ${who}${esc((d.to || [])[0] || '')}${personalTag}${ccTxt}`;
+          // 2 Nov (several recipients): who this person is in the company, and a warning when no role is recorded or they are below manager level
+          const rc = d.recipientCheck, rcTag = !rc ? '' : rc.noRole ? ' <span class="pill pill--warn" title="No role is recorded for this person in the CRM. Check who they are before approving.">⚠ no role recorded</span>' : ` <span class="pill${rc.belowManager ? ' pill--warn' : ''}" title="${esc(rc.role || '')}">${esc(rc.level || 'other role')}</span>`;
+          const test = d.redirectedFrom ? `<span class="pill pill--test">TEST</span> goes to ${esc((d.to || [])[0])} instead of ${who}${esc(d.redirectedFrom)}${personalTag}${ccTxt}` : `to ${who}${esc((d.to || [])[0] || '')}${rcTag}${personalTag}${ccTxt}`;
           return `<div class="draft" data-did="${esc(d.id)}">
             <div class="draft__head">
               <span class="draft__co"><a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" style="color:var(--text);">${esc(d.companyName || 'Company')}</a>${coFiguresHtml(coCache.get(d.companyId))}</span>

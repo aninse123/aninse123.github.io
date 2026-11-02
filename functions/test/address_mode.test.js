@@ -25,6 +25,13 @@ const ALL = [R("company", "geral@e.pt", 0), R("person", "ana@e.pt", 200, { perso
   ok("a company with no person: the company address only", emails(pickAddresses([R("company", "geral@e.pt", 0)], { mode: "person_company" })) === "geral@e.pt" && emails(pickAddresses([R("company", "geral@e.pt", 0)], { mode: "people" })) === "");
   ok("never more than 3 addresses", pickAddresses(ALL.concat([R("person", "x@e.pt", 90, { personId: "p4" })]), { mode: "people", max: 9 }).length === 3);
 
+  // 2 Nov: a person with no role recorded (rank 0) is never the best person (the Rui Pereira case at ELECTRO INSTALADORA)
+  const NOROLE = [R("company", "eib@e.pt", 0), R("person", "rui@e.pt", 0, { personId: "p9" })];
+  const { pickByPolicy } = require("../outreach/recipients.js");
+  ok("no role: best_person falls back to the company address", pickByPolicy(NOROLE, "best_person").email === "eib@e.pt");
+  ok("no role: the people modes leave them out; the company address stays", emails(pickAddresses(NOROLE, { mode: "all" })) === "eib@e.pt" && emails(pickAddresses(NOROLE, { mode: "people" })) === "");
+  ok("a typed contact (rank 10) and the company's main contact are still picked", pickByPolicy([R("company", "g@e.pt", 0), R("contact", "c@e.pt", 10)], "best_person").email === "c@e.pt" && emails(pickAddresses([R("company", "g@e.pt", 0), R("person", "m@e.pt", 0, { personId: "p8", isMain: true })], { mode: "all" })) === "m@e.pt,g@e.pt");
+
   // ── The campaign settings ──
   const n = normalizeCampaign({ name: "C", steps: [], addressMode: "people", addressMax: 9, startDelayPerson: 2, startDelayCompany: -1 });
   ok("settings: mode kept, maximum capped at 3, delays within 0 to 3", n.addressMode === "people" && n.addressMax === 3 && n.startDelayPerson === 2 && n.startDelayCompany === 1);

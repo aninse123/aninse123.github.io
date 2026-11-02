@@ -125,6 +125,18 @@ async function makeCampaign(campaign, ids) {
   const ta = docs("searchActivities").find((a) => a.taskId === stepTaskId(`${c2}_c1`, "s1"));
   ok("test-mode task writes a 'task_test' activity and doesn't touch the company", ta.type === "task_test" && /^\[TEST\]/.test(ta.title) && !get("searchCompanies/c1").outreachAttempts);
 
+  // 2 Nov: letters, calls… happen once per company: an extra address skips them (a bounce replacement does not)
+  seed();
+  const cx = await makeCampaign({ name: "Duas moradas", steps: [{ channel: "call", templateId: "S" }, { templateId: "t1", wait: { days: 0 } }] }, ["c1"]);
+  await run(TUE);
+  const rootId = `${cx}_c1`, root4 = get(`outreachEnrolments/${rootId}`);
+  const mk = (id, extra) => store.set(`outreachEnrolments/${id}`, { campaignId: cx, campaignName: "Duas moradas", companyId: "c1", companyName: "EMPRESA 1, LDA", status: "active", currentStep: 0, nextActionAt: Timestamp.fromMillis(new Date(TUE).getTime() - 3600000), senderId: root4.senderId || null, isTrack: true, trackOf: rootId, trackIndex: 1, recipient: { email: "outro@empresa1.pt", kind: "person" }, ...extra });
+  mk(`${rootId}__t1`, { isExtra: true });
+  mk(`${rootId}__t2`, { fallbackFrom: "x@empresa1.pt" });
+  const r4 = await run(TUE);
+  ok("an extra address creates no call task and moves on to its email step", !get(`outreachTasks/${stepTaskId(`${rootId}__t1`, "s1")}`) && get(`outreachEnrolments/${rootId}__t1`).currentStep >= 1 && r4.skippedForExtra === 1);
+  ok("the first address still has its call task; a replacement after a bounce does its own", !!get(`outreachTasks/${stepTaskId(rootId, "s1")}`) && !!get(`outreachTasks/${stepTaskId(`${rootId}__t2`, "s1")}`));
+
   // updateTask
   seed();
   const c3 = await makeCampaign({ name: "Visitas", steps: [{ channel: "visit" }] }, ["c1", "c2"]);
