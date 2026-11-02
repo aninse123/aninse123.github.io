@@ -6,7 +6,7 @@
 //   {{company.ebitda}}               same style (empty when not positive)
 //   {{company.ebitdaMargin}}         "17,9%"
 //   {{company.employees}}            42
-//   {{company.financialsSentence}}   the whole "Estudámos as contas mais recentes…" sentence
+//   {{company.financialsSentence}}   the whole "Pelas contas mais recentes, em 2025 a A.L. registou…" sentence
 //   {{company.growthSentence}}       revenue growth, only the positive periods, else empty
 //   {{company.letterIntro}}          the hand-researched opening line of a letter
 // Revenue growth is revenue, not EBITDA: computedGrowthRecent = Y1→Y3 (two years of
@@ -38,7 +38,7 @@ function pctPt(ratio) {
   return `${dec(r * 100, 1)}%`;
 }
 
-function figuresOf(company = {}, now = new Date()) {
+function figuresOf(company = {}, now = new Date(), name = "") {
   const year = num(String(company.lastAvailYear || "").slice(0, 4));
   const revenue = num(company.computedRevenue), ebitda = num(company.computedEBITDA);
   const margin = num(company.computedEBITDAMargin), employees = num(company.computedEmployees);
@@ -55,10 +55,12 @@ function figuresOf(company = {}, now = new Date()) {
   if (out.revenue) {
     // Accounts two or more years old (2024 or older in 2026) are named as such, with the year.
     const stale = year && year <= now.getFullYear() - 2;
+    // 3 Nov (André's wording): "Pelas contas mais recentes, em 2025 a A.L. registou…" — the company's name when the caller has it, else "a empresa".
+    const who = String(name || "").trim() ? `a ${String(name).trim()}` : "a empresa";
     let s = stale
-      ? `Estudámos as últimas contas disponíveis da empresa (${year}): registou um volume de negócios de ${out.revenue}`
-      : `Estudámos as contas mais recentes da empresa: ${year ? `em ${year}` : "no último ano"}, registou um volume de negócios de ${out.revenue}`;
-    if (out.ebitda) s += ` e um EBITDA de ${out.ebitda}${out.ebitdaMargin ? ` (uma margem de ${out.ebitdaMargin})` : ""}`;
+      ? `Pelas últimas contas disponíveis (${year}), ${who} registou um volume de negócios de ${out.revenue}`
+      : `Pelas contas mais recentes, ${year ? `em ${year}` : "no último ano"} ${who} registou um volume de negócios de ${out.revenue}`;
+    if (out.ebitda) s += ` e um EBITDA de ${out.ebitda}${out.ebitdaMargin ? ` (margem de ${out.ebitdaMargin})` : ""}`;
     if (out.employees) s += `, com ${out.employees} ${out.employees === "1" ? "colaborador" : "colaboradores"}`;
     out.financialsSentence = s + ".";
   }

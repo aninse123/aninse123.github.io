@@ -120,7 +120,7 @@ function buildContext({ company = {}, contactName = "", recipientRole = "", reci
       cae: company.caeDescription || company.caeCode || "",
       inCity: inCityOf(company), // "em Setúbal" / "no Porto" — 14 Oct: all 308 municipalities (concelho, any spelling; else city; Calheta / Lagoa by district)
       toCity: toCityOf(company), // 13 Oct: "a Setúbal" / "ao Porto" / "à Maia" — after "deslocar-nos"
-      ...figuresOf(company), // 29 Oct: finYear, revenue, ebitda, ebitdaMargin, employees, financialsSentence, growthSentence, letterIntro
+      ...figuresOf(company, undefined, emailNameOf(company)), // 29 Oct (3 Nov: with the name): finYear, revenue, ebitda, ebitdaMargin, employees, financialsSentence, growthSentence, letterIntro
     },
     owner: { ...ownerContext(company), otherCompanies: joinPt(others.map((n) => `da ${n}`)), otherCompanyNames: joinPt(others), knownCompanies: joinPt(known.map((n) => `da ${n}`)), knownCompanyNames: joinPt(known),
       // 2 Nov: "uma ligação com a X e a Y" (a = a empresa) and "ambas" for one related company, "todas" for more

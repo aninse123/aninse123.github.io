@@ -25,7 +25,7 @@ ok('page = server: every figure and sentence, 6 sample companies', samples.every
 ok('page = server: accounts two or more years old (pinned dates)', [new Date('2026-10-29'), new Date('2027-03-01')].every((d) => samples.every((c) => JSON.stringify(P.figuresOf(c, d)) === JSON.stringify(S.figuresOf(c, d)))));
 ok('page = server: amounts and percentages', [0, 850, 999700, 1e6, 2340000, 12400000, null, -3].every((v) => P.eurPt(v) === S.eurPt(v)) && [0, 0.03, 0.1789, null].every((v) => P.pctPt(v) === S.pctPt(v)));
 
-ok('both page contexts (tasks and compose preview) add the figures; the page imports the module', page.includes("import { figuresOf } from './company-figures.js'") && (page.match(/\.\.\.figuresOf\(c( \|\| \{\})?\)/g) || []).length === 2);
+ok('both page contexts (tasks and compose preview) add the figures; the page imports the module', page.includes("import { figuresOf } from './company-figures.js'") && (page.match(/\.\.\.figuresOf\(c( \|\| \{\})?, undefined, emailNameOf\(c\)\)/g) || []).length === 2);
 ok('the Letters screen only changes behind the switch (preview / edit column, missing check, no printing, care-of line)', page.includes("const LT = isOn('outreach.letterTools')") && page.includes('data-leted') && page.includes('missingFieldsOf(') && page.includes('Ao cuidado ${ctx.owner.of}') && page.includes('left out: a field is missing'));
 ok('a letter with its own text prints that text; a missing field disables its checkbox', page.includes('t.letterText?.body') && /disabled title="A field is missing/.test(page));
 ok('saving goes through updateTask with letterText; null goes back to the template', page.includes("action: 'updateTask', taskId: t.id, letterText: { subject, body, address }") && page.includes('letterText: null'));

@@ -27,7 +27,7 @@ export function pctPt(ratio) {
   return `${dec(r * 100, 1)}%`;
 }
 
-export function figuresOf(company = {}, now = new Date()) {
+export function figuresOf(company = {}, now = new Date(), name = '') {
   const year = num(String(company.lastAvailYear || '').slice(0, 4));
   const revenue = num(company.computedRevenue), ebitda = num(company.computedEBITDA);
   const margin = num(company.computedEBITDAMargin), employees = num(company.computedEmployees);
@@ -44,10 +44,12 @@ export function figuresOf(company = {}, now = new Date()) {
   if (out.revenue) {
     // Accounts two or more years old (2024 or older in 2026) are named as such, with the year.
     const stale = year && year <= now.getFullYear() - 2;
+    // 3 Nov (André's wording): "Pelas contas mais recentes, em 2025 a A.L. registou…" — the company's name when the caller has it, else "a empresa".
+    const who = String(name || '').trim() ? `a ${String(name).trim()}` : 'a empresa';
     let s = stale
-      ? `Estudámos as últimas contas disponíveis da empresa (${year}): registou um volume de negócios de ${out.revenue}`
-      : `Estudámos as contas mais recentes da empresa: ${year ? `em ${year}` : 'no último ano'}, registou um volume de negócios de ${out.revenue}`;
-    if (out.ebitda) s += ` e um EBITDA de ${out.ebitda}${out.ebitdaMargin ? ` (uma margem de ${out.ebitdaMargin})` : ''}`;
+      ? `Pelas últimas contas disponíveis (${year}), ${who} registou um volume de negócios de ${out.revenue}`
+      : `Pelas contas mais recentes, ${year ? `em ${year}` : 'no último ano'} ${who} registou um volume de negócios de ${out.revenue}`;
+    if (out.ebitda) s += ` e um EBITDA de ${out.ebitda}${out.ebitdaMargin ? ` (margem de ${out.ebitdaMargin})` : ''}`;
     if (out.employees) s += `, com ${out.employees} ${out.employees === '1' ? 'colaborador' : 'colaboradores'}`;
     out.financialsSentence = s + '.';
   }
