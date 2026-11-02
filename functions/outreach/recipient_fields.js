@@ -36,31 +36,23 @@ teodoro timoteo valdemar valentim vicente vladimir wilson xavier zacarias luca j
 christian olivier stefan stephan thomas raphael didier matthias juan simon juergen jurgen patrick hans axel franck frank jean francois jacques georges john stephen peter christoph richard martin norbert dieter javier klaus davide jesus pascal eric roman edward cedric laurent yan karlheinz jean-luc jean-louis stephane yohann joachim hannes antoine sebastien florent karim gerard valter hernani asdrubal valtencir serafim jonatas gilson michael michel andreas alexander alex max paul peter marc mark marcus lars jens kai uwe wolfgang helmut gerhard herbert rainer ralf robert ronald rolf sven tim tobias tom ulrich walter werner william james david jose pierre philippe alain bernard christophe daniel dominique emmanuel fabrice guillaume hugues ivan jan jorge juan lucien luc marcel mathieu maurice nicolas olaf oliver oskar pablo pedro rene roger roland sergei serge vincent xavier yves kohei bo`);
 
 
-// Names Orbis writes without accents: "Jose" → "José" (2 Nov 2026, André: JOBASI, Luís). Only the given name at the start (and the word after
-// Maria, Ana, José, João, António, Luís), only when it has no accent already — anything the team typed with an accent stays. Names that are Portuguese only
-// (José, João, Luís, Inês, Gonçalo…) always; names that other languages spell without the accent (António, Mário, André, Natália, Mónica…)
-// only when the surname looks Portuguese (da / do / dos, the common surnames, endings -es -eira -inho…), so Mario Rossi or Natalia
-// Kozlova stay as they are.
+// Names Orbis writes without accents: "Jose" → "José" (2 Nov 2026, André: JOBASI, Luís; same day: every name on the list, António included,
+// always — we write to Portuguese companies, so a foreign Antonio or Mario is rare and harmless). Only the given name at the start (and the
+// word after Maria, Ana, José, João, António, Luís), only when it has no accent already — anything the team typed with an accent stays.
 const ACCENT_SAFE = "José João Luís Inês Gonçalo Conceição Jerónimo Lourenço Estêvão Fernão Simão Sebastião Salomão Rúben Hélder Fátima Graça Hernâni".split(/\s+/);
-const ACCENT_AMBIGUOUS = "António Sérgio Fábio Mário Júlio André César Álvaro Emílio Maurício Vítor Márcio Ângelo Aníbal Cláudio Óscar Natália Nádia Mónica Patrícia Bárbara Ângela Cláudia Verónica Vânia Tânia Cecília Sílvia Sónia Márcia Cátia Amélia Aurélio Valério Hélio Lídia Lívia Júlia Luísa Nélia Noémia Olívia Vitória Zélia Brígida Cândida Eugénia Glória Valéria Núria Rosália Tomás Tomé Cândido Emídio Horácio Patrício Teodósio Ágata Fabíola Letícia Ludovina Hermínia Paulina Rosário".split(/\s+/);
-const PT_SURNAMES = new Set("silva santos ferreira pereira oliveira costa rodrigues martins jesus sousa fernandes goncalves gomes lopes marques alves almeida ribeiro pinto carvalho teixeira moreira correia mendes nunes soares vieira monteiro cardoso rocha raposo neves coelho cruz cunha pires ramos reis simoes antunes matos fonseca machado araujo barbosa tavares lourenco castro figueiredo azevedo sampaio baptista batista pacheco bessa duarte paiva freitas henriques lima miranda morais nogueira rebelo carneiro sequeira leite faria".split(/\s+/));
-const ACCENT_MAP = new Map([...ACCENT_SAFE, ...ACCENT_AMBIGUOUS].map((w) => [strip(w), w]));
-const AMBIGUOUS_KEYS = new Set(ACCENT_AMBIGUOUS.map(strip));
-function looksPortuguese(rest) {
-  return rest.some((t) => { const k = strip(t).replace(/[^a-z]/g, ""); return /^(da|das|do|dos)$/.test(k) || PT_SURNAMES.has(k) || (k.length > 4 && /(es|eira|eiro|inho|inha|oes|aes)$/.test(k) && !/ez$/.test(k)); });
-}
-function accentWord(w, rest) {
+const ACCENT_OTHERS = "António Sérgio Fábio Mário Júlio André César Álvaro Emílio Maurício Vítor Márcio Ângelo Aníbal Cláudio Óscar Natália Nádia Mónica Patrícia Bárbara Ângela Cláudia Verónica Vânia Tânia Cecília Sílvia Sónia Márcia Cátia Amélia Aurélio Valério Hélio Lídia Lívia Júlia Luísa Nélia Noémia Olívia Vitória Zélia Brígida Cândida Eugénia Glória Valéria Núria Rosália Tomás Tomé Cândido Emídio Horácio Patrício Teodósio Ágata Fabíola Letícia Ludovina Hermínia Paulina Rosário".split(/\s+/);
+const ACCENT_MAP = new Map([...ACCENT_SAFE, ...ACCENT_OTHERS].map((w) => [strip(w), w]));
+function accentWord(w) {
   const key = strip(w), f = ACCENT_MAP.get(key);
   if (!f || key !== w.toLowerCase()) return w;                         // unknown, or it already carries an accent
-  if (AMBIGUOUS_KEYS.has(key) && !looksPortuguese(rest)) return w;      // a spelling other languages use: only for a Portuguese-looking name
   return w === w.toUpperCase() ? f.toUpperCase() : f;                   // JOSE → JOSÉ, Jose → José
 }
 function accentName(name) {
   const t = String(name || "").trim().split(/(\s+)/);
   if (!t.length || !t[0]) return String(name || "");
-  const words = t.filter((x, i) => i % 2 === 0), first = strip(t[0]);
-  t[0] = accentWord(t[0], words.slice(1));
-  if (["maria", "ana", "jose", "joao", "antonio", "luis"].includes(first) && t[2]) t[2] = accentWord(t[2], words.slice(2)); // Maria José, José Luís, António Manuel…
+  const first = strip(t[0]);
+  t[0] = accentWord(t[0]);
+  if (["maria", "ana", "jose", "joao", "antonio", "luis"].includes(first) && t[2]) t[2] = accentWord(t[2]); // Maria José, José Luís, António Manuel…
   return t.join("");
 }
 
