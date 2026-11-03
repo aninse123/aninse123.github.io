@@ -1916,14 +1916,14 @@
           ${people.map(p => `<option value="${esc(p.personId)}"${p.personId === guess ? ' selected' : ''}>${esc(p.name)}${p.role ? ' (' + esc(p.role) + ')' : ''}</option>`).join('')}
           <option value=""${guess ? '' : ' selected'}>Someone new</option></select></div>
         <div id="aacNew"${guess ? ' hidden' : ''}>
-          <div class="field"><label for="aacName">Name</label><input id="aacName" value="${esc(fromName)}"></div>
+          <div class="field"><label for="aacName">Name</label><input type="text" id="aacName" value="${esc(fromName)}"></div>
           <div class="field"><label>Who are they?</label><div style="display:flex;gap:6px 16px;flex-wrap:wrap;">
             <label class="checkline"><input type="radio" name="aacKind" value="other" checked> <span>Other (a contact)</span></label>
             ${canOwners ? `<label class="checkline"><input type="radio" name="aacKind" value="manager"> <span>Manager</span></label>
             <label class="checkline"><input type="radio" name="aacKind" value="owner"> <span>Owner</span></label>
             <label class="checkline"><input type="radio" name="aacKind" value="both"> <span>Owner and manager</span></label>` : ''}</div>
             ${canOwners ? '' : '<span class="hint">Adding an owner or manager needs edit rights on this company.</span>'}</div>
-          <div class="field"><label for="aacRole">Role (optional)</label><input id="aacRole" placeholder="Diretor comercial, Sócio Gerente…"></div></div>`,
+          <div class="field"><label for="aacRole">Role (optional)</label><input type="text" id="aacRole" placeholder="Diretor comercial, Sócio Gerente…"></div></div>`,
         async () => saveAddToCompany(t, addr), 'Add');
       $('aacWho').addEventListener('change', () => { $('aacNew').hidden = !!$('aacWho').value; });
     }
@@ -2088,8 +2088,8 @@
           ${people.map(p => `<option value="${esc(p.personId)}"${def === p.personId ? ' selected' : ''}>${esc(p.name)}${p.role ? ' (' + esc(p.role) + ')' : ''}</option>`).join('')}
           <option value="new"${def === 'new' ? ' selected' : ''}>A new contact…</option></select></div>
         <div id="rtNew"${def === 'new' ? '' : ' hidden'}>
-          <div class="field"><label for="rtName">Name</label><input id="rtName" value="${esc(rc.sender ? '' : (rc.from.name || ''))}"></div>
-          <div class="field"><label for="rtRole">Role (optional)</label><input id="rtRole" placeholder="Diretora de serviços, Sócio Gerente…"></div>
+          <div class="field"><label for="rtName">Name</label><input type="text" id="rtName" value="${esc(rc.sender ? '' : (rc.from.name || ''))}"></div>
+          <div class="field"><label for="rtRole">Role (optional)</label><input type="text" id="rtRole" placeholder="Diretora de serviços, Sócio Gerente…"></div>
           ${unknownSender ? `<label class="checkline"><input type="checkbox" id="rtMail" checked> <span>Also add <b>${esc(rc.from.email)}</b>, the address that wrote, to them</span></label>` : ''}
         </div>`,
         async () => {
@@ -2537,14 +2537,14 @@
     function openInviteModal(ctx, done) {
       const tomorrow = new Date(Date.now() + 86400000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
       openModal('Calendar invite', `
-        <div class="field"><label for="ivTitle">Title</label><input id="ivTitle" value="${esc(ctx.title || 'Reunião')}"></div>
+        <div class="field"><label for="ivTitle">Title</label><input type="text" id="ivTitle" value="${esc(ctx.title || 'Reunião')}"></div>
         <div class="row2">
           <div class="field"><label for="ivDate">Date</label><input type="date" id="ivDate" value="${tomorrow}"></div>
           <div class="field"><label for="ivTime">Time (Lisbon)</label><input type="time" id="ivTime" value="10:00"></div>
         </div>
         <div class="field"><label for="ivMin">Duration (minutes)</label><input type="number" id="ivMin" value="30" min="10" max="480" step="5" style="max-width:120px;"></div>
-        <div class="field"><label for="ivWhere">Where</label><input id="ivWhere" value="${esc(ctx.where || '')}" placeholder="Address — or Online (put the link in the notes)"></div>
-        <div class="field"><label for="ivLink">Meeting link (optional)</label><input id="ivLink" placeholder="https://meet.google.com/…  or Teams / Zoom link"><span class="hint">For an online meeting: paste the link here. It shows in the invite as the place and in its description.</span></div>
+        <div class="field"><label for="ivWhere">Where</label><input type="text" id="ivWhere" value="${esc(ctx.where || '')}" placeholder="Address — or Online (put the link in the notes)"></div>
+        <div class="field"><label for="ivLink">Meeting link (optional)</label><input type="url" id="ivLink" placeholder="https://meet.google.com/…  or Teams / Zoom link"><span class="hint">For an online meeting: paste the link here. It shows in the invite as the place and in its description.</span></div>
         <div class="field"><label for="ivNote">Notes (optional)</label><textarea id="ivNote" rows="3"></textarea></div>
         <p class="hint">Sent as an invite from ${esc(ctx.organizer?.email || 'the sending address')} to ${esc((ctx.attendees || []).map(a => a.email).join(', ') || 'the addresses in To')}. Nothing is sent until you send the email.</p>`,
         async () => {

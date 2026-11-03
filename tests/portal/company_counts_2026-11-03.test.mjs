@@ -355,6 +355,9 @@ ok('Received files: the Inbox asks to save them to the company (Save / Not now),
 ok('Calendar invite: from the reply box and from Compose, with the company address as the place', html.includes("data-attcal") && html.includes('function replyInviteCtx(t)') && html.includes('function composeInviteCtx()') && html.includes("'Attach the invite'"));
 ok('The switch exists on both sides', fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8').includes('"outreach.attachments"') && fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8').includes("'outreach.attachments'"));
 
+const bareInputs = [...html.matchAll(/<input id="[^"]+"(?![^>]*type=)[^>]*>/g)].map((m) => m[0]);
+ok('Every text field in the new modals has a type, so the page style (rounded, bordered) applies: no <input id=...> without type', bareInputs.length === 0 && html.includes('<input type="text" id="ivTitle"') && html.includes('<input type="url" id="ivLink"'));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
