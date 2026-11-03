@@ -1372,7 +1372,7 @@ import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-u
 import { summaryOf as contactSummaryOf, contactedHtml, flagsHtml, tipHtml as contactTipHtml, CT_CSS } from './contact-summary.js'; // 27 Oct (search.contactColumns)
 document.head.insertAdjacentHTML('beforeend', `<style>${CT_CSS}</style>`);
 import { trustOf, trustTitle, trustPillHtml, TRUST_CSS, companyEmailTrust, companyEmailTitle, companyEmailLabel } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
-import { swapCompanyPrimary, withoutChosen, chosenAfterEdit, companyEmailsInOrder, firstUsableCompanyEmail } from './company-primary.js'; // 3 Nov: ★ on a company's added contact makes it the company's own; Orbis imports leave it alone
+import { swapCompanyPrimary, withoutChosen, chosenAfterEdit, companyEmailsInOrder, firstUsableCompanyEmail, fullAddress } from './company-primary.js'; // 3 Nov: ★ on a company's added contact makes it the company's own; Orbis imports leave it alone
 import { genderOfFirstName } from './recipient-fields.js'; // 30 Oct: gender of a person, for emails that agree with it (outreach.multiRecipient)
 document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
 import { stepsFor } from './campaign-paths.js'; // 27 Oct (outreach.paths)
@@ -3892,11 +3892,16 @@ function companyEmailRowHtml(c){
 function companyEmailStatusHtml(c){
   if (!isOn('contacts.trustLabels') || !c?.companyEmail) return '';
   const k = companyEmailTrust(c), mine = !!c.companyEmailConfirmedAt && String(c.companyEmailConfirmedFor || '').trim().toLowerCase() === String(c.companyEmail).trim().toLowerCase();
-  return ` ${trustPillHtml(k, companyEmailTitle(c, dayOfTs), esc, companyEmailLabel(c))}${canEditCompany(c) ? ' <button class="btn btn--ghost btn--sm" data-ceedit="email" title="Correct it in the company form">Edit</button>' : ''}${k !== 'bounced' && canEditCompany(c) ? ` <button class="btn btn--ghost btn--sm" id="ovEmailConfirm"${mine ? ' data-undo="1"' : ''} title="${mine ? 'Take back your confirmation' : 'You have checked it: mark as Confirmed'}">${mine ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}`;
+  return ` ${trustPillHtml(k, companyEmailTitle(c, dayOfTs), esc, companyEmailLabel(c))}${canEditCompany(c) ? ' <button class="btn btn--ghost btn--sm" data-ceedit="email" data-from="ov" title="Open the company contact details (Contacts tab)">Edit</button>' : ''}${k !== 'bounced' && canEditCompany(c) ? ` <button class="btn btn--ghost btn--sm" id="ovEmailConfirm"${mine ? ' data-undo="1"' : ''} title="${mine ? 'Take back your confirmation' : 'You have checked it: mark as Confirmed'}">${mine ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}`;
 }
 // 3 Nov: Edit next to a company email / phone / website opens the company form on that field (they come from the registry or Orbis, so they are corrected there)
 document.addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-ceedit]'); if (!b) return;
+  if (b.dataset.from === 'ov') { // from the Overview: go to the company contact details, not the whole company form
+    setActiveTab('contacts'); renderContacts(ovCompany || getCompany());
+    setTimeout(() => document.getElementById('companyReachCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    return;
+  }
   const id = { email: 'cCompanyEmail', phone: 'cCompanyPhone', linkedin: 'cLinkedin', website: 'cWebsite' }[b.dataset.ceedit];
   openEditCompany(); if (id) setTimeout(() => { const f = document.getElementById(id); if (f) { f.focus(); f.select?.(); } }, 60);
 });
@@ -3957,7 +3962,7 @@ function renderOverview(c){
         <div class="info-row"><span class="k">Concelho</span><span class="v">${esc(c.concelho||'—')}</span></div>
         <div class="info-row" data-feature="outreach"><span class="k" title="Campaign emails wait a day on the company's municipal holiday (Outreach → Settings)">Municipal holiday</span><span class="v" data-munhol>…</span></div>
         <div class="info-row"><span class="k">Postcode</span><span class="v">${esc(c.postcode||'—')}</span></div>
-        <div class="info-row"><span class="k">Address</span><span class="v">${esc(c.hqAddress||'—')}</span></div>
+        <div class="info-row"><span class="k">Address</span><span class="v">${fullAddress(c) ? `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress(c) + ', Portugal')}" target="_blank" rel="noopener noreferrer">${esc(fullAddress(c))}</a>` : '—'}</span></div>
         <div class="info-row"><span class="k">NUTS II</span><span class="v">${esc(c.nuts2||'—')}</span></div>
         <div class="info-row"><span class="k">NUTS III</span><span class="v">${esc(c.nuts3||'—')}</span></div>
         <div class="info-row"><span class="k">Regions</span><span class="v">${esc(regions)}</span></div>
@@ -4500,7 +4505,7 @@ function companyReachCardHtml(c){
     let first = '';
     if (single) {
       const isMail = t === 'email', k = isMail ? companyEmailTrust(c) : 'tool', conf = isMail && c.companyEmailConfirmedAt && String(c.companyEmailConfirmedFor || '').trim().toLowerCase() === String(single).trim().toLowerCase();
-      first = `<div class="contact-detail reach-row${k === 'bounced' ? ' prev' : ''}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span aria-hidden="true">${ICON[t]}</span>${reachLinkHtml(t, single, k === 'bounced' ? 'text-decoration:line-through;' : '')}
+      first = `<div class="contact-detail reach-row${k === 'bounced' ? ' prev' : ''}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span aria-hidden="true">${ICON[t]}</span>${reachLinkHtml(t, t === 'address' ? fullAddress(c) || single : single, k === 'bounced' ? 'text-decoration:line-through;' : '')}
         <span class="badge badge-blue" title="Used first">★ primary</span> ${trustPillHtml(k, isMail ? companyEmailTitle(c, dayOfTs) : 'From the registry or the Orbis database', esc, isMail ? companyEmailLabel(c) : null)} <span class="badge badge-grey" title="${(c.companyPrimaryChosen || {})[CR_SINGLES[t]] ? 'Chosen by the team; an Orbis import will not change it' : 'From the company record: the registry or Orbis (edit it in the company form, or ★ another one below)'}">${(c.companyPrimaryChosen || {})[CR_SINGLES[t]] ? 'Team' : 'Orbis'}</span>
         ${canEdit ? `<button class="btn btn--ghost btn--sm" data-ceedit="${t}" style="margin-left:auto;" title="Correct it in the company form (this value comes from the registry or Orbis)">Edit</button>` : ''}
         ${isMail && canEdit && k !== 'bounced' ? `<button class="btn btn--ghost btn--sm" data-ceconfirm="1"${conf ? ' data-undo="1"' : ''} style="${canEdit ? '' : 'margin-left:auto;'}">${conf ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}</div>`;

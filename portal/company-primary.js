@@ -47,6 +47,29 @@ export function companyEmailsInOrder(c) {
 // The one the Overview shows first when the company's own email is dead; null when the own email works (or nothing else is usable).
 export const firstUsableCompanyEmail = (c) => { const o = companyEmailsInOrder(c); return o.dead && o.usable[0] ? o.usable[0].entry : null; };
 
+// The company's address as a person would write it, and as Google Maps can find it (3 Nov): the street line, then the postcode and the
+// municipality — "Rua da Industria, 7, 2860-706 Moita" — not just the street name from the registry. The stored fields are not changed.
+// Orbis writes the street line in capitals: those are turned into words (accents cannot be restored: "Industria" stays "Industria").
+const SMALL = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'em', 'na', 'no']);
+export function niceCase(s) {
+  const t = String(s || '').trim();
+  if (!t || /[a-zà-ÿ]/.test(t)) return t; // already mixed case: leave it
+  return t.toLowerCase().split(/(\s+)/).map((w, i) => {
+    const raw = t.split(/(\s+)/)[i];
+    if (/^\s*$/.test(w)) return raw;
+    if (SMALL.has(w)) return w;
+    if (/[\d/]/.test(raw) || raw.replace(/[^A-ZÀ-Ý]/g, '').length <= 2) return raw; // numbers, C/V, EN, N.º stay as written
+    return w.replace(/(^|[-(])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase());
+  }).join('').replace(/^./, (m) => m.toUpperCase());
+}
+export function fullAddress(c) {
+  if (!c) return '';
+  const street = niceCase(c.hqAddress), pc = String(c.postcode || '').trim();
+  const place = niceCase(c.concelho || c.city);
+  const tail = [pc && !street.includes(pc) ? pc : '', place && !street.toLowerCase().includes(place.toLowerCase()) ? place : ''].filter(Boolean).join(' ');
+  return [street, tail].filter(Boolean).join(', ');
+}
+
 // An import row's fields, without the ones the team chose (companyPrimaryChosen) on that company.
 export function withoutChosen(match, payload) {
   const chosen = (match && match.companyPrimaryChosen) || {}, out = { ...payload };

@@ -175,6 +175,11 @@ ok('Refresh: wired into tabs, campaign, section, task view, settings, conversati
 
 ok('Addresses window: a dead first address (email 1 already sent) is not counted in "N emails will be sent"', html.includes('- (r.locked && list[0] && unusable(list[0]) && list[0].selected ? 1 : 0)'));
 
+ok('Address: street, postcode and municipality, in words (not capitals)', CP.fullAddress({ hqAddress: 'RUA DE TRAS - NOGUEIRA', postcode: '4475-500', concelho: 'Maia' }) === 'Rua de Tras - Nogueira, 4475-500 Maia' && CP.fullAddress({ hqAddress: 'RUA LUIS DE CAMOES, TORRE 6 C/V 3', postcode: '2620-105', concelho: 'Odivelas' }) === 'Rua Luis de Camoes, Torre 6 C/V 3, 2620-105 Odivelas');
+ok('Address: already complete or mixed case is left alone; no duplicate postcode or town; city when there is no municipality', CP.fullAddress({ hqAddress: 'Rua das Flores 12, 4000-100 Porto', postcode: '4000-100', concelho: 'Porto' }) === 'Rua das Flores 12, 4000-100 Porto' && CP.fullAddress({ hqAddress: 'EN 109, KM 5', postcode: '3000-001', city: 'COIMBRA' }) === 'EN 109, KM 5, 3000-001 Coimbra' && CP.fullAddress({}) === '');
+ok('Search CRM: the Overview and the contact card show the full address, and Maps gets it with the country', sh.includes('fullAddress(c)') && sh.includes("encodeURIComponent(fullAddress(c) + ', Portugal')") && sh.includes("t === 'address' ? fullAddress(c) || single : single"));
+ok('Overview: Edit next to the email goes to the Contacts tab (company contact details), not the whole company form', sh.includes('data-ceedit="email" data-from="ov"') && sh.includes("if (b.dataset.from === 'ov')") && sh.includes("getElementById('companyReachCard')?.scrollIntoView"));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
