@@ -8,12 +8,16 @@ const digits = (s) => String(s || '').replace(/\D/g, '');
 // What the sender wrote of their own: cut at the first quoted / forwarded block, so the old message's signature is never read.
 export function ownText(text) {
   const lines = String(text || '').replace(/\r/g, '').split('\n'), out = [];
-  for (const l of lines) {
-    if (/^\s*(?:de|from|enviad[ao]|sent|para|to|assunto|subject)\s*:/i.test(l) && out.some((x) => x.trim())) break;
-    if (/^\s*-{2,}\s*(?:original|mensagem|forwarded|message)/i.test(l) || /^\s*_{5,}\s*$/.test(l) || /^\s*>/.test(l)) break;
-    if (/^\s*(?:em|on)\s.+(?:escreveu|wrote)\s*:?\s*$/i.test(l)) break;
+  let cut = lines.length;
+  for (const [n, l] of lines.entries()) {
+    if (/^\s*(?:de|from|enviad[ao]|sent|para|to|assunto|subject)\s*:/i.test(l) && out.some((x) => x.trim())) { cut = n; break; }
+    if (/^\s*-{2,}\s*(?:original|mensagem|forwarded|message)/i.test(l) || /^\s*_{5,}\s*$/.test(l) || /^\s*>/.test(l)) { cut = n; break; }
+    if (/^\s*(?:em|on)\s.+(?:escreveu|wrote)\s*:?\s*$/i.test(l)) { cut = n; break; }
     out.push(l);
   }
+  // Some mail programs (Gmail, plain text) put the signature after the quoted message: a "-- " line below the quote starts it
+  const sig = lines.slice(cut).findLastIndex((l) => /^--\s*$/.test(l));
+  if (sig >= 0) out.push(...lines.slice(cut + sig, cut + sig + 12));
   return out.join('\n');
 }
 
