@@ -3731,6 +3731,7 @@
     let foldSteps = (() => { try { return localStorage.getItem('seqFold') !== 'off'; } catch (e) { return true; } })(), stepOpen = new Set();
     let pathOpts; // searchConfig/pathOptions: the sectors / sub-sectors / regions to pick from (Tools/path-options)
     try { seqView = localStorage.getItem('seqView') || 'list'; } catch (e) {}
+    let audAll = null; const audToggle = new Map(); // 3 Nov (outreach.companyCounts): address rows open / closed (auto = open when something stopped)
     let audFilter = 'all', audSearch = '', audPath = 'all'; // audPath: paths round 2 (R3)
 
     const curCamp = () => campaigns.find(c => c.id === curCampId) || null;
@@ -3894,7 +3895,7 @@
 
     function openCampaign(id, sec = 'overview') {
       if ($('panel-campaigns').hidden) showTab('campaigns');
-      curCampId = id; seqDraft = null; pathsDraft = null; pathCounts = null; seqDirty = false; csetDirty = false; audFilter = 'all'; audSearch = ''; audPath = 'all'; refreshUnsaved();
+      curCampId = id; seqDraft = null; pathsDraft = null; pathCounts = null; seqDirty = false; csetDirty = false; audAll = null; audToggle.clear(); audFilter = 'all'; audSearch = ''; audPath = 'all'; refreshUnsaved();
       $('campList').hidden = true; $('campPage').hidden = false; $('listsView').hidden = true; $('recurView').hidden = true;
       $('campTop').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x.dataset.cview === 'campaigns'));
       curEnrols = []; curThreads = [];
@@ -4214,7 +4215,12 @@ Optional note for them:`, '');
     }
     function renderAudience() {
       const c = curCamp(); if (!c) return;
-      const statuses = [...new Set(curEnrols.map(e => e.status))];
+      // 3 Nov (outreach.companyCounts): one row per company with its addresses under it; filters and counts are by company
+      const byCo = isOn('outreach.companyCounts') && c.audienceType !== 'people';
+      const roll = byCo ? rollupByCompany(curEnrols) : null, base = byCo ? roll : curEnrols;
+      const groupOf = new Map();
+      if (byCo) { curEnrols.forEach(e => { const k = e.companyId || e.id; if (!groupOf.has(k)) groupOf.set(k, []); groupOf.get(k).push(e); }); groupOf.forEach(g => g.sort((a, b) => (a.isExtra ? 1 : 0) - (b.isExtra ? 1 : 0) || String(a.id).localeCompare(String(b.id)))); }
+      const statuses = [...new Set(base.map(e => e.status))];
       const q = norm(audSearch);
       const pathsView = hasPaths(c) && isOn('outreach.paths');
       const inPath = (e) => audPath === 'all' || !pathsView || (audPath === 'left' ? isLeftOut(e) : audPath === 'none' ? !pathIdOf(e) : pathIdOf(e) === audPath && !isLeftOut(e));
@@ -4230,22 +4236,76 @@ Optional note for them:`, '');
       }
       const shown = rows.slice(0, 300);
       const canAdd = campEditable(c) && c.kind !== 'issue';
+      let coMore = '';
+      const coHead = `<tr><th>Company</th><th>Status</th>${pathsView ? '<th>Path</th>' : ''}<th style="min-width:210px;">Step</th><th style="min-width:190px;">Waiting for</th><th>From</th><th>Note</th><th></th></tr>`;
+      const coBody = () => {
+        const hit = (g) => !q || g.some(x => norm(x.companyName).includes(q) || norm(x.contactEmail).includes(q) || norm(x.recipient?.email).includes(q) || norm(x.personName).includes(q));
+        const list = roll.filter(r => inPath(r) && (audFilter === 'all' || (audFilter === 'live' ? LIVE_ENROL.includes(r.status) : r.status === audFilter)) && hit(groupOf.get(r.companyId || r.id) || []));
+        const vis = list.slice(0, 300);
+        if (list.length > vis.length) coMore = `<p class="hint" style="padding:10px 14px;">Showing the first ${num(vis.length)} of ${num(list.length)} companies — use the filter or search to narrow down.</p>`;
+        const cols = pathsView ? 8 : 7;
+        if (!vis.length) return `<tr><td colspan="${cols}" class="empty">${curEnrols.length ? 'No companies match.' : 'No companies yet.' + (canAdd ? ' Use "Add companies".' : '')}</td></tr>`;
+        const lineOf = (x) => `${esc(x.recipient?.name || '')} ${esc(x.recipient?.email || x.contactEmail || 'no email')}`.trim();
+        return vis.map(r => {
+          const key = r.companyId || r.id, g = groupOf.get(key) || [r], n = g.length, root = g[0];
+          const liveG = g.filter(x => LIVE_ENROL.includes(x.status));
+          const sorted = [...liveG].sort((a, b) => (tsMs(a.nextActionAt) || Infinity) - (tsMs(b.nextActionAt) || Infinity));
+          const top = g.find(x => x.status === r.status) || root, nextE = sorted[0] || top;
+          const stoppedN = g.filter(x => x.status === 'stopped').length, bouncedN = g.filter(x => x.status === 'stopped' && /bounce|can't receive/i.test(x.stopReason || '')).length;
+          const open = n > 1 && (audToggle.has(key) ? audToggle.get(key) : audAll !== null ? audAll : g.some(x => x.status === 'stopped' || x.lastError));
+          const parts = n > 1 ? [liveG.length ? `${liveG.length} in sequence` : '', g.filter(x => x.status === 'replied').length ? `${g.filter(x => x.status === 'replied').length} replied` : '', bouncedN ? `${bouncedN} bounced` : '', stoppedN - bouncedN > 0 ? `${stoppedN - bouncedN} stopped` : ''].filter(Boolean).join(' · ') : '';
+          const live = liveG.length > 0, allPaused = live && liveG.every(x => x.status === 'paused');
+          const btns = !live ? (r.status === 'replied' && root.companyId && isOn('outreach.multiRecipient') ? `<button class="btn btn--ghost btn--sm" data-eop="restart" data-perm="out.campaigns" data-eid="${esc(top.id)}" title="A reply stopped this company. Bring it back at the step it was on.">Restart company…</button>` : '') : [
+            canChooseRecipients(root) ? `<button class="btn btn--ghost btn--sm" data-eop="recipients" data-perm="out.campaigns" data-eid="${esc(root.id)}" title="Choose which addresses this company is written to, and in what order">Addresses…</button>` : '',
+            `<button class="btn btn--ghost btn--sm" data-coop="${allPaused ? 'resume' : 'pause'}" data-ckey="${esc(key)}" data-perm="out.campaigns">${allPaused ? 'Resume' : 'Pause'}</button>`,
+            `<button class="btn btn--ghost btn--sm" data-coop="move" data-ckey="${esc(key)}" data-perm="out.campaigns">Move…</button>`,
+            `<button class="btn btn--danger btn--sm" data-coop="remove" data-ckey="${esc(key)}" data-perm="out.campaigns">Remove</button>`,
+          ].join(' ');
+          const left = r.status === 'completed' && /^Left out by the campaign's paths/.test(r.stopReason || '');
+          const pathTxt = left ? 'Left out' : (r.status === 'pending' ? root.plannedPathName : root.pathName) || '—';
+          const head = `<tr>
+            <td>${n > 1 ? `<button class="btn btn--ghost btn--sm" data-cotoggle="${esc(key)}" data-open="${open ? 1 : 0}" aria-expanded="${open}" title="${open ? 'Hide' : 'Show'} the addresses" style="padding:0 6px;margin-right:4px;">${open ? '▾' : '▸'}</button>` : ''}<a href="/portal/search.html?company=${encodeURIComponent(root.companyId)}" style="color:var(--primary);">${esc(root.companyName || root.companyId)}</a>
+              <div class="hint">${n > 1 ? `<b>${n} addresses</b>${parts ? ' · ' + parts : ''}` : lineOf(root)}</div></td>
+            <td>${left ? '<span class="pill">Left out (paths)</span>' : pill(ENROL_PILL, r.status)}${live && liveG.length < n ? `<div class="hint">${liveG.length} of ${n} addresses active</div>` : ''}</td>
+            ${pathsView ? `<td style="font-size:0.78rem;">${esc(pathTxt)}</td>` : ''}
+            <td style="font-size:0.8rem;">${r.status === 'pending' ? 'Not started' : stepLabelIn(top, stepsFor(c, top))}</td>
+            <td style="font-size:0.78rem;">${live ? waitingFor(nextE, c) : ''}</td>
+            <td style="font-size:0.8rem;">${esc(localPart(root.senderId) || '—')}</td>
+            <td class="clip" style="font-size:0.78rem;" title="${esc(!live ? (r.stopReason || '') : '')}">${esc(!live ? (r.stopReason || r.lastError || '') : '')}</td>
+            <td style="white-space:nowrap;text-align:right;">${btns}</td></tr>`;
+          if (!open) return head;
+          const subs = g.map(x => {
+            const lv = LIVE_ENROL.includes(x.status), nt = x.lastError || x.stopReason || '';
+            return `<tr style="background:var(--surface-alt,rgba(0,0,0,0.02));">
+              <td style="padding-left:28px;font-size:0.8rem;">↳ ${lineOf(x)}${x.fallbackFrom ? ` <span class="hint">· next address after ${esc(x.fallbackFrom)} bounced</span>` : ''}</td>
+              <td>${pill(ENROL_PILL, x.status)}</td>
+              ${pathsView ? '<td></td>' : ''}
+              <td style="font-size:0.78rem;">${x.status === 'pending' ? 'Not started' : stepLabelIn(x, stepsFor(c, x))}</td>
+              <td style="font-size:0.76rem;">${lv ? waitingFor(x, c) : ''}</td>
+              <td></td>
+              <td class="clip" style="font-size:0.76rem;" title="${esc(nt)}">${esc(nt)}</td>
+              <td style="white-space:nowrap;text-align:right;">${lv && liveG.length > 1 ? `<button class="btn btn--ghost btn--sm" data-eop="remove" data-addr="1" data-perm="out.campaigns" data-eid="${esc(x.id)}" title="Stop writing to this address only">Stop</button>` : ''}</td></tr>`;
+          }).join('');
+          return head + subs;
+        }).join('');
+      };
       $('cs-audience').innerHTML = `
         <div class="card" style="padding:0;">
           <div class="toolbar">
             <select id="audFilter" aria-label="Status">
-              <option value="all">All (${num(curEnrols.length)})</option>
-              <option value="live">Still in the campaign (${num(curEnrols.filter(e => LIVE_ENROL.includes(e.status)).length)})</option>
-              ${Object.keys(ENROL_PILL).filter(k => statuses.includes(k)).map(k => `<option value="${k}">${esc(ENROL_PILL[k][0])} (${num(curEnrols.filter(e => e.status === k).length)})</option>`).join('')}
+              <option value="all">All (${num(base.length)})</option>
+              <option value="live">Still in the campaign (${num(base.filter(e => LIVE_ENROL.includes(e.status)).length)})</option>
+              ${Object.keys(ENROL_PILL).filter(k => statuses.includes(k)).map(k => `<option value="${k}">${esc(ENROL_PILL[k][0])} (${num(base.filter(e => e.status === k).length)})</option>`).join('')}
             </select>
-            ${pathsView ? `<select id="audPath" aria-label="Path"><option value="all">All paths</option>${pathsOf(c).map(p => `<option value="${esc(p.id)}">${esc(p.id === ELSE_PATH ? 'Everyone else' : p.name)} (${num(curEnrols.filter(e => pathIdOf(e) === p.id && !isLeftOut(e)).length)})</option>`).join('')}<option value="left">Left out (${num(curEnrols.filter(isLeftOut).length)})</option>${curEnrols.some(e => e.status === 'pending' && !pathIdOf(e)) ? `<option value="none">Not planned yet (${num(curEnrols.filter(e => e.status === 'pending' && !pathIdOf(e)).length)})</option>` : ''}</select>` : ''}
+            ${pathsView ? `<select id="audPath" aria-label="Path"><option value="all">All paths</option>${pathsOf(c).map(p => `<option value="${esc(p.id)}">${esc(p.id === ELSE_PATH ? 'Everyone else' : p.name)} (${num(base.filter(e => pathIdOf(e) === p.id && !isLeftOut(e)).length)})</option>`).join('')}<option value="left">Left out (${num(base.filter(isLeftOut).length)})</option>${base.some(e => e.status === 'pending' && !pathIdOf(e)) ? `<option value="none">Not planned yet (${num(base.filter(e => e.status === 'pending' && !pathIdOf(e)).length)})</option>` : ''}</select>` : ''}
             <input type="search" id="audSearch" placeholder="Company or email…" style="max-width:240px;" value="${esc(audSearch)}">
             <button class="btn btn--ghost btn--sm" id="audRefresh">Refresh</button>
+            ${byCo ? '<button class="btn btn--ghost btn--sm" id="audExpand">Expand all</button><button class="btn btn--ghost btn--sm" id="audCollapse">Collapse all</button>' : ''}
             ${canAdd ? `<button class="btn btn--primary btn--sm" id="audAdd" style="margin-left:auto;">${c.audienceType === 'people' ? 'Add people' : 'Add companies'}</button>` : ''}
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th>${c.audienceType === 'people' ? 'Person' : 'Company'}</th>${c.audienceType === 'people' ? '' : '<th title="Who email 1 goes to: fixed once it\'s sent, else a preview from Settings → Check who it reaches">Goes to</th>'}<th>Status</th><th>Step</th><th>Waiting for</th><th>From</th><th>Note</th><th></th></tr></thead>
-            <tbody>${shown.length ? shown.map(e => {
+            <thead>${byCo ? coHead : `<tr><th>${c.audienceType === 'people' ? 'Person' : 'Company'}</th>${c.audienceType === 'people' ? '' : '<th title="Who email 1 goes to: fixed once it\'s sent, else a preview from Settings → Check who it reaches">Goes to</th>'}<th>Status</th><th>Step</th><th>Waiting for</th><th>From</th><th>Note</th><th></th></tr>`}</thead>
+            <tbody>${byCo ? coBody() : shown.length ? shown.map(e => {
               const live = LIVE_ENROL.includes(e.status);
               const next = live ? waitingFor(e, c) : '';
               const note = e.lastError || e.stopReason || '';
@@ -4265,13 +4325,30 @@ Optional note for them:`, '');
                 <td style="white-space:nowrap;text-align:right;">${btns}</td></tr>`;
             }).join('') : `<tr><td colspan="${c.audienceType === 'people' ? 7 : 8}" class="empty">${curEnrols.length ? 'No companies match.' : 'No companies yet.' + (canAdd ? ' Use "Add companies".' : '')}</td></tr>`}</tbody>
           </table></div>
-          ${rows.length > shown.length ? `<p class="hint" style="padding:10px 14px;">Showing the first ${num(shown.length)} of ${num(rows.length)} — use the filter or search to narrow down.</p>` : ''}
+          ${byCo ? coMore : rows.length > shown.length ? `<p class="hint" style="padding:10px 14px;">Showing the first ${num(shown.length)} of ${num(rows.length)} — use the filter or search to narrow down.</p>` : ''}
         </div>`;
       $('audFilter').value = audFilter;
       $('audFilter').addEventListener('change', (e) => { audFilter = e.target.value; renderAudience(); });
       if ($('audPath')) { $('audPath').value = audPath; $('audPath').addEventListener('change', (e) => { audPath = e.target.value; renderAudience(); }); }
       $('audSearch').addEventListener('input', (e) => { audSearch = e.target.value; clearTimeout(renderAudience._t); renderAudience._t = setTimeout(() => { renderAudience(); $('audSearch').focus(); const v = $('audSearch'); v.setSelectionRange(v.value.length, v.value.length); }, 250); });
       $('audRefresh').addEventListener('click', loadCampaignData);
+      $('audExpand')?.addEventListener('click', () => { audAll = true; audToggle.clear(); renderAudience(); });
+      $('audCollapse')?.addEventListener('click', () => { audAll = false; audToggle.clear(); renderAudience(); });
+      $('cs-audience').querySelectorAll('[data-cotoggle]').forEach(b => b.addEventListener('click', () => { audToggle.set(b.dataset.cotoggle, b.dataset.open !== '1'); renderAudience(); }));
+      // 3 Nov: Pause / Resume / Remove / Move apply to every live address of the company (the server works one address at a time)
+      $('cs-audience').querySelectorAll('[data-coop]').forEach(b => b.addEventListener('click', async () => {
+        const g = groupOf.get(b.dataset.ckey) || [], op = b.dataset.coop, liveG = g.filter(x => LIVE_ENROL.includes(x.status)), name = g[0]?.companyName || 'this company';
+        if (op === 'move') { if (liveG[0]) openMoveCompany(liveG[0], liveG.slice(1).map(x => x.id)); return; }
+        let reason = null;
+        if (op === 'remove') { reason = prompt(`Remove ${name} (${liveG.length} address${liveG.length === 1 ? '' : 'es'}) from the campaign? Optional reason:`, ''); if (reason === null) return; }
+        const targets = op === 'resume' ? g.filter(x => x.status === 'paused') : op === 'pause' ? liveG.filter(x => x.status !== 'paused') : liveG;
+        const unbusy = busyBtn(b, op === 'remove' ? 'Removing…' : op === 'pause' ? 'Pausing…' : 'Resuming…');
+        try {
+          for (const x of targets) await callCampaign({ action: 'enrolment', enrolmentId: x.id, op, reason });
+          toast(op === 'remove' ? 'Company removed from the campaign.' : op === 'pause' ? 'Company paused.' : 'Company resumed.');
+          loadCampaignData();
+        } catch (err) { toast(errText(err)); unbusy(); }
+      }));
       $('audAdd')?.addEventListener('click', () => (c.audienceType === 'people' ? openAddPeople() : openAddCompanies()));
       $('cs-audience').querySelectorAll('[data-eop]').forEach(b => b.addEventListener('click', async () => {
         const op = b.dataset.eop, eid = b.dataset.eid;
@@ -4286,9 +4363,9 @@ Optional note for them:`, '');
           return;
         }
         let reason = null;
-        if (op === 'remove') { reason = prompt(`Remove ${e?.companyName || 'this company'} from the campaign? Optional reason:`, ''); if (reason === null) return; }
+        if (op === 'remove') { reason = prompt(`Remove ${b.dataset.addr ? (e?.recipient?.email || e?.contactEmail || 'this address') : (e?.companyName || 'this company')} from the campaign? Optional reason:`, ''); if (reason === null) return; }
         const unbusy = busyBtn(b, op === 'remove' ? 'Removing…' : op === 'pause' ? 'Pausing…' : 'Resuming…');
-        const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? 'Company removed from the campaign.' : op === 'pause' ? 'Company paused.' : 'Company resumed.');
+        const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? (b.dataset.addr ? 'Address removed from the campaign.' : 'Company removed from the campaign.') : op === 'pause' ? 'Company paused.' : 'Company resumed.');
         if (r) loadCampaignData(); else unbusy();
       }));
     }
@@ -4374,7 +4451,7 @@ Optional note for them:`, '');
     }
 
     // Move one company to another campaign (2c): the target's rules apply.
-    function openMoveCompany(e) {
+    function openMoveCompany(e, alsoEnd = []) {
       const c = curCamp();
       const targets = campaigns.filter(x => x.id !== c?.id && ['draft', 'active', 'paused'].includes(x.status));
       if (!targets.length) { toast('No other open campaign to move to.'); return; }
@@ -4384,6 +4461,7 @@ Optional note for them:`, '');
         <p class="hint">It leaves "${esc(c?.name || '')}" (its open task or draft there is cancelled) and starts the other campaign from the first step, if that campaign's rules allow it.</p>`,
         async () => {
           const r = (await callCampaign({ action: 'enrolment', enrolmentId: e.id, op: 'move', targetCampaignId: $('mvTarget').value })).data;
+          for (const id of alsoEnd) await callCampaign({ action: 'enrolment', enrolmentId: id, op: 'remove', reason: 'Moved with the company' }).catch(() => {}); // the company's other live addresses leave with it
           toast(`Moved to "${targets.find(x => x.id === r.targetCampaignId)?.name || 'the other campaign'}".`);
           loadCampaignData();
           return true;

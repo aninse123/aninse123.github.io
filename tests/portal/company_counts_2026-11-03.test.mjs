@@ -88,6 +88,38 @@ const delays = P.firstReplyDelays([
 ]);
 ok('reply time: per company, first answer (the call, 2 h after the first email) since its first touch; no answer, no time', delays.length === 2 && delays[0] === 7200000 && delays[1] === 7200000);
 ok('Metrics uses it behind the switch', html.includes("isOn('outreach.companyCounts') ? firstReplyDelays(threads)"));
+// the Audience table: one row per company, its addresses under it (run from the page's own renderAudience with small stand-ins)
+const raSrc = html.match(/    function renderAudience\(\) \{[\s\S]*?\n    \}\n(?=\n    \/\/ I22)/)[0];
+const aud = { innerHTML: '', querySelectorAll: () => [] };
+const mkAud = (on) => {
+  const names = ['isOn', 'curCamp', 'curEnrols', 'rollupByCompany', 'norm', 'audSearch', 'audPath', 'audFilter', 'audAll', 'audToggle', 'hasPaths', 'pathsOf', 'pathIdOf', 'isLeftOut', 'campEditable', '$', 'num', 'esc', 'LIVE_ENROL', 'ENROL_PILL', 'pill', 'tsMs', 'stepLabelIn', 'stepsFor', 'waitingFor', 'canChooseRecipients', 'localPart', 'stepLabel', 'goesTo', 'loadCampaignData', 'openAddPeople', 'openAddCompanies'];
+  const camp = { id: 'c1', audienceType: 'companies', status: 'active', steps: [] };
+  const enr = [
+    { id: 'm', companyId: 'cm', companyName: 'MODULAQUADRO', status: 'stopped', stopReason: 'Email bounced', recipient: { email: 'fernando@m.pt' }, senderId: 'a@x.pt', pathName: 'B' },
+    { id: 'm__t1', companyId: 'cm', companyName: 'MODULAQUADRO', status: 'stopped', isExtra: true, stopReason: 'Email bounced', recipient: { email: 'carlos@m.pt' } },
+    { id: 'm__t2', companyId: 'cm', companyName: 'MODULAQUADRO', status: 'active', isExtra: true, recipient: { email: 'geral@m.pt' } },
+    { id: 'x', companyId: 'cx', companyName: 'XPTO', status: 'active', recipient: { email: 'info@x.pt' } },
+    { id: 'y', companyId: 'cy', companyName: 'YOLO', status: 'active', recipient: { email: 'a@y.pt' } },
+    { id: 'y__t1', companyId: 'cy', companyName: 'YOLO', status: 'active', isExtra: true, recipient: { email: 'b@y.pt' } },
+  ];
+  const stand = { $: () => ({ addEventListener() {}, value: '', focus() {}, setSelectionRange() {} }) };
+  const vals = [(k) => on && k === 'outreach.companyCounts', () => camp, enr, P.rollupByCompany, (x) => String(x || '').toLowerCase(), '', 'all', 'all', null, new Map(), () => false, () => [{ id: 'main' }], () => null, () => false, () => true,
+    (id) => (id === 'cs-audience' ? aud : stand.$()), (n) => String(n), (x) => String(x == null ? '' : x), ['pending', 'active', 'awaiting_approval', 'awaiting_task', 'paused'],
+    { active: ['In sequence'], stopped: ['Stopped'], replied: ['Replied'], pending: ['Pending'], paused: ['Paused'] }, (m, st) => `[${st}]`, () => 0, () => 'STEP', () => [], () => 'WAIT', () => false, (x) => String(x || ''), () => 'STEP', () => 'GOES', () => {}, () => {}, () => {}];
+  aud.innerHTML = '';
+  new Function(...names, raSrc + '; renderAudience();')(...vals);
+  return aud.innerHTML;
+};
+const audOn = mkAud(true), audOff = mkAud(false);
+const nCo = (h) => (h.match(/<a href="\/portal\/search\.html\?company=/g) || []).length;
+ok('Audience On: one row per company (3 companies, not 6 enrolments)', nCo(audOn) === 3);
+ok('Audience On: the company row shows its addresses and what happened to them', audOn.includes('<b>3 addresses</b> · 1 in sequence · 2 bounced') && audOn.includes('<b>2 addresses</b> · 2 in sequence'));
+ok('Audience On: the company is In sequence (not Stopped) while one address is live, and says how many', audOn.includes('[active]') && audOn.includes('1 of 3 addresses active'));
+ok('Audience On: a company with a stopped address opens by itself; one without stays closed', audOn.includes('↳ carlos@m.pt') && !audOn.includes('↳ a@y.pt') && audOn.includes('data-cotoggle="cy" data-open="0"'));
+ok('Audience On: Pause / Move / Remove are for the company; a lone live address has no Stop button', audOn.includes('data-coop="pause" data-ckey="cm"') && audOn.includes('data-coop="remove" data-ckey="cx"') && !audOn.includes('data-addr="1"'));
+ok('Audience On: the old Goes to column is gone', !audOn.includes('Goes to') && audOn.includes('<th>Status</th>'));
+ok('Audience Off: as before, one row per address with Goes to', nCo(audOff) === 6 && audOff.includes('Goes to') && !audOff.includes('data-coop'));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
