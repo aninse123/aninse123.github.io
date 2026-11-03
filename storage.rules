@@ -36,5 +36,13 @@ service firebase.storage {
       allow read: if isAdmin() || can('out.view');
       allow write: if false;
     }
+    // 3 Nov: files to attach to outgoing email — documents, spreadsheets, slides, images and calendar invites, at most 10 MB, written by
+    // whoever writes email; removed by whoever edits templates. (A more specific rule, so it adds to the one above.)
+    match /outreach/files/{fileId}/{fileName} {
+      allow create: if request.resource != null && (isAdmin() || can('out.send') || can('out.draft') || can('out.templates'))
+                    && request.resource.size < 10 * 1024 * 1024
+                    && request.resource.contentType.matches('application/pdf|application/msword|application/vnd[.].*|text/plain|text/csv|text/calendar.*|image/(png|jpeg|gif)');
+      allow delete: if isAdmin() || can('out.templates');
+    }
   }
 }

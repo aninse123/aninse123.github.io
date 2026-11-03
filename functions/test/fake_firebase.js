@@ -156,7 +156,12 @@ const fakeDb = {
 // ── Storage ──
 const storageFiles = new Map();
 const bucket = {
-  file: (p) => ({ save: async (buf, meta) => storageFiles.set(p, { size: Buffer.byteLength(buf), meta }) }),
+  file: (p) => ({
+    save: async (buf, meta) => storageFiles.set(p, { size: Buffer.byteLength(buf), meta, buf: Buffer.from(buf) }),
+    download: async () => { const f = storageFiles.get(p); if (!f || !f.buf) throw new Error("No such object: " + p); return [f.buf]; }, // 3 Nov: attachments are read when sending
+    copy: async (dest) => { const f = storageFiles.get(p); if (!f) throw new Error("No such object: " + p); storageFiles.set(dest.name, { ...f }); },
+    name: p,
+  }),
   deleteFiles: async ({ prefix }) => { for (const k of [...storageFiles.keys()]) if (k.startsWith(prefix)) storageFiles.delete(k); },
 };
 

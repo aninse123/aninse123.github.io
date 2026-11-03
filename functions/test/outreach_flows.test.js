@@ -279,6 +279,25 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   r = await call(fns.outreachSend, { action: "forward", threadId: sigThread, to: "antonio.carvalho@douropartners.pt", note: "Vê isto" });
   ok("I15: forward sends the conversation with the note to a team member, and records it", r.res?.ok === true && lastSend().body.to[0] === "antonio.carvalho@douropartners.pt" && lastSend().body.subject === "Fwd: Assinatura" && lastSend().body.text.startsWith("Vê isto") && lastSend().body.text.includes("Corpo.") && (store.get(`outreachThreads/${sigThread}`).forwards || []).some((f) => f.to === "antonio.carvalho@douropartners.pt"));
 
+  console.log("\n=== batch 6: attachments (3 Nov) ===");
+  storageFiles.set("outreach/files/f1/Apresentacao.pdf", { size: 7, meta: {}, buf: Buffer.from("PDFDATA") });
+  store.set("outreachFiles/f1", { name: "Apresentação.pdf", filename: "Apresentacao.pdf", storagePath: "outreach/files/f1/Apresentacao.pdf", contentType: "application/pdf", size: 7, library: true });
+  store.set("outreachFiles/bad", { name: "x.exe", filename: "x.exe", storagePath: "outreach/files/bad/x.exe", contentType: "application/x-msdownload", size: 10 });
+  r = await call(fns.outreachSend, { senderId: S, to: "delivered+att@resend.dev", subject: "Com anexo", body: "Segue a apresentação.", attachments: ["f1"] });
+  const att = lastSend().body.attachments;
+  ok("an attached file is read from Storage and sent as base64 with its name and type", r.res?.ok === true && att?.length === 1 && att[0].filename === "Apresentacao.pdf" && att[0].content === Buffer.from("PDFDATA").toString("base64") && att[0].content_type === "application/pdf");
+  const attMsg = docs("outreachMessages").find((x) => x.id === r.res.messageId);
+  ok("the message records it, so it shows as a chip in the conversation", attMsg.attachments.length === 1 && attMsg.attachments[0].storagePath === "outreach/files/f1/Apresentacao.pdf" && attMsg.attachments[0].outgoing === true && attMsg.attachments[0].fileId === "f1");
+  r = await call(fns.outreachSend, { senderId: S, to: "delivered+att2@resend.dev", subject: "Sem anexo", body: "Sem." });
+  ok("an email without files sends no attachments field", r.res?.ok === true && lastSend().body.attachments === undefined);
+  r = await call(fns.outreachSend, { senderId: S, to: "delivered+att3@resend.dev", subject: "x", body: "y", attachments: ["nope"] });
+  ok("a file that is not in the library refuses the email", r.err?.details?.reason === "file_not_found");
+  r = await call(fns.outreachSend, { senderId: S, to: "delivered+att4@resend.dev", subject: "x", body: "y", attachments: ["bad"] });
+  ok("a file type that can run (exe) is refused", r.err?.details?.reason === "file_not_allowed");
+  r = await call(fns.outreachSend, { threadId: sigThread, body: "Resposta com a apresentação.", attachments: ["f1", "f1"] });
+  ok("a reply carries the file too (listed twice, sent once)", r.res?.ok === true && lastSend().body.attachments?.length === 1);
+  storageFiles.delete("outreach/files/f1/Apresentacao.pdf");
+
   console.log("\n=== clear test data ===");
   store.set("searchActivities/real1", { companyId: "co1", type: "note", isTest: false });
   // Usage tab: the sends above were counted (test mode → "test"), per sending address and for the partner who sent them.

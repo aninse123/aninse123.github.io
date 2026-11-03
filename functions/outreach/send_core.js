@@ -21,6 +21,7 @@ const { buildContext, renderTemplate, buildPlainEmail, buildQuote, replySubject,
 const { sendEmail, ResendError } = require("./resend");
 const store = require("./store");
 const { companyRecipients } = require("./recipients");
+const Files = require("./files"); // 3 Nov: attachments (switch outreach.attachments)
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -211,7 +212,7 @@ async function prepareEmail(opts) {
   if (sender.owner) { try { const m = (await db().doc(`teamDirectory/${sender.owner}`).get()).data() || {}; senderPhone = m.contactPhone || ""; senderBooking = m.bookingLink || ""; } catch (e) { /* fields stay empty */ } }
   const ctx = buildContext({ company: ctxCompany, contactName, recipientRole: recipient?.kind !== "company" ? recipient?.role || "" : "", recipientGender: recipient?.gender ? { gender: recipient.gender, source: recipient.genderSource || "" } : null, sender: { ...sender, email: senderId, phone: senderPhone, bookingLink: senderBooking }, unsubscribeUrl, aiOpener: opts.aiOpener || "", team: await teamDirectory(), senderKey: sender.owner || null, campaign: opts.campaignFields || {}, otherCompanies: opts.otherCompanies || [], knownCompanies: opts.knownCompanies || [] });
 
-  let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null, templateSigns = false;
+  let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null, templateSigns = false, templateFiles = [];
   if (opts.templateId) {
     const tSnap = await db().doc(`outreachTemplates/${opts.templateId}`).get();
     if (!tSnap.exists) fail("not-found", "template_not_found", "Template not found.");
@@ -221,6 +222,7 @@ async function prepareEmail(opts) {
     templateId = tSnap.id;
     variantKey = variant.key;
     templateSigns = tSnap.data().signs === true; // 9 Oct: the template has its own sign-off — no address signature
+    templateFiles = Array.isArray(tSnap.data().attachments) ? tSnap.data().attachments : []; // 3 Nov: files that go with every email of the template
     if (!isReply) subjectSrc = opts.subject || variant.subject;
     bodySrc = opts.body || variant.body;
   }
@@ -287,6 +289,7 @@ async function prepareEmail(opts) {
     callerEmail, settings, isReply, isTest, messageRef, messageId, threadRef, thread, companyId, company,
     senderId, sender, to, toDomain, toList, ccList, subject: subject.text, bodyText: body.text, text, html, headers,
     templateId, variantKey, countsAsOutreach, footer: withFooter,
+    attachments: await Files.resolveAttachments([...templateFiles, ...(Array.isArray(opts.attachments) ? opts.attachments : [])]), // 3 Nov: the template's files, then the ones chosen for this email
     redirectedFrom: isTest && intended && intended !== to ? intended : null,
     contactName, recipientKind: isReply ? (thread.recipientKind || null) : person ? "people" : (recipient?.kind || "company"),
     person,
@@ -338,7 +341,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
     ...(campaign?.pathId ? { pathId: campaign.pathId, pathName: campaign.pathName || null } : {}),
     redirectedFrom: p.redirectedFrom, approvedBy: campaign?.approvedBy || null,
     recipientKind: p.recipientKind, personalAddress: !!p.personalAddress,
-    status: "queued", events: [], attachments: [], isAutoReply: false, isTest, createdAt: now,
+    status: "queued", events: [], attachments: Files.describe(p.attachments), isAutoReply: false, isTest, createdAt: now,
   });
   await batch.commit();
 
@@ -356,6 +359,7 @@ async function deliverEmail(p, { campaign = null } = {}) {
       text: p.text,
       html: p.html,
       headers,
+      ...(p.attachments?.length ? { attachments: await Files.payload(p.attachments) } : {}), // 3 Nov: the bytes, read from Storage now
       tags: [{ name: "om", value: messageId }],
     }, messageId);
   } catch (e) {
@@ -428,7 +432,7 @@ async function saveDraft(p, { campaign }) {
     ...(campaign.pathId ? { pathId: campaign.pathId, pathName: campaign.pathName || null } : {}),
     redirectedFrom: p.redirectedFrom, isReply: p.isReply,
     recipient: p.isReply ? null : { email: p.redirectedFrom || p.to, name: p.contactName || "", kind: p.recipientKind, personal: !!p.personalAddress },
-    status: "draft", events: [], attachments: [], isAutoReply: false, isTest: p.isTest,
+    status: "draft", events: [], attachments: Files.describe(p.attachments), isAutoReply: false, isTest: p.isTest,
     createdAt: FieldValue.serverTimestamp(), createdBy: p.callerEmail,
   });
   return { messageId: p.messageId };

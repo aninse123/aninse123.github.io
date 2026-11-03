@@ -1397,7 +1397,7 @@ const CAMPAIGN_ACTION_PERM = {
   enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
   requestStart: "out.campaigns", returnStart: "out.approve", runNow: "out.approve", sendNow: "out.approve",
   approve: "out.approve", skipDraft: "out.approve", unapprove: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
-  createTask: "out.tasks", logActivity: "out.tasks", checkAddress: "out.write",
+  createTask: "out.tasks", logActivity: "out.tasks", checkAddress: "out.write", saveReceivedFiles: "out.write",
   related: "search.view", // owner-aware outreach (22 Oct): the company page's "related companies in outreach"
   emailName: "search.edit", // email name check (26 Oct)
   pathsPreview: "out.campaigns", // campaign paths (27 Oct)
@@ -1410,7 +1410,7 @@ function campaignActionPerm(data) {
 
 // "Run now" (test campaigns / test mode) sends through the scheduler from here, so this
 // function needs the scheduler's secrets too (27 Oct: without them Resend said "API key is invalid").
-exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, ANTHROPIC_API_KEY] }, async (request) => {
+exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory: "512MiB", secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, ANTHROPIC_API_KEY] }, async (request) => {
   const caller = normEmail(request.auth?.token?.email);
   const data = request.data || {};
   if (!P.hasPerm(request, campaignActionPerm(data))) fail("permission-denied", "not_admin", "You don't have permission to do this.");
@@ -1423,6 +1423,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
     || (data.action === "save" && data.campaign?.startOrder && data.campaign.startOrder.mode !== "added")) await Feat.requireFeature(request, "outreach.paths"); // + who starts first (R10)
   if (["recipientsFor", "setRecipients", "previewRecipient"].includes(data.action)) await Feat.requireFeature(request, "contacts.trustLabels"); // 30 Oct
   if (data.action === "checkAddress") await Feat.requireFeature(request, "outreach.replyContacts"); // 3 Nov
+  if (data.action === "saveReceivedFiles") await Feat.requireFeature(request, "outreach.attachments"); // 3 Nov
   if (["tracksFor", "restartCompany"].includes(data.action) || (data.action === "setRecipients" && data.all === true)) await Feat.requireFeature(request, "outreach.multiRecipient"); // 30 Oct
   if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
   if (data.action === "save" && Array.isArray(data.campaign?.cc) && data.campaign.cc.length) await Feat.requireFeature(request, "outreach.campaignCc"); // 28 Oct
@@ -1472,6 +1473,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, secrets
       case "related": return await relatedOf(data, { ownerAware });
       case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople, trust: await Feat.isOnFor(request, "contacts.trustLabels"), multi: await Feat.isOnFor(request, "outreach.multiRecipient") });
       case "recipientsFor": return await RL.recipientsFor(data);
+      case "saveReceivedFiles": return await require("./files").saveReceived(data, caller);
       case "checkAddress": return await require("./address_check").checkAddress(data); // 3 Nov: free OpenStreetMap look-up, on request
       case "setRecipients": return await RL.setRecipients(data, caller, { multi: await Feat.isOnFor(request, "outreach.multiRecipient") });
       case "previewRecipient": return await RL.previewRecipient(data);

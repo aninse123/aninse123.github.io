@@ -26,6 +26,7 @@ const { onCall } = require("firebase-functions/v2/https");
 const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, orgName } = require("./config");
 const { normEmail } = require("./util");
 const { prepareEmail, deliverEmail, fail } = require("./send_core");
+const Files = require("./files"); // 3 Nov: attachments
 const store = require("./store");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
@@ -50,6 +51,7 @@ function draftRequest(input, isReply) {
     replyCc: isReply && Array.isArray(input.replyCc) ? input.replyCc.slice(0, 20).map(String) : null,
     // 19 Oct (one inbox): "Stop the campaign for this company", ticked by default on a manual reply.
     stopCampaign: isReply && input.stopCampaign === true,
+    attachments: Array.isArray(input.attachments) ? input.attachments.slice(0, 10).map(String) : null, // 3 Nov: ids of files in outreachFiles
   };
 }
 
@@ -88,6 +90,7 @@ async function send(request, callerEmail) {
     subject: req.subject, body: req.body, signatureName: req.signatureName, footer: req.footer,
     replyTo: req.replyTo, replyCc: req.replyCc,
     confirmOverTarget: !!input.confirmOverTarget,
+    attachments: req.attachments,
   });
 
   if (!canSend) {
@@ -100,7 +103,7 @@ async function send(request, callerEmail) {
       redirectedFrom: p.redirectedFrom, isReply: p.isReply,
       recipient: p.isReply ? null : { email: p.redirectedFrom || p.to, name: p.contactName || "", kind: p.recipientKind, personal: !!p.personalAddress },
       request: req, writtenBy: callerEmail, writtenByKey: request.auth?.token?.key || null,
-      status: "draft", events: [], attachments: [], isAutoReply: false, isTest: p.isTest,
+      status: "draft", events: [], attachments: Files.describe(p.attachments), isAutoReply: false, isTest: p.isTest,
       createdAt: FieldValue.serverTimestamp(), createdBy: callerEmail,
     });
     await Usage.countPerson("email.written", callerEmail);
@@ -146,6 +149,7 @@ async function approveDraft(request, callerEmail) {
       threadId: req.threadId, companyId: req.companyId, senderId: req.senderId, to: req.to, recipient: req.recipient,
       templateId: req.templateId, variantKey: req.variantKey, subject: req.subject, body: req.body, signatureName: req.signatureName || null,
       footer: req.footer ?? null, replyTo: req.replyTo || null, replyCc: req.replyCc || null, confirmOverTarget: true,
+      attachments: req.attachments || null, // 3 Nov
     });
     const res = await deliverEmail(p);
     const stoppedCampaigns = await stopAfterReply(request, req, p, draft.writtenBy || callerEmail).catch(() => 0);
@@ -178,7 +182,7 @@ async function returnDraft(request, callerEmail) {
 // outreach address; the conversation records who forwarded it to whom.
 const NOT_SENT = ["draft", "approved", "approving", "cancelled", "returned", "draftSent"];
 async function forwardThread(request, callerEmail) {
-  const { threadId, to, note } = request.data || {};
+  const { threadId, to, note, includeFiles } = request.data || {};
   const want = normEmail(to);
   if (!threadId || typeof threadId !== "string") fail("invalid-argument", "thread_required", "Choose a conversation.");
   const ref = db().doc(`outreachThreads/${threadId}`);
@@ -196,9 +200,11 @@ async function forwardThread(request, callerEmail) {
   const text = `${String(note || "").trim() ? String(note).trim().slice(0, 2000) + "\n\n" : ""}Forwarded from the ${orgName()} Outreach inbox by ${callerEmail}.\nCompany: ${th.companyName || "—"} · Contact: ${th.contactEmail || "—"}\n\n${parts.join("\n\n") || "(no messages)"}\n`;
   const sender = (await db().doc(`outreachSenders/${th.senderId || "_"}`).get()).data();
   if (!sender) fail("failed-precondition", "sender_missing", "The conversation's sending address is no longer set up.");
-  await sendEmail(RESEND_SEND_KEY.value(), { from: `${sender.displayName || orgName()} <${th.senderId}>`, to: [want], subject: `Fwd: ${th.subject || ""}`.slice(0, 300), text }, `fwd_${threadId}_${Date.now()}`);
+  // 3 Nov (outreach.attachments): the attachments received in the conversation can go along (internal forward: any copied file, up to the limits)
+  const files = includeFiles === true ? Files.fromReceived(msgs) : [];
+  await sendEmail(RESEND_SEND_KEY.value(), { from: `${sender.displayName || orgName()} <${th.senderId}>`, to: [want], subject: `Fwd: ${th.subject || ""}`.slice(0, 300), text, ...(files.length ? { attachments: await Files.payload(files) } : {}) }, `fwd_${threadId}_${Date.now()}`);
   await ref.update({ forwards: FieldValue.arrayUnion({ to: want, by: callerEmail, at: Timestamp.now() }) });
-  return { ok: true, to: want, messages: msgs.length };
+  return { ok: true, to: want, messages: msgs.length, files: files.length };
 }
 function ms(t) {
   if (!t) return 0;
@@ -209,7 +215,7 @@ function ms(t) {
 }
 
 const Feat = require("../features"); // feature switches (Team & access → Features)
-exports.outreachSend = onCall({ region: REGION, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET] }, async (request) => {
+exports.outreachSend = onCall({ region: REGION, memory: "1GiB", timeoutSeconds: 120, secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET] }, async (request) => { // 3 Nov: 1 GiB — attachments (up to 20 MB, read from Storage and sent base64) are held in memory
   await Feat.requireFeature(request, "outreach");
   const callerEmail = normEmail(request.auth?.token?.email);
   const action = request.data?.action;

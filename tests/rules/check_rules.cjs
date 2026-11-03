@@ -105,6 +105,11 @@ const cases = [
   C('Partner: Network categories', PARTNER, 'update', 'networkConfig/categories', 'ALLOW', { a: 2 }, { a: 1 }),
   C('Partner: mark a conversation read', PARTNER, 'update', 'outreachThreads/t1', 'ALLOW', { unread: false }, { unread: true }),
   C('Partner: mark a conversation read for myself (readBy)', PARTNER, 'update', 'outreachThreads/t1', 'ALLOW', { unread: true, readBy: { antonio: 'now' } }, { unread: true }),
+  C('Partner: add a file to attach (own name)', PARTNER, 'create', 'outreachFiles/f1', 'ALLOW', { name: 'Deck.pdf', createdBy: ANT }),
+  C('Partner: add a file to attach as somebody else', PARTNER, 'create', 'outreachFiles/f1', 'DENY', { name: 'Deck.pdf', createdBy: 'other@x.pt' }),
+  C('Partner: edit a file in the library', PARTNER, 'update', 'outreachFiles/f1', 'ALLOW', { name: 'Y' }, { name: 'X' }),
+  C('Partner: delete a file from the library', PARTNER, 'delete', 'outreachFiles/f1', 'ALLOW', null, { name: 'X' }),
+  C('Intern: cannot add or delete library files', INTERN, 'delete', 'outreachFiles/f1', 'DENY', null, { name: 'X' }),
   C('Partner: create a list', PARTNER, 'create', 'outreachLists/l1', 'ALLOW', { name: 'X' }),
   C('Partner: add a list member', PARTNER, 'create', 'outreachLists/l1/members/m1', 'ALLOW', { email: 'x@y.pt' }),
   C('Partner: delete a list', PARTNER, 'delete', 'outreachLists/l1', 'ALLOW', null, { name: 'X' }),
@@ -171,7 +176,7 @@ const cases = [
 (async () => {
   const st = fs.readFileSync(path.join(__dirname, '../../storage.rules'), 'utf8');
   const B = '/b/douro-partners.firebasestorage.app/o/';
-  const S = (label, who, method, p, expect) => ({ label, tc: { expectation: expect, request: { auth: { uid: 'u', token: who }, path: B + p, method } } });
+  const S = (label, who, method, p, expect, resource) => ({ label, tc: { expectation: expect, request: { auth: { uid: 'u', token: who }, path: B + p, method, ...(resource ? { resource } : {}) } } });
   const sc = [
     S('Storage: Admin uploads a document', ANDRE, 'create', 'documents/a.pdf', 'ALLOW'),
     S('Storage: the old admin email without the admin role is not the Admin', { email: 'andre.rocha@douropartners.pt' }, 'create', 'documents/a.pdf', 'DENY'),
@@ -182,6 +187,11 @@ const cases = [
     S('Storage: old token without permissions — no upload', NO_CLAIMS, 'create', 'documents/a.pdf', 'DENY'),
     S('Storage: intern — no documents', INTERN, 'get', 'documents/a.pdf', 'DENY'),
     S('Storage: nobody writes Outreach attachments from the browser', PARTNER, 'create', 'outreach/t/a.png', 'DENY'),
+    S('Storage: partner uploads a file to attach (pdf, 1 MB)', PARTNER, 'create', 'outreach/files/f1/Deck.pdf', 'ALLOW', { name: 'outreach/files/f1/Deck.pdf', size: 1000000, contentType: 'application/pdf' }),
+    S('Storage: a file that can run is refused (exe)', PARTNER, 'create', 'outreach/files/f1/x.exe', 'DENY', { name: 'outreach/files/f1/x.exe', size: 1000, contentType: 'application/x-msdownload' }),
+    S('Storage: over 10 MB is refused', PARTNER, 'create', 'outreach/files/f1/Big.pdf', 'DENY', { name: 'outreach/files/f1/Big.pdf', size: 11 * 1024 * 1024, contentType: 'application/pdf' }),
+    S('Storage: someone who can only view cannot upload a file to attach', NO_CLAIMS, 'create', 'outreach/files/f1/Deck.pdf', 'DENY', { name: 'outreach/files/f1/Deck.pdf', size: 1000, contentType: 'application/pdf' }),
+    S('Storage: partner removes a file from the library', PARTNER, 'delete', 'outreach/files/f1/Deck.pdf', 'ALLOW'),
   ];
   const res = await fetch('https://firebaserules.googleapis.com/v1/projects/douro-partners:test', {
     method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },

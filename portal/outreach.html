@@ -467,6 +467,7 @@
               <label class="checkline" style="margin-top:8px;"><input type="checkbox" id="cFooter"> <span>Add the email footer <span class="hint">(optional — Settings → Email footer)</span></span></label>
             </div>
 
+            <div class="field" id="composeAttField" data-feature="outreach.attachments"><label>Attachments</label><div class="attbox" id="composeAtt"></div></div>
             <div class="banner banner--bad" id="composeErr" hidden style="margin-bottom:12px;"></div>
             <div class="actions">
               <button class="btn btn--primary" id="sendBtn">Send email</button>
@@ -611,6 +612,7 @@
           <button class="chip" data-sec="senders" data-perm="out.admin">Addresses</button>
           <button class="chip" data-sec="footer" data-perm="out.admin">Email footer</button>
           <button class="chip" data-sec="templates">Templates</button>
+          <button class="chip" data-sec="files" data-feature="outreach.attachments">Files</button>
           <button class="chip" data-sec="suppression">Suppression list</button>
         </div>
 
@@ -747,6 +749,24 @@
           </div>
 
           <!-- Templates -->
+          <!-- Files (3 Nov, outreach.attachments) -->
+          <div class="card setsec" id="sec-files" hidden style="padding:0;" data-feature="outreach.attachments">
+            <div style="padding:18px 20px 10px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+              <div><h2 style="margin:0;">Files</h2>
+                <p class="hint" style="margin-top:6px;">Files you can attach to a reply, a new email or a template (a template's files go with every email that uses it). Documents, spreadsheets, slides and images; at most 10 MB each.</p></div>
+              <label class="btn btn--primary btn--sm" style="cursor:pointer;" data-perm="out.write">Upload files<input type="file" id="filesUp" multiple hidden accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.txt,.csv,.png,.jpg,.jpeg,.gif"></label>
+            </div>
+            <div class="table-wrap"><table>
+              <thead><tr><th>File</th><th>Type</th><th>Size</th><th>Added</th><th>Used in</th><th></th></tr></thead>
+              <tbody id="filesBody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+            </table></div>
+            <h3 style="padding:14px 20px 4px;margin:0;font-size:0.95rem;">Saved from replies</h3>
+            <div class="table-wrap"><table>
+              <thead><tr><th>File</th><th>Company</th><th>Size</th><th>Saved</th><th></th></tr></thead>
+              <tbody id="filesRecvBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+            </table></div>
+          </div>
+
           <div class="card setsec" id="sec-templates" hidden style="padding:0;">
             <div style="padding:18px 20px 10px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
               <div><h2 style="margin:0;">Templates</h2>
@@ -803,6 +823,7 @@
     import { isOn, stateOf, currentFlags } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
+    import { MAX_FILES, MAX_EACH, MAX_TOTAL, TYPES, extOf, safeName, contentTypeFor, fmtSize, fileProblem, lisbonToUtc, buildIcs } from './attachments.js'; // 3 Nov: files on outgoing email, calendar invites
     import { extractContacts, compareContacts } from './reply-contacts.js'; // 3 Nov: contact details found in a reply
     import { isUnreadFor, readKeyOf } from './read-state.js'; // 3 Nov: read state per person
     import { addressLines, letterAddressParts } from './company-primary.js'; // 3 Nov: the envelope address = street, then postcode and municipality, never repeated
@@ -819,7 +840,7 @@
     import {
       collection, doc, query, where, orderBy, limit, onSnapshot, getDocs, getDoc, serverTimestamp, documentId, getCountFromServer, startAfter
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
-    import { ref, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
+    import { ref, getDownloadURL, uploadBytes, deleteObject } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
     import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
 
     // ── Constants ──────────────────────────────────────────────
@@ -1559,7 +1580,7 @@
       $('app').style.display = 'block';
       setupTabs(); setupFilters(); setupCompose(); setupSettings(); setupMetrics(); setupCampaigns();
       restoreWhere();
-      watchSettings(); watchSenders(); watchUsage(); watchThreads();
+      watchSettings(); watchSenders(); watchUsage(); watchThreads(); watchFiles(); renderAttachBox('composeAtt', composeAtt, composeAttOpts); wireFilesSection();
       setInterval(() => { if (dayUnsubs.day !== utcDay()) watchUsage(); }, 5 * 60 * 1000); // re-point at the new UTC day
     });
 
@@ -2169,6 +2190,7 @@
         <div class="hint" id="sibLine" style="margin:6px 0 0;"></div>
         <div id="replyContacts" style="margin:6px 0 0;"></div>
         <div id="relLine" style="margin:6px 0 0;"></div>
+        <div class="hint" id="coFilesLine" style="margin:6px 0 0;"></div>
         <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button>
           <button class="btn btn--ghost btn--sm" id="taskBtn" data-perm="out.tasks" title="Plan a call or other task for this company — or record one that already happened">＋ Task or activity</button></div>
         <div class="classify"><span class="classify__label">Classify</span>${CATEGORIES.map(([k, l]) =>
@@ -2177,6 +2199,7 @@
       if (isOn('outreach.multiRecipient') && t.companyId) updateSibLine(t);
       updateReplyContacts(t);
       updateRelated(t);
+      updateCompanyFiles(t);
       if (t.companyId && !coCache.has(t.companyId) && !headCoLoading.has(t.companyId)) { headCoLoading.add(t.companyId); loadCompaniesFor([t.companyId]).catch(() => {}).finally(() => { headCoLoading.delete(t.companyId); if (selectedId === t.id) renderThreadHead(); }); }
       $('assignBtn')?.addEventListener('click', () => assignCompany(t));
       $('viewHead').querySelectorAll('[data-addaddr]').forEach(b => b.addEventListener('click', () => openAddToCompany(t, b.dataset.addaddr)));
@@ -2270,15 +2293,17 @@
     }
     // I15: forward the conversation to a team member (internal only).
     function openForward(t) {
+      const nFiles = isOn('outreach.attachments') ? threadMessages.filter(m => m.direction === 'in').flatMap(m => (m.attachments || []).filter(a => a.storagePath && !a.flagged)).length : 0;
       const team = (window.teamDir || []).filter(m => m.active !== false && m.contactEmail);
       const opts = [...new Map([[String(me || '').toLowerCase(), 'Me'], ...team.map(m => [String(m.contactEmail).toLowerCase(), m.label])]).entries()];
       openModal('Forward this conversation', `
         <div class="field"><label for="fwdTo">To</label><select id="fwdTo">${opts.map(([e, l]) => `<option value="${esc(e)}">${esc(l)} — ${esc(e)}</option>`).join('')}</select></div>
         <div class="field"><label for="fwdNote">Note on top (optional)</label><textarea id="fwdNote" rows="3" placeholder="e.g. Can you call them this week?"></textarea></div>
+        ${nFiles ? `<label class="checkline"><input type="checkbox" id="fwdFiles" checked> <span>Include the ${nFiles} file${nFiles === 1 ? '' : 's'} received in this conversation</span></label>` : ''}
         <p class="hint">The whole conversation goes as plain text, from ${esc(t.senderId || 'its address')}. Only team addresses — to copy someone outside, reply instead.</p>`,
         async () => {
-          const r = (await callSend({ action: 'forward', threadId: t.id, to: $('fwdTo').value, note: $('fwdNote').value })).data;
-          toast(`Forwarded to ${r.to} (${num(r.messages)} message${r.messages === 1 ? '' : 's'}).`);
+          const r = (await callSend({ action: 'forward', threadId: t.id, to: $('fwdTo').value, note: $('fwdNote').value, ...($('fwdFiles')?.checked ? { includeFiles: true } : {}) })).data;
+          toast(`Forwarded to ${r.to} (${num(r.messages)} message${r.messages === 1 ? '' : 's'}${r.files ? `, ${r.files} file${r.files === 1 ? '' : 's'}` : ''}).`);
           return true;
         }, 'Forward');
     }
@@ -2300,12 +2325,13 @@
             <span>${tags} <span style="font-variant-numeric:tabular-nums;">${esc(m.createdAt ? dtFmt.format(new Date(tsMs(m.createdAt))) : '')}</span></span></div>
           ${rcptLine(m)}
           <div class="msg__body">${esc(body)}</div>
-          ${atts}${unsub}
+          ${atts}${saveBarHtml(m, t)}${unsub}
           ${canFull ? `<div class="msg__actions"><button class="btn btn--ghost btn--sm" data-full="${esc(m.id)}">Show full email</button></div><div id="full-${esc(m.id)}"></div>` : ''}
         </article>`;
       }).join('');
       $('msgs').querySelectorAll('[data-full]').forEach(b => b.addEventListener('click', () => toggleFull(b)));
       $('msgs').querySelectorAll('[data-att]').forEach(b => b.addEventListener('click', () => openAttachment(b)));
+      if (t) wireSaveBars(t);
       $('msgs').querySelectorAll('[data-unsub]').forEach(b => b.addEventListener('click', () => suppressThreadContact(threads.find(x => x.id === selectedId), 'reply')));
       fillReplyRecipients();
     }
@@ -2398,9 +2424,11 @@
           <span class="hint">Goes out as a reply in the same conversation (Re: subject, threading headers), with your signature and the previous message quoted below it. Fields like {{company.shortName}} work here too.</span>
           <label class="checkline" id="replyStopWrap" hidden style="margin-top:6px;"><input type="checkbox" id="replyStop" checked> <span>Stop the campaign for this company <span class="hint" id="replyStopHint"></span></span></label>
           <label class="checkline" style="margin-top:6px;"><input type="checkbox" id="replyFooter"${(typeof t.footer === 'boolean' ? t.footer : footerDefault('company')) ? ' checked' : ''}> <span>Add the email footer <span class="hint">(${typeof t.footer === 'boolean' ? 'as in this conversation\'s first email' : 'Settings default'})</span></span></label></div>
+        ${attachBoxHtml('replyAtt')}
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
         <button class="btn btn--primary" id="replyBtn" data-perm="out.write">${esc(SEND_LABEL(true))}</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
+      replyAtt.ids = []; renderAttachBox('replyAtt', replyAtt, { invite: true, inviteCtx: () => replyInviteCtx(t) }); // 3 Nov
       $('replyFwdBtn')?.addEventListener('click', () => openForward(t));
       $('replyTaskBtn')?.addEventListener('click', () => openThreadTask(t));
       box.querySelectorAll('[data-rmode]').forEach(b => b.addEventListener('click', () => { replyMode = b.dataset.rmode; replyEdited = false; fillReplyRecipients(); }));
@@ -2435,6 +2463,169 @@
       } catch (e) { /* the box just doesn't show */ }
     }
 
+    // ── 3 Nov (outreach.attachments): files on outgoing email — the library (Settings → Files), upload on the spot, calendar invites, and
+    // saving the files received in a reply to the company. The server checks everything again when it sends.
+    let filesLib = [], filesRecv = [];
+    const fileById = new Map(), coFilesCache = new Map(), replyAtt = { ids: [] }, composeAtt = { ids: [] };
+    function watchFiles() {
+      if (!isOn('outreach.attachments')) return;
+      onSnapshot(query(collection(db, 'outreachFiles'), where('library', '==', true)), (snap) => {
+        filesLib = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+        filesLib.forEach(f => fileById.set(f.id, f));
+        renderFilesSection();
+        ['replyAtt', 'composeAtt'].forEach(id => { if ($(id)) $(id).dispatchEvent(new Event('attrefresh')); });
+      }, (e) => console.warn('files', e));
+      onSnapshot(query(collection(db, 'outreachFiles'), where('source', '==', 'received'), limit(200)), (snap) => {
+        filesRecv = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt));
+        filesRecv.forEach(f => fileById.set(f.id, f));
+        renderFilesSection();
+      }, (e) => console.warn('received files', e));
+    }
+    async function openStoredFile(f) {
+      try { window.open(await getDownloadURL(ref(storage, f.storagePath)), '_blank', 'noopener'); } catch (e) { toast('Could not open the file: ' + e.message); }
+    }
+    // Upload one file: Storage first, then its record. keep = it stays in the library.
+    async function uploadFile(file, { keep = true, source = 'upload', contentType = null, companyId = null } = {}) {
+      const id = doc(collection(db, 'outreachFiles')).id, filename = safeName(file.name), path = `outreach/files/${id}/${filename}`;
+      const ct = contentType || contentTypeFor(file.name);
+      await uploadBytes(ref(storage, path), file, { contentType: ct });
+      const data = { name: file.name, filename, storagePath: path, contentType: ct, size: file.size, library: !!keep, source, createdAt: serverTimestamp(), createdBy: me, ...(companyId ? { companyId } : {}) };
+      await setDoc(doc(db, 'outreachFiles', id), data);
+      fileById.set(id, { id, ...data, createdAt: null });
+      return id;
+    }
+    // The box under a reply, a new email or a template: chips of the chosen files, Attach a file, Calendar invite.
+    const attachBoxHtml = (domId) => (isOn('outreach.attachments') ? `<div class="attbox" id="${domId}" style="margin:8px 0;"></div>` : '');
+    function renderAttachBox(domId, state, opts = {}) {
+      const el = $(domId); if (!el) return;
+      const chips = state.ids.map(id => { const f = fileById.get(id); return `<span class="att">📎 ${esc(f?.name || 'file')}${f ? ` <span class="hint">· ${esc(fmtSize(f.size))}</span>` : ''} <button type="button" class="link" data-attrm="${esc(id)}" aria-label="Remove ${esc(f?.name || 'file')}">✕</button></span>`; }).join(' ');
+      el.innerHTML = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${chips}
+        <button type="button" class="btn btn--ghost btn--sm" data-attadd>＋ Attach a file</button>
+        ${opts.invite ? '<button type="button" class="btn btn--ghost btn--sm" data-attcal title="Send a calendar invite for a meeting or a visit">📅 Calendar invite</button>' : ''}</div>
+        ${state.ids.length && opts.firstEmail?.() ? '<div class="hint" style="margin-top:4px;">⚠ A file on a first email makes it more likely to land in spam. Consider sending it in a reply, or in a later email.</div>' : ''}`;
+      const again = () => { renderAttachBox(domId, state, opts); opts.onChange?.(); };
+      el.querySelectorAll('[data-attrm]').forEach(b => b.addEventListener('click', () => { state.ids = state.ids.filter(x => x !== b.dataset.attrm); again(); }));
+      el.querySelector('[data-attadd]')?.addEventListener('click', () => openAttachPicker(state, again, opts));
+      el.querySelector('[data-attcal]')?.addEventListener('click', () => openInviteModal(opts.inviteCtx?.() || {}, (id) => { state.ids.push(id); again(); }));
+      el.onattrefresh = null; el.addEventListener('attrefresh', () => renderAttachBox(domId, state, opts), { once: true });
+    }
+    function openAttachPicker(state, done, opts = {}) {
+      const sizeOf = (id) => ({ size: fileById.get(id)?.size || 0 });
+      openModal('Attach files', `
+        <p class="hint" style="margin-bottom:8px;">Pick files from the library, or upload new ones. At most ${MAX_FILES} files, ${MAX_EACH / 1048576} MB each and ${MAX_TOTAL / 1048576} MB together: documents, spreadsheets, slides and images.</p>
+        <div style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-bottom:10px;">${filesLib.length ? filesLib.map(f => `<label class="checkline" style="display:flex;gap:8px;padding:3px 0;"><input type="checkbox" data-apf="${esc(f.id)}"${state.ids.includes(f.id) ? ' checked' : ''}> <span>${esc(f.name)} <span class="hint">· ${esc(fmtSize(f.size))}</span></span></label>`).join('') : '<span class="hint">The library is empty. Upload a file below.</span>'}</div>
+        <div class="field"><label for="apUp">Upload new files</label><input type="file" id="apUp" multiple accept="${esc(Object.keys(TYPES).map(e => '.' + e).join(','))}"></div>
+        ${opts.keepAlways ? '' : '<label class="checkline"><input type="checkbox" id="apKeep" checked> <span>Keep the uploaded files in the library for next time</span></label>'}`,
+        async () => {
+          const picked = [...document.querySelectorAll('[data-apf]:checked')].map(b => b.dataset.apf);
+          const oneOff = state.ids.filter(id => !filesLib.some(f => f.id === id)); // an invite or a one-off file already on the email stays
+          let next = [...new Set([...oneOff, ...picked])];
+          if (next.length > MAX_FILES) { modalError(`At most ${MAX_FILES} files per email.`); return false; }
+          const keep = opts.keepAlways ? true : !!$('apKeep')?.checked;
+          for (const file of [...($('apUp').files || [])]) {
+            const problem = fileProblem(file, next.map(sizeOf));
+            if (problem) { modalError(problem); return false; }
+            next.push(await uploadFile(file, { keep }));
+          }
+          const total = next.map(id => fileById.get(id)?.size || 0).reduce((a, b) => a + b, 0);
+          if (total > MAX_TOTAL) { modalError(`The files add up to more than ${MAX_TOTAL / 1048576} MB.`); return false; }
+          state.ids = next; done();
+          return true;
+        }, 'Attach');
+    }
+    // A calendar invite (.ics): the receiver accepts it in Gmail, Outlook or Apple Calendar. Written in UTC from Lisbon time.
+    function openInviteModal(ctx, done) {
+      const tomorrow = new Date(Date.now() + 86400000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      openModal('Calendar invite', `
+        <div class="field"><label for="ivTitle">Title</label><input id="ivTitle" value="${esc(ctx.title || 'Reunião')}"></div>
+        <div class="row2">
+          <div class="field"><label for="ivDate">Date</label><input type="date" id="ivDate" value="${tomorrow}"></div>
+          <div class="field"><label for="ivTime">Time (Lisbon)</label><input type="time" id="ivTime" value="10:00"></div>
+        </div>
+        <div class="field"><label for="ivMin">Duration (minutes)</label><input type="number" id="ivMin" value="30" min="10" max="480" step="5" style="max-width:120px;"></div>
+        <div class="field"><label for="ivWhere">Where</label><input id="ivWhere" value="${esc(ctx.where || '')}" placeholder="Address — or Online (put the link in the notes)"></div>
+        <div class="field"><label for="ivNote">Notes (optional)</label><textarea id="ivNote" rows="3"></textarea></div>
+        <p class="hint">Sent as an invite from ${esc(ctx.organizer?.email || 'the sending address')} to ${esc((ctx.attendees || []).map(a => a.email).join(', ') || 'the addresses in To')}. Nothing is sent until you send the email.</p>`,
+        async () => {
+          const title = $('ivTitle').value.trim(), date = $('ivDate').value, time = $('ivTime').value, minutes = Number($('ivMin').value) || 30;
+          if (!title || !date || !time) { modalError('Give the title, the date and the time.'); return false; }
+          if (!ctx.organizer?.email) { modalError('There is no sending address yet.'); return false; }
+          const start = lisbonToUtc(date, time);
+          const ics = buildIcs({ uid: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}@invite`, title, start, minutes, location: $('ivWhere').value.trim(), description: $('ivNote').value.trim(), organizer: ctx.organizer, attendees: (ctx.attendees || []).filter(a => a.email) });
+          const id = await uploadFile(new File([ics], 'convite.ics', { type: 'text/calendar' }), { keep: false, source: 'invite', contentType: 'text/calendar; method=REQUEST; charset=UTF-8' });
+          done(id);
+          return true;
+        }, 'Attach the invite');
+    }
+    const orgSenderName = (id) => (senders.find(s => s.id === id)?.displayName || '');
+    function replyInviteCtx(t) {
+      const co = coCache.get(t.companyId);
+      return { title: `Reunião — ${t.companyName || ''}`.trim(), where: co ? addressLines(co).join(', ') : '', organizer: { name: orgSenderName(t.senderId), email: t.senderId }, attendees: addrList($('replyTo')?.value || '').map(a => ({ name: a.name || '', email: a.email })) };
+    }
+    function composeInviteCtx() {
+      const co = picked ? coCache.get(picked.id) || picked : null;
+      return { title: `Reunião — ${picked?.name || ''}`.trim(), where: co ? addressLines(co).join(', ') : '', organizer: { name: orgSenderName($('cFrom')?.value), email: $('cFrom')?.value || '' }, attendees: addrList($('cTo')?.value || '').map(a => ({ name: a.name || '', email: a.email })) };
+    }
+    // Settings → Files: the library, and the files saved from replies.
+    function renderFilesSection() {
+      const body = $('filesBody'); if (!body) return;
+      const used = (id) => (templatesAll || []).filter(t => (t.attachments || []).includes(id));
+      body.innerHTML = filesLib.length ? filesLib.map(f => { const u = used(f.id); return `<tr><td><b>${esc(f.name)}</b></td><td class="hint">${esc(extOf(f.name).toUpperCase())}</td><td>${esc(fmtSize(f.size))}</td><td class="hint">${esc(String(f.createdBy || '').split('@')[0])}${f.createdAt ? ' · ' + esc(dayFmt.format(new Date(tsMs(f.createdAt)))) : ''}</td><td class="hint">${u.length ? esc(u.map(t => t.name).join(', ')) : '—'}</td>
+        <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-fopen="${esc(f.id)}">Open</button> <button class="btn btn--danger btn--sm" data-fdel="${esc(f.id)}" data-perm="out.templates">Delete</button></td></tr>`; }).join('')
+        : '<tr><td colspan="6" class="empty">No files yet. Upload one, or attach a file to an email and keep it in the library.</td></tr>';
+      const rb = $('filesRecvBody');
+      if (rb) rb.innerHTML = filesRecv.length ? filesRecv.map(f => `<tr><td><b>${esc(f.name)}</b></td><td><a href="/portal/search.html?company=${encodeURIComponent(f.companyId || '')}">${esc(coCache.get(f.companyId)?.name || 'Company')}</a></td><td>${esc(fmtSize(f.size))}</td><td class="hint">${f.createdAt ? esc(dayFmt.format(new Date(tsMs(f.createdAt)))) : ''}</td><td style="text-align:right;"><button class="btn btn--ghost btn--sm" data-fopen="${esc(f.id)}">Open</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">None yet. When a reply comes with files, the Inbox offers to save them to the company.</td></tr>';
+      const sec = $('sec-files'); if (!sec) return;
+      sec.querySelectorAll('[data-fopen]').forEach(b => { b.onclick = () => { const f = fileById.get(b.dataset.fopen); if (f) openStoredFile(f); }; });
+      sec.querySelectorAll('[data-fdel]').forEach(b => { b.onclick = async () => {
+        const f = fileById.get(b.dataset.fdel), u = used(b.dataset.fdel); if (!f) return;
+        if (!confirm(u.length ? `"${f.name}" is attached to ${u.map(t => '"' + t.name + '"').join(', ')}. Delete it anyway? Those templates will send without it.` : `Delete "${f.name}" from the library?`)) return;
+        try { await deleteObject(ref(storage, f.storagePath)).catch(() => {}); await deleteDoc(doc(db, 'outreachFiles', f.id)); toast('File deleted.'); } catch (e) { toast('Could not delete it: ' + errText(e)); }
+      }; });
+    }
+    function wireFilesSection() {
+      $('filesUp')?.addEventListener('change', async (e) => {
+        const files = [...e.target.files]; e.target.value = '';
+        for (const file of files) {
+          const problem = fileProblem(file, []);
+          if (problem) { toast(problem); continue; }
+          try { await uploadFile(file, { keep: true }); toast(`${file.name} is in the library.`); } catch (err) { toast('Could not upload it: ' + errText(err)); }
+        }
+      });
+    }
+    // The files received in a reply: offer to keep them with the company (the file is copied; nothing is sent anywhere).
+    const saveAsked = (mid) => { try { return !!localStorage.getItem('attSaveNo:' + mid); } catch (e) { return false; } };
+    function saveBarHtml(m, t) {
+      if (!isOn('outreach.attachments') || m.direction === 'out' || !t?.companyId) return '';
+      const todo = (m.attachments || []).filter((a, i) => a.storagePath && !(m.savedAttachments || []).includes(i));
+      if (!todo.length || saveAsked(m.id)) return '';
+      return `<div class="banner" style="margin-top:8px;"><span>Save ${todo.length === 1 ? 'this file' : 'these ' + todo.length + ' files'} to ${esc(t.companyName || 'the company')}'s files?</span><button class="btn btn--ghost btn--sm" data-attsave="${esc(m.id)}" data-perm="out.write">Save</button><button class="btn btn--ghost btn--sm" data-attsaveno="${esc(m.id)}">Not now</button></div>`;
+    }
+    function wireSaveBars(t) {
+      $('msgs').querySelectorAll('[data-attsaveno]').forEach(b => b.addEventListener('click', () => { try { localStorage.setItem('attSaveNo:' + b.dataset.attsaveno, '1'); } catch (e) {} renderMessages(); }));
+      $('msgs').querySelectorAll('[data-attsave]').forEach(b => b.addEventListener('click', async () => {
+        const m = threadMessages.find(x => x.id === b.dataset.attsave); if (!m) return;
+        b.disabled = true; let n = 0;
+        for (const [i, a] of (m.attachments || []).entries()) {
+          if (!a.storagePath || (m.savedAttachments || []).includes(i)) continue;
+          if (a.flagged && !confirm(`"${a.filename}" is a risky file type. Save it to the company anyway?`)) continue;
+          try { await callCampaign({ action: 'saveReceivedFiles', messageId: m.id, index: i }); n++; } catch (e) { toast('Could not save ' + a.filename + ': ' + errText(e)); }
+        }
+        coFilesCache.delete(t.companyId); updateCompanyFiles(t);
+        if (n) toast(`${n} file${n === 1 ? '' : 's'} saved to ${t.companyName || 'the company'}.`);
+      }));
+    }
+    async function updateCompanyFiles(t) {
+      const el = $('coFilesLine'); if (!el) return;
+      if (!isOn('outreach.attachments') || !t.companyId) { el.innerHTML = ''; return; }
+      let list = coFilesCache.get(t.companyId);
+      if (!list) {
+        try { const s = await getDocs(query(collection(db, 'outreachFiles'), where('companyId', '==', t.companyId), limit(30))); addReads(s.size || 1); list = s.docs.map(d => ({ id: d.id, ...d.data() })); coFilesCache.set(t.companyId, list); list.forEach(f => fileById.set(f.id, f)); } catch (e) { return; }
+      }
+      if (selectedId !== t.id || !$('coFilesLine')) return;
+      $('coFilesLine').innerHTML = list.length ? `Company files (${list.length}): ${list.map(f => `<button type="button" class="att" data-cofile="${esc(f.id)}" title="Open">📎 ${esc(f.name)}</button>`).join(' ')}` : '';
+      $('coFilesLine').querySelectorAll('[data-cofile]').forEach(b => b.addEventListener('click', () => { const f = fileById.get(b.dataset.cofile); if (f) openStoredFile(f); }));
+    }
     async function sendReply(t) {
       const body = $('replyText').value.trim();
       const err = $('replyErr'); err.hidden = true;
@@ -2449,7 +2640,8 @@
       const btn = $('replyBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
       try {
         const stopCampaign = !!($('replyStopWrap') && !$('replyStopWrap').hidden && $('replyStop')?.checked);
-        const res = await sendWithConfirm({ threadId: t.id, body, replyTo, replyCc, requestId: requestId(), footer: !!$('replyFooter')?.checked, ...(stopCampaign ? { stopCampaign: true } : {}) });
+        const res = await sendWithConfirm({ threadId: t.id, body, replyTo, replyCc, requestId: requestId(), footer: !!$('replyFooter')?.checked, ...(stopCampaign ? { stopCampaign: true } : {}), ...(replyAtt.ids.length ? { attachments: replyAtt.ids } : {}) });
+        if (res) { replyAtt.ids = []; renderAttachBox('replyAtt', replyAtt, { invite: true, inviteCtx: () => replyInviteCtx(t) }); }
         if (res?.draft) { $('replyText').value = ''; toast('Reply saved — it waits in Tasks → To approve until André or António sends it.' + (stopCampaign ? ' The campaign stops when it\'s sent.' : '')); }
         else if (res) { $('replyText').value = ''; if ($('replyStopWrap')) $('replyStopWrap').hidden = true; toast((res.warnings?.length ? 'Reply sent. ' + res.warnings[0] : 'Reply sent.') + (res.stoppedCampaigns ? ' The company\'s campaign is stopped.' : '')); }
       } catch (e) { err.textContent = errText(e); err.hidden = false; }
@@ -3030,6 +3222,7 @@
         (missing.length ? ` · <span style="color:var(--danger)">empty: ${missing.map(esc).join(', ')}</span>` : '');
     }
 
+    const composeAttOpts = { invite: true, inviteCtx: () => composeInviteCtx(), firstEmail: () => true };
     async function sendNew() {
       const err = $('composeErr'); err.hidden = true;
       const payload = {
@@ -3037,6 +3230,7 @@
         subject: $('cSubject').value, body: $('cBody').value, requestId: requestId(),
         ...($('cSig')?.value ? { signatureName: $('cSig').value } : {}),
         footer: !!$('cFooter')?.checked,
+        ...(composeAtt.ids.length ? { attachments: composeAtt.ids } : {}), // 3 Nov
       };
       const rcp = picked ? chosenRecipient() : null;
       if (rcp) payload.recipient = { email: rcp.email };
@@ -3049,10 +3243,10 @@
         const res = await sendWithConfirm(payload);
         if (res?.draft) {
           toast('Saved — it waits in Tasks → To approve until André or António sends it.');
-          $('cSubject').value = ''; $('cBody').value = ''; renderPreview();
+          $('cSubject').value = ''; $('cBody').value = ''; composeAtt.ids = []; renderAttachBox('composeAtt', composeAtt, composeAttOpts); renderPreview();
         } else if (res) {
           toast(res.warnings?.length ? 'Email sent. ' + res.warnings[0] : `Email sent${res.isTest ? ' (test)' : ''}.`);
-          $('cSubject').value = ''; $('cBody').value = ''; renderPreview();
+          $('cSubject').value = ''; $('cBody').value = ''; composeAtt.ids = []; renderAttachBox('composeAtt', composeAtt, composeAttOpts); renderPreview();
           selectedId = res.threadId; showTab('inbox'); openThread(res.threadId);
         }
       } catch (e) { err.textContent = errText(e); err.hidden = false; }
@@ -3751,6 +3945,7 @@
 
     function openTemplate(t) {
       const tpl = t || { id: null, name: '', language: 'pt', status: 'draft', kind: 'email', variants: [{ key: 'A', subject: '', body: '' }] };
+      const tplAtt = { ids: [...(tpl.attachments || [])] }; // 3 Nov: files that go with every email of this template
       const kindNow = () => $('tKind')?.value || tpl.kind || 'email';
       let variants = (tpl.variants || []).map(v => ({ ...v }));
       const variantHtml = () => variants.map((v, i) => `
@@ -3771,6 +3966,7 @@
         <div class="field"><label for="tKind">Used for</label><select id="tKind">${TEMPLATE_KINDS.map(([k, l]) => `<option value="${k}"${(tpl.kind || 'email') === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
           <span class="hint">Email templates appear in Compose, replies and email steps; letters, messages and call scripts in the matching campaign steps and tasks.</span></div>
         <p class="hint" style="margin:-4px 0 6px;">Click a field to insert it where you're typing (subject or message). Give a fallback after <code>|</code> for fields that can be empty, e.g. <code>{{contact.firstName|Olá}}</code>. Only <b>active</b> templates can be used.</p>
+        ${isOn('outreach.attachments') ? `<div class="field"><label>Attachments</label>${attachBoxHtml('tAtt')}<span class="hint">Files that go with every email that uses this template. On the first email of a campaign a file makes it more likely to land in spam.</span></div>` : ''}
         <div class="vars" id="tVars" style="margin-bottom:10px;">${varBarHtml()}</div>
         <div id="tVariants">${variantHtml()}</div>
         <button type="button" class="btn btn--ghost btn--sm" id="tAddVar">Add variant</button>`,
@@ -3781,7 +3977,7 @@
           const kind = $('tKind').value;
           const needsSubject = kind === 'email';
           if (variants.some(v => (needsSubject && !v.subject.trim()) || !v.body.trim())) { modalError(needsSubject ? 'Every variant needs a subject and a message.' : 'Every variant needs a message.'); return false; }
-          const data = { name, kind, language: $('tLang').value, status: $('tStatus').value, layout: kind === 'letter' ? 'letter' : 'plain', signs: $('tSigns').checked, variants, updatedAt: serverTimestamp(), updatedBy: me };
+          const data = { name, kind, language: $('tLang').value, status: $('tStatus').value, layout: kind === 'letter' ? 'letter' : 'plain', signs: $('tSigns').checked, variants, ...(isOn('outreach.attachments') ? { attachments: kind === 'email' ? tplAtt.ids : [] } : {}), updatedAt: serverTimestamp(), updatedBy: me };
           if (t?.id) await updateDoc(doc(db, 'outreachTemplates', t.id), data);
           else await addDoc(collection(db, 'outreachTemplates'), { ...data, complianceBlockId: 'default', createdAt: serverTimestamp(), createdBy: me });
           toast(`Template "${name}" saved.`);
@@ -3796,6 +3992,7 @@
       function rerender() { $('tVariants').innerHTML = variantHtml(); bindRemove(); $('tVariants').querySelectorAll('[data-subjwrap]').forEach(w => { w.hidden = ['message', 'script'].includes(kindNow()); }); }
       function bindRemove() { $('tVariants').querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => { collect(); variants.splice(Number(b.dataset.rm), 1); rerender(); })); }
       bindRemove();
+      renderAttachBox('tAtt', tplAtt, { keepAlways: true }); // 3 Nov: the template's own files (always kept in the library)
       wireVarBar($('tVars'), $('tVariants'), 'input[data-f="subject"], textarea[data-f="body"]');
       $('tKind').addEventListener('change', () => { collect(); rerender(); $('tVariants').querySelectorAll('[data-subjwrap]').forEach(w => { w.hidden = ['message', 'script'].includes(kindNow()); }); });
       $('tVariants').querySelectorAll('[data-subjwrap]').forEach(w => { w.hidden = ['message', 'script'].includes(kindNow()); });

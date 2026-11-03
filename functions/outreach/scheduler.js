@@ -686,6 +686,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
 
 exports.outreachScheduler = onSchedule({
   region: REGION,
+  memory: "1GiB", // 3 Nov: a template can carry files (read from Storage and sent base64)
   schedule: "every 10 minutes",
   timeZone: "Europe/Lisbon",
   secrets: [RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, ANTHROPIC_API_KEY],
