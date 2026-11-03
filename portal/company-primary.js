@@ -1,0 +1,50 @@
+// A company's own email, phone, LinkedIn, website and address (3 Nov 2026, contacts.trustLabels). The first of each kind is a single field on
+// the company (companyEmail …), from the registry / Orbis; more are added to searchCompanies.reach. The ★ on an added one makes it the
+// company's own value: the old one moves into the list, and the field is marked as chosen by the team, so an Orbis import never writes over it.
+
+export const PRIMARY_FIELDS = { email: 'companyEmail', phone: 'companyPhone', linkedin: 'linkedinUrl', website: 'website', address: 'hqAddress' };
+const lc = (s) => String(s || '').trim().toLowerCase();
+
+// entry: the reach entry that becomes the company's own. Returns { patch, list } (patch = fields to write on the company), or null.
+export function swapCompanyPrimary(c, entry, { by = '', at = '', newId = () => 'old' + Math.random().toString(36).slice(2, 10) } = {}) {
+  const field = entry && PRIMARY_FIELDS[entry.type];
+  if (!field) return null;
+  const old = c[field], isMail = entry.type === 'email';
+  const list = (c.reach || []).filter((e) => e && e.id !== entry.id);
+  if (old && lc(old) !== lc(entry.value)) {
+    const bounced = isMail && c.companyEmailBounce && lc(c.companyEmailBounce.email) === lc(old);
+    const confirmed = isMail && c.companyEmailConfirmedAt && lc(c.companyEmailConfirmedFor) === lc(old);
+    list.push({
+      id: newId(), type: entry.type, value: old, source: 'orbis', origin: 'database', primary: false, addedBy: by, addedAt: at,
+      note: bounced ? (c.companyEmailBounce.kind === 'no_mx' ? 'no mail servers' : 'bounced') : 'previous main (registry / Orbis)',
+      status: bounced ? 'bounced' : 'ok',
+      ...(confirmed ? { confirmedAt: c.companyEmailConfirmedAt, confirmedBy: c.companyEmailConfirmedBy || null } : {}),
+    });
+  }
+  const patch = { [field]: entry.value, reach: list, companyPrimaryChosen: { ...(c.companyPrimaryChosen || {}), [field]: { by, at } } };
+  if (isMail) {
+    // The confirmation and the bounce belong to one address: the new one has its own. Typed by the team = confirmed by the team.
+    const typed = (entry.origin || 'team') === 'team' || entry.origin === 'person';
+    const confirmedAt = entry.confirmedAt || (typed ? entry.addedAt || at : null);
+    Object.assign(patch, confirmedAt
+      ? { companyEmailConfirmedAt: confirmedAt, companyEmailConfirmedBy: entry.confirmedBy || entry.addedBy || by || null, companyEmailConfirmedFor: lc(entry.value), companyEmailConfirmedVia: entry.confirmedVia || null }
+      : { companyEmailConfirmedAt: null, companyEmailConfirmedBy: null, companyEmailConfirmedFor: null, companyEmailConfirmedVia: null });
+    if (c.companyEmailBounce && lc(c.companyEmailBounce.email) !== lc(entry.value)) patch.companyEmailBounce = null; // it moved to the old entry's status
+  }
+  return { patch, list };
+}
+
+// An import row's fields, without the ones the team chose (companyPrimaryChosen) on that company.
+export function withoutChosen(match, payload) {
+  const chosen = (match && match.companyPrimaryChosen) || {}, out = { ...payload };
+  for (const f of Object.values(PRIMARY_FIELDS)) if (chosen[f]) delete out[f];
+  return out;
+}
+
+// The company form saved a different value for one of these fields: it is the team's choice from now on.
+export function chosenAfterEdit(prev, changed, by = '', at = '') {
+  const out = { ...((prev && prev.companyPrimaryChosen) || {}) };
+  let any = false;
+  for (const f of Object.values(PRIMARY_FIELDS)) if (f in changed && changed[f]) { out[f] = { by, at }; any = true; }
+  return any ? out : null;
+}

@@ -1372,6 +1372,7 @@ import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-u
 import { summaryOf as contactSummaryOf, contactedHtml, flagsHtml, tipHtml as contactTipHtml, CT_CSS } from './contact-summary.js'; // 27 Oct (search.contactColumns)
 document.head.insertAdjacentHTML('beforeend', `<style>${CT_CSS}</style>`);
 import { trustOf, trustTitle, trustPillHtml, TRUST_CSS, companyEmailTrust, companyEmailTitle, companyEmailLabel } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
+import { swapCompanyPrimary, withoutChosen, chosenAfterEdit } from './company-primary.js'; // 3 Nov: ★ on a company's added contact makes it the company's own; Orbis imports leave it alone
 import { genderOfFirstName } from './recipient-fields.js'; // 30 Oct: gender of a person, for emails that agree with it (outreach.multiRecipient)
 document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
 import { stepsFor } from './campaign-paths.js'; // 27 Oct (outreach.paths)
@@ -4494,13 +4495,13 @@ function companyReachCardHtml(c){
     if (single) {
       const isMail = t === 'email', k = isMail ? companyEmailTrust(c) : 'tool', conf = isMail && c.companyEmailConfirmedAt && String(c.companyEmailConfirmedFor || '').trim().toLowerCase() === String(single).trim().toLowerCase();
       first = `<div class="contact-detail reach-row${k === 'bounced' ? ' prev' : ''}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span aria-hidden="true">${ICON[t]}</span>${reachLinkHtml(t, single, k === 'bounced' ? 'text-decoration:line-through;' : '')}
-        ${trustPillHtml(k, isMail ? companyEmailTitle(c, dayOfTs) : 'From the registry or the Orbis database', esc, isMail ? companyEmailLabel(c) : null)} <span class="badge badge-grey" title="From the company record (edit it in the company form)">Orbis</span>
+        <span class="badge badge-blue" title="Used first">★ primary</span> ${trustPillHtml(k, isMail ? companyEmailTitle(c, dayOfTs) : 'From the registry or the Orbis database', esc, isMail ? companyEmailLabel(c) : null)} <span class="badge badge-grey" title="${(c.companyPrimaryChosen || {})[CR_SINGLES[t]] ? 'Chosen by the team; an Orbis import will not change it' : 'From the company record: the registry or Orbis (edit it in the company form, or ★ another one below)'}">${(c.companyPrimaryChosen || {})[CR_SINGLES[t]] ? 'Team' : 'Orbis'}</span>
         ${canEdit ? `<button class="btn btn--ghost btn--sm" data-ceedit="${t}" style="margin-left:auto;" title="Correct it in the company form (this value comes from the registry or Orbis)">Edit</button>` : ''}
         ${isMail && canEdit && k !== 'bounced' ? `<button class="btn btn--ghost btn--sm" data-ceconfirm="1"${conf ? ' data-undo="1"' : ''} style="${canEdit ? '' : 'margin-left:auto;'}">${conf ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}</div>`;
     }
     return `<div style="margin-bottom:8px;"><div class="contact-detail" style="font-weight:600;">${label}</div>${first}${mine.map(e => reachRowHtml(e, canEdit, '', ICON[t])).join('')}</div>`;
   }).join('');
-  return `<div class="card" id="companyReachCard"><style>#companyReachCard [data-reachprimary], #companyReachCard .reach-row .badge-blue { display: none; }</style>
+  return `<div class="card" id="companyReachCard">
     <div class="sec-title">Company contact details</div>
     <div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">The company's own addresses, numbers and pages. The first of each kind comes from the registry or Orbis; add more here, for example another general email to use if the first one bounces.</div>
     ${groups || '<div class="hint" style="margin-bottom:8px;">Nothing on file yet.</div>'}
@@ -4523,13 +4524,30 @@ function wireCompanyReach(c){
   const redo = () => { renderCompanyPeople(c); renderOverview(c); };
   const run = async (list, change) => { const btn = document.getElementById('crSave'); if (btn) btn.disabled = true; try { await saveCompanyReach(c, list, change); redo(); } catch (err) { const er = document.getElementById('crErr'); if (er) { er.textContent = err.message; er.style.display = 'block'; } if (btn) btn.disabled = false; } };
   card.addEventListener('click', async (ev) => {
-    const t = ev.target.closest('[data-ceconfirm],[data-reachconfirm],[data-reachedit],[data-reachdel],#crSave,#crCancel'); if (!t) return;
+    const t = ev.target.closest('[data-ceconfirm],[data-reachprimary],[data-reachconfirm],[data-reachedit],[data-reachdel],#crSave,#crCancel'); if (!t) return;
     ev.stopPropagation(); const own = (c.reach || []).slice();
     if (t.id === 'crCancel') { companyReachEditId = null; redo(); return; }
     if (t.dataset.ceconfirm) {
       const undo = !!t.dataset.undo; t.disabled = true;
       const patch = undo ? { companyEmailConfirmedAt: null, companyEmailConfirmedBy: null, companyEmailConfirmedFor: null, companyEmailConfirmedVia: null } : { companyEmailConfirmedAt: new Date().toISOString(), companyEmailConfirmedBy: currentUser, companyEmailConfirmedFor: String(c.companyEmail).trim().toLowerCase(), companyEmailConfirmedVia: null };
       try { await updateDoc(doc(db, 'searchCompanies', c.id), { ...patch, updatedAt: serverTimestamp() }); Object.assign(c, patch); redo(); } catch (err) { alert('Error: ' + err.message); t.disabled = false; }
+      return;
+    }
+    if (t.dataset.reachprimary) {
+      // 3 Nov: ★ makes it the company's own (the field on the company); the old one moves into the list; Orbis imports leave it alone
+      const e = own.find(x => x.id === t.dataset.reachprimary); if (!e) return;
+      if ((e.status || 'ok') !== 'ok') { alert('Mark it OK first: a bounced or wrong address cannot be the main one.'); return; }
+      const r = swapCompanyPrimary(c, e, { by: currentUser, at: new Date().toISOString(), newId: reachNewId });
+      if (!r) return;
+      t.disabled = true;
+      try {
+        const extra = r.list.filter(x => x.type === 'email' && (x.status || 'ok') === 'ok').map(x => ({ email: x.value }));
+        const emailKeys = companyEmailKeys({ ...c, ...r.patch, contacts: [...(c.contacts || []), ...extra] });
+        await updateDoc(doc(db, 'searchCompanies', c.id), { ...r.patch, emailKeys, updatedAt: serverTimestamp(), updatedBy: currentUser });
+        Object.assign(c, r.patch, { emailKeys });
+        try { await logAuto(c.id, 'company_edited', `Company contact details: ${e.value} is now the company's own ${e.type}`); } catch (err) {}
+        redo();
+      } catch (err) { alert('Error: ' + err.message); t.disabled = false; }
       return;
     }
     if (t.dataset.reachedit) { companyReachEditId = t.dataset.reachedit; renderCompanyPeople(c); return; }
@@ -10240,7 +10258,8 @@ async function confirmCompaniesImport(){
       // if the row renamed the company, it also becomes unfindable by its
       // new name until the next full recompute). Free: same one write per
       // company, just a fuller payload.
-      const merged = computeFields({ ...match, ...r.payload, ...companyIndexFields({ ...match, ...r.payload }) });
+      const pl = withoutChosen(match, r.payload); // 3 Nov: what the team chose on the company (email, phone…) is not overwritten
+      const merged = computeFields({ ...match, ...pl, ...companyIndexFields({ ...match, ...pl }) });
       // Same rule as everywhere else in this file that sets sector from a
       // NACE/CAE code (the creating stage above, backfillSectors(),
       // saveCompany()'s manual "＋ New Company" autofill): only fill it in
@@ -10263,7 +10282,7 @@ async function confirmCompaniesImport(){
       // one write per company either way (Firestore bills per document, not
       // per byte), this only cuts how much has to go over the wire.
       const candidate = {
-        ...r.payload,
+        ...pl,
         ...(derivedSector ? { sector: derivedSector.sector, ...(derivedSector.subSector ? { subSector: derivedSector.subSector } : {}) } : {}),
         nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes,
         ...((merged.emailKeys || []).length || match.emailKeys ? { emailKeys: merged.emailKeys || [] } : {}),
@@ -11185,6 +11204,7 @@ async function saveCompany(){
       const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
       const changed = Object.fromEntries(Object.entries(data).filter(([k, val]) => k === 'updatedAt' || !same(prev[k], val)));
       if ('priority' in changed && prev.targetTierManual) changed.targetTierManual = null; // F1: one Tier field
+      { const ch = chosenAfterEdit(prev, changed, currentUser, new Date().toISOString()); if (ch) changed.companyPrimaryChosen = ch; } // 3 Nov: a contact detail corrected here is the team's choice; an Orbis import will not write over it
       const merged = computeFields({ ...companies[idx], ...changed, ...companyIndexFields({ ...companies[idx], ...changed }) });
       await updateDoc(doc(db,'searchCompanies',editCoId), {
         ...changed,
