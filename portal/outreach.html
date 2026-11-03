@@ -824,7 +824,7 @@
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
     import { MAX_FILES, MAX_EACH, MAX_TOTAL, TYPES, extOf, safeName, contentTypeFor, fmtSize, fileProblem, ZONES, zoneToUtc, isEmail, mergeGuests, buildIcs } from './attachments.js'; // 3 Nov: files on outgoing email, calendar invites
-    import { extractContacts, compareContacts } from './reply-contacts.js'; // 3 Nov: contact details found in a reply
+    import { extractContacts, compareContacts, guessPerson } from './reply-contacts.js'; // 3 Nov: contact details found in a reply
     import { isUnreadFor, readKeyOf } from './read-state.js'; // 3 Nov: read state per person
     import { addressLines, letterAddressParts } from './company-primary.js'; // 3 Nov: the envelope address = street, then postcode and municipality, never repeated
     import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, rollupByCompany, repliesByCompany, REPLY_LABEL, firstReplyDelays, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
@@ -1905,7 +1905,7 @@
       const last = [...threadMessages].reverse().find(m => m.direction === 'in' && addrList(m.from).some(x => x.email === addr));
       const fromName = last ? (addrList(last.from).find(x => x.email === addr)?.name || '') : '';
       const key = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/^(mr|mrs|ms|dr|dra|eng|sr|sra)\.?\s+/, '').replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
-      const guess = (fromName && people.find(p => key(p.name) === key(fromName))?.personId) || '';
+      const guess = guessPerson(people, fromName, addr)?.personId || ''; // 3 Nov: also "Raul Abraão" = "Raul Jorge Marques Abraao", or rabraao@…
       // 21 Oct (people merge follow-ups): someone new is a contact by default; an
       // owner or manager (as in the Search CRM's "Add person") needs edit rights on the company.
       const co = coCache.get(t.companyId), a = window.pageAccess;
@@ -2031,11 +2031,13 @@
         const people = peopleCache.get(t.companyId) || [];
         const from = addrList(msg.from)[0] || { email: '', name: '' };
         const found = extractContacts(msg.text || msg.snippet, { ignoreEmail: isOurAddr });
-        const sender = people.find(p => (p.emails || []).includes(from.email)) || null;
+        const byEmail = people.find(p => (p.emails || []).includes(from.email)) || null;
+        const sender = byEmail || guessPerson(people, from.name, from.email); // not known by email: the person the name or the address points to
+        const senderGuess = !byEmail && !!sender;
         let senderPhones = [];
         if (sender) { try { const s = await getDoc(doc(db, 'searchPeople', sender.personId)); addReads(1); senderPhones = personDetails(s.data() || {}, 'phone', co); } catch (e) { /* the comparison still works without them */ } }
         const cmp = compareContacts(found, { company: co, peopleEmails: people.flatMap(p => p.emails || []), senderEmail: from.email, senderPhones, known: t.addresses || [] });
-        rc = { t, msg, co, sender, from, cmp, checks: {} };
+        rc = { t, msg, co, sender, senderGuess, from, cmp, checks: {} };
         rcRuns.set(key, rc);
       }
       if (selectedId !== t.id) return;
@@ -2058,13 +2060,13 @@
         const toPerson = i.type === 'phone' && i.target === 'person' && rc.sender;
         const can = toPerson ? canPerson : canCompany;
         const act = i.have ? '<span class="pill pill--ok">already on file</span>'
-          : can ? `<button class="btn btn--ghost btn--sm" data-rcadd="${n}">Add to ${toPerson ? esc(rc.sender.name.split(' ')[0]) : 'company'}</button><button class="btn btn--ghost btn--sm" data-rcmore="${n}" title="Add it to another person, or to a new contact" aria-label="Choose where to add it" style="padding:0 6px;">▾</button>`
+          : can ? `<button class="btn btn--ghost btn--sm" data-rcadd="${n}"${toPerson && rc.senderGuess ? ` title="The sender is not in the CRM by email: it looks like ${esc(rc.sender.name)}${rc.sender.role ? ' (' + esc(rc.sender.role) + ')' : ''} — use the arrow to choose someone else"` : ''}>Add to ${toPerson ? esc(rc.sender.name.split(' ')[0]) + (rc.senderGuess ? '?' : '') : 'company'}</button><button class="btn btn--ghost btn--sm" data-rcmore="${n}" title="Add it to another person, or to a new contact" aria-label="Choose where to add it" style="padding:0 6px;">▾</button>`
           : (canPerson || canCompany) ? `<button class="btn btn--ghost btn--sm" data-rcmore="${n}">Add to…</button>` : '<span class="pill">new</span>';
         const chk = i.type === 'address' && !i.have ? ` <button class="btn btn--ghost btn--sm" data-rcchk="${n}" title="Looks the address up on OpenStreetMap (free; only when you ask)">Check address</button> <span class="hint">${esc(checkText(rc.checks[n]))}</span>` : '';
         return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;"><span class="hint" style="min-width:92px;">${NAME[i.type]}${i.type === 'phone' ? ' · ' + i.kind : ''}</span><b>${esc(i.value)}</b> ${act}${chk}</div>`;
       }).join('');
       const nif = nipc ? `<div style="padding:3px 0;"><span class="hint" style="min-width:92px;display:inline-block;">NIPC</span> <b>${esc(nipc.value)}</b> ${nipc.matches === true ? '<span class="pill pill--ok">matches the company</span>' : nipc.matches === false ? '<span class="pill pill--warn">differs from the company\'s NIF</span>' : '<span class="pill">company has no NIF on file</span>'}</div>` : '';
-      el.innerHTML = `<details style="border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:0.82rem;"${newN ? ' open' : ''}><summary style="cursor:pointer;font-weight:600;">Contact details in this reply <span class="hint">(${newN ? newN + ' new' : 'all on file'})</span></summary>${rows}${nif}<div class="hint" style="margin-top:4px;">Read from what ${esc(rc.from.name || rc.from.email || 'they')} wrote. Nothing is saved until you click Add.</div></details>`;
+      el.innerHTML = `<details style="border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:0.82rem;"${newN ? ' open' : ''}><summary style="cursor:pointer;font-weight:600;">Contact details in this reply <span class="hint">(${newN ? newN + ' new' : 'all on file'})</span></summary>${rows}${nif}<div class="hint" style="margin-top:4px;">Read from what ${esc(rc.from.name || rc.from.email || 'they')} wrote${rc.senderGuess ? `, who looks like <b>${esc(rc.sender.name)}</b>${rc.sender.role ? ' (' + esc(rc.sender.role) + ')' : ''}` : ''}. Nothing is saved until you click Add.</div></details>`;
       el.querySelectorAll('[data-rcadd]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
         try { await addReplyContact(rc, items[+b.dataset.rcadd]); renderReplyContacts(rc); } catch (e) { toast(e.message || 'Could not add it.'); b.disabled = false; }
@@ -2080,6 +2082,7 @@
     // Where a detail goes: the company's general contacts, a person already there, or a new contact (the sender, by default, when we do not know them).
     function openRcTarget(rc, item) {
       const people = peopleCache.get(rc.t.companyId) || [], unknownSender = !rc.sender && rc.from.email;
+      const mailNew = !!rc.from.email && !(rc.sender && (rc.sender.emails || []).includes(rc.from.email)); // the address that wrote is not on any record yet
       const def = item.target === 'person' && rc.sender ? rc.sender.personId : (unknownSender && item.type === 'phone' && item.kind === 'mobile' ? 'new' : 'company');
       openModal(`Add ${item.value}`, `
         <p class="hint" style="margin-bottom:10px;">${esc(item.type === 'phone' ? 'Phone' : item.type === 'email' ? 'Email' : item.type === 'address' ? 'Address' : 'Website')} found in the reply of <b>${esc(rc.from.name || rc.from.email || 'the sender')}</b>.</p>
@@ -2091,15 +2094,18 @@
           <div class="field"><label for="rtName">Name</label><input type="text" id="rtName" value="${esc(rc.sender ? '' : (rc.from.name || ''))}"></div>
           <div class="field"><label for="rtRole">Role (optional)</label><input type="text" id="rtRole" placeholder="Diretora de serviços, Sócio Gerente…"></div>
           ${unknownSender ? `<label class="checkline"><input type="checkbox" id="rtMail" checked> <span>Also add <b>${esc(rc.from.email)}</b>, the address that wrote, to them</span></label>` : ''}
+        </div>
+        <div id="rtPerson"${people.some(p => p.personId === def) && mailNew ? '' : ' hidden'}>
+          <label class="checkline"><input type="checkbox" id="rtMailP"${rc.senderGuess ? ' checked' : ''}> <span>Also add <b>${esc(rc.from.email)}</b>, the address that wrote, to them</span></label>
         </div>`,
         async () => {
           const who = $('rtWho').value;
-          const target = who === 'company' ? { kind: 'company' } : who === 'new' ? { kind: 'new', name: $('rtName').value.trim().replace(/\s+/g, ' '), role: $('rtRole').value.trim().slice(0, 80) || null, withMail: !!$('rtMail')?.checked } : { kind: 'person', personId: who, name: (people.find(p => p.personId === who) || {}).name || '' };
+          const target = who === 'company' ? { kind: 'company' } : who === 'new' ? { kind: 'new', name: $('rtName').value.trim().replace(/\s+/g, ' '), role: $('rtRole').value.trim().slice(0, 80) || null, withMail: !!$('rtMail')?.checked } : { kind: 'person', personId: who, name: (people.find(p => p.personId === who) || {}).name || '', withMail: !!$('rtMailP')?.checked };
           await addReplyContact(rc, item, target);
           renderReplyContacts(rc);
           return true;
         }, 'Add');
-      $('rtWho').addEventListener('change', () => { $('rtNew').hidden = $('rtWho').value !== 'new'; });
+      $('rtWho').addEventListener('change', () => { $('rtNew').hidden = $('rtWho').value !== 'new'; $('rtPerson').hidden = !(mailNew && $('rtWho').value !== 'new' && $('rtWho').value !== 'company'); });
     }
     async function addReplyContact(rc, item, target) {
       target = target || (item.target === 'person' && rc.sender ? { kind: 'person', personId: rc.sender.personId, name: rc.sender.name } : { kind: 'company' });
@@ -2119,8 +2125,11 @@
         const reach = snap.data().reach || [];
         if (reach.some(e => e.type === type && sameOf(e.value) === sameOf(value))) throw new Error('It is already on their record.');
         const next = [...reach, mk(reach)];
-        await updateDoc(ref, { reach: next, ...(type === 'email' ? { reachEmails: [...new Set(next.filter(e => e.type === 'email').map(e => String(e.value).trim().toLowerCase()))] } : {}), updatedAt: serverTimestamp(), updatedBy: me });
-        if (type === 'email') await keysFor([value]);
+        const sendMail = target.withMail && rc.from.email && type !== 'email' && !next.some(e => e.type === 'email' && String(e.value).trim().toLowerCase() === rc.from.email.toLowerCase());
+        if (sendMail) next.push(mk(next, 'email', rc.from.email));
+        const mails = [...new Set(next.filter(e => e.type === 'email').map(e => String(e.value).trim().toLowerCase()))];
+        await updateDoc(ref, { reach: next, ...(type === 'email' || sendMail ? { reachEmails: mails } : {}), updatedAt: serverTimestamp(), updatedBy: me });
+        if (type === 'email' || sendMail) await keysFor(type === 'email' ? [value] : [rc.from.email]);
         await log('person_contact_edited', `Contact details — ${target.name}: added ${value} (from the reply)`);
         peopleCache.delete(rc.t.companyId); threadPeopleLoaded.delete(rc.t.companyId);
         toast(`${value} added to ${target.name}.`);

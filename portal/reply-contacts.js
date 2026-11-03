@@ -75,17 +75,18 @@ export function findAddress(text) {
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/(?:^|\s)(\d{4}-\d{3})\s+([^,\n–-]+?)\s*(?:[-–,].*)?$/);
     if (!m || !/[A-Za-zÀ-ÿ]/.test(m[2])) continue;
+    // the street and the postcode on the same line: "Av Brasil 17, 11º 2005-136 Santarém - Portugal"
+    const before = lines[i].slice(0, lines[i].indexOf(m[1])).replace(/[,\s-]+$/, '').trim();
+    if (before && STREET.test(before)) return { street: before, postcode: m[1], place: m[2].trim() };
     const prev = [];
     for (let j = i - 1; j >= 0 && prev.length < 3; j--) {
       const l = lines[j]; if (!l) continue;
       if (/@|https?:|www\.|\b(?:tel|tlm|tlf|m[oó]vel|fax|nipc|nif|chamada)(?![a-z])|\(\+?\d{2,3}\)|\b\d{3}\s?\d{3}\s?\d{3}\b/i.test(l)) break;
       prev.unshift(l);
     }
-    let k = -1;
-    for (let x = prev.length - 1; x >= 0; x--) if (STREET.test(prev[x])) { k = x; break; }
+    const k = prev.findIndex((l) => STREET.test(l)); // the first street-like line: "Av. José Saramago - Majapoas" then "Apartado 14" are both the address
     if (k < 0) continue;
-    const rest = prev.slice(k + 1).filter((l) => l.split(' ').length <= 5 && !/\d/.test(l));
-    return { street: [prev[k], ...rest].join(', ').replace(/[,;]+$/, ''), postcode: m[1], place: m[2].trim() };
+    return { street: prev.slice(k).filter((l) => l.split(' ').length <= 8).join(', ').replace(/[,;]+$/, ''), postcode: m[1], place: m[2].trim() };
   }
   return null;
 }
@@ -117,4 +118,26 @@ export function compareContacts(found, { company = {}, peopleEmails = [], people
   const nif = digits(company.nif || company.vatNumber || '').slice(-9);
   const nipc = found.nipc ? { value: found.nipc, matches: nif ? nif === found.nipc : null } : null;
   return { items, nipc };
+}
+
+// Who in the company wrote? The sender's name as it is in the email header, against the people of the company: the same name, or the sender's
+// words all inside one person's full name ("Raul Abraão" is "Raul Jorge Marques Abraao"), accepting only a single such person. A sender with
+// no name or a single word is matched on the email instead: first initial + surname ("rabraao@…" = Raul … Abraao). Returns the person or null.
+const deburr = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const nameWords = (v) => deburr(v).replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter((w) => w.length > 1 && !['de', 'da', 'do', 'dos', 'das', 'e', 'sr', 'sra', 'dr', 'dra', 'eng'].includes(w));
+export function guessPerson(people, fromName, fromEmail) {
+  const list = (people || []).filter((p) => p && p.name), f = nameWords(fromName);
+  const exact = f.length ? list.filter((p) => nameWords(p.name).join(' ') === f.join(' ')) : [];
+  if (exact.length === 1) return exact[0];
+  if (f.length >= 2) {
+    const sub = list.filter((p) => { const t = nameWords(p.name); return f.every((w) => t.includes(w)); });
+    if (sub.length === 1) return sub[0];
+    if (sub.length > 1) return null;
+  }
+  const local = deburr(String(fromEmail || '').split('@')[0]).replace(/[^a-z]/g, '');
+  if (local.length >= 4) {
+    const hits = list.filter((p) => { const t = nameWords(p.name); return t.length >= 2 && (local === t[0][0] + t[t.length - 1] || local === t[0] + t[t.length - 1] || local === t[0][0] + t[t.length - 2] + t[t.length - 1]); });
+    if (hits.length === 1) return hits[0];
+  }
+  return null;
 }
