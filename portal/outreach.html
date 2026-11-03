@@ -3937,12 +3937,12 @@
       const id = curCampId; if (!id) return;
       try {
         const [es, ts] = await Promise.all([
-          getDocs(query(collection(db, 'outreachEnrolments'), where('campaignId', '==', id), orderBy('enrolledAt', 'desc'), limit(5000))),
+          getDocs(query(collection(db, 'outreachEnrolments'), where('campaignId', '==', id), limit(5000))), // 3 Nov: no orderBy('enrolledAt') — a company's extra addresses have no enrolledAt, so that query left them out; sorted below
           getDocs(query(collection(db, 'outreachThreads'), where('campaignId', '==', id), limit(5000))),
         ]);
         addReads((es.size || 1) + (ts.size || 1)); refreshReads();
         if (id !== curCampId) return;
-        curEnrols = es.docs.map(d => ({ id: d.id, ...d.data() }));
+        curEnrols = es.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (tsMs(b.enrolledAt || b.startedAt) - tsMs(a.enrolledAt || a.startedAt)) || String(a.id).localeCompare(String(b.id))); // newest first; an extra address sits with its company
         curThreads = ts.docs.map(d => ({ id: d.id, ...d.data() }));
         renderCampHeader(); // F6 banner needs the enrolments
       } catch (e) { toast('Could not load the campaign: ' + errText(e)); }

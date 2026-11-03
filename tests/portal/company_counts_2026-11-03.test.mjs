@@ -120,6 +120,8 @@ ok('Audience On: Pause / Move / Remove are for the company; a lone live address 
 ok('Audience On: the old Goes to column is gone', !audOn.includes('Goes to') && audOn.includes('<th>Status</th>'));
 ok('Audience Off: as before, one row per address with Goes to', nCo(audOff) === 6 && audOff.includes('Goes to') && !audOff.includes('data-coop'));
 
+ok("the campaign's enrolments are loaded without orderBy('enrolledAt') (extra addresses have no enrolledAt and would be left out)", !html.includes("where('campaignId', '==', id), orderBy('enrolledAt', 'desc')") && html.includes("where('campaignId', '==', id), limit(5000))), // 3 Nov: no orderBy"));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
