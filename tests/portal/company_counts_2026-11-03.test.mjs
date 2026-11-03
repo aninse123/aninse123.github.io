@@ -403,6 +403,8 @@ ok('…the same phone twice is refused', /already one of their phones/.test(dup)
 sacEls.aacWho.value = '@co';
 await sac(tt, 'luisfpinho@sapo.pt', null, false);
 ok('"The company" choice: the address is added to the company\'s general contacts (not primary), with its search keys, logged', store.co.c1.reach.length === 1 && store.co.c1.reach[0].value === 'luisfpinho@sapo.pt' && store.co.c1.reach[0].primary === false && store.co.c1.emailKeys.length > 0 && store.acts.some((x) => x.type === 'company_edited' && /luisfpinho@sapo.pt/.test(x.content)));
+const wh = RCm.compareContacts(RCm.extractContacts('Tel 243 326 065' + String.fromCharCode(10) + 'Tlm 966 751 726' + String.fromCharCode(10) + 'www.nat.com'), { company: { companyPhone: '+351 243326065', website: 'nat.com' }, senderPhones: ['966751726'], senderName: 'Raul Jorge Abraao', senderEmail: 'r@nat.com', peopleEmails: ['r@nat.com'], people: [{ name: 'Raul Jorge Abraao', emails: ['r@nat.com'] }] });
+ok('Reply contacts: "already on file" says where — the company, or the person', wh.items.find((i) => i.norm === '243326065').where === 'the company' && wh.items.find((i) => i.norm === '966751726').where === 'Raul Jorge Abraao' && wh.items.find((i) => i.type === 'website').where === 'the company' && raw0.includes("already on file${i.where ? ' · ' + esc(i.where) : ''}"));
 ok('Inbox search: finds a conversation by any of its addresses (the one that replied), also in the older ones', raw0.includes('t.contactEmail, ...(t.addresses || []), t.contactName') && raw0.includes("where('addresses', 'array-contains', q.toLowerCase())"));
 console.log(fail ? `\n${fail} FAILED` : '\nAll passed');
 process.exit(fail ? 1 : 0);

@@ -101,7 +101,7 @@ export function extractContacts(text, { ignoreEmail = () => false } = {}) {
 }
 
 // What the CRM has, to compare with. company: the searchCompanies doc; peopleEmails / peoplePhones: those of the people at the company.
-export function compareContacts(found, { company = {}, peopleEmails = [], peoplePhones = [], senderEmail = '', senderPhones = [], known = [] } = {}) {
+export function compareContacts(found, { company = {}, peopleEmails = [], peoplePhones = [], senderEmail = '', senderPhones = [], known = [], people = [], senderName = '' } = {}) {
   const reachOf = (t) => (company.reach || []).filter((e) => e && e.type === t).map((e) => e.value);
   const hostOf = (u) => lc(u).replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
   const pcOf = (v) => (String(v || '').match(/\d{4}-\d{3}/) || [])[0];
@@ -111,18 +111,21 @@ export function compareContacts(found, { company = {}, peopleEmails = [], people
     hosts: new Set([company.website, ...reachOf('website')].map(hostOf).filter(Boolean)),
     postcodes: new Set([company.postcode, pcOf(company.hqAddress), ...reachOf('address').map(pcOf)].filter(Boolean)),
   };
+  // Where it is on file, to say so: "the company", or the person's name
+  const phoneWhere = (n) => [company.companyPhone, ...reachOf('phone')].some((p) => digits(p).slice(-9) === n) ? 'the company' : senderPhones.some((p) => digits(p).slice(-9) === n) ? (senderName || 'the sender') : peoplePhones.some((p) => digits(p).slice(-9) === n) ? 'a person' : '';
+  const emailWhere = (e) => [company.companyEmail, ...reachOf('email'), ...(company.contacts || []).map((c) => c.email)].map(lc).includes(e) ? 'the company' : (people.find((p) => (p.emails || []).map(lc).includes(e)) || {}).name || (peopleEmails.map(lc).includes(e) ? 'a person' : known.map(lc).includes(e) ? 'this conversation' : '');
   const items = [];
-  for (const p of found.phones) items.push({ type: 'phone', kind: p.kind, value: p.display, norm: p.norm, have: have.phones.has(p.norm), target: p.kind === 'mobile' ? 'person' : 'company' });
+  for (const p of found.phones) items.push({ type: 'phone', kind: p.kind, value: p.display, norm: p.norm, have: have.phones.has(p.norm), where: phoneWhere(p.norm), target: p.kind === 'mobile' ? 'person' : 'company' });
   // The address that wrote: offered first when no record of the company has it (the conversation knowing it is not the CRM knowing it)
   const from = lc(senderEmail);
   const inCrm = new Set([company.companyEmail, ...reachOf('email'), ...(company.contacts || []).map((c) => c.email), ...peopleEmails].map(lc).filter(Boolean));
   const senderNew = !!from && !inCrm.has(from);
   if (senderNew) items.push({ type: 'email', value: from, have: false, target: 'person', sender: true });
-  for (const e of found.emails) if (!(senderNew && e === from)) items.push({ type: 'email', value: e, have: have.emails.has(e), target: 'company' });
-  for (const u of found.urls) items.push({ type: u.linkedin ? 'linkedin' : 'website', value: u.url, host: u.host, have: u.linkedin ? false : have.hosts.has(u.host), target: 'company' });
+  for (const e of found.emails) if (!(senderNew && e === from)) items.push({ type: 'email', value: e, have: have.emails.has(e), where: emailWhere(e), target: 'company' });
+  for (const u of found.urls) items.push({ type: u.linkedin ? 'linkedin' : 'website', value: u.url, host: u.host, have: u.linkedin ? false : have.hosts.has(u.host), where: 'the company', target: 'company' });
   if (found.address) {
     const a = found.address;
-    items.push({ type: 'address', value: `${a.street}, ${a.postcode} ${a.place}`, address: a, have: have.postcodes.has(a.postcode), target: 'company' });
+    items.push({ type: 'address', value: `${a.street}, ${a.postcode} ${a.place}`, address: a, have: have.postcodes.has(a.postcode), where: 'the company', target: 'company' });
   }
   const nif = digits(company.nif || company.vatNumber || '').slice(-9);
   const nipc = found.nipc ? { value: found.nipc, matches: nif ? nif === found.nipc : null } : null;
