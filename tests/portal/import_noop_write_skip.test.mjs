@@ -49,6 +49,7 @@ function makeCtx(){
     "function companySearchFields(name){ return { nameKey: (name||'').toUpperCase() }; }",
     "function companyIndexFields(c){ return companySearchFields(c && c.name); }",
     "function serverTimestamp(){ return '__SERVER_TS__'; }",
+    'function withoutChosen(match, payload){ return { ...payload }; }', // 3 Nov: the real one (company-primary.js) is tested in company_counts_2026-11-03
     "function doc(db, col, id){ return { col, id }; }",
     'let db = {};',
     liftUpdatingCallback(),
