@@ -46,7 +46,7 @@ ok('a kind change is logged ("contact → manager")', page.includes('if (wasKind
 
 // Inbox
 ok('Inbox "Someone new": Other by default; Manager / Owner / both with edit rights on the company', out.includes('<input type="radio" name="aacKind" value="other" checked>') && out.includes('value="both"> <span>Owner and manager</span>') && out.includes("const canOwners = !a || a.can('search.editall') || (a.can('search.edit') && !!co?.owner && co.owner === a.key);"));
-ok('Inbox: an owner / manager gets the facets and the company counts follow; logged with the kind', out.includes("mgmtRoles: manager ? [role || 'Manager'] : []") && out.includes('peopleCounts: { sh: L.filter(l => l.shCurrent === true).length') && out.includes('`Linked person: ${who} (${newKind}) — ${addr} (from the inbox)`'));
+ok('Inbox: an owner / manager gets the facets and the company counts follow; logged with the kind', out.includes("mgmtRoles: manager ? [role || 'Manager'] : []") && out.includes('peopleCounts: { sh: L.filter(l => l.shCurrent === true).length') && out.includes('`Linked person: ${who} (${newKind}) — ${dValue} (from the ${detail ? \'reply\' : \'inbox\'})`'));
 
 // Company import
 ok('company import: with the switch on, the file\'s person is not put in the old Contacts list', page.includes("contacts: peopleOn ? [] : contacts,") && page.includes("const person = peopleOn && cName ? { name: cName, role: g('contact role') || '', email: g('contact email') || '', phone: g('contact phone') || '', manager: !g('contact name') } : null;"));
