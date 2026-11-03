@@ -16,7 +16,7 @@ ok('Search CRM: same_inbox labelled, with who else has the address', search.incl
 ok('reply box: "Stop the campaign for this company", ticked, hidden until a running campaign is found', out.includes('<label class="checkline" id="replyStopWrap" hidden') && out.includes('<input type="checkbox" id="replyStop" checked> <span>Stop the campaign for this company'));
 ok('…only with the switch on and a company, from its live enrolments', /async function showReplyStop\(t\) \{\n\s+if \(!isOn\('outreach\.oneInbox'\) \|\| !t\.companyId\) return;/.test(out) && out.includes("where('companyId', '==', t.companyId)") && out.includes('LIVE_ENROL.includes(e.status)'));
 ok('…sent only when shown and ticked', out.includes("const stopCampaign = !!($('replyStopWrap') && !$('replyStopWrap').hidden && $('replyStop')?.checked);") && out.includes('...(stopCampaign ? { stopCampaign: true } : {})'));
-ok('header: every address used, first one first (switch on)', out.includes('function addrTrail(t)') && out.includes("join(' → ')") && out.includes('${company}${addrTrail(t)}'));
+ok('header: every address used, first one first (switch on)', out.includes('function addrTrail(t)') && out.includes("join(' → ')") && out.includes('${company}${coFiguresHtml(coCache.get(t.companyId))}${addrTrail(t)}'));
 ok('To approve: companies waiting because of the same address, read at most once a minute', out.includes("where('holdKind', '==', 'same_inbox')") && out.includes('Date.now() - inboxHeldAt < 60000') && out.includes('${inboxHeldCard()}'));
 ok('Search CRM: the hold activity is labelled and never counts as a touch', search.includes("outreach_hold:    { label:'Held: same email address'") && /AUTO_TYPES = \[[^\]]*'outreach_hold'[^\]]*\]/.test(search));
 

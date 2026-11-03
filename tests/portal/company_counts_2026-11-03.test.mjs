@@ -289,6 +289,13 @@ ok('Inbox card (SHORTLEC): no known sender → the mobile goes to the company; t
 renderRC({ co: rcCo, sender: null, from: { email: 'x@y.pt' }, cmp: { items: [], nipc: null }, checks: {} });
 ok('Inbox card: nothing found → nothing shown', rcEl.innerHTML === '');
 
+const CPm = await import(new URL('../../portal/company-primary.js', import.meta.url));
+ok('Letter check: the street, postcode and place come from the envelope lines (the name and "Ao cuidado" are never the street)', JSON.stringify(CPm.letterAddressParts(['ISOGNOM, LDA', 'Ao cuidado do Senhor X', 'R. de Trás 421', '4475-500 Maia'])) === JSON.stringify({ street: 'R. de Trás 421', postcode: '4475-500', place: 'Maia' }) && JSON.stringify(CPm.letterAddressParts(['QV, LDA', 'Rua da Quinta da Serra Nº4, Paradinha', '3510-107 Viseu - Portugal'])) === JSON.stringify({ street: 'Rua da Quinta da Serra Nº4, Paradinha', postcode: '3510-107', place: 'Viseu' }));
+ok('Letter check: no postcode, or only the name and a postcode, = nothing to check', CPm.letterAddressParts(['QV, LDA', 'Rua do Sol']) === null && CPm.letterAddressParts(['QV, LDA', '3510-107 Viseu']) === null && CPm.letterAddressParts(['QV, LDA', 'Ao cuidado de Y', '3510-107 Viseu']) === null);
+ok('Letters to print: Check addresses one at a time (1.2 s apart), a pill per letter, print asks when an address did not check out', html.includes('id="letCheck"') && html.includes("action: 'checkAddress', street: p.street") && html.includes('setTimeout(r, 1200)') && html.includes('data-lchk=') && html.includes('const checkBad = (r)') && html.includes('have an address that did not check out'));
+ok('Inbox: the company figures sit next to its name, and the related companies under the conversation (outreach.ownerAware)', html.includes('${company}${coFiguresHtml(coCache.get(t.companyId))}${addrTrail(t)}') && html.includes('id="relLine"') && html.includes("callCampaign({ action: 'related', companyId: t.companyId })") && html.includes('Related companies (${d.related.length})'));
+ok('Inbox: Forward and Task or activity also sit next to Reply / Reply all, same actions as the buttons at the top', html.includes('id="replyFwdBtn"') && html.includes('id="replyTaskBtn"') && html.includes("$('replyFwdBtn')?.addEventListener('click', () => openForward(t))") && html.includes("$('taskBtn')?.addEventListener('click', () => openThreadTask(t))") && html.includes("$('replyTaskBtn')?.addEventListener('click', () => openThreadTask(t))"));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');

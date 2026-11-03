@@ -92,3 +92,17 @@ export function chosenAfterEdit(prev, changed, by = '', at = '') {
   for (const f of Object.values(PRIMARY_FIELDS)) if (f in changed && changed[f]) { out[f] = { by, at }; any = true; }
   return any ? out : null;
 }
+
+// The parts of an envelope address to look up: { street, postcode, place } from its lines (company name, "Ao cuidado de…", street, then
+// "postcode place"), or null when there is no postcode or no street line to check.
+export function letterAddressParts(lines) {
+  const L = (lines || []).map((l) => String(l).trim()).filter(Boolean);
+  const k = L.findIndex((l) => /\b\d{4}-\d{3}\b/.test(l));
+  if (k < 0) return null;
+  const m = L[k].match(/(\d{4}-\d{3})\s*(.*)$/);
+  const place = (m[2] || '').split(/[,–-]/)[0].trim();
+  const before = L[k].slice(0, L[k].indexOf(m[1])).replace(/[,\s-]+$/, '').trim();
+  const prev = k > 1 ? L[k - 1] : ''; // the first line is the name, never the street
+  const street = before || (/^ao cuidado/i.test(prev) ? '' : prev);
+  return street ? { street, postcode: m[1], place } : null;
+}

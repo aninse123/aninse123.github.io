@@ -805,7 +805,7 @@
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
     import { extractContacts, compareContacts } from './reply-contacts.js'; // 3 Nov: contact details found in a reply
     import { isUnreadFor, readKeyOf } from './read-state.js'; // 3 Nov: read state per person
-    import { addressLines } from './company-primary.js'; // 3 Nov: the envelope address = street, then postcode and municipality, never repeated
+    import { addressLines, letterAddressParts } from './company-primary.js'; // 3 Nov: the envelope address = street, then postcode and municipality, never repeated
     import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, rollupByCompany, repliesByCompany, REPLY_LABEL, firstReplyDelays, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
     document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
     document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
@@ -2080,6 +2080,28 @@
       }
       item.have = true;
     }
+    // 3 Nov: the company's figures next to its name in the conversation, and its related companies under it (the same data as the approval
+    // card and the Search CRM's Ownership tab; related companies need outreach.ownerAware).
+    const relCache = new Map(), headCoLoading = new Set();
+    async function updateRelated(t) {
+      const el = $('relLine'); if (!el) return;
+      if (!isOn('outreach.ownerAware') || !t.companyId) { el.innerHTML = ''; return; }
+      let d = relCache.get(t.companyId);
+      if (!d) {
+        try { d = (await callCampaign({ action: 'related', companyId: t.companyId })).data; } catch (e) { return; }
+        relCache.set(t.companyId, d);
+        await loadCompaniesFor((d.related || []).map(r => r.companyId)).catch(() => {});
+      }
+      if (selectedId !== t.id || !$('relLine')) return;
+      if (!d.related?.length) { $('relLine').innerHTML = ''; return; }
+      const FLAG = { said_no: 'pill--bad', in_conversation: 'pill--warn' };
+      $('relLine').innerHTML = `<details style="font-size:0.8rem;"${(d.flags || []).length ? ' open' : ''}><summary style="cursor:pointer;color:#475569;">Related companies (${d.related.length})${(d.flags || []).map(f => ` <span class="pill ${FLAG[f.kind] || ''}">${esc(f.text)}</span>`).join('')}</summary><ul style="margin:4px 0 0;padding-left:18px;">${d.related.map(r => `<li>${relatedLine(r)}${coFiguresHtml(coCache.get(r.companyId))} · <a href="/portal/search.html?company=${encodeURIComponent(r.companyId)}" target="_blank" rel="noopener">open ↗</a></li>`).join('')}</ul></details>`;
+    }
+    function openThreadTask(t) {
+      if (!t.companyId) { toast('Assign this conversation to a company first.'); return; }
+      const last = [...threadMessages].reverse().find(m => m.direction === 'in' && !m.isAutoReply);
+      openTaskModal({ companyId: t.companyId, companyName: t.companyName, threadId: t.id, who: last ? addrList(last.from)[0] : null });
+    }
     function renderThreadHead() {
       const t = threads.find(x => x.id === selectedId); if (!t || !$('viewHead')) return;
       const company = t.companyId
@@ -2087,12 +2109,13 @@
         : `<span class="pill${t.unmatched ? ' pill--warn' : ''}">${t.unmatched ? 'Unmatched' : 'No company'}</span> <button class="btn btn--ghost btn--sm" id="assignBtn" data-perm="out.write">Assign to company</button>`;
       $('viewHead').innerHTML = `
         <div class="view__title">${esc(t.subject || '(no subject)')}</div>
-        <div class="view__sub">${company}${addrTrail(t)}
+        <div class="view__sub">${company}${coFiguresHtml(coCache.get(t.companyId))}${addrTrail(t)}
           <span>via ${esc(t.senderId || '—')}</span>${t.owner ? `<span>${esc(OWNER_LABEL[t.owner] || t.owner)}</span>` : ''}
           ${threadPill(t)}${t.campaignId ? `<button type="button" class="pill pill--info" id="campInfoBtn" style="border:0;cursor:pointer;" title="Show the campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}${t.pathName ? ' · ' + esc(t.pathName) : ''}</button>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
         ${t.recipientIssue ? `<div class="banner banner--warn" style="margin:8px 0 4px;"><span>An email in this conversation to several people bounced for one of them (Resend doesn't say which), so nobody was put on the suppression list. Addresses: ${esc((t.recipientIssue.addresses || []).join(', '))}.</span></div>` : ''}
         <div class="hint" id="sibLine" style="margin:6px 0 0;"></div>
         <div id="replyContacts" style="margin:6px 0 0;"></div>
+        <div id="relLine" style="margin:6px 0 0;"></div>
         <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button>
           <button class="btn btn--ghost btn--sm" id="taskBtn" data-perm="out.tasks" title="Plan a call or other task for this company — or record one that already happened">＋ Task or activity</button></div>
         <div class="classify"><span class="classify__label">Classify</span>${CATEGORIES.map(([k, l]) =>
@@ -2100,15 +2123,13 @@
       $('viewHead').querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => classify(t, b.dataset.cat)));
       if (isOn('outreach.multiRecipient') && t.companyId) updateSibLine(t);
       updateReplyContacts(t);
+      updateRelated(t);
+      if (t.companyId && !coCache.has(t.companyId) && !headCoLoading.has(t.companyId)) { headCoLoading.add(t.companyId); loadCompaniesFor([t.companyId]).catch(() => {}).finally(() => { headCoLoading.delete(t.companyId); if (selectedId === t.id) renderThreadHead(); }); }
       $('assignBtn')?.addEventListener('click', () => assignCompany(t));
       $('viewHead').querySelectorAll('[data-addaddr]').forEach(b => b.addEventListener('click', () => openAddToCompany(t, b.dataset.addaddr)));
       $('fwdBtn')?.addEventListener('click', () => openForward(t));
       $('campInfoBtn')?.addEventListener('click', () => openCampaignInfo(t));
-      $('taskBtn')?.addEventListener('click', () => {
-        if (!t.companyId) { toast('Assign this conversation to a company first.'); return; }
-        const last = [...threadMessages].reverse().find(m => m.direction === 'in' && !m.isAutoReply);
-        openTaskModal({ companyId: t.companyId, companyName: t.companyName, threadId: t.id, who: last ? addrList(last.from)[0] : null });
-      });
+      $('taskBtn')?.addEventListener('click', () => openThreadTask(t));
     }
 
     // Own task or activity (12 Oct): plan a call / LinkedIn / WhatsApp / letter /
@@ -2308,6 +2329,8 @@
           <div class="rcpt__modes" role="group" aria-label="Who the reply goes to">
             <button type="button" class="chip" data-rmode="reply" title="Only the person who wrote the last email">↩ Reply</button>
             <button type="button" class="chip" data-rmode="all" title="Everyone in To and Cc of the last email, except our own addresses">↩ Reply all</button>
+            <button type="button" class="chip" id="replyFwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button>
+            <button type="button" class="chip" id="replyTaskBtn" data-perm="out.tasks" title="Plan a call or other task for this company — or record one that already happened">＋ Task or activity</button>
           </div>
           <div class="field rcpt__row"><label for="replyTo">To</label><input id="replyTo" type="text" autocomplete="off" spellcheck="false"></div>
           <div class="field rcpt__row"><label for="replyCc">Cc</label><input id="replyCc" type="text" autocomplete="off" spellcheck="false" placeholder="Add addresses, separated by commas"></div>
@@ -2325,6 +2348,8 @@
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
         <button class="btn btn--primary" id="replyBtn" data-perm="out.write">${esc(SEND_LABEL(true))}</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
+      $('replyFwdBtn')?.addEventListener('click', () => openForward(t));
+      $('replyTaskBtn')?.addEventListener('click', () => openThreadTask(t));
       box.querySelectorAll('[data-rmode]').forEach(b => b.addEventListener('click', () => { replyMode = b.dataset.rmode; replyEdited = false; fillReplyRecipients(); }));
       ['replyTo', 'replyCc'].forEach(id => $(id).addEventListener('input', () => { replyEdited = true; }));
       fillReplyRecipients();
@@ -6083,6 +6108,17 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
 
     // ── Letters to print (C1: plain A4, address block for a left window envelope, typed signature) ──
     let letterSel = new Set();
+    // 3 Nov (outreach.replyContacts): "Check addresses" — each letter's envelope address looked up on OpenStreetMap, on request, one at a time.
+    // A letter that comes back costs the stamp and days: this catches a wrong postcode or a swapped place; it cannot promise the door number exists.
+    const letterChecks = new Map();
+    const letterAddrParts = (t, c) => letterAddressParts(t.letterText?.address ? t.letterText.address.split('\n') : addressLines(c));
+    const checkBad = (r) => !!r && (r.status === 'not_found' || r.samePlace === false);
+    function letterCheckPill(r) {
+      if (!r) return '<span class="hint">—</span>';
+      const [cls, mark] = r.status === 'not_found' ? ['pill--bad', '✗ not found'] : r.samePlace === false ? ['pill--warn', '⚠ other place'] : r.status === 'found' ? ['pill--ok', '✓ found'] : r.status === 'postcode_only' ? ['pill', '~ postcode only'] : ['pill', '? not checked'];
+      const tip = [r.label, r.samePlace === false ? `The postcode is in ${r.place}` : '', r.note].filter(Boolean).join(' · ');
+      return `<span class="pill ${cls}" title="${esc(tip)}">${mark}</span>`;
+    }
     async function renderLetters() {
       const allLetters = tasks.filter(t => t.channel === 'letter');
       // 3 Nov: filter by campaign, with the counts, like To approve
@@ -6101,27 +6137,48 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <label class="checkline"><input type="checkbox" id="letAll"${list.length && letterSel.size === list.length ? ' checked' : ''}> <span>Select all</span></label>
             <button class="btn btn--primary btn--sm" id="letPrint"${letterSel.size ? '' : ' disabled'}>Print selected (${num(letterSel.size)})</button>
             <button class="btn btn--ghost btn--sm" id="letPosted"${letterSel.size ? '' : ' disabled'}>Mark selected as printed &amp; posted</button>
+            ${isOn('outreach.replyContacts') ? '<button class="btn btn--ghost btn--sm" id="letCheck" title="Looks each envelope address up on OpenStreetMap (free), one at a time">Check addresses</button>' : ''}
             ${LT ? '<label class="checkline" title="Printing on both sides of the sheet: every one-page letter gets a blank back, so each letter starts on a fresh sheet"><input type="checkbox" id="letDuplex"> <span>Double-sided</span></label>' : ''}
             ${LT ? '<button class="btn btn--ghost btn--sm" id="letCal" title="One page to print on plain paper and fold into the envelope: the dashed rectangle must sit in the window">Print window test sheet</button>' : ''}
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th></th><th>To</th><th>Address</th><th>Campaign</th>${list.some(t => t.pathName) ? '<th>Path</th>' : ''}<th>Step</th><th>Template</th>${LT ? '<th>Letter</th>' : ''}<th>Signed by</th><th>Due</th></tr></thead>
+            <thead><tr><th></th><th>To</th><th>Address</th>${isOn('outreach.replyContacts') ? '<th>Check</th>' : ''}<th>Campaign</th>${list.some(t => t.pathName) ? '<th>Path</th>' : ''}<th>Step</th><th>Template</th>${LT ? '<th>Letter</th>' : ''}<th>Signed by</th><th>Due</th></tr></thead>
             <tbody>${list.length ? list.map(t => {
               const c = taskCo(t);
               const addr = LT && t.letterText?.address ? t.letterText.address.split('\n').join(', ') : addressLines(c).join(', ');
               return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}${LT && info(t)?.missing?.length ? ' disabled title="A field is missing — open the letter"' : ''}></td>
                 <td>${c._person ? `${esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
+                ${isOn('outreach.replyContacts') ? `<td data-lchk="${esc(t.id)}" style="white-space:nowrap;">${letterCheckPill(letterChecks.get(t.id))}</td>` : ''}
                 <td style="font-size:0.8rem;">${t.campaignId ? esc(t.campaignName || '') : 'Own task'}</td>${list.some(x => x.pathName) ? `<td style="font-size:0.8rem;">${esc(t.pathName || '—')}</td>` : ''}<td style="font-size:0.8rem;">${t.campaignId ? esc(t.stepName || '') : esc(t.instructions || '')}</td>
                 <td style="font-size:0.8rem;">${esc(tplName(t.templateId))}${t.variantKey ? ` (${esc(t.variantKey)})` : ''}</td>
                 ${LT ? (() => { const i = info(t); return `<td style="white-space:nowrap;font-size:0.8rem;">${(() => { const np = i && !i.missing?.length ? letterPageCount(i, taskCo(t), t) : 1; return np > 1 ? `<span class="pill pill--test" title="This letter runs to ${np} pages">${np} pages</span> ` : ''; })()}${i?.missing?.length ? `<span class="pill pill--bad" title="${esc(i.missing.join(', '))}">missing: ${esc(i.missing[0])}${i.missing.length > 1 ? ` +${i.missing.length - 1}` : ''}</span> ` : i?.edited ? '<span class="pill pill--info">edited</span> ' : ''}<button class="btn btn--ghost btn--sm" data-leted="${esc(t.id)}">Preview / edit</button></td>`; })() : ''}
                 <td style="white-space:nowrap;"><select data-lsigner="${esc(t.id)}" style="width:auto;padding:2px 6px;font-size:0.78rem;">${ownerOpts(signerFor(t, c))}${LT ? `<option value="both"${signerFor(t, c) === 'both' ? ' selected' : ''}>André &amp; António</option>` : ''}</select>${(window.teamDir || []).find(m => m.key === (signerFor(t, c) === 'both' ? 'andre' : signerFor(t, c)))?.contactPhone ? '' : ' <span class="pill pill--warn" title="Add it in Team → Contact details">no phone</span>'}</td>
                 <td style="white-space:nowrap;font-size:0.8rem;">${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}</td></tr>`;
-            }).join('') : '<tr><td colspan="8" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
+            }).join('') : '<tr><td colspan="9" class="empty">No letters waiting. They appear when a campaign reaches a letter step.</td></tr>'}</tbody>
           </table></div>
           <p class="hint" style="padding:10px 14px;">Print on plain A4 and fold into a window envelope (address in the envelope window, set in Settings → General). ${LT ? 'No footer is printed; sign the last page by hand.' : 'The legal entity line from Settings → Email footer (if filled) is printed at the bottom.'} After posting, mark them — the sequence then moves on.</p>
         </div>`;
       $('letCamp').addEventListener('change', (e) => { lettersCampaign = e.target.value; renderLetters(); });
+      $('letCheck')?.addEventListener('click', async (ev) => {
+        const b = ev.currentTarget, todo = list.filter(t => !letterChecks.has(t.id));
+        if (!todo.length) { toast('Every address in this list has been checked.'); return; }
+        b.disabled = true; let n = 0;
+        for (const t of todo) {
+          const p = letterAddrParts(t, taskCo(t));
+          if (!p) letterChecks.set(t.id, { status: 'error', note: 'No street or postcode to check.' });
+          else {
+            try { letterChecks.set(t.id, (await callCampaign({ action: 'checkAddress', street: p.street, postcode: p.postcode, place: p.place })).data); }
+            catch (e) { letterChecks.set(t.id, { status: 'error', note: 'The check did not run: ' + (e.message || 'try again.') }); }
+            await new Promise(r => setTimeout(r, 1200)); // the service asks for at most one request a second
+          }
+          const cell = $('lettersView').querySelector(`[data-lchk="${t.id}"]`); if (cell) cell.innerHTML = letterCheckPill(letterChecks.get(t.id));
+          b.textContent = `Checking… ${++n} of ${todo.length}`;
+        }
+        b.disabled = false; b.textContent = 'Check addresses';
+        const bad = list.filter(t => checkBad(letterChecks.get(t.id))).length;
+        toast(bad ? `${num(bad)} address${bad === 1 ? '' : 'es'} to look at (✗ or ⚠).` : 'Checked. Nothing wrong found.');
+      });
       const sync = () => { $('letPrint').disabled = $('letPosted').disabled = !letterSel.size; $('letPrint').textContent = `Print selected (${num(letterSel.size)})`; };
       $('lettersView').querySelectorAll('[data-let]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) letterSel.add(cb.dataset.let); else letterSel.delete(cb.dataset.let); sync(); }));
       $('lettersView').querySelectorAll('[data-lsigner]').forEach(s => s.addEventListener('change', async () => {
@@ -6130,7 +6187,11 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       }));
       $('lettersView').querySelectorAll('[data-leted]').forEach(b => b.addEventListener('click', () => openLetterEditor(list.find(x => x.id === b.dataset.leted))));
       $('letAll')?.addEventListener('change', (e) => { letterSel = e.target.checked ? new Set(list.filter(t => !(LT && info(t)?.missing?.length)).map(t => t.id)) : new Set(); renderLetters(); });
-      $('letPrint').addEventListener('click', () => printLetters(list.filter(t => letterSel.has(t.id)), { duplex: !!$('letDuplex')?.checked }));
+      $('letPrint').addEventListener('click', () => {
+        const sel = list.filter(t => letterSel.has(t.id)), bad = sel.filter(t => checkBad(letterChecks.get(t.id)));
+        if (bad.length && !confirm(`${num(bad.length)} of these letters have an address that did not check out (${bad.slice(0, 5).map(t => t.companyName || '').join(', ')}). Print anyway?`)) return;
+        printLetters(sel, { duplex: !!$('letDuplex')?.checked });
+      });
       $('letCal')?.addEventListener('click', () => printCalibration());
       $('letPosted').addEventListener('click', async () => {
         const ids = [...letterSel];
