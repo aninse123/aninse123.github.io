@@ -803,7 +803,7 @@
     import { isOn, stateOf, currentFlags } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
-    import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, rollupByCompany, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
+    import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, rollupByCompany, repliesByCompany, REPLY_LABEL, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
     document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
     document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
@@ -2983,8 +2983,9 @@
       if (need.length && !ownerCoLoading) { ownerCoLoading = true; loadCompaniesFor(need.slice(0, 600)).catch(() => {}).finally(() => { ownerCoLoading = false; renderOwnerMetrics(threads); }); }
       const ownerOf = (id) => coCache.get(id)?.ownGroupKey || 'co:' + id;
       const started = new Set(threads.filter(t => t.companyId).map(t => ownerOf(t.companyId)));
-      const replied = new Set(threads.filter(t => t.companyId && t.repliedAt).map(t => ownerOf(t.companyId)));
-      const coStarted = new Set(threads.filter(t => t.companyId).map(t => t.companyId)).size, coReplied = new Set(threads.filter(t => t.companyId && t.repliedAt).map(t => t.companyId)).size;
+      const answered = (t) => t.repliedAt || (isOn('outreach.companyCounts') && t.otherReplyAt); // 3 Nov: an email, or a call / visit logged by hand
+      const replied = new Set(threads.filter(t => t.companyId && answered(t)).map(t => ownerOf(t.companyId)));
+      const coStarted = new Set(threads.filter(t => t.companyId).map(t => t.companyId)).size, coReplied = new Set(threads.filter(t => t.companyId && answered(t)).map(t => t.companyId)).size;
       const r = ownerReport, w = r?.week, o = r?.owners;
       el.innerHTML = `<div class="card" style="margin-top:16px;">
         <h3 style="margin:0 0 6px;font-size:0.95rem;">By owner</h3>
@@ -3816,6 +3817,17 @@
             const x = ex.docs.map(d => d.data());
             k = { live: k.live - x.filter(e => LIVE_ENROL.includes(e.status)).length, approve: k.approve - x.filter(e => e.status === 'awaiting_approval').length, replied: k.replied - x.filter(e => e.status === 'replied').length };
           }
+          // 3 Nov (outreach.companyCounts): replied companies = an enrolment replied, an email came in, or a call / visit / message was logged
+          if (isOn('outreach.companyCounts') && c.audienceType !== 'people') {
+            const [re, rt, ro] = await Promise.all([
+              getDocs(query(col, where('campaignId', '==', c.id), where('status', '==', 'replied'))),
+              getDocs(query(collection(db, 'outreachThreads'), where('campaignId', '==', c.id), where('status', '==', 'replied'))),
+              getDocs(query(collection(db, 'outreachThreads'), where('campaignId', '==', c.id), where('otherReplyChannel', 'in', Object.keys(REPLY_LABEL)))).catch(() => ({ size: 0, docs: [] })), // best effort: needs no composite index, but never blocks the other counts
+            ]);
+            addReads(re.size + rt.size + ro.size);
+            const ids = new Set([...re.docs.map(d => d.data().companyId), ...[...rt.docs, ...ro.docs].filter(d => !d.data().isTest).map(d => d.data().companyId)].filter(Boolean));
+            k.replied = ids.size;
+          }
           campCounts[c.id] = k;
         } catch (e) { console.warn('campaign counts', c.id, e); }
       }));
@@ -4085,11 +4097,15 @@ Optional note for them:`, '');
       let replied = by.replied || 0;
       const repliedIds = new Set(curEnrols.filter(e => e.status === 'replied').map(e => e.id));
       let positive = curThreads.filter(t => POSITIVE.includes(t.responseCategory)).length;
+      let repMap = null, repliedSet = null, repliedHow = ''; // 3 Nov: who answered, and how the first answer came
       if (isOn('outreach.companyCounts') && c.audienceType !== 'people') {
         // 3 Nov: once per company — answered by email (enrolment), by phone / visit, or classified positive; positive once per company.
-        const rc = new Set(curEnrols.filter(e => e.status === 'replied' && e.companyId).map(e => e.companyId)), pc = new Set();
-        curThreads.forEach(t => { if (!t.companyId) return; if (t.repliedAt || t.otherReplyAt || POSITIVE.includes(t.responseCategory)) rc.add(t.companyId); if (POSITIVE.includes(t.responseCategory)) pc.add(t.companyId); });
-        replied = rc.size; positive = pc.size;
+        const pc = new Set();
+        curThreads.forEach(t => { if (t.companyId && POSITIVE.includes(t.responseCategory)) pc.add(t.companyId); });
+        repMap = repliesByCompany(curThreads, curEnrols, POSITIVE); repliedSet = new Set(repMap.keys());
+        replied = repMap.size; positive = pc.size;
+        const bc = {}; repMap.forEach(v => { bc[v.channel] = (bc[v.channel] || 0) + 1; });
+        repliedHow = Object.entries(bc).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${num(n)} ${esc(REPLY_LABEL[k] || k)}`).join(' · ');
       }
       const sent = curEnrols.reduce((a, e) => a + (e.history || []).filter(h => h.result === 'sent').length, 0);
       const kpi = (label, value, sub = '') => `<div class="kpi"><div class="kpi__label">${label}</div><div class="kpi__value">${value}</div>${sub ? `<div class="kpi__sub">${sub}</div>` : ''}</div>`;
@@ -4112,12 +4128,15 @@ Optional note for them:`, '');
       eRows.forEach(e => {
         const k = e.sourceLabel || ({ filters: 'Search CRM filters', csv: 'CSV list', manual: 'Added by hand', dynamic: 'Dynamic' }[e.source] || 'Other');
         const g = bySrc[k] ||= { n: 0, contacted: 0, replied: 0 };
-        g.n++; if ((e.history || []).length || e.status === 'replied') g.contacted++; if (e.status === 'replied') g.replied++;
+        const answered = repliedSet ? repliedSet.has(e.companyId) : e.status === 'replied';
+        g.n++; if ((e.history || []).length || answered) g.contacted++; if (answered) g.replied++;
       });
       const srcRows = Object.entries(bySrc).sort((a, b) => b[1].n - a[1].n).map(([k, g]) => `<tr><td class="clip" title="${esc(k)}">${esc(k)}</td><td class="num">${num(g.n)}</td><td class="num">${num(g.contacted)}</td><td class="num">${num(g.replied)}</td><td class="num">${pctTxt(pct(g.replied, g.contacted))}</td></tr>`).join('');
       const stepRow = (s, i) => {
         const hist = curEnrols.flatMap(e => (e.history || []).filter(h => h.stepId === s.id).map(h => ({ ...h, e })));
-        const repliedHere = curEnrols.filter(e => e.status === 'replied' && (e.history || []).slice(-1)[0]?.stepId === s.id);
+        // 3 Nov: with company counts, a company that answered (any way) is counted at the last step it was sent.
+        const lastStep = (e) => [...(e.history || [])].sort((a, b) => tsMs(a.at) - tsMs(b.at)).slice(-1)[0]?.stepId;
+        const repliedHere = repliedSet ? eRows.filter(e => repliedSet.has(e.companyId) && lastStep(e) === s.id) : curEnrols.filter(e => e.status === 'replied' && (e.history || []).slice(-1)[0]?.stepId === s.id);
         const variants = {};
         hist.forEach(h => { const k = h.variant || '—'; variants[k] = variants[k] || { sent: 0, replied: 0 }; variants[k].sent++; });
         repliedHere.forEach(e => { const k = e.variants?.[s.id] || '—'; variants[k] = variants[k] || { sent: 0, replied: 0 }; variants[k].replied++; });
@@ -4129,7 +4148,7 @@ Optional note for them:`, '');
       // Paths round 2 (R2, 27 Oct): "By step" grouped by path (each path numbers from 1) and a "By path" table.
       const pathsView = hasPaths(c) && isOn('outreach.paths');
       const stepRows = pathsView ? pathsOf(c).map((p, pi) => { const ps = stepsOfPath(c, p.id); return `<tr class="path-row"><td colspan="5" style="color:${pathColor(p, pi)[0]};">${esc(p.id === ELSE_PATH ? 'Everyone else' : p.name)}</td></tr>${ps.length ? ps.map(stepRow).join('') : '<tr><td colspan="5" class="hint">No steps — these companies are left out.</td></tr>'}`; }).join('') : steps.map(stepRow).join('');
-      const pr = pathsView ? pathResults(c, curEnrols, curThreads, POSITIVE, rolled) : null;
+      const pr = pathsView ? pathResults(c, curEnrols, curThreads, POSITIVE, rolled, repliedSet) : null;
       const byPathHtml = pr ? `<div style="padding:14px 16px 4px;"><h3>By path</h3><p class="hint" style="margin:2px 0 0;">Companies waiting to start are on their planned path${pr.unplanned ? ` (${num(pr.unplanned)} not planned yet — they get one when the paths are saved or the campaign runs)` : ''}.</p></div>
             <div class="table-wrap"><table><thead><tr><th>Path</th><th class="num">Companies</th><th class="num">Waiting</th><th class="num">In sequence</th><th class="num">Contacted</th><th class="num">Replied</th><th class="num">Reply rate</th><th class="num">Positive</th><th class="num">Left out</th></tr></thead>
             <tbody>${pr.rows.map((r, pi) => `<tr><td style="color:${pathColor(pathsOf(c)[pi], pi)[0]};font-weight:600;">${esc(r.name)}</td><td class="num">${num(r.total)}</td><td class="num">${num(r.waiting)}</td><td class="num">${num(r.inSeq)}</td><td class="num">${num(r.contacted)}</td><td class="num">${num(r.replied)}</td><td class="num">${pctTxt(pct(r.replied, r.contacted))}</td><td class="num">${num(r.positive)}</td><td class="num">${r.leftOut ? num(r.leftOut) : '—'}</td></tr>`).join('')}</tbody></table></div>` : '';
@@ -4141,7 +4160,7 @@ Optional note for them:`, '');
           ${kpi('To approve', num(by.awaiting_approval || 0), by.awaiting_approval ? `<button class="camp-link" id="ovApprove" style="font-size:0.74rem;">Open the queue →</button>` : 'drafts waiting')}
           ${steps.some(s => s.channel && s.channel !== 'email') ? kpi('Tasks open', num(by.awaiting_task || 0), by.awaiting_task ? `<button class="camp-link" id="ovTasks" style="font-size:0.74rem;">Open tasks →</button>` : 'calls, LinkedIn, letters…') : ''}
           ${kpi('Emails sent', num(sent), `${c.audienceType === 'people' ? `${num(contacted)} ${contacted === 1 ? 'person' : 'people'} emailed` : `${num(contacted)} compan${contacted === 1 ? 'y' : 'ies'} contacted (any channel)`}`)}
-          ${kpi('Replied', num(replied), `${pctTxt(pct(replied, contacted))} of contacted`)}
+          ${kpi('Replied', num(replied), `${pctTxt(pct(replied, contacted))} of contacted${repliedHow ? `<br>first answer: ${repliedHow}` : ''}`)}
           ${kpi('Positive', num(positive), 'interested · call back · referred')}
           ${kpi('Finished, no reply', num(by.completed || 0))}
           ${kpi('Stopped / removed', num((by.stopped || 0) + (by.removed || 0) + (by.moved || 0)), 'bounce, unsubscribe, removed, moved')}

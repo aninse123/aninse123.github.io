@@ -44,11 +44,20 @@ function weekStart(now) {
 }
 
 // Pure: the report from the week's documents (tested on synthetic data).
+// How a company first answered: the earliest of an email (repliedAt) and a call / visit / message logged by hand (otherReplyAt + channel).
+const REPLY_CHANNEL = { email: "email", call: "chamada", visit: "visita", linkedin: "LinkedIn", whatsapp: "WhatsApp", letter: "carta", other: "outro" };
+function replyChannelOf(list) {
+  const c = [];
+  for (const t of list) { if (t.repliedAt) c.push([ms(t.repliedAt), "email"]); if (t.otherReplyAt) c.push([ms(t.otherReplyAt), t.otherReplyChannel || "other"]); }
+  c.sort((a, b) => a[0] - b[0]);
+  return REPLY_CHANNEL[c[0]?.[1]] || "classificada";
+}
+
 function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions = [], activities = [], tasks = [], enrolments = [], liveEnrolments = [], companies = new Map(), drafts = [], campaigns = new Map(), onlyTest = false, sameEmail = null, companyCounts = false }) {
   const inWeek = (t) => { const x = ms(t); return x >= from && x < to; };
   const keep = (x) => (onlyTest ? !!x.isTest : !x.isTest);
   const sent = messages.filter((m) => m.direction === "out" && keep(m) && inWeek(m.createdAt) && !NOT_SENT.includes(m.status) && m.via !== "gmail");
-  const week = { sent: sent.length, byCampaign: {}, byCampaignPath: {}, bySender: {}, delivered: 0, bounced: 0, replies: 0, byCategory: {}, unsubscribes: 0, meetings: 0, meetingsHeld: 0, tasksDone: 0, tasksByChannel: {}, started: 0, held: 0 };
+  const week = { sent: sent.length, byCampaign: {}, byCampaignPath: {}, bySender: {}, delivered: 0, bounced: 0, replies: 0, repliesByChannel: {}, byCategory: {}, unsubscribes: 0, meetings: 0, meetingsHeld: 0, tasksDone: 0, tasksByChannel: {}, started: 0, held: 0 };
   for (const m of sent) {
     inc(week.byCampaign, m.campaignId ? (campaigns.get(m.campaignId)?.name || "Campaign") : "Written by hand");
     if (m.campaignId && m.pathName) inc(((week.byCampaignPath[campaigns.get(m.campaignId)?.name || "Campaign"] ||= { sent: {}, replies: {} }).sent), m.pathName);
@@ -68,6 +77,7 @@ function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions
     for (const list of groups.values()) {
       const t = list.find((x) => POS.includes(x.responseCategory)) || list.find((x) => x.responseCategory) || list[0];
       week.replies++; inc(week.byCategory, CATS[t.responseCategory] || (t.responseCategory ? t.responseCategory : "Not classified"));
+      inc(week.repliesByChannel, replyChannelOf(list));
       if (t.campaignId && t.pathName) inc(((week.byCampaignPath[campaigns.get(t.campaignId)?.name || "Campaign"] ||= { sent: {}, replies: {} }).replies), t.pathName);
     }
   } else for (const t of threads.filter((x) => keep(x) && inWeek(x.repliedAt))) {
@@ -147,7 +157,7 @@ function reportText(r, { weekKey, toKey }) {
     `Relatório semanal de outreach — semana de ${weekKey} a ${toKey}`, "",
     "1. A semana", "",
     `Emails enviados: ${w.sent} (entregues ${w.delivered}, devolvidos ${w.bounced})`, "Por campanha:", campaignList, "Por endereço:", list(w.bySender), "",
-    `Respostas: ${w.replies}`, list(w.byCategory), "",
+    `Respostas: ${w.replies}`, ...(Object.keys(w.repliesByChannel || {}).length ? [`Por canal (a primeira resposta de cada empresa):`, list(w.repliesByChannel)] : []), list(w.byCategory), "",
     `Pedidos de remoção: ${w.unsubscribes}`, `Reuniões marcadas: ${w.meetings}`, `Reuniões realizadas: ${w.meetingsHeld || 0}`,
     `Tarefas feitas: ${w.tasksDone}`, list(w.tasksByChannel), "",
     `Empresas que começaram uma campanha: ${w.started}`, `Empresas em espera (mesmo endereço): ${w.held}`, "",

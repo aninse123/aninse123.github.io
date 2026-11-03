@@ -1081,7 +1081,7 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     });
     activityId = ref.id;
     await store.touchCompany(t.companyId, { direction: "out", isTest: t.isTest, outreach: t.channel !== "other", channel: t.channel, by: caller, outcome: o.key });
-    if (o.reply) { await store.touchCompany(t.companyId, { direction: "in", isTest: t.isTest, channel: t.channel }); await markOtherReply(t.companyId, t.isTest); }
+    if (o.reply) { await store.touchCompany(t.companyId, { direction: "in", isTest: t.isTest, channel: t.channel }); await markOtherReply(t.companyId, t.isTest, t.channel); }
     if (visitMeet && t.meetingActivityId) await db().doc(`searchActivities/${t.meetingActivityId}`).update({ status: "happened", closedAt: FieldValue.serverTimestamp(), closedBy: caller }).catch(() => {});
   }
 
@@ -1202,12 +1202,13 @@ async function updateTask({ taskId, assignee, signer, dueAt, notes, letterText }
 // "meeting done" and closes the scheduled one, "Reschedule…" moves the scheduled date (the Monday report counts booked and held).
 const visitMeetingsOn = async () => (await Feat.jobState("outreach.visitMeetings")) !== "off";
 // 3 Nov (switch outreach.companyCounts): an answer by phone or in person marks the company's conversations (otherReplyAt), so the
-// metrics count the company as replied even though no email came in.
-async function markOtherReply(companyId, isTest) {
+// metrics count the company as replied even though no email came in. otherReplyChannel = how (call, visit, linkedin…), at = when it
+// happened (the logged date); a later answer never overwrites the first one.
+async function markOtherReply(companyId, isTest, channel, at) {
   if (!companyId || isTest || (await Feat.jobState("outreach.companyCounts")) === "off") return;
   try {
     const snap = await db().collection("outreachThreads").where("companyId", "==", companyId).get();
-    await Promise.all(snap.docs.filter((d) => !d.data().otherReplyAt).map((d) => d.ref.update({ otherReplyAt: Timestamp.now() })));
+    await Promise.all(snap.docs.filter((d) => !d.data().otherReplyAt).map((d) => d.ref.update({ otherReplyAt: at ? Timestamp.fromDate(at) : Timestamp.now(), otherReplyChannel: channel || "other" })));
   } catch (err) { /* best effort: the replies stay counted by their category */ }
 }
 const OWN_CHANNELS = ["call", "linkedin", "whatsapp", "letter", "visit", "other"];
@@ -1280,7 +1281,7 @@ async function logActivity({ companyId, threadId, channel, outcome, notes, date 
     createdAt: FieldValue.serverTimestamp(), createdBy: caller,
   });
   await store.touchCompany(cid, { direction: "out", isTest, outreach: channel !== "other", channel, by: caller, outcome: o.key });
-  if (o.reply) { await store.touchCompany(cid, { direction: "in", isTest, channel }); await markOtherReply(cid, isTest); }
+  if (o.reply) { await store.touchCompany(cid, { direction: "in", isTest, channel }); await markOtherReply(cid, isTest, channel, when); }
   return { ok: true, activityId: ref.id };
 }
 

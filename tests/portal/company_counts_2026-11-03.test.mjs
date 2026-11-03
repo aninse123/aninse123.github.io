@@ -60,7 +60,25 @@ ok('By path Off: counts addresses (A has 5)', row(off2, 'A').total === 5);
 ok('By path On: counts companies (A has 2, B has 2 with the waiting one)', row(on2, 'A').total === 2 && row(on2, 'B').total === 2);
 ok('By path On: contacted and replied per company', row(on2, 'A').contacted === 2 && row(on2, 'B').contacted === 1 && row(on2, 'B').replied === 1);
 ok('By path On: positive once per company (co1 answered on two addresses)', row(on2, 'A').positive === 1 && row(on2, 'B').positive === 1 && row(off2, 'A').positive === 2);
-ok('the page rolls up before counting, only under the switch', html.includes("const rolled = isOn('outreach.companyCounts') && c.audienceType !== 'people';") && html.includes('const eRows = rolled ? rollupByCompany(curEnrols) : curEnrols;') && html.includes('POSITIVE, rolled)'));
+ok('the page rolls up before counting, only under the switch', html.includes("const rolled = isOn('outreach.companyCounts') && c.audienceType !== 'people';") && html.includes('const eRows = rolled ? rollupByCompany(curEnrols) : curEnrols;') && html.includes('POSITIVE, rolled, repliedSet)'));
+
+// who answered, and how: the first answer of any kind counts, once per company
+const T = (d) => ({ toMillis: () => Date.parse(d) });
+const rthr = [
+  { companyId: 'co1', repliedAt: T('2026-11-03T08:35:00Z') },
+  { companyId: 'co1', otherReplyAt: T('2026-11-02T12:00:00Z'), otherReplyChannel: 'call' },
+  { companyId: 'co2', repliedAt: T('2026-11-03T09:00:00Z') },
+  { companyId: 'co3', responseCategory: 'interested' },
+  { companyId: 'co4', otherReplyAt: T('2026-11-04T09:00:00Z'), otherReplyChannel: 'visit' },
+];
+const rm = P.repliesByCompany(rthr, [{ companyId: 'co5', status: 'replied' }], POSITIVE);
+ok('four companies and the enrolment reply answered: 5', rm.size === 5);
+ok('the first answer wins: the call (2 Nov) before the email (3 Nov)', rm.get('co1').channel === 'call' && rm.get('co2').channel === 'email' && rm.get('co4').channel === 'visit');
+ok('marked positive only when nothing else answered; an enrolment reply is an email', rm.get('co3').channel === 'marked' && rm.get('co5').channel === 'email');
+const camp2 = { paths: [{ id: 'A', name: 'A' }, { id: 'main', name: 'Else' }], steps: [] };
+const en2 = [{ id: 'x', companyId: 'co1', status: 'stopped', pathId: 'A', history: sent(1) }, { id: 'y', companyId: 'co2', status: 'active', pathId: 'A', history: sent(1) }];
+ok('By path counts a company that answered by call while its enrolment was stopped', P.pathResults(camp2, en2, [], POSITIVE, true, new Set(['co1'])).rows[0].replied === 1 && P.pathResults(camp2, en2, [], POSITIVE, true).rows[0].replied === 0);
+ok('the Overview shows how the first answer came, and By step / By source use the same set', html.includes('first answer: ${repliedHow}') && html.includes('repliedSet ? eRows.filter(e => repliedSet.has(e.companyId)') && html.includes('const answered = repliedSet ? repliedSet.has(e.companyId)'));
 
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');

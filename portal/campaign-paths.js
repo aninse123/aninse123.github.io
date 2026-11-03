@@ -66,10 +66,24 @@ export function rollupByCompany(enrols) {
     return { ...root, status: top.status, stopReason: top.stopReason, history: list.flatMap((e) => e.history || []), _ids: list.map((e) => e.id) };
   });
 }
+// 3 Nov (outreach.companyCounts): who answered and how. One entry per company: the FIRST answer of any kind — an email (repliedAt), a call /
+// visit / message logged by hand (otherReplyAt + otherReplyChannel), or, with nothing else, a conversation you marked positive ('marked').
+export const REPLY_LABEL = { email: 'email', call: 'call', visit: 'visit', linkedin: 'LinkedIn', whatsapp: 'WhatsApp', letter: 'letter', other: 'other', marked: 'marked positive' };
+export function repliesByCompany(threads, enrols, positive = []) {
+  const m = new Map();
+  const add = (k, at, channel) => { if (!k) return; const o = m.get(k); if (!o || at < o.at) m.set(k, { at, channel }); };
+  for (const e of enrols) if (e.status === 'replied') add(e.companyId, msOf(e.endedAt) || Infinity, 'email');
+  for (const t of threads) {
+    if (t.repliedAt) add(t.companyId, msOf(t.repliedAt) || Infinity, 'email');
+    if (t.otherReplyAt) add(t.companyId, msOf(t.otherReplyAt) || Infinity, t.otherReplyChannel || 'other');
+  }
+  for (const t of threads) if (t.companyId && !m.has(t.companyId) && positive.includes(t.responseCategory)) add(t.companyId, Infinity, 'marked');
+  return m;
+}
 // R2: the campaign's results per path (Overview "By path"): companies, waiting, in
 // the sequence, contacted, replied, positive (from the conversations) and left out.
 const IN_SEQ = ['active', 'awaiting_approval', 'awaiting_task', 'paused'];
-export function pathResults(c, enrols, threads = [], positive = [], byCompany = false) {
+export function pathResults(c, enrols, threads = [], positive = [], byCompany = false, repliedSet = null) {
   if (byCompany) enrols = rollupByCompany(enrols);
   const rows = new Map(pathsOf(c).map((p) => [p.id, { id: p.id, name: p.id === ELSE_PATH ? 'Everyone else' : p.name, total: 0, waiting: 0, inSeq: 0, contacted: 0, replied: 0, positive: 0, leftOut: 0 }]));
   const byEnrol = new Map();
@@ -82,7 +96,7 @@ export function pathResults(c, enrols, threads = [], positive = [], byCompany = 
     const r = rows.get(id); r.total++;
     if (e.status === 'pending') r.waiting++; else if (IN_SEQ.includes(e.status)) r.inSeq++;
     if ((e.history || []).length || e.status === 'replied') r.contacted++;
-    if (e.status === 'replied') r.replied++;
+    if (byCompany && repliedSet ? repliedSet.has(e.companyId) : e.status === 'replied') r.replied++;
     if (isLeftOut(e)) r.leftOut++;
   }
   const seenPos = new Set();

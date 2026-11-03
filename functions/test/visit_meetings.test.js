@@ -86,6 +86,18 @@ function flags(visit, counts) {
   ok("report Off: as before, by email only (one reply, the phone one is not counted)", rep.replies === 1);
   const en = [{ startedAt: at, companyId: "co1" }, { startedAt: at, companyId: "co1", isExtra: true }, { startedAt: at, companyId: "co2" }];
   ok("report On: a company's extra addresses are not new companies started", Report.buildWeeklyReport({ from, to, enrolments: en, companyCounts: true }).week.started === 2 && Report.buildWeeklyReport({ from, to, enrolments: en }).week.started === 3);
+  const chThreads = [
+    { id: "a", companyId: "co1", repliedAt: at + 86400000, otherReplyAt: at, otherReplyChannel: "call" },
+    { id: "c", companyId: "co9", repliedAt: at },
+    { id: "d", companyId: "co7", otherReplyAt: at, otherReplyChannel: "visit" },
+  ];
+  const wk = Report.buildWeeklyReport({ from, to, threads: chThreads, companyCounts: true }).week;
+  ok("report On: replies by channel, the first answer of each company (call before email)", wk.replies === 3 && wk.repliesByChannel["chamada"] === 1 && wk.repliesByChannel["email"] === 1 && wk.repliesByChannel["visita"] === 1);
+  flags("on", "on");
+  store.set("outreachThreads/thF", { companyId: "co3", contactEmail: "z@t.pt", isTest: false });
+  await camp({ action: "logActivity", companyId: "co3", channel: "call", outcome: "connected", date: "2026-11-02T12:00:00Z" });
+  const tf = store.get("outreachThreads/thF");
+  ok("logActivity stores the channel and the logged date of the answer", tf.otherReplyChannel === "call" && new Date(tf.otherReplyAt.toDate ? tf.otherReplyAt.toDate() : tf.otherReplyAt).toISOString().slice(0, 10) === "2026-11-02");
   ok("the report text has the held line", /Reuniões realizadas: 2/.test(Report.reportText({ week: { ...rep, meetingsHeld: 2, byCampaign: {}, bySender: {}, byCategory: {}, tasksByChannel: {} }, owners: { multiCampaign: [], sameOwner: [], emailLinks: [], openFlags: [], heldNow: [] } }, { weekKey: "2026-11-02", toKey: "2026-11-08" })));
 
   console.log(fail ? `\n${fail} FAILED` : "\nAll passed");
