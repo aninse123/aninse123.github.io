@@ -62,6 +62,14 @@ export function niceCase(s) {
     return w.replace(/(^|[-(])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase());
   }).join('').replace(/^./, (m) => m.toUpperCase());
 }
+// The envelope lines for a letter: the street line, then the postcode and the municipality. If the street line already carries its own
+// postcode (an address typed by the team and chosen with the ★: "R. de Trás 421, 4475-500 Maia"), it is split there, never repeated.
+export function addressLines(c) {
+  const street = String(c?.hqAddress || '').trim(), pc = String(c?.postcode || '').trim(), place = String(c?.concelho || c?.city || '').trim();
+  const m = street.match(/\b\d{4}-\d{3}\b/);
+  if (m) { const i = street.indexOf(m[0]); return [street.slice(0, i).replace(/[,\s-]+$/, '').trim(), street.slice(i).trim()].filter(Boolean); }
+  return [street, [pc, place].filter(Boolean).join(' ')].filter(Boolean);
+}
 export function fullAddress(c) {
   if (!c) return '';
   const street = niceCase(c.hqAddress), pc = String(c.postcode || '').trim();

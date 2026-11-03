@@ -180,6 +180,10 @@ ok('Address: already complete or mixed case is left alone; no duplicate postcode
 ok('Search CRM: the Overview and the contact card show the full address, and Maps gets it with the country', sh.includes('fullAddress(c)') && sh.includes("encodeURIComponent(fullAddress(c) + ', Portugal')") && sh.includes("t === 'address' ? fullAddress(c) || single : single"));
 ok('Overview: Edit next to the email goes to the Contacts tab (company contact details), not the whole company form', sh.includes('data-ceedit="email" data-from="ov"') && sh.includes("if (b.dataset.from === 'ov')") && sh.includes("getElementById('companyReachCard')?.scrollIntoView"));
 
+ok('Letters: street line, then postcode and municipality', JSON.stringify(CP.addressLines({ hqAddress: 'RUA DA INDUSTRIA, 7', postcode: '2860-706', concelho: 'Moita' })) === JSON.stringify(['RUA DA INDUSTRIA, 7', '2860-706 Moita']));
+ok('Letters: an address that carries its postcode is split there, not repeated', JSON.stringify(CP.addressLines({ hqAddress: 'R. de Trás 421, 4475-500 Maia', postcode: '4475-500', concelho: 'Maia' })) === JSON.stringify(['R. de Trás 421', '4475-500 Maia']) && JSON.stringify(CP.addressLines({})) === '[]');
+ok('Letters: the envelope, the print list and the letter preview all use it', !html.includes("c.hqAddress || '', [c.postcode, c.concelho]") && (html.match(/addressLines\(/g) || []).length >= 4);
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
