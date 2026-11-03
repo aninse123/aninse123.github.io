@@ -57,7 +57,11 @@ async function setRecipients({ enrolmentId, emails, all }, caller, { deps, multi
   const cur = await recipientsFor({ enrolmentId }, { deps });
   const e = (await ref.get()).data();
   if (e.trackOf) fail("failed-precondition", "is_track", "Change the company's first address instead.");
-  const want = [...new Set(emails.map(normEmail).filter(Boolean))];
+  let want = [...new Set(emails.map(normEmail).filter(Boolean))];
+  // 3 Nov: the first address already got email 1 and has stopped (bounced): it is no longer offered as a choice, so the list does not carry it;
+  // it stays first all the same
+  const sentTo = normEmail(e.recipient?.email);
+  if (cur.locked && sentTo && e.status === "stopped" && want.length && want[0] !== sentTo) want = [sentTo, ...want.filter((x) => x !== sentTo)];
   const byEmail = new Map(cur.list.map((r) => [r.email, r]));
   // 3 Nov: the first address, once email 1 has gone to it, stays first even if it has since bounced or been stopped: it is not written
   // to again, so it is neither checked nor counted towards the limit (the others can use its place).

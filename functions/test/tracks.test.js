@@ -95,6 +95,13 @@ function seed() {
   const dead = await RL.setRecipients({ enrolmentId: "en1", emails: ["joao@empresa.pt", "geral@empresa.pt", "contas@empresa.pt", "joao.silva@empresa.pt"], all: true }, "andre", { deps: dns, multi: true });
   ok("a stopped first address stays first, is not counted, and the others (3) can be added", dead.added === 2 && live("en1__t1") && en("en1__t2").recipient.email === "contas@empresa.pt" && en("en1__t3").recipient.email === "joao.silva@empresa.pt" && en("en1__t3").forceApproval === true);
   ok("listing the stopped first address with a live one is fine (nothing new to add)", (await reason(RL.setRecipients({ enrolmentId: "en1", emails: ["joao@empresa.pt", "geral@empresa.pt"], all: true }, "andre", { deps: dns, multi: true }))) === null);
+  // the window does not list the bounced first address at all (a bounced person address is not offered): it still stays first
+  seed();
+  store.set("searchPeople/u_1", { name: "João Silva", reach: [{ id: "r1", type: "email", value: "joao@empresa.pt", status: "bounced", primary: true, origin: "team" }, { id: "r2", type: "email", value: "joao.silva@empresa.pt", status: "ok", origin: "team" }] });
+  store.set("outreachEnrolments/en1", { ...en("en1"), status: "stopped", stopReason: "Email bounced", threadId: "th1", currentStep: 1, multiRecipient: true, recipient: { email: "joao@empresa.pt", kind: "person", personId: "u_1" }, recipientList: ["joao@empresa.pt", "geral@empresa.pt"] });
+  store.set("outreachEnrolments/en1__t1", { campaignId: "cmp1", companyId: "co1", companyName: "EMPRESA, LDA", status: "active", currentStep: 1, isTrack: true, isExtra: true, trackOf: "en1", trackIndex: 1, threadId: "th2", recipient: { email: "geral@empresa.pt", kind: "company" } });
+  const noFirst = await RL.setRecipients({ enrolmentId: "en1", emails: ["geral@empresa.pt", "contas@empresa.pt", "joao.silva@empresa.pt"], all: true }, "andre", { deps: dns, multi: true });
+  ok("the stopped first address need not be in the list: it stays first and the three chosen are written to (3 Nov)", noFirst.added === 2 && noFirst.list[0] === "joao@empresa.pt" && en("en1__t3").recipient.email === "joao.silva@empresa.pt" && live("en1__t1"));
 
   // ── A reply from anyone stops them all; restart ──
   seed();
