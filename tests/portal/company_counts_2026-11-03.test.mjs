@@ -383,5 +383,6 @@ ok('A draft (the email waits in To approve) does not book the meeting; a sent re
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
 for (const k of ['outreach.visitMeetings', 'outreach.companyCounts']) ok(`switch ${k} is in the server catalog and the page list`, cat.includes(`"${k}"`) && pf.includes(`'${k}'`));
+ok('Inbox search: finds a conversation by any of its addresses (the one that replied), also in the older ones', raw0.includes('t.contactEmail, ...(t.addresses || []), t.contactName') && raw0.includes("where('addresses', 'array-contains', q.toLowerCase())"));
 console.log(fail ? `\n${fail} FAILED` : '\nAll passed');
 process.exit(fail ? 1 : 0);

@@ -1778,6 +1778,8 @@
         if (q.includes('@') && !q.startsWith('@')) {
           const s = await getDocs(query(collection(db, 'outreachThreads'), where('contactEmail', '==', q.toLowerCase()), limit(50)));
           addReads(s.size || 1); found.push(...s.docs);
+          const s2 = await getDocs(query(collection(db, 'outreachThreads'), where('addresses', 'array-contains', q.toLowerCase()), limit(50))); // 3 Nov: also any address of the company, e.g. the one that replied
+          addReads(s2.size || 1); found.push(...s2.docs);
         }
         refreshReads();
         if (allSearch.q !== q) return; // a newer search started
@@ -1793,7 +1795,7 @@
       const own = owner || ownerFilter;
       const q = norm($('inboxSearch')?.value || '').trim();
       return threads.filter(t => {
-        if (q && !(nifSearch.ids && /^\d{9}$/.test(q) && nifSearch.ids.has(t.companyId)) && !(allSearch.ids && norm(allSearch.q) === q && allSearch.ids.has(t.companyId)) && ![t.companyName, t.contactEmail, t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
+        if (q && !(nifSearch.ids && /^\d{9}$/.test(q) && nifSearch.ids.has(t.companyId)) && !(allSearch.ids && norm(allSearch.q) === q && allSearch.ids.has(t.companyId)) && ![t.companyName, t.contactEmail, ...(t.addresses || []), t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
         if (stateFilter === 'closed' && t.status !== 'closed') return false;
         if (stateFilter === 'bounced' && !['bounced', 'failed'].includes(t.status)) return false;
         if (stateFilter === 'replied' && t.status !== 'replied') return false;
