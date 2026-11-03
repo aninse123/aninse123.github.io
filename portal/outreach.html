@@ -4294,7 +4294,7 @@ Optional note for them:`, '');
           const parts = n > 1 ? [liveG.length ? `${liveG.length} in sequence` : '', g.filter(x => x.status === 'replied').length ? `${g.filter(x => x.status === 'replied').length} replied` : '', bouncedN ? `${bouncedN} bounced` : '', stoppedN - bouncedN > 0 ? `${stoppedN - bouncedN} stopped` : ''].filter(Boolean).join(' · ') : '';
           const live = liveG.length > 0, allPaused = live && liveG.every(x => x.status === 'paused');
           const btns = !live ? (r.status === 'replied' && root.companyId && isOn('outreach.multiRecipient') ? `<button class="btn btn--ghost btn--sm" data-eop="restart" data-perm="out.campaigns" data-eid="${esc(top.id)}" title="A reply stopped this company. Bring it back at the step it was on.">Restart company…</button>` : '') : [
-            canChooseRecipients(root) ? `<button class="btn btn--ghost btn--sm" data-eop="recipients" data-perm="out.campaigns" data-eid="${esc(root.id)}" title="Choose which addresses this company is written to, and in what order">Addresses…</button>` : '',
+            canChooseRecipients(root, liveG) ? `<button class="btn btn--ghost btn--sm" data-eop="recipients" data-perm="out.campaigns" data-eid="${esc(root.id)}" title="Choose which addresses this company is written to, and in what order">Addresses…</button>` : '',
             `<button class="btn btn--ghost btn--sm" data-coop="${allPaused ? 'resume' : 'pause'}" data-ckey="${esc(key)}" data-perm="out.campaigns">${allPaused ? 'Resume' : 'Pause'}</button>`,
             `<button class="btn btn--ghost btn--sm" data-coop="move" data-ckey="${esc(key)}" data-perm="out.campaigns">Move…</button>`,
             `<button class="btn btn--danger btn--sm" data-coop="remove" data-ckey="${esc(key)}" data-perm="out.campaigns">Remove</button>`,
@@ -4440,7 +4440,8 @@ Optional note for them:`, '');
 
     // 30 Oct (contacts.trustLabels): choose the addresses a company is written to, and in which order. The first one gets
     // email 1; the others are kept in order for later (a bounce, or several people). The domain flag is advice only.
-    function canChooseRecipients(e) { return isOn('contacts.trustLabels') && e.companyId && !e.personEmail && !e.trackOf && LIVE_ENROL.includes(e.status) && ((!e.threadId && !(e.currentStep > 0)) || isOn('outreach.multiRecipient')); } // after email 1 only the extra addresses can change (several recipients)
+    // 3 Nov: liveOthers = the company's other live addresses: the first address may have bounced (stopped) while the company still runs, and then it can still be changed
+    function canChooseRecipients(e, liveOthers = []) { return isOn('contacts.trustLabels') && e.companyId && !e.personEmail && !e.trackOf && (LIVE_ENROL.includes(e.status) || liveOthers.length > 0) && ((!e.threadId && !(e.currentStep > 0)) || isOn('outreach.multiRecipient')); } // after email 1 only the extra addresses can change (several recipients)
     async function openChooseRecipients(e) {
       let r;
       try { r = (await callCampaign({ action: 'recipientsFor', enrolmentId: e.id })).data; } catch (err) { toast(errText(err)); return; }
