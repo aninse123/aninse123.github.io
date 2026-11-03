@@ -389,7 +389,8 @@ async function deliverEmail(p, { campaign = null } = {}) {
     lastMessageAt: sentAt, lastDirection: "out",
     ...(replyAddrs.length ? { addresses: FieldValue.arrayUnion(...replyAddrs) } : {}),
     status: isReply && !campaign ? "waiting" : "open",
-    ...(isReply && !campaign ? { unread: false } : {}),
+    // 3 Nov: answering a conversation means YOU have read it; the other partner has not (readBy is per person: same key as portal/read-state.js)
+    ...(isReply && !campaign ? (p.callerEmail ? { [`readBy.${String(p.callerEmail).split("@")[0].replace(/[^A-Za-z0-9_]/g, "_") || "user"}`]: sentAt } : { unread: false }) : {}),
   });
   await store.writeActivity({
     companyId, direction: "out", subject: p.subject, content: p.bodyText, threadId: threadRef.id,

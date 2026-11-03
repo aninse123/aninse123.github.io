@@ -208,7 +208,8 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   ok("References carry the chain", rep.body.headers["References"].includes("<om-reqAAAAAAAAAAAA1@mail.douropartners-team.pt>") && rep.body.headers["References"].includes("<reply-1@mail.gmail.com>"));
   ok("subject gets Re:", rep.body.subject === "Re: Search funds — Metalúrgica Silva");
   ok("reply quotes the prospect's message at the end (B7)", rep.body.text.includes("escreveu:\n> Claro, quinta às 10h?") && rep.body.text.indexOf("escreveu:") > rep.body.text.indexOf("\n--\n"));
-  ok("thread → waiting, read", store.get("outreachThreads/" + thread1Id).status === "waiting" && store.get("outreachThreads/" + thread1Id).unread === false);
+  const afterReply = store.get("outreachThreads/" + thread1Id);
+  ok("thread → waiting; the one who answered has read it, the other partner has not (3 Nov)", afterReply.status === "waiting" && afterReply.unread === true && !!afterReply.readBy && Object.keys(afterReply.readBy).length === 1);
   ok("counted as reply", store.get("outreachDaily/" + day).repliesSent === 1);
 
   console.log("\n=== inbound: domain rule and unmatched ===");
