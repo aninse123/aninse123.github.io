@@ -4409,6 +4409,11 @@ Optional note for them:`, '');
       const camp = curCamp(), multiOn = isOn('outreach.multiRecipient');
       let list = r.list.slice(), all = !!r.all, previews = {};
       if (r.locked) { const f = list.findIndex(x => x.email === e.recipient?.email); if (f > 0) list.unshift(list.splice(f, 1)[0]); if (list[0]) list[0].selected = true; }
+      // 3 Nov: an address that bounced, has no mail servers or is not verified cannot be written to: it is never ticked and does not count
+      // towards the 3 (before, it stayed ticked from the saved list, could not be unticked, and made the count one too many). They go last.
+      const unusable = (x) => x.blocked || x.trust === 'bounced';
+      list = list.map((x, i) => (unusable(x) && !(r.locked && i === 0) ? { ...x, selected: false } : x));
+      list = [...list.filter((x, i) => !unusable(x) || (r.locked && i === 0)), ...list.filter((x, i) => unusable(x) && !(r.locked && i === 0))];
       const KIND = { company: 'company address', contact: 'contact', person: 'person' };
       const DOM = { none: ['⚠ the domain does not seem to receive email', 'color:var(--danger)'] };
       const draw = () => {

@@ -151,6 +151,8 @@ ok('Order: a working own email stays first', CP.companyEmailsInOrder({ companyEm
 ok('Overview shows the usable one first when the own one is dead; none usable = as before', CP.firstUsableCompanyEmail(dead2).value === 'b@ok.pt' && CP.firstUsableCompanyEmail({ ...dead2, reach: [] }) === null);
 ok('Search CRM wiring: Overview row and the send-email options use the order', sh.includes('companyEmailRowHtml(c)') && sh.includes('companyEmailsInOrder(c)') && sh.includes('cannot receive email)'));
 
+ok('Addresses window: an address that bounced or cannot be used is never ticked, does not count, and goes last', html.includes("const unusable = (x) => x.blocked || x.trust === 'bounced';") && html.includes('{ ...x, selected: false }') && html.includes('...list.filter((x, i) => unusable(x) && !(r.locked && i === 0))'));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
