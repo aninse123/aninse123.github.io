@@ -185,14 +185,15 @@ async function setCompanyOutreachStatus(companyId, status, isTest) {
 
 // 30 Oct (switch contacts.trustLabels shows it): a hard bounce on the company's own general address is recorded on
 // the company, for that address (suppression says "this address", the company status only says "a bounce happened").
-async function markCompanyEmailBounced(companyId, email, reason, isTest) {
+// kind "no_mx": the domain has no mail servers (nothing was sent); the portal names it "No mail server" instead of "Bounced".
+async function markCompanyEmailBounced(companyId, email, reason, isTest, kind = null) {
   if (!companyId || isTest) return false;
   try {
     const ref = db().doc(`searchCompanies/${companyId}`);
     const snap = await ref.get();
     const e = normEmail(email);
     if (!snap.exists || !e || normEmail(snap.data().companyEmail) !== e) return false;
-    await ref.update({ companyEmailBounce: { email: e, at: FieldValue.serverTimestamp(), reason: String(reason || "bounced").slice(0, 120) }, updatedAt: FieldValue.serverTimestamp() }); // updatedAt: the Search CRM only re-reads companies whose updatedAt changed
+    await ref.update({ companyEmailBounce: { email: e, at: FieldValue.serverTimestamp(), reason: String(reason || "bounced").slice(0, 120), ...(kind ? { kind } : {}) }, updatedAt: FieldValue.serverTimestamp() }); // updatedAt: the Search CRM only re-reads companies whose updatedAt changed
     return true;
   } catch (err) { return false; }
 }

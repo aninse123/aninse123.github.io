@@ -1371,7 +1371,7 @@ import { nameIssues, nameCheckOf } from './email-name-check.js'; // 26 Oct (sear
 import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-ui.js';
 import { summaryOf as contactSummaryOf, contactedHtml, flagsHtml, tipHtml as contactTipHtml, CT_CSS } from './contact-summary.js'; // 27 Oct (search.contactColumns)
 document.head.insertAdjacentHTML('beforeend', `<style>${CT_CSS}</style>`);
-import { trustOf, trustTitle, trustPillHtml, TRUST_CSS, companyEmailTrust, companyEmailTitle } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
+import { trustOf, trustTitle, trustPillHtml, TRUST_CSS, companyEmailTrust, companyEmailTitle, companyEmailLabel } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
 import { genderOfFirstName } from './recipient-fields.js'; // 30 Oct: gender of a person, for emails that agree with it (outreach.multiRecipient)
 document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
 import { stepsFor } from './campaign-paths.js'; // 27 Oct (outreach.paths)
@@ -3885,7 +3885,7 @@ const dayOfTs = (v) => { const d = tsToDate(v) || (v ? new Date(v) : null); retu
 function companyEmailStatusHtml(c){
   if (!isOn('contacts.trustLabels') || !c?.companyEmail) return '';
   const k = companyEmailTrust(c), mine = !!c.companyEmailConfirmedAt && String(c.companyEmailConfirmedFor || '').trim().toLowerCase() === String(c.companyEmail).trim().toLowerCase();
-  return ` ${trustPillHtml(k, companyEmailTitle(c, dayOfTs), esc)}${canEditCompany(c) ? ' <button class="btn btn--ghost btn--sm" data-ceedit="email" title="Correct it in the company form">Edit</button>' : ''}${k !== 'bounced' && canEditCompany(c) ? ` <button class="btn btn--ghost btn--sm" id="ovEmailConfirm"${mine ? ' data-undo="1"' : ''} title="${mine ? 'Take back your confirmation' : 'You have checked it: mark as Confirmed'}">${mine ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}`;
+  return ` ${trustPillHtml(k, companyEmailTitle(c, dayOfTs), esc, companyEmailLabel(c))}${canEditCompany(c) ? ' <button class="btn btn--ghost btn--sm" data-ceedit="email" title="Correct it in the company form">Edit</button>' : ''}${k !== 'bounced' && canEditCompany(c) ? ` <button class="btn btn--ghost btn--sm" id="ovEmailConfirm"${mine ? ' data-undo="1"' : ''} title="${mine ? 'Take back your confirmation' : 'You have checked it: mark as Confirmed'}">${mine ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}`;
 }
 // 3 Nov: Edit next to a company email / phone / website opens the company form on that field (they come from the registry or Orbis, so they are corrected there)
 document.addEventListener('click', (ev) => {
@@ -4494,7 +4494,7 @@ function companyReachCardHtml(c){
     if (single) {
       const isMail = t === 'email', k = isMail ? companyEmailTrust(c) : 'tool', conf = isMail && c.companyEmailConfirmedAt && String(c.companyEmailConfirmedFor || '').trim().toLowerCase() === String(single).trim().toLowerCase();
       first = `<div class="contact-detail reach-row${k === 'bounced' ? ' prev' : ''}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><span aria-hidden="true">${ICON[t]}</span>${reachLinkHtml(t, single, k === 'bounced' ? 'text-decoration:line-through;' : '')}
-        ${trustPillHtml(k, isMail ? companyEmailTitle(c, dayOfTs) : 'From the registry or the Orbis database', esc)} <span class="badge badge-grey" title="From the company record (edit it in the company form)">Orbis</span>
+        ${trustPillHtml(k, isMail ? companyEmailTitle(c, dayOfTs) : 'From the registry or the Orbis database', esc, isMail ? companyEmailLabel(c) : null)} <span class="badge badge-grey" title="From the company record (edit it in the company form)">Orbis</span>
         ${canEdit ? `<button class="btn btn--ghost btn--sm" data-ceedit="${t}" style="margin-left:auto;" title="Correct it in the company form (this value comes from the registry or Orbis)">Edit</button>` : ''}
         ${isMail && canEdit && k !== 'bounced' ? `<button class="btn btn--ghost btn--sm" data-ceconfirm="1"${conf ? ' data-undo="1"' : ''} style="${canEdit ? '' : 'margin-left:auto;'}">${conf ? 'Unconfirm' : '✓ Confirm'}</button>` : ''}</div>`;
     }

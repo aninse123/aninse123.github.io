@@ -654,7 +654,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
       if (STOP.has(reason)) {
         if (await endEnrolment(doc.ref, "stopped", msg)) report.stopped++;
         // 3 Nov: a general address whose domain has no mail servers is marked on the company, like a bounce (Bounced in the contact details)
-        if (reason === "no_mx" && e.recipient?.email) await store.markCompanyEmailBounced(e.companyId, e.recipient.email, "no mail servers (the domain can't receive email)", e.isTest);
+        if (reason === "no_mx" && e.recipient?.email) await store.markCompanyEmailBounced(e.companyId, e.recipient.email, "no mail servers (the domain can't receive email)", e.isTest, "no_mx");
       } else if (STOP_RUN.has(reason)) {
         report.stoppedSends = reason;
         report.stoppedSendsText = holdText(reason, msg);

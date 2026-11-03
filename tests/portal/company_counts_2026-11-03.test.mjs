@@ -125,6 +125,11 @@ ok("the campaign's enrolments are loaded without orderBy('enrolledAt') (extra ad
 const sh = fs.readFileSync(new URL('../../portal/search.html', import.meta.url), 'utf8');
 ok('Search CRM: Edit next to the company email (Overview and contact details) opens the company form on that field', sh.includes('data-ceedit="email"') && sh.includes('data-ceedit="${t}"') && sh.includes("email: 'cCompanyEmail'") && sh.includes('openEditCompany(); if (id) setTimeout('));
 
+const CT = await import(new URL('../../portal/contact-trust.js', import.meta.url));
+const dead = { companyEmail: 'a@x.com.pt', companyEmailBounce: { email: 'a@x.com.pt', kind: 'no_mx', reason: 'no mail servers' } }, bounce = { companyEmail: 'b@y.pt', companyEmailBounce: { email: 'b@y.pt', reason: 'hard bounce' } };
+ok('Company email pill: "No mail server" for a dead domain, "Bounced" for a refused mailbox; both count as bounced', CT.companyEmailTrust(dead) === 'bounced' && CT.companyEmailLabel(dead) === 'No mail server' && CT.companyEmailTrust(bounce) === 'bounced' && CT.companyEmailLabel(bounce) === null && CT.trustPillHtml('bounced', '', (s) => s, 'No mail server').includes('>No mail server<') && CT.trustPillHtml('bounced', '').includes('>Bounced<'));
+ok('Company email title: says nothing was sent for a dead domain', CT.companyEmailTitle(dead).includes('no mail servers, so email cannot reach it (nothing was sent)') && CT.companyEmailTitle(bounce).includes('an email to it bounced'));
+ok('the label follows an edited address: a new address is not marked', CT.companyEmailLabel({ ...dead, companyEmail: 'a@x.pt' }) === null);
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');

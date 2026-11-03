@@ -35,10 +35,13 @@ export function companyEmailEntry(c) {
   return { origin: 'database', type: 'email', status: bounced ? 'bounced' : 'ok', confirmedAt: confirmed ? c.companyEmailConfirmedAt : null, confirmedBy: confirmed ? c.companyEmailConfirmedBy || null : null };
 }
 export const companyEmailTrust = (c) => trustOf(companyEmailEntry(c));
+// 3 Nov: a bounce (we sent, the mailbox refused) and a domain with no mail servers (never sent) are both 'bounced' for every rule
+// (struck through, skipped by Outreach), but the pill says which, because the fix differs: the mailbox, or the domain.
+export const companyEmailLabel = (c) => (companyEmailTrust(c) === 'bounced' && c.companyEmailBounce && c.companyEmailBounce.kind === 'no_mx' ? 'No mail server' : null);
 // `day` turns a stored date (ISO text or a Firestore timestamp) into text.
 export function companyEmailTitle(c, day = (v) => String(v || '').slice(0, 10)) {
   const e = companyEmailEntry(c), bits = ['From the registry or the Orbis database'];
-  if (e.status === 'bounced') { const b = c.companyEmailBounce || {}; bits.push('an email to it bounced' + (b.at ? ' on ' + day(b.at) : '') + (b.reason ? ' (' + b.reason + ')' : '')); }
+  if (e.status === 'bounced') { const b = c.companyEmailBounce || {}; bits.push(b.kind === 'no_mx' ? 'its domain has no mail servers, so email cannot reach it (nothing was sent)' + (b.at ? ' · found on ' + day(b.at) : '') : 'an email to it bounced' + (b.at ? ' on ' + day(b.at) : '') + (b.reason ? ' (' + b.reason + ')' : '')); }
   if (e.confirmedAt) bits.push(c.companyEmailConfirmedVia === 'reply' ? 'confirmed: they replied from it on ' + day(e.confirmedAt) : 'confirmed by ' + String(e.confirmedBy || '').split('@')[0] + ' on ' + day(e.confirmedAt));
   else bits.push('not confirmed by a person');
   return bits.join(' · ');
@@ -61,8 +64,8 @@ export function trustTitle(entry, day = (iso) => String(iso || '').slice(0, 10))
 }
 
 // The pill, as html. `esc` is the page's escaper.
-export function trustPillHtml(key, title, esc = (s) => s) {
-  return `<span class="trust trust--${key}" title="${esc(title || '')}">${esc(STATUS[key])}</span>`;
+export function trustPillHtml(key, title, esc = (s) => s, label = null) {
+  return `<span class="trust trust--${key}" title="${esc(title || '')}">${esc(label || STATUS[key])}</span>`;
 }
 
 export const TRUST_CSS = `
