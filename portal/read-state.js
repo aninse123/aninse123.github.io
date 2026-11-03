@@ -2,7 +2,7 @@
 // person: thread.readBy[<key>] = when that person opened it, or answered it (the portal's send writes the answerer's own key).
 // Unread for me = unread, and I have not opened or answered it since the last email came in (lastInboundAt; older conversations:
 // lastMessageAt). So when one partner opens or answers a conversation the other still sees it as unread, and a new email makes it unread
-// for both again. (An answer sent from Gmail cannot be tied to a person: it marks the conversation read for everyone, as before.)
+// for both again. (An answer sent from Gmail cannot be tied to a person: it changes nobody's read state.)
 
 export const readKeyOf = (email) => String(email || '').split('@')[0].replace(/[^A-Za-z0-9_]/g, '_') || 'user';
 const ms = (v) => (v && v.toMillis ? v.toMillis() : v && v.seconds != null ? v.seconds * 1000 : v ? new Date(v).getTime() : 0);

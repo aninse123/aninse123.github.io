@@ -95,7 +95,7 @@ async function maybeRecordGmailReply(data) {
   });
   if (threadDoc) {
     await threadDoc.ref.update({
-      lastMessageAt: now, lastDirection: "out", status: "waiting", unread: false,
+      lastMessageAt: now, lastDirection: "out", status: "waiting", // 3 Nov: read state (unread, readBy) is left as it is: nobody is marked as having read it, nobody is flagged again
       ...(data.message_id ? { rfcIds: FieldValue.arrayUnion(data.message_id) } : {}),
     });
     await store.writeActivity({
