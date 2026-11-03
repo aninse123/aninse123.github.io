@@ -45,13 +45,17 @@ function fold(line) {
   out.push(cur);
   return out.join('\r\n');
 }
-export function buildIcs({ uid, title, start, minutes = 30, location = '', description = '', organizer, attendees = [], now = new Date() }) {
+// link: the meeting link (Google Meet, Teams, Zoom…). It goes where each calendar looks for it: the location (when none is given), the description,
+// the event URL, and, for Google Meet, Google's own conference property (Gmail then shows its Join button).
+export function buildIcs({ uid, title, start, minutes = 30, location = '', description = '', link = '', organizer, attendees = [], now = new Date() }) {
   const end = new Date(start.getTime() + minutes * 60000);
+  const where = location || link, text = [link ? `Ligação para a reunião: ${link}` : '', description].filter(Boolean).join('\n\n');
   const cn = (n, e) => `CN=${esc(n || e).replace(/:/g, '')}`;
   const lines = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Outreach//Invite 1.0//EN', 'CALSCALE:GREGORIAN', 'METHOD:REQUEST', 'BEGIN:VEVENT',
     `UID:${uid}`, `DTSTAMP:${stamp(now)}`, `DTSTART:${stamp(start)}`, `DTEND:${stamp(end)}`, 'SEQUENCE:0', 'STATUS:CONFIRMED', 'TRANSP:OPAQUE',
-    `SUMMARY:${esc(title)}`, ...(location ? [`LOCATION:${esc(location)}`] : []), ...(description ? [`DESCRIPTION:${esc(description)}`] : []),
+    `SUMMARY:${esc(title)}`, ...(where ? [`LOCATION:${esc(where)}`] : []), ...(text ? [`DESCRIPTION:${esc(text)}`] : []),
+    ...(link ? [`URL:${link}`] : []), ...(/^https:\/\/meet\.google\.com\//i.test(link) ? [`X-GOOGLE-CONFERENCE:${link}`] : []),
     `ORGANIZER;${cn(organizer.name, organizer.email)}:mailto:${organizer.email}`,
     ...attendees.map((a) => `ATTENDEE;${cn(a.name, a.email)};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${a.email}`),
     'END:VEVENT', 'END:VCALENDAR',

@@ -2544,14 +2544,17 @@
         </div>
         <div class="field"><label for="ivMin">Duration (minutes)</label><input type="number" id="ivMin" value="30" min="10" max="480" step="5" style="max-width:120px;"></div>
         <div class="field"><label for="ivWhere">Where</label><input id="ivWhere" value="${esc(ctx.where || '')}" placeholder="Address — or Online (put the link in the notes)"></div>
+        <div class="field"><label for="ivLink">Meeting link (optional)</label><input id="ivLink" placeholder="https://meet.google.com/…  or Teams / Zoom link"><span class="hint">For an online meeting: paste the link here. It shows in the invite as the place and in its description.</span></div>
         <div class="field"><label for="ivNote">Notes (optional)</label><textarea id="ivNote" rows="3"></textarea></div>
         <p class="hint">Sent as an invite from ${esc(ctx.organizer?.email || 'the sending address')} to ${esc((ctx.attendees || []).map(a => a.email).join(', ') || 'the addresses in To')}. Nothing is sent until you send the email.</p>`,
         async () => {
           const title = $('ivTitle').value.trim(), date = $('ivDate').value, time = $('ivTime').value, minutes = Number($('ivMin').value) || 30;
           if (!title || !date || !time) { modalError('Give the title, the date and the time.'); return false; }
           if (!ctx.organizer?.email) { modalError('There is no sending address yet.'); return false; }
+          const link = $('ivLink').value.trim();
+          if (link && !/^https?:\/\/[^\s]+$/i.test(link)) { modalError('The meeting link must start with https://'); return false; }
           const start = lisbonToUtc(date, time);
-          const ics = buildIcs({ uid: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}@invite`, title, start, minutes, location: $('ivWhere').value.trim(), description: $('ivNote').value.trim(), organizer: ctx.organizer, attendees: (ctx.attendees || []).filter(a => a.email) });
+          const ics = buildIcs({ uid: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}@invite`, title, start, minutes, location: $('ivWhere').value.trim(), description: $('ivNote').value.trim(), link, organizer: ctx.organizer, attendees: (ctx.attendees || []).filter(a => a.email) });
           const id = await uploadFile(new File([ics], 'convite.ics', { type: 'text/calendar' }), { keep: false, source: 'invite', contentType: 'text/calendar; method=REQUEST; charset=UTF-8' });
           done(id);
           return true;
