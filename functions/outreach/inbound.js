@@ -160,7 +160,7 @@ async function handleReceived(data) {
       senderId: sender?.id || match?.data?.senderId || null,
       owner: sender?.owner || match?.data?.owner || null,
       subject, status: "open", unread: true, unmatched: !match,
-      lastMessageAt: now, lastDirection: "in", rfcIds: [], lastInboundRfcId: null,
+      lastMessageAt: now, lastInboundAt: now, lastDirection: "in", rfcIds: [], lastInboundRfcId: null,
       templateId: null, variantKey: null, campaignId: null, firstTouchAt: null, repliedAt: null,
       responseCategory: null, isTest: match?.data?.isTest ?? !!settings.testMode,
       createdAt: now, createdBy: "resend-webhook",
@@ -194,7 +194,7 @@ async function handleReceived(data) {
   // 12 Oct: whether the last email received was automatic (out of office…) —
   // the Inbox "Auto-reply" tag / filter and the tag in Sent.
   const threadUpd = {
-    lastMessageAt: Timestamp.now(), lastDirection: "in", unread: true,
+    lastMessageAt: Timestamp.now(), lastInboundAt: Timestamp.now(), lastDirection: "in", unread: true, // 3 Nov: lastInboundAt — who has read it is kept per person (readBy)
     lastInboundAuto: !!autoReply, ...(autoReply ? { autoReplyAt: Timestamp.now() } : {}),
     ...(from.email ? { addresses: FieldValue.arrayUnion(from.email) } : {}),
     ...(rfcMessageId ? { rfcIds: FieldValue.arrayUnion(rfcMessageId), lastInboundRfcId: rfcMessageId } : {}),

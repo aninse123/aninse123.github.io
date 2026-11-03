@@ -181,7 +181,7 @@ service cloud.firestore {
     match /outreachThreads/{id} {
       allow read: if can('out.view');
       // Classify / assign / close: people who can write emails. Anyone who can see: mark as read.
-      allow update: if canAny(['out.send', 'out.draft', 'out.admin']) || (can('out.view') && onlyFields(['unread']));
+      allow update: if canAny(['out.send', 'out.draft', 'out.admin']) || (can('out.view') && onlyFields(['unread', 'readBy'])); // 3 Nov: readBy = who opened it (per person)
     }
     match /outreachMessages/{id} { allow read: if can('out.view'); }
     match /outreachCampaigns/{id} { allow read: if can('out.view') || can('search.view'); }

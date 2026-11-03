@@ -104,6 +104,7 @@ const cases = [
   C('Partner: log a Network activity', PARTNER, 'create', 'networkActivities/a1', 'ALLOW', { contactId: 'n1', createdBy: me }),
   C('Partner: Network categories', PARTNER, 'update', 'networkConfig/categories', 'ALLOW', { a: 2 }, { a: 1 }),
   C('Partner: mark a conversation read', PARTNER, 'update', 'outreachThreads/t1', 'ALLOW', { unread: false }, { unread: true }),
+  C('Partner: mark a conversation read for myself (readBy)', PARTNER, 'update', 'outreachThreads/t1', 'ALLOW', { unread: true, readBy: { antonio: 'now' } }, { unread: true }),
   C('Partner: create a list', PARTNER, 'create', 'outreachLists/l1', 'ALLOW', { name: 'X' }),
   C('Partner: add a list member', PARTNER, 'create', 'outreachLists/l1/members/m1', 'ALLOW', { email: 'x@y.pt' }),
   C('Partner: delete a list', PARTNER, 'delete', 'outreachLists/l1', 'ALLOW', null, { name: 'X' }),

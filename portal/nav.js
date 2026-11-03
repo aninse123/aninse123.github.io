@@ -5,7 +5,8 @@
 // duplication that caused real drift (spacing fixed on one page but not
 // another, an overlap bug, container widths desyncing from body width).
 import { signOut } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-import { collection, query, where, getCountFromServer, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+import { collection, query, where, getCountFromServer, getDocs, limit, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+import { isUnreadFor } from "./read-state.js"; // 3 Nov: unread per person
 import {
   auth, db, addReads, getTodayReads, FREE_TIER_DAILY_READS, watchSharedReads,
   getTodayWrites, getTodayDeletes, FREE_TIER_DAILY_WRITES, FREE_TIER_DAILY_DELETES,
@@ -189,9 +190,11 @@ function renderUsageAlert() {
 // outreach.html calls setOutreachBadge() itself with its live number.
 export async function refreshOutreachBadge() {
   try {
-    const snap = await getCountFromServer(query(collection(db, 'outreachThreads'), where('unread', '==', true)));
-    addReads(1);
-    setOutreachBadge(snap.data().count);
+    // 3 Nov: unread for ME (who opened it is kept per person), so the unread conversations are read, not just counted
+    const snap = await getDocs(query(collection(db, 'outreachThreads'), where('unread', '==', true), limit(300)));
+    addReads(snap.size || 1);
+    const mail = auth.currentUser?.email;
+    setOutreachBadge(snap.docs.filter((d) => isUnreadFor(d.data(), mail)).length);
   } catch (e) { /* the badge is a convenience — never block a page on it */ }
 }
 export function setOutreachBadge(n) {

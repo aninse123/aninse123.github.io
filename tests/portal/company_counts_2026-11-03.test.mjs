@@ -184,6 +184,17 @@ ok('Letters: street line, then postcode and municipality', JSON.stringify(CP.add
 ok('Letters: an address that carries its postcode is split there, not repeated', JSON.stringify(CP.addressLines({ hqAddress: 'R. de Trás 421, 4475-500 Maia', postcode: '4475-500', concelho: 'Maia' })) === JSON.stringify(['R. de Trás 421', '4475-500 Maia']) && JSON.stringify(CP.addressLines({})) === '[]');
 ok('Letters: the envelope, the print list and the letter preview all use it', !html.includes("c.hqAddress || '', [c.postcode, c.concelho]") && (html.match(/addressLines\(/g) || []).length >= 4);
 
+const RS = await import(new URL('../../portal/read-state.js', import.meta.url));
+const AM = 'andre.rocha@douropartners.pt', AN = 'antonio.carvalho@douropartners.pt';
+const th1 = { unread: true, lastInboundAt: T('2026-11-03T10:00:00Z'), lastMessageAt: T('2026-11-03T10:00:00Z') };
+ok('Read: a new reply is unread for both partners', RS.isUnreadFor(th1, AM) && RS.isUnreadFor(th1, AN));
+const th2 = { ...th1, readBy: { andre_rocha: T('2026-11-03T11:00:00Z') } };
+ok('Read: when one opens it, it is read for that person only', !RS.isUnreadFor(th2, AM) && RS.isUnreadFor(th2, AN));
+const th3 = { ...th2, lastInboundAt: T('2026-11-03T12:00:00Z'), lastMessageAt: T('2026-11-03T12:00:00Z') };
+ok('Read: a newer email makes it unread again for the one who had opened it', RS.isUnreadFor(th3, AM));
+ok('Read: an answered conversation (unread false) is read for everyone; an old one with no lastInboundAt uses lastMessageAt', !RS.isUnreadFor({ unread: false }, AM) && RS.isUnreadFor({ unread: true, lastMessageAt: T('2026-11-03T10:00:00Z') }, AN) && !RS.isUnreadFor({ unread: true, lastMessageAt: T('2026-11-03T10:00:00Z'), readBy: { antonio_carvalho: T('2026-11-03T10:05:00Z') } }, AN));
+ok('Inbox and the menu badge use it; opening marks it read for me only', html.includes('.filter(isUnread).length') && html.includes("['readBy.' + readKeyOf(me)]: serverTimestamp()") && fs.readFileSync(new URL('../../portal/nav.js', import.meta.url), 'utf8').includes('isUnreadFor(d.data(), mail)') && fs.readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8').includes("onlyFields(['unread', 'readBy'])") && fs.readFileSync(new URL('../../functions/outreach/inbound.js', import.meta.url), 'utf8').includes('lastInboundAt: Timestamp.now()'));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
