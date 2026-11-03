@@ -4129,7 +4129,9 @@ Optional note for them:`, '');
       const c = curCamp(); if (!c) return;
       // 3 Nov (outreach.companyCounts): companies, not addresses — a company's extra addresses are rolled into its row.
       const rolled = isOn('outreach.companyCounts') && c.audienceType !== 'people';
-      const eRows = rolled ? rollupByCompany(curEnrols) : curEnrols;
+      // 3 Nov: a company that answered (even by calling you) and is not running is 'Replied', not 'Stopped' (the sequence was stopped by your answer)
+      const answeredSet = rolled ? new Set([...repliesByCompany(curThreads, curEnrols, POSITIVE)].filter(([, v]) => v.channel !== 'marked').map(([k]) => k)) : null;
+      const eRows = rolled ? rollupByCompany(curEnrols, answeredSet) : curEnrols;
       const by = {}; eRows.forEach(e => { by[e.status] = (by[e.status] || 0) + 1; });
       const total = eRows.length;
       // Contacted = any step done (email or task), or answered.
@@ -4255,7 +4257,7 @@ Optional note for them:`, '');
       const c = curCamp(); if (!c) return;
       // 3 Nov (outreach.companyCounts): one row per company with its addresses under it; filters and counts are by company
       const byCo = isOn('outreach.companyCounts') && c.audienceType !== 'people';
-      const roll = byCo ? rollupByCompany(curEnrols) : null, base = byCo ? roll : curEnrols;
+      const roll = byCo ? rollupByCompany(curEnrols, new Set([...repliesByCompany(curThreads, curEnrols, POSITIVE)].filter(([, v]) => v.channel !== 'marked').map(([k]) => k))) : null, base = byCo ? roll : curEnrols;
       const groupOf = new Map();
       if (byCo) { curEnrols.forEach(e => { const k = e.companyId || e.id; if (!groupOf.has(k)) groupOf.set(k, []); groupOf.get(k).push(e); }); groupOf.forEach(g => g.sort((a, b) => (a.isExtra ? 1 : 0) - (b.isExtra ? 1 : 0) || String(a.id).localeCompare(String(b.id)))); }
       const statuses = [...new Set(base.map(e => e.status))];

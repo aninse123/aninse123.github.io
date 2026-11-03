@@ -60,7 +60,7 @@ ok('By path Off: counts addresses (A has 5)', row(off2, 'A').total === 5);
 ok('By path On: counts companies (A has 2, B has 2 with the waiting one)', row(on2, 'A').total === 2 && row(on2, 'B').total === 2);
 ok('By path On: contacted and replied per company', row(on2, 'A').contacted === 2 && row(on2, 'B').contacted === 1 && row(on2, 'B').replied === 1);
 ok('By path On: positive once per company (co1 answered on two addresses)', row(on2, 'A').positive === 1 && row(on2, 'B').positive === 1 && row(off2, 'A').positive === 2);
-ok('the page rolls up before counting, only under the switch', html.includes("const rolled = isOn('outreach.companyCounts') && c.audienceType !== 'people';") && html.includes('const eRows = rolled ? rollupByCompany(curEnrols) : curEnrols;') && html.includes('POSITIVE, rolled, repliedSet)'));
+ok('the page rolls up before counting, only under the switch', html.includes("const rolled = isOn('outreach.companyCounts') && c.audienceType !== 'people';") && html.includes('const eRows = rolled ? rollupByCompany(curEnrols, answeredSet) : curEnrols;') && html.includes('POSITIVE, rolled, repliedSet)'));
 
 // who answered, and how: the first answer of any kind counts, once per company
 const T = (d) => ({ toMillis: () => Date.parse(d) });
@@ -92,7 +92,7 @@ ok('Metrics uses it behind the switch', html.includes("isOn('outreach.companyCou
 const raSrc = html.match(/    function renderAudience\(\) \{[\s\S]*?\n    \}\n(?=\n    \/\/ I22)/)[0];
 const aud = { innerHTML: '', querySelectorAll: () => [] };
 const mkAud = (on) => {
-  const names = ['isOn', 'curCamp', 'curEnrols', 'rollupByCompany', 'norm', 'audSearch', 'audPath', 'audFilter', 'audAll', 'audToggle', 'hasPaths', 'pathsOf', 'pathIdOf', 'isLeftOut', 'campEditable', '$', 'num', 'esc', 'LIVE_ENROL', 'ENROL_PILL', 'pill', 'tsMs', 'stepLabelIn', 'stepsFor', 'waitingFor', 'canChooseRecipients', 'localPart', 'stepLabel', 'goesTo', 'loadCampaignData', 'openAddPeople', 'openAddCompanies'];
+  const names = ['isOn', 'curCamp', 'curEnrols', 'rollupByCompany', 'norm', 'audSearch', 'audPath', 'audFilter', 'audAll', 'audToggle', 'hasPaths', 'pathsOf', 'pathIdOf', 'isLeftOut', 'campEditable', '$', 'num', 'esc', 'LIVE_ENROL', 'ENROL_PILL', 'pill', 'tsMs', 'stepLabelIn', 'stepsFor', 'waitingFor', 'canChooseRecipients', 'localPart', 'stepLabel', 'goesTo', 'loadCampaignData', 'openAddPeople', 'openAddCompanies', 'repliesByCompany', 'curThreads', 'POSITIVE'];
   const camp = { id: 'c1', audienceType: 'companies', status: 'active', steps: [] };
   const enr = [
     { id: 'm', companyId: 'cm', companyName: 'MODULAQUADRO', status: 'stopped', stopReason: 'Email bounced', recipient: { email: 'fernando@m.pt' }, senderId: 'a@x.pt', pathName: 'B' },
@@ -105,7 +105,7 @@ const mkAud = (on) => {
   const stand = { $: () => ({ addEventListener() {}, value: '', focus() {}, setSelectionRange() {} }) };
   const vals = [(k) => on && k === 'outreach.companyCounts', () => camp, enr, P.rollupByCompany, (x) => String(x || '').toLowerCase(), '', 'all', 'all', null, new Map(), () => false, () => [{ id: 'main' }], () => null, () => false, () => true,
     (id) => (id === 'cs-audience' ? aud : stand.$()), (n) => String(n), (x) => String(x == null ? '' : x), ['pending', 'active', 'awaiting_approval', 'awaiting_task', 'paused'],
-    { active: ['In sequence'], stopped: ['Stopped'], replied: ['Replied'], pending: ['Pending'], paused: ['Paused'] }, (m, st) => `[${st}]`, () => 0, () => 'STEP', () => [], () => 'WAIT', () => false, (x) => String(x || ''), () => 'STEP', () => 'GOES', () => {}, () => {}, () => {}];
+    { active: ['In sequence'], stopped: ['Stopped'], replied: ['Replied'], pending: ['Pending'], paused: ['Paused'] }, (m, st) => `[${st}]`, () => 0, () => 'STEP', () => [], () => 'WAIT', () => false, (x) => String(x || ''), () => 'STEP', () => 'GOES', () => {}, () => {}, () => {}, P.repliesByCompany, [], []];
   aud.innerHTML = '';
   new Function(...names, raSrc + '; renderAudience();')(...vals);
   return aud.innerHTML;
@@ -202,6 +202,13 @@ const ccStart = html.indexOf('    function canChooseRecipients(e, liveOthers = [
 const mkCC = new Function('isOn', 'LIVE_ENROL', 'isOnMulti', cc + String.fromCharCode(10) + '; return canChooseRecipients;')(() => true, ['pending', 'active', 'awaiting_approval', 'awaiting_task', 'paused'], true);
 const stoppedRoot = { companyId: 'c', status: 'stopped', threadId: 't', currentStep: 1 };
 ok('Addresses…: stopped first address + another live address = shown; nobody live = not shown; an extra address never', mkCC(stoppedRoot, [{ status: 'active' }]) === true && mkCC(stoppedRoot, []) === false && mkCC({ ...stoppedRoot, trackOf: 'r' }, [{}]) === false && mkCC({ ...stoppedRoot, status: 'active' }, []) === true);
+
+const stoppedByHand = [{ id: 's', companyId: 'cs', companyName: 'SHORTLEC', status: 'stopped', stopReason: 'Stopped: André replied by hand', history: [] }, { id: 's__t1', companyId: 'cs', status: 'stopped', isExtra: true, history: [] }, { id: 'z', companyId: 'cz', status: 'stopped', stopReason: 'Email bounced', history: [] }];
+const callThreads = [{ companyId: 'cs', otherReplyAt: T('2026-11-02T12:00:00Z'), otherReplyChannel: 'call' }, { companyId: 'cz', responseCategory: 'interested' }];
+const ans = new Set([...P.repliesByCompany(callThreads, stoppedByHand, POSITIVE)].filter(([, v]) => v.channel !== 'marked').map(([k]) => k));
+const rr = Object.fromEntries(P.rollupByCompany(stoppedByHand, ans).map((r) => [r.companyId, r.status]));
+ok('Replied, not Stopped: a company that called you (its addresses stopped by your answer) is Replied; one that only bounced stays Stopped (a positive mark alone is not a reply)', rr.cs === 'replied' && rr.cz === 'stopped' && P.rollupByCompany(stoppedByHand).find((r) => r.companyId === 'cs').status === 'stopped' && P.rollupByCompany([{ id: 'a', companyId: 'cs', status: 'active', history: [] }], ans)[0].status === 'active');
+ok('Overview and Audience roll up with the companies that answered', html.includes('rollupByCompany(curEnrols, answeredSet)') && html.includes('rollupByCompany(curEnrols, new Set([...repliesByCompany(curThreads, curEnrols, POSITIVE)]'));
 
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');

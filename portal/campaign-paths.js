@@ -56,14 +56,17 @@ export function startQueue(c, pending, perDay) {
 // One row per company: the main enrolment, with the most advanced status of its addresses (replied, then waiting for approval or a
 // task, in sequence, paused, waiting, finished, stopped, removed) and the history of all of them.
 const ROLL_ORDER = ['replied', 'awaiting_approval', 'awaiting_task', 'active', 'paused', 'pending', 'completed', 'stopped', 'removed', 'moved'];
-export function rollupByCompany(enrols) {
+// answered (optional): the companies that answered in any way (email, call, visit…). A company that answered and is not running any more is
+// 'replied' — even when its addresses were stopped by your own answer by hand (the company called you: it is a reply, not just a stop).
+export function rollupByCompany(enrols, answered = null) {
   const groups = new Map();
   for (const e of enrols) { const k = e.companyId || e.id; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
   const rank = (s) => { const i = ROLL_ORDER.indexOf(s); return i < 0 ? ROLL_ORDER.length : i; };
   return [...groups.values()].map((list) => {
     const root = list.find((e) => !e.isExtra) || list[0];
     const top = list.reduce((a, b) => (rank(b.status) < rank(a.status) ? b : a));
-    return { ...root, status: top.status, stopReason: top.stopReason, history: list.flatMap((e) => e.history || []), _ids: list.map((e) => e.id) };
+    const status = answered && answered.has(root.companyId) && ['stopped', 'completed'].includes(top.status) ? 'replied' : top.status;
+    return { ...root, status, stopReason: top.stopReason, history: list.flatMap((e) => e.history || []), _ids: list.map((e) => e.id) };
   });
 }
 // 3 Nov (outreach.companyCounts): who answered and how. One entry per company: the FIRST answer of any kind — an email (repliedAt), a call /
@@ -90,7 +93,7 @@ export function firstReplyDelays(threads) {
 // the sequence, contacted, replied, positive (from the conversations) and left out.
 const IN_SEQ = ['active', 'awaiting_approval', 'awaiting_task', 'paused'];
 export function pathResults(c, enrols, threads = [], positive = [], byCompany = false, repliedSet = null) {
-  if (byCompany) enrols = rollupByCompany(enrols);
+  if (byCompany) enrols = rollupByCompany(enrols, repliedSet);
   const rows = new Map(pathsOf(c).map((p) => [p.id, { id: p.id, name: p.id === ELSE_PATH ? 'Everyone else' : p.name, total: 0, waiting: 0, inSeq: 0, contacted: 0, replied: 0, positive: 0, leftOut: 0 }]));
   const byEnrol = new Map();
   let unplanned = 0;
