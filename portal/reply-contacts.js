@@ -107,13 +107,18 @@ export function compareContacts(found, { company = {}, peopleEmails = [], people
   const pcOf = (v) => (String(v || '').match(/\d{4}-\d{3}/) || [])[0];
   const have = {
     phones: new Set([company.companyPhone, ...reachOf('phone'), ...peoplePhones, ...senderPhones].map((p) => digits(p).slice(-9)).filter(Boolean)),
-    emails: new Set([company.companyEmail, ...reachOf('email'), ...(company.contacts || []).map((c) => c.email), ...peopleEmails, senderEmail, ...known].map(lc).filter(Boolean)),
+    emails: new Set([company.companyEmail, ...reachOf('email'), ...(company.contacts || []).map((c) => c.email), ...peopleEmails, ...known].map(lc).filter(Boolean)),
     hosts: new Set([company.website, ...reachOf('website')].map(hostOf).filter(Boolean)),
     postcodes: new Set([company.postcode, pcOf(company.hqAddress), ...reachOf('address').map(pcOf)].filter(Boolean)),
   };
   const items = [];
   for (const p of found.phones) items.push({ type: 'phone', kind: p.kind, value: p.display, norm: p.norm, have: have.phones.has(p.norm), target: p.kind === 'mobile' ? 'person' : 'company' });
-  for (const e of found.emails) items.push({ type: 'email', value: e, have: have.emails.has(e), target: 'company' });
+  // The address that wrote: offered first when no record of the company has it (the conversation knowing it is not the CRM knowing it)
+  const from = lc(senderEmail);
+  const inCrm = new Set([company.companyEmail, ...reachOf('email'), ...(company.contacts || []).map((c) => c.email), ...peopleEmails].map(lc).filter(Boolean));
+  const senderNew = !!from && !inCrm.has(from);
+  if (senderNew) items.push({ type: 'email', value: from, have: false, target: 'person', sender: true });
+  for (const e of found.emails) if (!(senderNew && e === from)) items.push({ type: 'email', value: e, have: have.emails.has(e), target: 'company' });
   for (const u of found.urls) items.push({ type: u.linkedin ? 'linkedin' : 'website', value: u.url, host: u.host, have: u.linkedin ? false : have.hosts.has(u.host), target: 'company' });
   if (found.address) {
     const a = found.address;

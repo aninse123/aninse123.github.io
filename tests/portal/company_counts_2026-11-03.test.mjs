@@ -383,6 +383,10 @@ ok('A draft (the email waits in To approve) does not book the meeting; a sent re
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
 for (const k of ['outreach.visitMeetings', 'outreach.companyCounts']) ok(`switch ${k} is in the server catalog and the page list`, cat.includes(`"${k}"`) && pf.includes(`'${k}'`));
+const lf = RCm.compareContacts(RCm.extractContacts('Bom dia'), { company: { companyEmail: 'geral@lojagricola.pt' }, peopleEmails: [], senderEmail: 'luisfpinho@sapo.pt', known: ['luisfpinho@sapo.pt', 'geral@lojagricola.pt'] });
+const lfOn = RCm.compareContacts(RCm.extractContacts('Bom dia'), { company: { companyEmail: 'geral@lojagricola.pt' }, peopleEmails: ['luisfpinho@sapo.pt'], senderEmail: 'luisfpinho@sapo.pt', known: ['luisfpinho@sapo.pt'] });
+ok('Reply contacts: the address that wrote is a row to add when no record has it (the conversation knowing it is not the CRM), and no row when one does', lf.items.length === 1 && lf.items[0].type === 'email' && lf.items[0].sender === true && lf.items[0].have === false && lf.items[0].target === 'person' && lfOn.items.length === 0);
+ok('Inbox: the header drops its own "Add to company" for the address the card offers; the sender row goes to the guessed person or to a new contact', raw0.includes("const coveredByCard = isOn('outreach.replyContacts')") && raw0.includes("(i.type === 'phone' || i.sender) && i.target === 'person' && rc.sender") && raw0.includes("(item.sender || (item.type === 'phone' && item.kind === 'mobile')) ? 'new'"));
 ok('Inbox search: finds a conversation by any of its addresses (the one that replied), also in the older ones', raw0.includes('t.contactEmail, ...(t.addresses || []), t.contactName') && raw0.includes("where('addresses', 'array-contains', q.toLowerCase())"));
 console.log(fail ? `\n${fail} FAILED` : '\nAll passed');
 process.exit(fail ? 1 : 0);

@@ -1899,8 +1899,10 @@
       const ready = peopleCache.has(t.companyId);
       // Older conversations (before 19 Oct) don't record their addresses: the messages on screen fill them in.
       const fromMsgs = selectedId === t.id ? (threadMessages || []).filter(m => !NOT_SENT_STATUSES.includes(m.status)).flatMap(m => m.direction === 'in' ? addrList(m.from).map(x => x.email) : [...msgTo(m), ...msgCc(m)].map(x => x.email)) : [];
+      const lastIn = [...(selectedId === t.id ? threadMessages || [] : [])].reverse().find(m => m.direction === 'in' && !m.isAutoReply && (m.text || m.snippet));
+      const coveredByCard = isOn('outreach.replyContacts') && lastIn ? addrList(lastIn.from)[0]?.email : ''; // 3 Nov: the card below offers to add the address that wrote
       const all = [...new Set([t.contactEmail, ...(t.addresses || []), ...fromMsgs].map(a => String(a || '').trim().toLowerCase()).filter(a => a && !isOurAddr(a)))];
-      return `<span>${all.map(a => { const w = ready ? whoIsAddress(a, t) : ''; return `${esc(a)} <span class="hint">· ${ready ? esc(w || 'not in the CRM') : '…'}</span>${ready && !w && canAdd && !t.isTest ? ` <button type="button" class="camp-link" data-addaddr="${esc(a)}" style="font-size:0.76rem;">Add to company</button>` : ''}`; }).join(' → ')}</span>`;
+      return `<span>${all.map(a => { const w = ready ? whoIsAddress(a, t) : ''; return `${esc(a)} <span class="hint">· ${ready ? esc(w || 'not in the CRM') : '…'}</span>${ready && !w && canAdd && !t.isTest && a !== coveredByCard ? ` <button type="button" class="camp-link" data-addaddr="${esc(a)}" style="font-size:0.76rem;">Add to company</button>` : ''}`; }).join(' → ')}</span>`;
     }
     async function openAddToCompany(t, addr) {
       const people = peopleCache.get(t.companyId) || [];
@@ -2059,7 +2061,7 @@
       const newN = items.filter(i => !i.have).length;
       const NAME = { phone: 'Phone', email: 'Email', website: 'Website', linkedin: 'LinkedIn', address: 'Address' };
       const rows = items.map((i, n) => {
-        const toPerson = i.type === 'phone' && i.target === 'person' && rc.sender;
+        const toPerson = (i.type === 'phone' || i.sender) && i.target === 'person' && rc.sender;
         const can = toPerson ? canPerson : canCompany;
         const act = i.have ? '<span class="pill pill--ok">already on file</span>'
           : can ? `<button class="btn btn--ghost btn--sm" data-rcadd="${n}"${toPerson && rc.senderGuess ? ` title="The sender is not in the CRM by email: it looks like ${esc(rc.sender.name)}${rc.sender.role ? ' (' + esc(rc.sender.role) + ')' : ''} — use the arrow to choose someone else"` : ''}>Add to ${toPerson ? esc(rc.sender.name.split(' ')[0]) + (rc.senderGuess ? '?' : '') : 'company'}</button><button class="btn btn--ghost btn--sm" data-rcmore="${n}" title="Add it to another person, or to a new contact" aria-label="Choose where to add it" style="padding:0 6px;">▾</button>`
@@ -2085,7 +2087,7 @@
     function openRcTarget(rc, item) {
       const people = peopleCache.get(rc.t.companyId) || [], unknownSender = !rc.sender && rc.from.email;
       const mailNew = !!rc.from.email && !(rc.sender && (rc.sender.emails || []).includes(rc.from.email)); // the address that wrote is not on any record yet
-      const def = item.target === 'person' && rc.sender ? rc.sender.personId : (unknownSender && item.type === 'phone' && item.kind === 'mobile' ? 'new' : 'company');
+      const def = item.target === 'person' && rc.sender ? rc.sender.personId : (unknownSender && (item.sender || (item.type === 'phone' && item.kind === 'mobile')) ? 'new' : 'company');
       openModal(`Add ${item.value}`, `
         <p class="hint" style="margin-bottom:10px;">${esc(item.type === 'phone' ? 'Phone' : item.type === 'email' ? 'Email' : item.type === 'address' ? 'Address' : 'Website')} found in the reply of <b>${esc(rc.from.name || rc.from.email || 'the sender')}</b>.</p>
         <div class="field"><label for="rtWho">Add it to</label><select id="rtWho">
@@ -2095,9 +2097,9 @@
         <div id="rtNew"${def === 'new' ? '' : ' hidden'}>
           <div class="field"><label for="rtName">Name</label><input type="text" id="rtName" value="${esc(rc.sender ? '' : (rc.from.name || ''))}"></div>
           <div class="field"><label for="rtRole">Role (optional)</label><input type="text" id="rtRole" placeholder="Diretora de serviços, Sócio Gerente…"></div>
-          ${unknownSender ? `<label class="checkline"><input type="checkbox" id="rtMail" checked> <span>Also add <b>${esc(rc.from.email)}</b>, the address that wrote, to them</span></label>` : ''}
+          ${unknownSender && !item.sender ? `<label class="checkline"><input type="checkbox" id="rtMail" checked> <span>Also add <b>${esc(rc.from.email)}</b>, the address that wrote, to them</span></label>` : ''}
         </div>
-        <div id="rtPerson"${people.some(p => p.personId === def) && mailNew ? '' : ' hidden'}>
+        <div id="rtPerson"${people.some(p => p.personId === def) && mailNew && !item.sender ? '' : ' hidden'}>
           <label class="checkline"><input type="checkbox" id="rtMailP"${rc.senderGuess ? ' checked' : ''}> <span>Also add <b>${esc(rc.from.email)}</b>, the address that wrote, to them</span></label>
         </div>`,
         async () => {
@@ -2107,7 +2109,7 @@
           renderReplyContacts(rc);
           return true;
         }, 'Add');
-      $('rtWho').addEventListener('change', () => { $('rtNew').hidden = $('rtWho').value !== 'new'; $('rtPerson').hidden = !(mailNew && $('rtWho').value !== 'new' && $('rtWho').value !== 'company'); });
+      $('rtWho').addEventListener('change', () => { $('rtNew').hidden = $('rtWho').value !== 'new'; $('rtPerson').hidden = !(mailNew && !item.sender && $('rtWho').value !== 'new' && $('rtWho').value !== 'company'); });
     }
     async function addReplyContact(rc, item, target) {
       target = target || (item.target === 'person' && rc.sender ? { kind: 'person', personId: rc.sender.personId, name: rc.sender.name } : { kind: 'company' });
