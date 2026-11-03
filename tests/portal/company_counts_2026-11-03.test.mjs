@@ -199,9 +199,7 @@ ok('Inbox and the menu badge use it; opening marks it read for me only', html.in
 
 ok('Addresses… shows when the first address has stopped but the company still runs (liveOthers)', html.includes('function canChooseRecipients(e, liveOthers = [])') && html.includes('(LIVE_ENROL.includes(e.status) || liveOthers.length > 0)') && html.includes('canChooseRecipients(root, liveG)'));
 const ccStart = html.indexOf('    function canChooseRecipients(e, liveOthers = [])'), cc = html.slice(ccStart, html.indexOf(String.fromCharCode(10), ccStart));
-]*
-/)[0];
-const mkCC = new Function('isOn', 'LIVE_ENROL', 'isOnMulti', cc + '; return canChooseRecipients;')(() => true, ['pending', 'active', 'awaiting_approval', 'awaiting_task', 'paused'], true);
+const mkCC = new Function('isOn', 'LIVE_ENROL', 'isOnMulti', cc + String.fromCharCode(10) + '; return canChooseRecipients;')(() => true, ['pending', 'active', 'awaiting_approval', 'awaiting_task', 'paused'], true);
 const stoppedRoot = { companyId: 'c', status: 'stopped', threadId: 't', currentStep: 1 };
 ok('Addresses…: stopped first address + another live address = shown; nobody live = not shown; an extra address never', mkCC(stoppedRoot, [{ status: 'active' }]) === true && mkCC(stoppedRoot, []) === false && mkCC({ ...stoppedRoot, trackOf: 'r' }, [{}]) === false && mkCC({ ...stoppedRoot, status: 'active' }, []) === true);
 
