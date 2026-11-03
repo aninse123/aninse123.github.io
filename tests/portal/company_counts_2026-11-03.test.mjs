@@ -122,6 +122,9 @@ ok('Audience Off: as before, one row per address with Goes to', nCo(audOff) === 
 
 ok("the campaign's enrolments are loaded without orderBy('enrolledAt') (extra addresses have no enrolledAt and would be left out)", !html.includes("where('campaignId', '==', id), orderBy('enrolledAt', 'desc')") && html.includes("where('campaignId', '==', id), limit(5000))), // 3 Nov: no orderBy"));
 
+const sh = fs.readFileSync(new URL('../../portal/search.html', import.meta.url), 'utf8');
+ok('Search CRM: Edit next to the company email (Overview and contact details) opens the company form on that field', sh.includes('data-ceedit="email"') && sh.includes('data-ceedit="${t}"') && sh.includes("email: 'cCompanyEmail'") && sh.includes('openEditCompany(); if (id) setTimeout('));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');

@@ -98,6 +98,10 @@ function flags(visit, counts) {
   await camp({ action: "logActivity", companyId: "co3", channel: "call", outcome: "connected", date: "2026-11-02T12:00:00Z" });
   const tf = store.get("outreachThreads/thF");
   ok("logActivity stores the channel and the logged date of the answer", tf.otherReplyChannel === "call" && new Date(tf.otherReplyAt.toDate ? tf.otherReplyAt.toDate() : tf.otherReplyAt).toISOString().slice(0, 10) === "2026-11-02");
+  store.set("searchCompanies/coMx", { name: "SEM MX, LDA", companyEmail: "geral@sem-mx.pt" });
+  const Store = require("../outreach/store.js");
+  ok("a general address with no mail servers is marked on the company, for that address only", (await Store.markCompanyEmailBounced("coMx", "geral@sem-mx.pt", "no mail servers (the domain can't receive email)", false)) === true && store.get("searchCompanies/coMx").companyEmailBounce.email === "geral@sem-mx.pt" && (await Store.markCompanyEmailBounced("coMx", "outro@sem-mx.pt", "x", false)) === false);
+  ok("the scheduler marks it when a send stops for no mail servers", require("fs").readFileSync(require("path").join(__dirname, "../outreach/scheduler.js"), "utf8").includes('reason === "no_mx" && e.recipient?.email) await store.markCompanyEmailBounced('));
   ok("the report text has the held line", /Reuniões realizadas: 2/.test(Report.reportText({ week: { ...rep, meetingsHeld: 2, byCampaign: {}, bySender: {}, byCategory: {}, tasksByChannel: {} }, owners: { multiCampaign: [], sameOwner: [], emailLinks: [], openFlags: [], heldNow: [] } }, { weekKey: "2026-11-02", toKey: "2026-11-08" })));
 
   console.log(fail ? `\n${fail} FAILED` : "\nAll passed");
