@@ -144,6 +144,13 @@ ok('Orbis import: leaves out the fields the team chose, keeps the rest', JSON.st
 ok('Company form: a corrected email or phone is a team choice; other edits are not', CP.chosenAfterEdit({}, { companyEmail: 'new@x.pt' }, 'a', 't').companyEmail.by === 'a' && CP.chosenAfterEdit({}, { stage: 'pass' }, 'a', 't') === null && CP.chosenAfterEdit(chosen, { companyPhone: '1' }, 'a', 't').companyEmail.by === 'a');
 ok('Search CRM wiring: ★ on the company card, Orbis import and the company form use it', sh.includes('swapCompanyPrimary(c, e,') && sh.includes('withoutChosen(match, r.payload)') && sh.includes('...pl,') && sh.includes('chosenAfterEdit(prev, changed') && !sh.includes('#companyReachCard [data-reachprimary]'));
 
+const dead2 = { companyEmail: 'a@dead.com.pt', companyEmailBounce: { email: 'a@dead.com.pt', kind: 'no_mx' }, reach: [{ id: 'r1', type: 'email', value: 'b@ok.pt', status: 'ok', source: 'manual' }, { id: 'r2', type: 'email', value: 'c@bad.pt', status: 'bounced' }, { id: 'r3', type: 'email', value: 'd@ok.pt', status: 'ok' }] };
+const ord = CP.companyEmailsInOrder(dead2);
+ok('Order: a dead own email goes last, the next usable first (bounced ones left out)', ord.usable.map((u) => u.value).join() === 'b@ok.pt,d@ok.pt' && ord.dead === 'a@dead.com.pt');
+ok('Order: a working own email stays first', CP.companyEmailsInOrder({ companyEmail: 'a@x.pt', reach: [{ type: 'email', value: 'b@x.pt', status: 'ok' }] }).usable.map((u) => u.value).join() === 'a@x.pt,b@x.pt' && CP.firstUsableCompanyEmail({ companyEmail: 'a@x.pt', reach: [{ id: 'q', type: 'email', value: 'b@x.pt', status: 'ok' }] }) === null);
+ok('Overview shows the usable one first when the own one is dead; none usable = as before', CP.firstUsableCompanyEmail(dead2).value === 'b@ok.pt' && CP.firstUsableCompanyEmail({ ...dead2, reach: [] }) === null);
+ok('Search CRM wiring: Overview row and the send-email options use the order', sh.includes('companyEmailRowHtml(c)') && sh.includes('companyEmailsInOrder(c)') && sh.includes('cannot receive email)'));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');

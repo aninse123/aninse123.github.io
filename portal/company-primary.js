@@ -2,6 +2,8 @@
 // the company (companyEmail …), from the registry / Orbis; more are added to searchCompanies.reach. The ★ on an added one makes it the
 // company's own value: the old one moves into the list, and the field is marked as chosen by the team, so an Orbis import never writes over it.
 
+import { trustOf, companyEmailTrust } from './contact-trust.js';
+
 export const PRIMARY_FIELDS = { email: 'companyEmail', phone: 'companyPhone', linkedin: 'linkedinUrl', website: 'website', address: 'hqAddress' };
 const lc = (s) => String(s || '').trim().toLowerCase();
 
@@ -33,6 +35,17 @@ export function swapCompanyPrimary(c, entry, { by = '', at = '', newId = () => '
   }
   return { patch, list };
 }
+
+// The company's emails in the order they are used (3 Nov): the registry / chosen one first while it works; when it bounced or its domain has
+// no mail servers, the next usable one comes first (an added email, in order) and the dead one goes last. Outreach already skips it; this
+// is what the screens show and offer first.
+export function companyEmailsInOrder(c) {
+  const main = c && c.companyEmail, dead = !!main && companyEmailTrust(c) === 'bounced';
+  const extra = ((c && c.reach) || []).filter((e) => e && e.type === 'email' && (e.status || 'ok') === 'ok' && trustOf(e) !== 'bounced' && lc(e.value) !== lc(main));
+  return { usable: [...(main && !dead ? [{ value: main, entry: null }] : []), ...extra.map((e) => ({ value: e.value, entry: e }))], dead: dead ? main : null };
+}
+// The one the Overview shows first when the company's own email is dead; null when the own email works (or nothing else is usable).
+export const firstUsableCompanyEmail = (c) => { const o = companyEmailsInOrder(c); return o.dead && o.usable[0] ? o.usable[0].entry : null; };
 
 // An import row's fields, without the ones the team chose (companyPrimaryChosen) on that company.
 export function withoutChosen(match, payload) {

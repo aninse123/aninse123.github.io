@@ -1372,7 +1372,7 @@ import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-u
 import { summaryOf as contactSummaryOf, contactedHtml, flagsHtml, tipHtml as contactTipHtml, CT_CSS } from './contact-summary.js'; // 27 Oct (search.contactColumns)
 document.head.insertAdjacentHTML('beforeend', `<style>${CT_CSS}</style>`);
 import { trustOf, trustTitle, trustPillHtml, TRUST_CSS, companyEmailTrust, companyEmailTitle, companyEmailLabel } from './contact-trust.js'; // 30 Oct (contacts.trustLabels)
-import { swapCompanyPrimary, withoutChosen, chosenAfterEdit } from './company-primary.js'; // 3 Nov: ★ on a company's added contact makes it the company's own; Orbis imports leave it alone
+import { swapCompanyPrimary, withoutChosen, chosenAfterEdit, companyEmailsInOrder, firstUsableCompanyEmail } from './company-primary.js'; // 3 Nov: ★ on a company's added contact makes it the company's own; Orbis imports leave it alone
 import { genderOfFirstName } from './recipient-fields.js'; // 30 Oct: gender of a person, for emails that agree with it (outreach.multiRecipient)
 document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
 import { stepsFor } from './campaign-paths.js'; // 27 Oct (outreach.paths)
@@ -3880,9 +3880,15 @@ async function fillMunHoliday(c){
 // 30 Oct (contacts.trustLabels): the status of the company's general address: tool-verified (registry / Orbis),
 // confirmed by a person, or bounced (an email to exactly that address hard-bounced). Bounced replaces the others.
 let ovCompany = null; // the company the Overview shows, for the Confirm button next to its email
-const ovMoreHtml = (c, t) => { const n = isOn('contacts.trustLabels') ? (c?.reach || []).filter(e => e && e.type === t).length : 0; return n ? ` <button class="link" data-ovmore="1" title="See them in Contacts" style="font-size:0.78rem;">+${n} more</button>` : ''; };
+const ovMoreHtml = (c, t, skip = 0) => { const n = isOn('contacts.trustLabels') ? Math.max(0, (c?.reach || []).filter(e => e && e.type === t).length - skip) : 0; return n ? ` <button class="link" data-ovmore="1" title="See them in Contacts" style="font-size:0.78rem;">+${n} more</button>` : ''; };
 document.addEventListener('click', (ev) => { if (ev.target.closest('[data-ovmore]')) { setActiveTab('contacts'); renderContacts(ovCompany || getCompany()); } });
 const dayOfTs = (v) => { const d = tsToDate(v) || (v ? new Date(v) : null); return d && !isNaN(d) ? reachDay(d.toISOString()) : ''; };
+// 3 Nov: when the company's own email bounced or has no mail servers, the next usable one is shown first, and the dead one after it
+function companyEmailRowHtml(c){
+  const alt = isOn('contacts.trustLabels') ? firstUsableCompanyEmail(c) : null;
+  if (!alt) return `${esc(c.companyEmail||'—')}${companyEmailStatusHtml(c)}${ovMoreHtml(c, 'email')}`;
+  return `${esc(alt.value)} ${trustPillHtml(trustOf(alt), trustTitle(alt, reachDay), esc)} <span class="hint">· instead of</span> <span class="hint" style="text-decoration:line-through;">${esc(c.companyEmail)}</span>${companyEmailStatusHtml(c)}${ovMoreHtml(c, 'email', 1)}`;
+}
 function companyEmailStatusHtml(c){
   if (!isOn('contacts.trustLabels') || !c?.companyEmail) return '';
   const k = companyEmailTrust(c), mine = !!c.companyEmailConfirmedAt && String(c.companyEmailConfirmedFor || '').trim().toLowerCase() === String(c.companyEmail).trim().toLowerCase();
@@ -3958,7 +3964,7 @@ function renderOverview(c){
         <div class="info-row"><span class="k">Multinational</span><span class="v">${c.isMultinational?'Yes — '+esc((c.countries||[]).join(', ')):'No'}</span></div>
         <div class="info-row"><span class="k">Website</span><span class="v">${c.website?`<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">${esc(c.website)}</a>`:'—'}${ovMoreHtml(c, 'website')}</span></div>
         <div class="info-row"><span class="k">LinkedIn</span><span class="v">${c.linkedinUrl?`<a href="${esc(extUrl(c.linkedinUrl))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Profile</a>`:'—'}${ovMoreHtml(c, 'linkedin')}</span></div>
-        <div class="info-row"><span class="k">Email</span><span class="v">${esc(c.companyEmail||'—')}${companyEmailStatusHtml(c)}${ovMoreHtml(c, 'email')}<span id="ovSameEmail" data-feature="search.sameEmail"></span></span></div>
+        <div class="info-row"><span class="k">Email</span><span class="v">${companyEmailRowHtml(c)}<span id="ovSameEmail" data-feature="search.sameEmail"></span></span></div>
         <div class="info-row"><span class="k">Phone</span><span class="v">${esc(c.companyPhone||'—')}${ovMoreHtml(c, 'phone')}</span></div>
       </div>
     </div>
@@ -12057,7 +12063,8 @@ async function openSendEmail(idx){
   const PERSONAL_RE = /@(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me|mac|aol|sapo|iol|netcabo|clix|telepac|portugalmail|oninet|zonmail|vodafone|meo|netvisao|gmx|mail|protonmail|proton|zoho|yandex)\.[a-z.]+$/i;
   const seenE = new Set();
   const addOpt = (email, label, key) => { const e = String(email || '').trim().toLowerCase(); if (!e || seenE.has(e)) return; seenE.add(e); opts.push({ email: e, label: label + (PERSONAL_RE.test(e) && key !== 'company' ? ' · personal address' : ''), key }); };
-  if (c.companyEmail) addOpt(c.companyEmail, `Company — ${c.companyEmail}`, 'company');
+  if (isOn('contacts.trustLabels')) { const o = companyEmailsInOrder(c); o.usable.forEach(u => addOpt(u.value, `Company — ${u.value}`, 'company')); if (o.dead) addOpt(o.dead, `Company — ${o.dead} (cannot receive email)`, 'company'); } // 3 Nov: the usable ones first, a dead one last
+  else if (c.companyEmail) addOpt(c.companyEmail, `Company — ${c.companyEmail}`, 'company');
   (c.contacts || []).forEach((ct, i) => { if (ct.email) addOpt(ct.email, `${ct.name}${ct.role ? ' (' + ct.role + ')' : ''} — ${ct.email}`, String(i)); });
   // Phase 3b: People linked to the company that have an email (owner, gerente…).
   try {
