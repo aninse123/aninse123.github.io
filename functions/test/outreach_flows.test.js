@@ -237,7 +237,7 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   w = await webhook({ type: "email.sent", data: { email_id: "gm1", from: "André Rocha <an.rocha@mail.douropartners-team.pt>", to: ["andrenorocha@gmail.com"], subject: "Re: Teste", message_id: "<gmail-sent-1@mail.gmail.com>" } });
   const gm = docs("outreachMessages").find((m) => m.resendId === "gm1");
   ok("Gmail reply stored on thread with via gmail", w.body === "ok" && gm?.via === "gmail" && gm.threadId === thread1Id && gm.snippet === "Olá, quinta às 10h confirmado.");
-  ok("thread → waiting after Gmail reply; the read state is left alone (3 Nov)", store.get("outreachThreads/" + thread1Id).status === "waiting" && store.get("outreachThreads/" + thread1Id).unread === afterReply.unread && JSON.stringify(store.get("outreachThreads/" + thread1Id).readBy) === JSON.stringify(afterReply.readBy));
+  ok("thread → waiting after Gmail reply; unread for both partners again (attentionAt, 3 Nov)", store.get("outreachThreads/" + thread1Id).status === "waiting" && store.get("outreachThreads/" + thread1Id).unread === true && !!store.get("outreachThreads/" + thread1Id).attentionAt);
   w = await webhook({ type: "email.sent", data: { email_id: "gm2", from: "andre.rocha@mail.douropartners-team.pt", to: ["someone@x.pt"] } });
   ok("email.sent from a warming address ignored", w.body === "ignored");
 

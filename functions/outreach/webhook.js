@@ -95,7 +95,8 @@ async function maybeRecordGmailReply(data) {
   });
   if (threadDoc) {
     await threadDoc.ref.update({
-      lastMessageAt: now, lastDirection: "out", status: "waiting", // 3 Nov: read state (unread, readBy) is left as it is: nobody is marked as having read it, nobody is flagged again
+      lastMessageAt: now, lastDirection: "out", status: "waiting",
+      unread: true, attentionAt: now, // 3 Nov: an answer from Gmail cannot be tied to a person, so it is unread for both partners (attentionAt: newer than anyone's readBy)
       ...(data.message_id ? { rfcIds: FieldValue.arrayUnion(data.message_id) } : {}),
     });
     await store.writeActivity({
