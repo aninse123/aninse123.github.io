@@ -113,7 +113,7 @@ export function compareContacts(found, { company = {}, peopleEmails = [], people
   };
   // Where it is on file, to say so: "the company", or the person's name
   const phoneWhere = (n) => [company.companyPhone, ...reachOf('phone')].some((p) => digits(p).slice(-9) === n) ? 'the company' : senderPhones.some((p) => digits(p).slice(-9) === n) ? (senderName || 'the sender') : peoplePhones.some((p) => digits(p).slice(-9) === n) ? 'a person' : '';
-  const emailWhere = (e) => [company.companyEmail, ...reachOf('email'), ...(company.contacts || []).map((c) => c.email)].map(lc).includes(e) ? 'the company' : (people.find((p) => (p.emails || []).map(lc).includes(e)) || {}).name || (peopleEmails.map(lc).includes(e) ? 'a person' : known.map(lc).includes(e) ? 'this conversation' : '');
+  const emailWhere = (e) => [company.companyEmail, ...reachOf('email'), ...(company.contacts || []).map((c) => c.email)].map(lc).includes(e) ? 'the company' : ((p) => p ? p.name + (p.role ? ` (${String(p.role).split(/,\s*/)[0]})` : '') : '')(people.find((p) => (p.emails || []).map(lc).includes(e))) || (peopleEmails.map(lc).includes(e) ? 'a person' : known.map(lc).includes(e) ? 'this conversation' : '');
   const items = [];
   for (const p of found.phones) items.push({ type: 'phone', kind: p.kind, value: p.display, norm: p.norm, have: have.phones.has(p.norm), where: phoneWhere(p.norm), target: p.kind === 'mobile' ? 'person' : 'company' });
   // The address that wrote: offered first when no record of the company has it (the conversation knowing it is not the CRM knowing it)

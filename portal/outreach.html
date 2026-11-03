@@ -2042,6 +2042,7 @@
     // ── 3 Nov (outreach.replyContacts): the contact details found in the latest reply — phones, other emails, website, address, NIPC —
     // compared with what the CRM has: "already on file" or "new", one click to add. Nothing is saved without the click.
     const rcRuns = new Map();
+    const firstRole = (r) => String(r || '').split(/,\s*/)[0]; // the CRM lists a role in English and in Portuguese: the first is enough here
     async function updateReplyContacts(t) {
       const el = $('replyContacts'); if (!el) return;
       if (!isOn('outreach.replyContacts') || !t.companyId) { el.innerHTML = ''; return; }
@@ -2060,7 +2061,7 @@
         const senderGuess = !byEmail && !!sender;
         let senderPhones = [];
         if (sender) { try { const s = await getDoc(doc(db, 'searchPeople', sender.personId)); addReads(1); senderPhones = personDetails(s.data() || {}, 'phone', co); } catch (e) { /* the comparison still works without them */ } }
-        const cmp = compareContacts(found, { company: co, peopleEmails: people.flatMap(p => p.emails || []), senderEmail: from.email, senderPhones, senderName: sender?.name || '', people: people.map(p => ({ name: p.name, emails: p.emails || [] })), known: t.addresses || [] });
+        const cmp = compareContacts(found, { company: co, peopleEmails: people.flatMap(p => p.emails || []), senderEmail: from.email, senderPhones, senderName: sender ? sender.name + (sender.role ? ` (${firstRole(sender.role)})` : '') : '', people: people.map(p => ({ name: p.name, role: p.role || '', emails: p.emails || [] })), known: t.addresses || [] });
         rc = { t, msg, co, sender, senderGuess, from, cmp, checks: {} };
         rcRuns.set(key, rc);
       }
@@ -2084,13 +2085,13 @@
         const toPerson = (i.type === 'phone' || i.sender) && i.target === 'person' && rc.sender;
         const can = toPerson || i.sender ? canPerson : canCompany;
         const act = i.have ? `<span class="pill pill--ok">already on file${i.where ? ' · ' + esc(i.where) : ''}</span>`
-          : can ? `<button class="btn btn--ghost btn--sm" data-${toPerson || i.sender ? 'rcmore' : 'rcadd'}="${n}"${toPerson && rc.senderGuess ? ` title="The sender is not in the CRM by email: it looks like ${esc(rc.sender.name)}${rc.sender.role ? ' (' + esc(rc.sender.role) + ')' : ''} — use the arrow to choose someone else"` : ''}>Add to ${toPerson ? esc(rc.sender.name.split(' ')[0]) + (rc.senderGuess ? '?' : '') : (i.sender ? 'CRM' : 'company')}</button>${toPerson || i.sender ? '' : `<button class="btn btn--ghost btn--sm" data-rcmore="${n}" title="Add it to another person, or to a new contact" aria-label="Choose where to add it" style="padding:0 6px;">▾</button>`}`
+          : can ? `<button class="btn btn--ghost btn--sm" data-${toPerson || i.sender ? 'rcmore' : 'rcadd'}="${n}"${toPerson && rc.senderGuess ? ` title="The sender is not in the CRM by email: it looks like ${esc(rc.sender.name)}${rc.sender.role ? ' (' + esc(firstRole(rc.sender.role)) + ')' : ''} — use the arrow to choose someone else"` : ''}>Add to ${toPerson ? esc(rc.sender.name.split(' ')[0]) + (rc.senderGuess ? '?' : '') : (i.sender ? 'CRM' : 'company')}</button>${toPerson || i.sender ? '' : `<button class="btn btn--ghost btn--sm" data-rcmore="${n}" title="Add it to another person, or to a new contact" aria-label="Choose where to add it" style="padding:0 6px;">▾</button>`}`
           : (canPerson || canCompany) ? `<button class="btn btn--ghost btn--sm" data-rcmore="${n}">Add to…</button>` : '<span class="pill">new</span>';
         const chk = i.type === 'address' && !i.have ? ` <button class="btn btn--ghost btn--sm" data-rcchk="${n}" title="Looks the address up on OpenStreetMap (free; only when you ask)">Check address</button> <span class="hint">${esc(checkText(rc.checks[n]))}</span>` : '';
         return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;"><span class="hint" style="min-width:92px;">${NAME[i.type]}${i.type === 'phone' ? ' · ' + i.kind : ''}</span><b>${esc(i.value)}</b> ${act}${chk}</div>`;
       }).join('');
       const nif = nipc ? `<div style="padding:3px 0;"><span class="hint" style="min-width:92px;display:inline-block;">NIPC</span> <b>${esc(nipc.value)}</b> ${nipc.matches === true ? '<span class="pill pill--ok">matches the company</span>' : nipc.matches === false ? '<span class="pill pill--warn">differs from the company\'s NIF</span>' : '<span class="pill">company has no NIF on file</span>'}</div>` : '';
-      el.innerHTML = `<details style="border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:0.82rem;"${newN ? ' open' : ''}><summary style="cursor:pointer;font-weight:600;">Contact details in this reply <span class="hint">(${newN ? newN + ' new' : 'all on file'})</span></summary>${rows}${nif}<div class="hint" style="margin-top:4px;">Read from what ${esc(rc.from.name || rc.from.email || 'they')} wrote${rc.senderGuess ? `, who looks like <b>${esc(rc.sender.name)}</b>${rc.sender.role ? ' (' + esc(rc.sender.role) + ')' : ''}` : ''}. Nothing is saved until you click Add.</div></details>`;
+      el.innerHTML = `<details style="border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:0.82rem;"${newN ? ' open' : ''}><summary style="cursor:pointer;font-weight:600;">Contact details in this reply <span class="hint">(${newN ? newN + ' new' : 'all on file'})</span></summary>${rows}${nif}<div class="hint" style="margin-top:4px;">Read from what ${esc(rc.from.name || rc.from.email || 'they')} wrote${rc.senderGuess ? `, who looks like <b>${esc(rc.sender.name)}</b>${rc.sender.role ? ' (' + esc(firstRole(rc.sender.role)) + ')' : ''}` : ''}. Nothing is saved until you click Add.</div></details>`;
       el.querySelectorAll('[data-rcadd]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
         try { await addReplyContact(rc, items[+b.dataset.rcadd]); renderReplyContacts(rc); } catch (e) { toast(e.message || 'Could not add it.'); b.disabled = false; }
