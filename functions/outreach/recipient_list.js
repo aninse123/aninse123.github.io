@@ -58,9 +58,14 @@ async function setRecipients({ enrolmentId, emails, all }, caller, { deps, multi
   const e = (await ref.get()).data();
   if (e.trackOf) fail("failed-precondition", "is_track", "Change the company's first address instead.");
   const want = [...new Set(emails.map(normEmail).filter(Boolean))];
-  if (all && want.length > Tracks.MAX_TRACKS) fail("invalid-argument", "too_many_tracks", `At most ${Tracks.MAX_TRACKS} addresses can each get an email.`);
   const byEmail = new Map(cur.list.map((r) => [r.email, r]));
-  for (const em of want) {
+  // 3 Nov: the first address, once email 1 has gone to it, stays first even if it has since bounced or been stopped: it is not written
+  // to again, so it is neither checked nor counted towards the limit (the others can use its place).
+  const deadFirst = !!cur.locked && want.length > 0 && want[0] === normEmail(e.recipient?.email) && (e.status === "stopped" || !!byEmail.get(want[0])?.blocked || byEmail.get(want[0])?.trust === "bounced");
+  const counted = deadFirst ? want.slice(1) : want;
+  if (all && counted.length > Tracks.MAX_TRACKS) fail("invalid-argument", "too_many_tracks", `At most ${Tracks.MAX_TRACKS} addresses can each get an email.`);
+  for (const [i, em] of want.entries()) {
+    if (deadFirst && i === 0) continue;
     const r = byEmail.get(em);
     if (!r) fail("invalid-argument", "unknown_address", `${em} is not one of this company's addresses.`);
     if (r.blocked) fail("failed-precondition", "blocked_address", `${em} is not verified and this campaign does not use unverified addresses.`);
@@ -69,7 +74,7 @@ async function setRecipients({ enrolmentId, emails, all }, caller, { deps, multi
   const extras = (list) => list.slice(1).map((x) => ({ email: x, name: byEmail.get(x).name, kind: byEmail.get(x).kind, personId: byEmail.get(x).personId || null }));
   if (cur.locked) {
     if (!all || !want.length || want[0] !== normEmail(e.recipient?.email)) fail("failed-precondition", "already_started", "The first email has already gone out; its address can no longer change.");
-    const r = await Tracks.syncTracks(enrolmentId, extras(want), caller, { late: true });
+    const r = await Tracks.syncTracks(enrolmentId, extras(want), caller, { late: true, maxExtras: deadFirst ? Tracks.MAX_TRACKS : Tracks.MAX_TRACKS - 1 });
     await ref.update({ recipientList: want, recipientListBy: caller, recipientListAt: FieldValue.serverTimestamp() });
     return { ok: true, list: want, ...r };
   }

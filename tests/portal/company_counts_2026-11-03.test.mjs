@@ -173,6 +173,8 @@ w.set({ tab: 'inbox', camp: null, tv: 'todo', th: 'T1' }); w.wherePending.camp =
 ok('Refresh: the Inbox keeps the open conversation; the default tab is not written', w.loc.hash === '#th=T1');
 ok('Refresh: wired into tabs, campaign, section, task view, settings, conversation and the campaign list', ["curTab = name;", "campSec = name; saveWhere();", "taskView = v; saveWhere();", "selectedId = id; saveWhere();", "restoreWhere();", "restoreCampaign(); //", "|| wherePending.th;"].every((x) => html.includes(x)));
 
+ok('Addresses window: a dead first address (email 1 already sent) is not counted in "N emails will be sent"', html.includes('- (r.locked && list[0] && unusable(list[0]) && list[0].selected ? 1 : 0)'));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');

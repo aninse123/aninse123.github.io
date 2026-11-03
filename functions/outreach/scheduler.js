@@ -655,6 +655,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         if (await endEnrolment(doc.ref, "stopped", msg)) report.stopped++;
         // 3 Nov: a general address whose domain has no mail servers is marked on the company, like a bounce (Bounced in the contact details)
         if (reason === "no_mx" && e.recipient?.email) await store.markCompanyEmailBounced(e.companyId, e.recipient.email, "no mail servers (the domain can't receive email)", e.isTest, "no_mx");
+        // 3 Nov: the same person's / company's next address, to approve (once the company's first email has gone out)
+        if (reason === "no_mx" && e.companyId && (await Feat.jobState("outreach.multiRecipient")) !== "off") await Tracks.addAlternateAddress(doc.id, e.recipient?.email, "system").catch(() => null);
       } else if (STOP_RUN.has(reason)) {
         report.stoppedSends = reason;
         report.stoppedSendsText = holdText(reason, msg);

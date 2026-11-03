@@ -4452,7 +4452,7 @@ Optional note for them:`, '');
       const KIND = { company: 'company address', contact: 'contact', person: 'person' };
       const DOM = { none: ['⚠ the domain does not seem to receive email', 'color:var(--danger)'] };
       const draw = () => {
-        const n = list.filter(x => x.selected).length;
+        const n = list.filter(x => x.selected).length - (r.locked && list[0] && unusable(list[0]) && list[0].selected ? 1 : 0); // 3 Nov: a first address that already got email 1 and has since bounced is not written to again, so it is not counted
         $('modalBody').innerHTML = `<p class="hint">Tick the addresses to write to, and put them in order: the first one gets email 1.${r.locked ? ' Email 1 has already gone out to the first address, so it stays first; you can add or remove the others.' : ''} A ⚠ on the domain is advice only; it never blocks.</p>
           ${multiOn ? `<label style="display:flex;gap:8px;align-items:center;margin:8px 0;"><input type="checkbox" id="rcAll"${all ? ' checked' : ''}> Write to every ticked address (separate emails, at most 3)</label>` : ''}
           <div style="display:grid;gap:6px;">${list.map((x, i) => `<div style="padding:6px 0;border-bottom:1px solid var(--border);"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">

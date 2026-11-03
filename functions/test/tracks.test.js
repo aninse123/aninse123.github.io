@@ -64,7 +64,37 @@ function seed() {
   ok("one address with a saved list: the next address takes over, from the start, in a conversation of its own", fb === "fallback" && fbT.recipient.email === "geral@empresa.pt" && fbT.status === "active" && fbT.currentStep === 0 && fbT.fallbackFrom === "joao@empresa.pt" && en("en1").status === "stopped");
   ok("a fallback track is not an extra address", fbT.isExtra === undefined && fbT.isTrack === true);
   ok("the company keeps its campaign slot (now on the fallback)", store.get("searchCompanies/co1").activeEnrolmentId === "en1__t1");
-  ok("and when that one bounces too, nothing is left", (await Tracks.onHardBounce("en1__t1", "geral@empresa.pt")) === "none");
+  const again = await Tracks.onHardBounce("en1__t1", "geral@empresa.pt");
+  ok("and when that one bounces too, the company's other general address is tried, to approve (3 Nov)", again === "track" && en("en1__t2")?.recipient.email === "contas@empresa.pt" && en("en1__t2").forceApproval === true && en("en1__t2").fallbackFrom === "geral@empresa.pt" && en("en1__t2").isExtra === true);
+  ok("and when that one bounces too, nothing is left", (await Tracks.onHardBounce("en1__t2", "contas@empresa.pt")) === "none");
+
+  // ── 3 Nov: a person's address bounced while the company's other addresses run: the same person's other address is added, to approve ──
+  seed();
+  store.set("searchPeople/u_1", { name: "João Silva", reach: [{ id: "r1", type: "email", value: "joao@empresa.pt", status: "ok", primary: true, origin: "team" }, { id: "r2", type: "email", value: "joao.silva@empresa.pt", status: "ok", origin: "team", confirmedAt: "2026-11-03T15:00:00Z" }] });
+  store.set("outreachEnrolments/en1", { ...en("en1"), threadId: "th1", currentStep: 1, multiRecipient: true, recipient: { email: "joao@empresa.pt", kind: "person", personId: "u_1" }, recipientList: ["joao@empresa.pt", "geral@empresa.pt"] });
+  store.set("outreachEnrolments/en1__t1", { campaignId: "cmp1", companyId: "co1", companyName: "EMPRESA, LDA", status: "active", currentStep: 1, isTrack: true, isExtra: true, trackOf: "en1", trackIndex: 1, threadId: "th2", recipient: { email: "geral@empresa.pt", kind: "company" } });
+  const pb = await Tracks.onHardBounce("en1", "joao@empresa.pt");
+  const alt = en("en1__t2");
+  ok("same person, another address: the company keeps running and the other address waits in To approve", pb === "track" && en("en1").status === "stopped" && live("en1__t1") && alt && alt.recipient.email === "joao.silva@empresa.pt" && alt.recipient.personId === "u_1" && alt.forceApproval === true && alt.status === "pending" && alt.isExtra === true && alt.fallbackFrom === "joao@empresa.pt");
+  ok("the stopped one says what happened", /joao\.silva@empresa\.pt/.test(en("en1").stopReason) && /bounce/i.test(en("en1").stopReason));
+  ok("it is not added twice", (await Tracks.addAlternateAddress("en1", "joao@empresa.pt")) === null);
+  await Tracks.startTracks({ id: "cmp1", _sendingDays: [1, 2, 3, 4, 5, 6, 7], _skipHolidays: false }, new Date("2026-11-03T10:00:00Z"), {});
+  ok("it starts even though the first address bounced (the first email did go out)", en("en1__t2").status === "active");
+  seed();
+  store.set("outreachEnrolments/en1", { ...en("en1"), threadId: "th1", currentStep: 1, recipient: { email: "joao@empresa.pt", kind: "person", personId: "u_1" } });
+  ok("no other address for that person: nothing is added", (await Tracks.addAlternateAddress("en1", "joao@empresa.pt")) === null);
+  store.set("outreachEnrolments/en1", { ...en("en1"), threadId: null, currentStep: 0 });
+  store.set("searchPeople/u_1", { name: "João Silva", reach: [{ id: "r1", type: "email", value: "joao@empresa.pt", status: "ok", primary: true, origin: "team" }, { id: "r2", type: "email", value: "joao.silva@empresa.pt", status: "ok", origin: "team" }] });
+  ok("nothing is added before email 1 of the company has gone out", (await Tracks.addAlternateAddress("en1", "joao@empresa.pt")) === null);
+
+  // ── 3 Nov: the first address bounced (stopped) but others run: it stays first, is not counted, and the others can be added ──
+  seed();
+  store.set("searchPeople/u_1", { name: "João Silva", reach: [{ id: "r1", type: "email", value: "joao@empresa.pt", status: "bounced", primary: true, origin: "team" }, { id: "r2", type: "email", value: "joao.silva@empresa.pt", status: "ok", origin: "team" }] });
+  store.set("outreachEnrolments/en1", { ...en("en1"), status: "stopped", stopReason: "Email bounced", threadId: "th1", currentStep: 1, multiRecipient: true, recipient: { email: "joao@empresa.pt", kind: "person", personId: "u_1" }, recipientList: ["joao@empresa.pt", "geral@empresa.pt"] });
+  store.set("outreachEnrolments/en1__t1", { campaignId: "cmp1", companyId: "co1", companyName: "EMPRESA, LDA", status: "active", currentStep: 1, isTrack: true, isExtra: true, trackOf: "en1", trackIndex: 1, threadId: "th2", recipient: { email: "geral@empresa.pt", kind: "company" } });
+  const dead = await RL.setRecipients({ enrolmentId: "en1", emails: ["joao@empresa.pt", "geral@empresa.pt", "contas@empresa.pt", "joao.silva@empresa.pt"], all: true }, "andre", { deps: dns, multi: true });
+  ok("a stopped first address stays first, is not counted, and the others (3) can be added", dead.added === 2 && live("en1__t1") && en("en1__t2").recipient.email === "contas@empresa.pt" && en("en1__t3").recipient.email === "joao.silva@empresa.pt" && en("en1__t3").forceApproval === true);
+  ok("listing the stopped first address with a live one is fine (nothing new to add)", (await reason(RL.setRecipients({ enrolmentId: "en1", emails: ["joao@empresa.pt", "geral@empresa.pt"], all: true }, "andre", { deps: dns, multi: true }))) === null);
 
   // ── A reply from anyone stops them all; restart ──
   seed();

@@ -18,6 +18,23 @@ const rootOf = (id, e) => (e && e.trackOf) || id;
 const campaigns = () => require("./campaigns"); // lazy: campaigns requires this module's callers
 const ts = (d) => Timestamp.fromDate(d);
 
+// One extra address of a company: a sibling enrolment of the first one, waiting to start once email 1 of the first has gone out.
+// isExtra: an extra address of the same company (not a replacement after a bounce, which takes the first one's place).
+function trackDoc(root, rootId, n, r, caller, { late = false, fallbackFrom = null } = {}) {
+  const email = normEmail(r.email);
+  return {
+    campaignId: root.campaignId, campaignName: root.campaignName || "", companyId: root.companyId, companyName: root.companyName || "",
+    owner: root.owner || null, contactEmail: email, source: root.source || null, sourceLabel: root.sourceLabel || null,
+    status: "pending", stopReason: null, currentStep: 0, nextActionAt: null, senderId: root.senderId || null, threadId: null,
+    variants: {}, history: [], isTest: !!root.isTest, createdAt: FieldValue.serverTimestamp(), enrolledBy: caller, endedAt: null,
+    isTrack: true, isExtra: true, trackOf: rootId, trackIndex: n,
+    recipient: { email, name: r.name || "", kind: r.kind || "company", ...(r.personId ? { personId: r.personId } : {}) }, recipientList: [email],
+    ...(late ? { forceApproval: true } : {}), ...(fallbackFrom ? { fallbackFrom } : {}),
+    // 2 Nov: the related companies chosen to be mentioned are a company-level choice: every address carries them
+    ...(root.mention?.length ? { mention: root.mention } : {}), ...(root.known?.length ? { known: root.known } : {}),
+  };
+}
+
 async function siblingsOf(rootId) {
   const snap = await db().collection("outreachEnrolments").where("trackOf", "==", rootId).get();
   return snap.docs;
@@ -26,12 +43,12 @@ async function siblingsOf(rootId) {
 // The tracks of one first-track enrolment wanted after a choice: `list` = [{ email, name, kind }] for the 2nd address on.
 // Live tracks whose address is no longer wanted end ("removed"); new addresses get a track. `late`: the first email
 // has already gone out, so these start as drafts to approve even in an automatic campaign.
-async function syncTracks(rootId, list, caller, { late = false } = {}) {
+async function syncTracks(rootId, list, caller, { late = false, maxExtras = MAX_TRACKS - 1 } = {}) {
   const rootRef = db().doc(`outreachEnrolments/${rootId}`);
   const root = (await rootRef.get()).data();
   if (!root) return { added: 0, removed: 0 };
   const sibs = await siblingsOf(rootId);
-  const want = new Map(list.slice(0, MAX_TRACKS - 1).map((r) => [normEmail(r.email), r]));
+  const want = new Map(list.slice(0, maxExtras).map((r) => [normEmail(r.email), r]));
   let removed = 0, added = 0;
   for (const d of sibs) {
     const s = d.data(), em = normEmail(s.recipient?.email);
@@ -42,17 +59,7 @@ async function syncTracks(rootId, list, caller, { late = false } = {}) {
   let n = sibs.reduce((m, d) => Math.max(m, d.data().trackIndex || 0), 0);
   for (const [email, r] of want) {
     n++;
-    await db().doc(`outreachEnrolments/${trackId(rootId, n)}`).set({
-      campaignId: root.campaignId, campaignName: root.campaignName || "", companyId: root.companyId, companyName: root.companyName || "",
-      owner: root.owner || null, contactEmail: email, source: root.source || null, sourceLabel: root.sourceLabel || null,
-      status: "pending", stopReason: null, currentStep: 0, nextActionAt: null, senderId: root.senderId || null, threadId: null,
-      variants: {}, history: [], isTest: !!root.isTest, createdAt: FieldValue.serverTimestamp(), enrolledBy: caller, endedAt: null,
-      isTrack: true, isExtra: true, trackOf: rootId, trackIndex: n, // isExtra: an extra address of the same company (not a replacement after a bounce)
-      recipient: { email, name: r.name || "", kind: r.kind || "company", ...(r.personId ? { personId: r.personId } : {}) }, recipientList: [email],
-      ...(late ? { forceApproval: true } : {}),
-      // 2 Nov: the related companies chosen to be mentioned are a company-level choice: every address carries them
-      ...(root.mention?.length ? { mention: root.mention } : {}), ...(root.known?.length ? { known: root.known } : {}),
-    });
+    await db().doc(`outreachEnrolments/${trackId(rootId, n)}`).set(trackDoc(root, rootId, n, { email, ...r }, caller, { late }));
     added++;
   }
   await rootRef.update({ multiRecipient: true, tracksBy: caller, tracksAt: FieldValue.serverTimestamp() });
@@ -81,6 +88,47 @@ async function startTracks(campaign, now, report = {}) {
   }
 }
 
+// 3 Nov: an address stopped by an error (bounced, or its domain has no mail servers). If the same person (a general address: the
+// company's other general addresses) has another usable address that this company has not been written to yet, it becomes a new
+// track of the company, waiting in To approve (forceApproval) — even while other addresses of the company are running. Returns the
+// address added, or null. Only once email 1 has gone out to the company's first address (the track starts after it).
+async function addAlternateAddress(enrolmentId, deadEmail, caller = "system") {
+  const ref = db().doc(`outreachEnrolments/${enrolmentId}`);
+  const e = (await ref.get()).data();
+  if (!e || !e.companyId || e.isTest) return null;
+  const rootId = rootOf(enrolmentId, e);
+  const rootSnap = rootId === enrolmentId ? null : await db().doc(`outreachEnrolments/${rootId}`).get();
+  const root = rootSnap ? (rootSnap.exists ? rootSnap.data() : null) : e;
+  if (!root || ["replied", "removed", "moved"].includes(root.status) || (!root.threadId && !((root.currentStep || 0) > 0))) return null;
+  const [cs, camp, sibs] = await Promise.all([
+    db().doc(`searchCompanies/${e.companyId}`).get(), db().doc(`outreachCampaigns/${e.campaignId}`).get(),
+    db().collection("outreachEnrolments").where("companyId", "==", e.companyId).where("campaignId", "==", e.campaignId).get(),
+  ]);
+  if (!cs.exists) return null;
+  const campaign = camp.exists ? camp.data() : {};
+  const all = sibs.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const max = Math.min(MAX_TRACKS, Number(campaign.addressMax) || MAX_TRACKS);
+  if (all.filter((x) => x.id !== enrolmentId && LIVE_ENROLMENT.includes(x.status)).length >= max) return null; // the cap counts live addresses (not the one that failed)
+  const used = new Set(all.flatMap((x) => [x.recipient?.email, ...(x.recipientTried || [])]).map(normEmail).filter(Boolean));
+  const dead = normEmail(deadEmail || e.recipient?.email);
+  used.add(dead);
+  const cands = await companyRecipients(e.companyId, cs.data(), { usePeople: true, trust: { on: true, includeUnverified: !!campaign.useUnverified } });
+  const personId = e.recipient?.personId || null, kind = e.recipient?.kind || "company";
+  const pick = [];
+  for (const r of cands) {
+    const em = normEmail(r.email);
+    if (r.blocked || r.trust === "bounced" || used.has(em)) continue;
+    if (personId ? r.personId !== personId : (kind !== "company" || r.kind !== "company")) continue; // the same person, or another general address
+    if (await store.findSuppression(em)) continue;
+    pick.push({ ...r, email: em }); break;
+  }
+  if (!pick.length) return null;
+  const n = all.reduce((m, x) => Math.max(m, x.trackIndex || 0), 0) + 1;
+  await db().doc(`outreachEnrolments/${trackId(rootId, n)}`).set(trackDoc(root, rootId, n, pick[0], caller, { late: true, fallbackFrom: dead }));
+  await db().doc(`outreachEnrolments/${rootId}`).update({ multiRecipient: true, tracksBy: caller, tracksAt: FieldValue.serverTimestamp() });
+  return pick[0].email;
+}
+
 // A hard bounce on a conversation. "fallback": the next address in the company's list takes over; "track": this track
 // ended and others carry on; "none": nothing else to try, the caller stops the company as before.
 async function onHardBounce(enrolmentId, bouncedEmail, now = new Date()) {
@@ -94,6 +142,8 @@ async function onHardBounce(enrolmentId, bouncedEmail, now = new Date()) {
   const rootLive = root === enrolmentId ? false : rootSnap.exists && LIVE_ENROLMENT.includes(rootSnap.data().status);
   if (mates.length || rootLive) {
     await campaigns().endEnrolment(ref, "stopped", "Email bounced"); // the other addresses carry on
+    const alt = await addAlternateAddress(enrolmentId, bouncedEmail, "system").catch(() => null); // 3 Nov: the same person's next address, to approve
+    if (alt) await ref.update({ stopReason: `Email bounced; ${alt} (same person) waits in To approve` }).catch(() => {});
     return "track";
   }
   // Nobody else is running: try the next address of the saved list that has not been tried
@@ -103,7 +153,12 @@ async function onHardBounce(enrolmentId, bouncedEmail, now = new Date()) {
   const tried = new Set([...(e.recipientTried || []), bounced, ...used].map(normEmail));
   const list = (e.recipientList || []).map(normEmail);
   const next = list.find((x) => !tried.has(x) && x !== bounced);
-  if (!next) return "none";
+  if (!next) {
+    const alt = await addAlternateAddress(enrolmentId, bouncedEmail, "system").catch(() => null); // 3 Nov: the same person's other address, to approve
+    if (!alt) return "none";
+    await campaigns().endEnrolment(ref, "stopped", `Email bounced; ${alt} (same person) waits in To approve`);
+    return "track";
+  }
   const sup = await store.findSuppression(next);
   const remaining = list.find((x) => !tried.has(x) && x !== bounced && x !== next);
   if (sup && !remaining) return "none";
@@ -195,4 +250,4 @@ async function tracksFor(enrolmentId) {
   };
 }
 
-module.exports = { syncTracks, startTracks, applyAddressMode, onHardBounce, hasTracks, restartCompany, tracksFor, rootOf, MAX_TRACKS };
+module.exports = { syncTracks, startTracks, applyAddressMode, onHardBounce, addAlternateAddress, hasTracks, restartCompany, tracksFor, rootOf, MAX_TRACKS };
