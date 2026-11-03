@@ -298,6 +298,14 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   ok("a reply carries the file too (listed twice, sent once)", r.res?.ok === true && lastSend().body.attachments?.length === 1);
   storageFiles.delete("outreach/files/f1/Apresentacao.pdf");
 
+  store.set("outreachMessages/inAtt", { threadId: sigThread, direction: "in", status: "received", from: "dono@empresa.pt", subject: "Re: Assinatura", text: "Segue o balanço.", companyId: "co1", isTest: true, attachments: [{ filename: "Balanco.pdf", storagePath: "outreach/t/in1/Balanco.pdf", size: 5, contentType: "application/pdf", flagged: false }, { filename: "macro.docm", storagePath: "outreach/t/in1/macro.docm", size: 5, contentType: "application/octet-stream", flagged: true }] });
+  storageFiles.set("outreach/t/in1/Balanco.pdf", { size: 5, meta: {}, buf: Buffer.from("BALAN") });
+  r = await call(fns.outreachSend, { action: "forward", threadId: sigThread, to: "antonio.carvalho@douropartners.pt", note: "Com o balanço", includeFiles: true });
+  ok("Forward with the received files: the copied, not risky ones go along as attachments", r.res?.ok === true && r.res.files === 1 && lastSend().body.attachments?.length === 1 && lastSend().body.attachments[0].filename === "Balanco.pdf" && lastSend().body.attachments[0].content === Buffer.from("BALAN").toString("base64"));
+  r = await call(fns.outreachSend, { action: "forward", threadId: sigThread, to: "antonio.carvalho@douropartners.pt", note: "Sem ficheiros" });
+  ok("Forward without asking for files sends none", r.res?.ok === true && lastSend().body.attachments === undefined);
+  storageFiles.delete("outreach/t/in1/Balanco.pdf");
+
   console.log("\n=== clear test data ===");
   store.set("searchActivities/real1", { companyId: "co1", type: "note", isTest: false });
   // Usage tab: the sends above were counted (test mode → "test"), per sending address and for the partner who sent them.

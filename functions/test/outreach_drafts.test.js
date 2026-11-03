@@ -70,6 +70,31 @@ const docs = (coll) => [...store.entries()].filter(([p]) => p.startsWith(coll + 
   ok("a partner can ask for a draft (preview as a writer): saved, not sent", pd.draft === true && sends.length === 2 && store.get(`outreachMessages/${pd.messageId}`).status === "draft");
   ok("asDraft doesn't let a view-only person write", (await send(VIEWER, { ...base, asDraft: true })).err?.details?.reason === "not_admin");
 
+  // ── 3 Nov: attachments through a draft and a template (dumb data) ──
+  F.storageFiles.set("outreach/files/dk1/Deck.pdf", { size: 4, meta: {}, buf: Buffer.from("DECK") });
+  F.storageFiles.set("outreach/files/dk2/Termos.docx", { size: 5, meta: {}, buf: Buffer.from("TERMS") });
+  store.set("outreachFiles/dk1", { name: "Deck.pdf", filename: "Deck.pdf", storagePath: "outreach/files/dk1/Deck.pdf", contentType: "application/pdf", size: 4, library: true });
+  store.set("outreachFiles/dk2", { name: "Termos.docx", filename: "Termos.docx", storagePath: "outreach/files/dk2/Termos.docx", contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: 5, library: true });
+  const before = sends.length;
+  const dAtt = await send(INTERN, { ...base, attachments: ["dk1"] });
+  const dDoc = store.get(`outreachMessages/${dAtt.messageId}`);
+  ok("an intern's draft keeps the files (named in the draft, ids in the request), nothing is sent yet", dAtt.draft === true && sends.length === before && dDoc.attachments.length === 1 && dDoc.attachments[0].filename === "Deck.pdf" && dDoc.request.attachments.join() === "dk1");
+  await send(PARTNER, { action: "approveDraft", messageId: dAtt.messageId });
+  const sentAtt = sends[sends.length - 1];
+  ok("approving the draft sends the file with the email (base64, name, type)", sends.length === before + 1 && sentAtt.attachments?.length === 1 && sentAtt.attachments[0].filename === "Deck.pdf" && sentAtt.attachments[0].content === Buffer.from("DECK").toString("base64") && sentAtt.attachments[0].content_type === "application/pdf");
+
+  store.set("outreachTemplates/tplAtt", { name: "Com apresentação", kind: "email", status: "active", language: "pt", variants: [{ key: "A", subject: "Apresentação", body: "Segue a apresentação." }], attachments: ["dk1", "dk2"] });
+  const viaTpl = await send(PARTNER, { companyId: "c1", senderId: "an.rocha@mail.douropartners-team.pt", templateId: "tplAtt", variantKey: "A" });
+  const sentTpl = sends[sends.length - 1];
+  ok("a template's files go with every email that uses it", viaTpl.ok === true && sentTpl.attachments?.map((a) => a.filename).join() === "Deck.pdf,Termos.docx");
+  const both = await send(PARTNER, { companyId: "c1", senderId: "an.rocha@mail.douropartners-team.pt", templateId: "tplAtt", variantKey: "A", attachments: ["dk1"] });
+  ok("the template's files and the email's own are joined, a file in both is sent once", both.ok === true && sends[sends.length - 1].attachments.length === 2);
+  store.set("outreachTemplates/tplGone", { name: "Sem ficheiro", kind: "email", status: "active", language: "pt", variants: [{ key: "A", subject: "Olá", body: "Texto." }], attachments: ["deleted-file"] });
+  const gone = await send(PARTNER, { companyId: "c1", senderId: "an.rocha@mail.douropartners-team.pt", templateId: "tplGone", variantKey: "A" });
+  ok("a template whose file was deleted from the library refuses to send, and says so", gone.err?.details?.reason === "file_not_found");
+  const noAtt = await send(PARTNER, base);
+  ok("an email with no files carries no attachments field", noAtt.ok === true && sends[sends.length - 1].attachments === undefined);
+
   console.log(fail ? `\n${fail} FAILED` : "\nall draft tests passed");
   process.exit(fail ? 1 : 0);
 })();
