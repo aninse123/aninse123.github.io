@@ -33,6 +33,35 @@ ok('classify turns an empty category into null', html.includes("cat = cat || nul
 ok('the "Also contacted" line exists and reads the company enrolments', html.includes('id="sibLine"') && html.includes("where('companyId', '==', t.companyId), limit(20)"));
 ok('the Overview counts companies under outreach.companyCounts', html.includes("isOn('outreach.companyCounts') && c.audienceType !== 'people'"));
 
+// the Overview and By path count companies, not addresses (a company's extra addresses are enrolments of their own)
+const P = await import(new URL('../../portal/campaign-paths.js', import.meta.url));
+const sent = (n) => Array.from({ length: n }, () => ({ result: 'sent' }));
+const enrols = [
+  { id: 'a', companyId: 'co1', status: 'active', pathId: 'A', history: sent(1), sourceLabel: 'List 1' },
+  { id: 'a__t1', companyId: 'co1', status: 'stopped', isExtra: true, pathId: 'A', history: sent(1), stopReason: 'Email bounced' },
+  { id: 'a__t2', companyId: 'co1', status: 'active', isExtra: true, pathId: 'A', history: sent(1) },
+  { id: 'b', companyId: 'co2', status: 'stopped', pathId: 'A', history: sent(1), stopReason: 'Email bounced' },
+  { id: 'b__t1', companyId: 'co2', status: 'stopped', isExtra: true, pathId: 'A', history: sent(1) },
+  { id: 'c', companyId: 'co3', status: 'replied', pathId: 'B', history: sent(1) },
+  { id: 'c__t1', companyId: 'co3', status: 'stopped', isExtra: true, pathId: 'B', history: sent(1) },
+  { id: 'd', companyId: 'co4', status: 'pending', plannedPathId: 'B', history: [] },
+];
+const roll = P.rollupByCompany(enrols);
+ok('one row per company (8 enrolments, 4 companies)', roll.length === 4);
+const st = Object.fromEntries(roll.map((r) => [r.companyId, r.status]));
+ok('a company is in sequence when any address is; stopped only when all are; replied wins', st.co1 === 'active' && st.co2 === 'stopped' && st.co3 === 'replied' && st.co4 === 'pending');
+ok('the history of the addresses is joined (emails still add up)', roll.find((r) => r.companyId === 'co1').history.length === 3 && roll.reduce((a, r) => a + r.history.length, 0) === 7);
+ok('the main address supplies the rest of the row', roll.find((r) => r.companyId === 'co1').id === 'a' && roll.find((r) => r.companyId === 'co1').sourceLabel === 'List 1');
+const camp = { paths: [{ id: 'A', name: 'A' }, { id: 'B', name: 'B' }, { id: 'main', name: 'Else' }], steps: [] };
+const thr = [{ enrolmentId: 'a', companyId: 'co1', responseCategory: 'interested' }, { enrolmentId: 'a__t2', companyId: 'co1', responseCategory: 'interested' }, { enrolmentId: 'c', companyId: 'co3', responseCategory: 'interested' }];
+const off2 = P.pathResults(camp, enrols, thr, POSITIVE), on2 = P.pathResults(camp, enrols, thr, POSITIVE, true);
+const row = (r, id) => r.rows.find((x) => x.id === id);
+ok('By path Off: counts addresses (A has 5)', row(off2, 'A').total === 5);
+ok('By path On: counts companies (A has 2, B has 2 with the waiting one)', row(on2, 'A').total === 2 && row(on2, 'B').total === 2);
+ok('By path On: contacted and replied per company', row(on2, 'A').contacted === 2 && row(on2, 'B').contacted === 1 && row(on2, 'B').replied === 1);
+ok('By path On: positive once per company (co1 answered on two addresses)', row(on2, 'A').positive === 1 && row(on2, 'B').positive === 1 && row(off2, 'A').positive === 2);
+ok('the page rolls up before counting, only under the switch', html.includes("const rolled = isOn('outreach.companyCounts') && c.audienceType !== 'people';") && html.includes('const eRows = rolled ? rollupByCompany(curEnrols) : curEnrols;') && html.includes('POSITIVE, rolled)'));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');

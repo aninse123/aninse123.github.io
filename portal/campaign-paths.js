@@ -52,10 +52,25 @@ export function startQueue(c, pending, perDay) {
   }
   return [...out, ...rest];
 }
+// 3 Nov (outreach.companyCounts): a company's extra addresses are enrolments of their own, but the results count the company once.
+// One row per company: the main enrolment, with the most advanced status of its addresses (replied, then waiting for approval or a
+// task, in sequence, paused, waiting, finished, stopped, removed) and the history of all of them.
+const ROLL_ORDER = ['replied', 'awaiting_approval', 'awaiting_task', 'active', 'paused', 'pending', 'completed', 'stopped', 'removed', 'moved'];
+export function rollupByCompany(enrols) {
+  const groups = new Map();
+  for (const e of enrols) { const k = e.companyId || e.id; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+  const rank = (s) => { const i = ROLL_ORDER.indexOf(s); return i < 0 ? ROLL_ORDER.length : i; };
+  return [...groups.values()].map((list) => {
+    const root = list.find((e) => !e.isExtra) || list[0];
+    const top = list.reduce((a, b) => (rank(b.status) < rank(a.status) ? b : a));
+    return { ...root, status: top.status, stopReason: top.stopReason, history: list.flatMap((e) => e.history || []), _ids: list.map((e) => e.id) };
+  });
+}
 // R2: the campaign's results per path (Overview "By path"): companies, waiting, in
 // the sequence, contacted, replied, positive (from the conversations) and left out.
 const IN_SEQ = ['active', 'awaiting_approval', 'awaiting_task', 'paused'];
-export function pathResults(c, enrols, threads = [], positive = []) {
+export function pathResults(c, enrols, threads = [], positive = [], byCompany = false) {
+  if (byCompany) enrols = rollupByCompany(enrols);
   const rows = new Map(pathsOf(c).map((p) => [p.id, { id: p.id, name: p.id === ELSE_PATH ? 'Everyone else' : p.name, total: 0, waiting: 0, inSeq: 0, contacted: 0, replied: 0, positive: 0, leftOut: 0 }]));
   const byEnrol = new Map();
   let unplanned = 0;
@@ -63,14 +78,20 @@ export function pathResults(c, enrols, threads = [], positive = []) {
     if (['removed', 'moved'].includes(e.status)) continue;
     const id = pathIdOf(e);
     if (!id || !rows.has(id)) { if (e.status === 'pending') unplanned++; continue; }
-    byEnrol.set(e.id, id);
+    byEnrol.set(e.id, id); (e._ids || []).forEach((x) => byEnrol.set(x, id));
     const r = rows.get(id); r.total++;
     if (e.status === 'pending') r.waiting++; else if (IN_SEQ.includes(e.status)) r.inSeq++;
     if ((e.history || []).length || e.status === 'replied') r.contacted++;
     if (e.status === 'replied') r.replied++;
     if (isLeftOut(e)) r.leftOut++;
   }
-  for (const t of threads) { const id = byEnrol.get(t.enrolmentId) || t.pathId; if (id && rows.has(id) && positive.includes(t.responseCategory)) rows.get(id).positive++; }
+  const seenPos = new Set();
+  for (const t of threads) {
+    const id = byEnrol.get(t.enrolmentId) || t.pathId;
+    if (!(id && rows.has(id) && positive.includes(t.responseCategory))) continue;
+    if (byCompany && t.companyId) { if (seenPos.has(t.companyId)) continue; seenPos.add(t.companyId); } // once per company
+    rows.get(id).positive++;
+  }
   return { rows: [...rows.values()], unplanned };
 }
 

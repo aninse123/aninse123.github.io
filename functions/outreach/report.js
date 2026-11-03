@@ -82,7 +82,7 @@ function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions
     if (a.type === "outreach_hold") week.held++;
   }
   for (const t of tasks.filter((x) => x.status === "done" && inWeek(x.completedAt) && keep(x))) { week.tasksDone++; inc(week.tasksByChannel, t.channel); }
-  week.started = enrolments.filter((e) => keep(e) && inWeek(e.startedAt)).length;
+  week.started = enrolments.filter((e) => keep(e) && inWeek(e.startedAt) && !(companyCounts && e.isExtra)).length; // 3 Nov: a company's extra addresses are not new companies
 
   // Part 2 — by owner (the ultimate owner's group key; a company with none is its own owner).
   const live = liveEnrolments.filter((e) => keep(e) && LIVE.includes(e.status) && e.companyId);

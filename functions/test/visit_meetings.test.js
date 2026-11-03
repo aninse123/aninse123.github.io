@@ -84,6 +84,8 @@ function flags(visit, counts) {
   ok("report: meetings booked 1, held 2", rep.meetings === 1 && rep.meetingsHeld === 2);
   rep = Report.buildWeeklyReport({ from, to, threads, activities: acts }).week;
   ok("report Off: as before, by email only (one reply, the phone one is not counted)", rep.replies === 1);
+  const en = [{ startedAt: at, companyId: "co1" }, { startedAt: at, companyId: "co1", isExtra: true }, { startedAt: at, companyId: "co2" }];
+  ok("report On: a company's extra addresses are not new companies started", Report.buildWeeklyReport({ from, to, enrolments: en, companyCounts: true }).week.started === 2 && Report.buildWeeklyReport({ from, to, enrolments: en }).week.started === 3);
   ok("the report text has the held line", /Reuniões realizadas: 2/.test(Report.reportText({ week: { ...rep, meetingsHeld: 2, byCampaign: {}, bySender: {}, byCategory: {}, tasksByChannel: {} }, owners: { multiCampaign: [], sameOwner: [], emailLinks: [], openFlags: [], heldNow: [] } }, { weekKey: "2026-11-02", toKey: "2026-11-08" })));
 
   console.log(fail ? `\n${fail} FAILED` : "\nAll passed");
