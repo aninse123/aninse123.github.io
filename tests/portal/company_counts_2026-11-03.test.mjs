@@ -80,6 +80,14 @@ const en2 = [{ id: 'x', companyId: 'co1', status: 'stopped', pathId: 'A', histor
 ok('By path counts a company that answered by call while its enrolment was stopped', P.pathResults(camp2, en2, [], POSITIVE, true, new Set(['co1'])).rows[0].replied === 1 && P.pathResults(camp2, en2, [], POSITIVE, true).rows[0].replied === 0);
 ok('the Overview shows how the first answer came, and By step / By source use the same set', html.includes('first answer: ${repliedHow}') && html.includes('repliedSet ? eRows.filter(e => repliedSet.has(e.companyId)') && html.includes('const answered = repliedSet ? repliedSet.has(e.companyId)'));
 
+const delays = P.firstReplyDelays([
+  { companyId: 'co1', firstTouchAt: T('2026-11-02T17:45:00Z'), repliedAt: T('2026-11-03T08:35:00Z') },
+  { companyId: 'co1', firstTouchAt: T('2026-11-02T18:39:00Z'), otherReplyAt: T('2026-11-02T19:45:00Z'), otherReplyChannel: 'call' },
+  { companyId: 'co2', firstTouchAt: T('2026-11-02T10:00:00Z'), repliedAt: T('2026-11-02T12:00:00Z') },
+  { companyId: 'co3', firstTouchAt: T('2026-11-02T10:00:00Z') },
+]);
+ok('reply time: per company, first answer (the call, 2 h after the first email) since its first touch; no answer, no time', delays.length === 2 && delays[0] === 7200000 && delays[1] === 7200000);
+ok('Metrics uses it behind the switch', html.includes("isOn('outreach.companyCounts') ? firstReplyDelays(threads)"));
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');

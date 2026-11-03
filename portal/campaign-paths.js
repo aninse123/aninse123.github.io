@@ -80,6 +80,12 @@ export function repliesByCompany(threads, enrols, positive = []) {
   for (const t of threads) if (t.companyId && !m.has(t.companyId) && positive.includes(t.responseCategory)) add(t.companyId, Infinity, 'marked');
   return m;
 }
+// How long each company took to answer, by any way: its first answer minus its first touch (the median shown in Metrics). Sorted.
+export function firstReplyDelays(threads) {
+  const first = new Map();
+  for (const t of threads) { const f = msOf(t.firstTouchAt); if (t.companyId && f && (!first.has(t.companyId) || f < first.get(t.companyId))) first.set(t.companyId, f); }
+  return [...repliesByCompany(threads, [], [])].filter(([k, v]) => Number.isFinite(v.at) && first.has(k) && v.at >= first.get(k)).map(([k, v]) => v.at - first.get(k)).sort((a, b) => a - b);
+}
 // R2: the campaign's results per path (Overview "By path"): companies, waiting, in
 // the sequence, contacted, replied, positive (from the conversations) and left out.
 const IN_SEQ = ['active', 'awaiting_approval', 'awaiting_task', 'paused'];

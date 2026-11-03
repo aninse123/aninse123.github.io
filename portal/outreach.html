@@ -803,7 +803,7 @@
     import { isOn, stateOf, currentFlags } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
-    import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, rollupByCompany, repliesByCompany, REPLY_LABEL, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
+    import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, rollupByCompany, repliesByCompany, REPLY_LABEL, firstReplyDelays, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
     document.head.insertAdjacentHTML('beforeend', `<style>${TREE_CSS}</style>`);
     document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
     import { applyDirectory } from './team-dir.js';
@@ -3010,7 +3010,8 @@
       const bounced = sent.filter(m => m.status === 'bounced').length;
       const complained = sent.filter(m => m.status === 'complained').length;
       const opened = sent.filter(m => m.firstOpenedAt).length, clicked = sent.filter(m => m.firstClickedAt).length;
-      const replyTimes = threads.filter(t => t.repliedAt).map(t => tsMs(t.repliedAt) - tsMs(t.firstTouchAt)).sort((a, b) => a - b);
+      // 3 Nov (outreach.companyCounts): per company, first answer of any kind (email, call, visit…) since the first touch
+      const replyTimes = isOn('outreach.companyCounts') ? firstReplyDelays(threads) : threads.filter(t => t.repliedAt).map(t => tsMs(t.repliedAt) - tsMs(t.firstTouchAt)).sort((a, b) => a - b);
       const median = replyTimes.length ? replyTimes[Math.floor(replyTimes.length / 2)] : null;
       const dur = (ms) => ms == null ? '—' : ms < 3600000 ? Math.max(1, Math.round(ms / 60000)) + ' min' : ms < 172800000 ? Math.round(ms / 3600000) + ' h' : Math.round(ms / 86400000) + ' days';
       const bouncePct = pct(bounced, sent.length), complaintPct = pct(complained, sent.length);
