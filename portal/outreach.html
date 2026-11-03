@@ -1862,6 +1862,8 @@
       if (c && String(c.companyEmail || '').trim().toLowerCase() === a) return 'company address';
       const p = (peopleCache.get(t.companyId) || []).find(x => (x.emails || []).includes(a));
       if (p) return `${p.name}${p.role ? ' (' + p.role + ')' : ''}`;
+      const pb = (peopleCache.get(t.companyId) || []).find(x => (x.badEmails || []).includes(a)); // on their record, but bounced / marked wrong
+      if (pb) return `${pb.name} · bounced address`;
       const ct = (c?.contacts || []).find(x => String(x.email || '').trim().toLowerCase() === a);
       return ct ? `contact: ${ct.name}` : '';
     }
@@ -2885,7 +2887,9 @@
             const p = people.get(l.personId) || {};
             const co = coCache.get(id) || (picked?.id === id ? picked : null);
             const emails = personDetails(p, 'email', co).map(e => String(e).trim().toLowerCase());
-            return { personId: l.personId, name: p.name || l.personName || '', role: l.isContact ? (l.contactRole || 'Contact') : (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personDetails(p, 'phone', co)[0] || '', linkedin: personDetails(p, 'linkedin', co)[0] || '', rank, isContact: !!l.isContact,
+            // 3 Nov: addresses that bounced (or are marked wrong) are left out of `emails` (never written to), but they ARE the person's: the Inbox must not call them "not in the CRM"
+            const badEmails = (p.reach || []).filter(e => e && e.type === 'email' && (e.status || 'ok') !== 'ok').map(e => String(e.value).trim().toLowerCase());
+            return { personId: l.personId, badEmails, name: p.name || l.personName || '', role: l.isContact ? (l.contactRole || 'Contact') : (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personDetails(p, 'phone', co)[0] || '', linkedin: personDetails(p, 'linkedin', co)[0] || '', rank, isContact: !!l.isContact,
               trusts: { emails: emails.map(v => detailTrustKey(p, 'email', v)), phone: personDetails(p, 'phone', co)[0] ? detailTrustKey(p, 'phone', personDetails(p, 'phone', co)[0]) : null, linkedin: personDetails(p, 'linkedin', co)[0] ? detailTrustKey(p, 'linkedin', personDetails(p, 'linkedin', co)[0]) : null } };
           }));
         } catch (e) { console.warn('people', id, e); peopleCache.set(id, []); }

@@ -296,6 +296,10 @@ ok('Letters to print: Check addresses one at a time (1.2 s apart), a pill per le
 ok('Inbox: the company figures sit next to its name, and the related companies under the conversation (outreach.ownerAware)', html.includes('${company}${coFiguresHtml(coCache.get(t.companyId))}${addrTrail(t)}') && html.includes('id="relLine"') && html.includes("callCampaign({ action: 'related', companyId: t.companyId })") && html.includes('Related companies (${d.related.length})'));
 ok('Inbox: Forward and Task or activity also sit next to Reply / Reply all, same actions as the buttons at the top', html.includes('id="replyFwdBtn"') && html.includes('id="replyTaskBtn"') && html.includes("$('replyFwdBtn')?.addEventListener('click', () => openForward(t))") && html.includes("$('taskBtn')?.addEventListener('click', () => openThreadTask(t))") && html.includes("$('replyTaskBtn')?.addEventListener('click', () => openThreadTask(t))"));
 
+const wiStart = html.indexOf('    function whoIsAddress(a, t) {'), wiEnd = html.indexOf('    function addrWho(t) {');
+const whoIs = new Function('coCache', 'peopleCache', html.slice(wiStart, wiEnd) + '; return whoIsAddress;')(new Map([['c1', { companyEmail: 'geral@x.pt', contacts: [] }]]), new Map([['c1', [{ name: 'Fernando Gouveia Pereira', role: 'Manager', emails: ['fernando.ok@x.pt'], badEmails: ['fernandogouveia.pereira@x.pt'] }]]]));
+ok('Inbox: an address that bounced is still on the person record ("Fernando · bounced address"), not "not in the CRM"; a stranger still is', whoIs('fernandogouveia.pereira@x.pt', { companyId: 'c1' }) === 'Fernando Gouveia Pereira · bounced address' && whoIs('fernando.ok@x.pt', { companyId: 'c1' }).startsWith('Fernando Gouveia Pereira (Manager)') && whoIs('geral@x.pt', { companyId: 'c1' }) === 'company address' && whoIs('stranger@y.pt', { companyId: 'c1' }) === '');
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
