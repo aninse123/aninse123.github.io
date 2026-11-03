@@ -25,17 +25,30 @@ export function fileProblem(file, already = []) {
 }
 
 // ── Calendar invite (.ics) ──
-// Lisbon wall-clock time → the instant (handles summer time), so the invite is written in UTC and shows right in any calendar.
-export function lisbonToUtc(dateStr, timeStr) {
+export const ZONES = [['Europe/Lisbon', 'Lisboa'], ['Europe/London', 'Londres'], ['Europe/Madrid', 'Madrid'], ['Europe/Paris', 'Paris'], ['Europe/Berlin', 'Berlim'], ['America/Sao_Paulo', 'São Paulo'], ['America/New_York', 'Nova Iorque'], ['UTC', 'UTC']];
+export const isEmail = (e) => /^[^\s@,;<>]+@[^\s@,;<>]+\.[A-Za-z]{2,}$/.test(String(e || '').trim());
+// Guests: [{ email, name }] — merges lists, one per address (the first name wins), ignoring what is not an email.
+export function mergeGuests(list, more) {
+  const seen = new Set(), out = [];
+  for (const g of [...(list || []), ...(more || [])]) {
+    const email = String(g && g.email || '').trim();
+    if (!isEmail(email) || seen.has(email.toLowerCase())) continue;
+    seen.add(email.toLowerCase()); out.push({ email, name: String(g.name || '').trim() });
+  }
+  return out;
+}
+// A wall-clock time in a time zone → the instant (handles summer time), so the invite is written in UTC and shows right in any calendar.
+export function zoneToUtc(dateStr, timeStr, zone = 'Europe/Lisbon') {
   const [y, m, d] = String(dateStr).split('-').map(Number), [hh, mm] = String(timeStr).split(':').map(Number);
   const guess = Date.UTC(y, m - 1, d, hh, mm);
   const off = (t) => {
-    const g = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Lisbon', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(t)).map((p) => [p.type, p.value]));
+    const g = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(t)).map((p) => [p.type, p.value]));
     return Date.UTC(+g.year, +g.month - 1, +g.day, +g.hour, +g.minute) - t;
   };
   let t = guess - off(guess); t = guess - off(t);
   return new Date(t);
 }
+export const lisbonToUtc = (dateStr, timeStr) => zoneToUtc(dateStr, timeStr, 'Europe/Lisbon');
 const stamp = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 const esc = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
 // Lines longer than 75 bytes are folded (RFC 5545): a CRLF and a space.

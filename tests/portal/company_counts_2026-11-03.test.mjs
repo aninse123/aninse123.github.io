@@ -358,6 +358,24 @@ ok('The switch exists on both sides', fs.readFileSync(new URL('../../functions/f
 const bareInputs = [...html.matchAll(/<input id="[^"]+"(?![^>]*type=)[^>]*>/g)].map((m) => m[0]);
 ok('Every text field in the new modals has a type, so the page style (rounded, bordered) applies: no <input id=...> without type', bareInputs.length === 0 && html.includes('<input type="text" id="ivTitle"') && html.includes('<input type="url" id="ivLink"'));
 
+ok('Invite: time zones — Madrid in summer, New York in winter, Lisbon; the same wall-clock time is a different instant', ATm.zoneToUtc('2026-07-06', '10:00', 'Europe/Madrid').toISOString() === '2026-07-06T08:00:00.000Z' && ATm.zoneToUtc('2026-11-06', '09:00', 'America/New_York').toISOString() === '2026-11-06T14:00:00.000Z' && ATm.zoneToUtc('2026-11-06', '14:30').toISOString() === '2026-11-06T14:30:00.000Z' && ATm.ZONES[0][0] === 'Europe/Lisbon');
+ok('Invite guests: merged one per address (case-insensitive, first name wins), what is not an email is dropped', JSON.stringify(ATm.mergeGuests([{ email: 'a@x.pt', name: 'A' }], [{ email: 'A@X.pt', name: 'dup' }, { email: 'bad' }, { email: 'b@y.pt' }])) === JSON.stringify([{ email: 'a@x.pt', name: 'A' }, { email: 'b@y.pt', name: '' }]) && ATm.isEmail('x@y.pt') && !ATm.isEmail('x@y') && !ATm.isEmail('a b@y.pt'));
+const icsGuests = ATm.buildIcs({ uid: 'g@x', title: 'Reunião', start: ATm.zoneToUtc('2026-11-06', '10:00'), minutes: 30, organizer: { name: 'A', email: 'a@mail.example.test' }, attendees: ATm.mergeGuests([{ email: 'carlos@empresa.pt', name: 'Carlos' }], [{ email: 'partner1@example.test', name: 'André' }, { email: 'partner2@example.test', name: 'António' }]), now: new Date('2026-11-03T12:00:00Z') }).replace(/\r\n /g, '');
+ok('Invite (.ics): every guest is an attendee — the company contact and both partners', (icsGuests.match(/ATTENDEE;/g) || []).length === 3 && icsGuests.includes('mailto:partner1@example.test') && icsGuests.includes('mailto:partner2@example.test') && icsGuests.includes('mailto:carlos@empresa.pt'));
+const bkStart = html.indexOf('    async function bookInviteMeetings('), bkEnd = html.indexOf('    const orgSenderName = ');
+const bk = [], toasts = [];
+const metaMap = new Map([['f1', { title: 'Reunião — SHORTLEC', start: '2026-11-06T14:30:00.000Z', where: 'Av. Dom Miguel 150', link: 'https://meet.google.com/abc', guests: ['c@x.pt', 'a@y.pt'] }]]);
+const book = new Function('inviteMeta', 'callCampaign', 'myOwner', 'toast', 'errText', html.slice(bkStart, bkEnd) + '; return bookInviteMeetings;')(metaMap, async (p) => { bk.push(p); return { data: {} }; }, 'andre', (m) => toasts.push(m), (e) => e.message);
+await book(['f1', 'unknown'], { companyId: 'co1', threadId: 't1' });
+ok('Sending the invite books the meeting: a visit task on the company, due at the meeting time, assigned to the sender, with the place, the link and the guests', bk.length === 1 && bk[0].action === 'createTask' && bk[0].companyId === 'co1' && bk[0].threadId === 't1' && bk[0].channel === 'visit' && bk[0].dueAt === '2026-11-06T14:30:00.000Z' && bk[0].assignee === 'andre' && /Reunião — SHORTLEC — Av\. Dom Miguel 150/.test(bk[0].instructions) && /Link: https:\/\/meet\.google\.com\/abc/.test(bk[0].instructions) && /Guests: c@x\.pt, a@y\.pt/.test(bk[0].instructions) && toasts.length === 1 && !metaMap.has('f1'));
+await book(['f1'], { companyId: 'co1' });
+ok('…once only (the meeting is forgotten after booking), and not without a company', bk.length === 1);
+metaMap.set('f2', { title: 'X', start: '2026-11-06T14:30:00.000Z', guests: [] });
+await book(['f2'], { companyId: null });
+ok('A test send with no company books nothing', bk.length === 1 && !metaMap.has('f2'));
+ok('The invite form: title, date, zone, start, end, place, link, guests with suggestions (partners by default, removable), notes; no duration box', html.includes('id="ivZone"') && html.includes('id="ivEnd"') && html.includes('id="ivGuest" list="ivGuestList"') && html.includes('The partners are guests by default') && html.includes("(window.teamDir || []).filter(m => m.partner && m.active !== false && m.contactEmail)") && !html.includes('id="ivMin"'));
+ok('A draft (the email waits in To approve) does not book the meeting; a sent reply and a sent Compose do', html.includes('if (res && !res.draft) await bookInviteMeetings(replyAtt.ids, { companyId: t.companyId, threadId: t.id })') && html.includes('await bookInviteMeetings(composeAtt.ids, { companyId: payload.companyId, threadId: res.threadId })'));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
