@@ -278,7 +278,7 @@ ok('Inbox card: under the conversation head, behind outreach.replyContacts, one 
 ok('Inbox: an address added from the inbox that wrote to us is confirmed by the reply', raw0.includes("...(replied ? { origin: 'person', confirmedAt: at, confirmedBy: 'reply', confirmedVia: 'reply' } : {})"));
 ok('The switch exists on both sides', fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8').includes('"outreach.replyContacts"') && fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8').includes("'outreach.replyContacts'"));
 
-const rcStart = raw0.indexOf('    const checkText = (r) =>'), rcEnd = raw0.indexOf('    async function addReplyContact(rc, item)');
+const rcStart = raw0.indexOf('    const checkText = (r) =>'), rcEnd = raw0.indexOf('    // Where a detail goes:');
 const rcEl = { innerHTML: '', querySelectorAll: () => [] };
 const renderRC = new Function('$', 'esc', 'window', rcEnd > rcStart && rcStart > 0 ? raw0.slice(rcStart, rcEnd) + '; return renderReplyContacts;' : 'throw new Error("not found")')(() => rcEl, (x) => String(x == null ? '' : x), { pageAccess: { can: () => true, key: 'andre' } });
 const rcCo = { owner: 'andre', ...qvCo }, rcCmp = RCm.compareContacts(qv, { company: qvCo, peopleEmails: ['hfc.quadroviseu@sapo.pt'], senderEmail: 'hfc.quadroviseu@sapo.pt' });
@@ -299,6 +299,35 @@ ok('Inbox: Forward and Task or activity also sit next to Reply / Reply all, same
 const wiStart = html.indexOf('    function whoIsAddress(a, t) {'), wiEnd = html.indexOf('    function addrWho(t) {');
 const whoIs = new Function('coCache', 'peopleCache', html.slice(wiStart, wiEnd) + '; return whoIsAddress;')(new Map([['c1', { companyEmail: 'geral@x.pt', contacts: [] }]]), new Map([['c1', [{ name: 'Fernando Gouveia Pereira', role: 'Manager', emails: ['fernando.ok@x.pt'], badEmails: ['fernandogouveia.pereira@x.pt'] }]]]));
 ok('Inbox: an address that bounced is still on the person record ("Fernando · bounced address"), not "not in the CRM"; a stranger still is', whoIs('fernandogouveia.pereira@x.pt', { companyId: 'c1' }) === 'Fernando Gouveia Pereira · bounced address' && whoIs('fernando.ok@x.pt', { companyId: 'c1' }).startsWith('Fernando Gouveia Pereira (Manager)') && whoIs('geral@x.pt', { companyId: 'c1' }) === 'company address' && whoIs('stranger@y.pt', { companyId: 'c1' }) === '');
+
+const adStart = html.indexOf('    async function addReplyContact(rc, item, target) {'), adEnd = html.indexOf("    // 3 Nov: the company's figures next to its name");
+const calls = [];
+const store2 = new Map([['searchPeople/p1', { reach: [{ type: 'phone', value: '+351 111111111' }], name: 'Carla Caridade' }], ['searchCompanies/c1', { reach: [], emailKeys: [] }]]);
+const mkAdd = () => new Function('doc', 'collection', 'getDoc', 'setDoc', 'updateDoc', 'addDoc', 'serverTimestamp', 'emailKeysFor', 'dayFmt', 'tsMs', 'me', 'db', 'addReads', 'toast', 'peopleCache', 'threadPeopleLoaded', html.slice(adStart, adEnd) + '; return addReplyContact;')(
+  (a, b, c) => (a && a.col && b === undefined ? { p: a.col + '/gen1', id: 'gen1' } : { p: b + '/' + c, id: c }),
+  (d, name) => ({ col: name }),
+  async (ref) => ({ exists: () => store2.has(ref.p), data: () => store2.get(ref.p) }),
+  async (ref, v) => { calls.push(['set', ref.p, v]); },
+  async (ref, v) => { calls.push(['update', ref.p, v]); },
+  async (col, v) => { calls.push(['add', 'activity', v]); },
+  () => 'TS', (emails) => emails.map((e) => e.slice(0, 3)), { format: () => '3 Nov' }, () => 0, 'andre@x.pt', {}, () => {}, () => {}, new Map(), new Set());
+const addRC = mkAdd();
+const rcx = { t: { companyId: 'c1', companyName: 'GAIACEDE' }, msg: { createdAt: 0 }, co: { reach: [] }, sender: null, from: { name: 'Carla Caridade', email: 'ccaridade@gaiacede.pt' } };
+const mob = { type: 'phone', kind: 'mobile', norm: '937864404', value: '937 864 404', have: false, target: 'person' };
+await addRC(rcx, mob, { kind: 'new', name: 'Carla Caridade', role: 'Directora', withMail: true });
+const setP = calls.find((c) => c[0] === 'set' && c[1].startsWith('searchPeople')), setL = calls.find((c) => c[0] === 'set' && c[1].startsWith('searchPersonLinks'));
+ok('Add to a NEW contact: the person is created with the phone and the sender address, linked as a contact with the role, and logged', setP && setP[2].name === 'Carla Caridade' && setP[2].reach.some((r) => r.type === 'phone' && r.value === '+351 937864404' && r.origin === 'person') && setP[2].reach.some((r) => r.type === 'email' && r.value === 'ccaridade@gaiacede.pt') && setP[2].reachEmails.join() === 'ccaridade@gaiacede.pt' && setL && setL[2].isContact === true && setL[2].contactRole === 'Directora' && calls.some((c) => c[0] === 'add' && c[2].type === 'person_linked'));
+calls.length = 0;
+await addRC(rcx, mob, { kind: 'person', personId: 'p1', name: 'Carla Caridade' });
+const up = calls.find((c) => c[0] === 'update' && c[1] === 'searchPeople/p1');
+ok('Add to an EXISTING person (any of the company\'s people): the phone is appended to their record', up && up[2].reach.length === 2 && up[2].reach[1].value === '+351 937864404');
+calls.length = 0;
+await addRC(rcx, { type: 'email', value: 'gerencia@x.pt', have: false, target: 'company' }, { kind: 'company' });
+ok('Add to the COMPANY: the email goes to the company\'s general contacts, with the search keys', calls.some((c) => c[0] === 'update' && c[1] === 'searchCompanies/c1' && c[2].reach[0].value === 'gerencia@x.pt' && c[2].emailKeys.length > 0));
+store2.set('searchPeople/p1', { name: 'Carla Caridade', reach: [{ type: 'phone', value: '+351 937 864 404' }] });
+let dupErr = ''; try { await addRC({ ...rcx, co: { reach: [] } }, mob, { kind: 'person', personId: 'p1', name: 'Carla' }); } catch (e) { dupErr = e.message; }
+ok('A detail already on the record is refused, not added twice', /already on their record/.test(dupErr));
+ok('The ▾ next to Add opens the choice: company, each person, a new contact', html.includes('data-rcmore=') && html.includes('function openRcTarget(rc, item)') && html.includes('A new contact…') && html.includes('The company (general contact details)'));
 
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
