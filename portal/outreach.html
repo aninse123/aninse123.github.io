@@ -1554,6 +1554,7 @@
       $('loadingScreen').style.display = 'none';
       $('app').style.display = 'block';
       setupTabs(); setupFilters(); setupCompose(); setupSettings(); setupMetrics(); setupCampaigns();
+      restoreWhere();
       watchSettings(); watchSenders(); watchUsage(); watchThreads();
       setInterval(() => { if (dayUnsubs.day !== utcDay()) watchUsage(); }, 5 * 60 * 1000); // re-point at the new UTC day
     });
@@ -1563,6 +1564,7 @@
       document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => showTab(tab.dataset.tab)));
     }
     function showTab(name) {
+      curTab = name;
       document.querySelectorAll('.tab').forEach(t => { const on = t.dataset.tab === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', on); });
       document.querySelectorAll('.panel').forEach(p => { p.hidden = p.id !== 'panel-' + name; });
       if (name === 'sent') loadSent();
@@ -1572,6 +1574,7 @@
       // Admin / Partner split: a partner's Settings are Templates and the suppression list.
       if (name === 'settings' && !window.pageAccess?.can('out.admin') && !$('sec-general').hidden) showSec('templates');
       else if (name === 'settings' && !$('sec-general').hidden) renderReadiness();
+      saveWhere();
     }
 
     // ── Live data ──────────────────────────────────────────────
@@ -1617,7 +1620,7 @@
 
     function watchThreads() {
       let first = true;
-      const deepThread = new URLSearchParams(location.search).get('thread'); // from the Search CRM's "Open conversation"
+      const deepThread = new URLSearchParams(location.search).get('thread') || wherePending.th; // from the Search CRM's "Open conversation", or the conversation open before a refresh
       onSnapshot(query(collection(db, 'outreachThreads'), orderBy('lastMessageAt', 'desc'), limit(150)), async (snap) => {
         const wasFirst = first;
         countSnap(snap, first); first = false;
@@ -1825,7 +1828,7 @@
     }
 
     function openThread(id) {
-      selectedId = id;
+      selectedId = id; saveWhere();
       renderThreads();
       if (msgUnsub) msgUnsub();
       threadMessages = [];
@@ -3176,6 +3179,7 @@
       document.querySelectorAll('.setsec').forEach(s => { s.hidden = s.id !== 'sec-' + name; });
       if (name === 'suppression' && !suppression) loadSuppression();
       if (name === 'general') renderReadiness();
+      saveWhere();
     }
 
     // Generic modal: body HTML + a save handler that returns true to close.
@@ -3723,6 +3727,36 @@
     let campCounts = {};
     let curCampId = null;
     let curEnrols = [], curThreads = [];
+    // 3 Nov: the page remembers where you are across a refresh, in the address: #tab=campaigns&camp=ID&sec=audience (also the task view, the
+    // settings section and the open conversation). A campaign is opened once the campaign list has loaded (wherePending).
+    let curTab = 'inbox';
+    const wherePending = (() => { try { const p = Object.fromEntries(new URLSearchParams(location.hash.slice(1))); return { tab: p.tab, camp: p.camp, sec: p.sec, tv: p.tv, ss: p.ss, th: p.th }; } catch (e) { return {}; } })();
+    function saveWhere() {
+      try {
+        const p = new URLSearchParams();
+        if (curTab && curTab !== 'inbox') p.set('tab', curTab);
+        const camp = curCampId || wherePending.camp;
+        if (camp) { p.set('camp', camp); const sec = curCampId ? campSec : wherePending.sec; if (sec && sec !== 'overview') p.set('sec', sec); }
+        if (curTab === 'tasks' && taskView && taskView !== 'todo') p.set('tv', taskView);
+        const ss = document.querySelector('#setNav .chip.on')?.dataset.sec; if (curTab === 'settings' && ss) p.set('ss', ss);
+        const th = selectedId || wherePending.th; if (curTab === 'inbox' && th) p.set('th', th);
+        const h = p.toString();
+        if (location.hash.slice(1) !== h) history.replaceState(null, '', location.pathname + location.search + (h ? '#' + h : ''));
+      } catch (e) {}
+    }
+    function restoreWhere() {
+      const w = wherePending, tabBtn = w.tab && document.querySelector(`.tab[data-tab="${CSS.escape(w.tab)}"]`);
+      if (tabBtn && getComputedStyle(tabBtn).display !== 'none') showTab(w.tab);
+      if (w.tv && $('taskTop')?.querySelector(`[data-tview="${CSS.escape(w.tv)}"]`)) showTaskView(w.tv);
+      if (w.ss && $('setNav')?.querySelector(`[data-sec="${CSS.escape(w.ss)}"]`) && curTab === 'settings') showSec(w.ss);
+    }
+    function restoreCampaign() { // once the campaign list is there
+      const w = wherePending; if (!w.camp) return;
+      const id = w.camp, sec = w.sec && $('campNav')?.querySelector(`[data-csec="${CSS.escape(w.sec)}"]`) ? w.sec : 'overview', back = curTab;
+      w.camp = null; w.sec = null;
+      if (!campaigns.some(c => c.id === id)) { saveWhere(); return; }
+      openCampaign(id, sec); if (back !== 'campaigns') showTab(back); // opening a campaign switches to Campaigns: go back to the tab you were on
+    }
     let campSec = 'overview';
     let seqDraft = null, seqDirty = false, csetDirty = false;
     // 27 Oct (outreach.paths): the paths being edited, their counts ("Check who goes where") and the view.
@@ -3763,7 +3797,7 @@
     // Tasks tab: to do (manual steps), to approve (drafts), letters to print.
     let taskView = 'todo';
     function showTaskView(v) {
-      taskView = v;
+      taskView = v; saveWhere();
       $('taskTop').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.tview === v));
       $('todoView').hidden = v !== 'todo';
       $('approveView').hidden = v !== 'approve'; $('issueView').hidden = v !== 'approve';
@@ -3788,6 +3822,7 @@
         campaigns = snap.docs.map(d => ({ id: d.id, ...d.data() }))
           .sort((a, b) => tsMs(b.updatedAt || b.createdAt) - tsMs(a.updatedAt || a.createdAt));
         renderCampList();
+        restoreCampaign(); // 3 Nov: back to the campaign you were in before a refresh
         updateTaskBadge(); // B1: campaigns waiting to be started count in To approve
         if (taskView === 'approve' && !$('panel-tasks').hidden) renderApprove();
         if (curCampId) {
@@ -3906,7 +3941,7 @@
     }
     function closeCampaign() {
       if ((seqDirty || csetDirty) && !confirm('Leave without saving your changes?')) return;
-      curCampId = null; seqDirty = false; csetDirty = false;
+      curCampId = null; seqDirty = false; csetDirty = false; saveWhere();
       $('campPage').hidden = true; $('campList').hidden = false;
       loadCampCounts();
     }
@@ -3923,7 +3958,7 @@
       $('discardAllBtn')?.addEventListener('click', () => { if (!confirm('Discard the unsaved changes?')) return; seqDirty = csetDirty = false; seqDraft = null; pathsDraft = null; if (campSec === 'sequence') renderSequence(); if (campSec === 'csettings') renderCampSettings(); refreshUnsaved(); });
     }
     function showCampSec(name) {
-      campSec = name;
+      campSec = name; saveWhere();
       $('campNav').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.csec === name));
       document.querySelectorAll('.campsec').forEach(s => { s.hidden = s.id !== 'cs-' + name; });
       if (name === 'overview') renderOverview();

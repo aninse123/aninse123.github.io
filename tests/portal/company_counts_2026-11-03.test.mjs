@@ -153,6 +153,26 @@ ok('Search CRM wiring: Overview row and the send-email options use the order', s
 
 ok('Addresses window: an address that bounced or cannot be used is never ticked, does not count, and goes last', html.includes("const unusable = (x) => x.blocked || x.trust === 'bounced';") && html.includes('{ ...x, selected: false }') && html.includes('...list.filter((x, i) => unusable(x) && !(r.locked && i === 0))'));
 
+// the page remembers where you are across a refresh (address hash), from the page's own saveWhere
+const wSrc = html.slice(html.indexOf("    let curTab = 'inbox';"), html.indexOf('    function restoreWhere() {'));
+const mkWhere = (hash, st) => {
+  const loc = { hash, pathname: '/portal/outreach.html', search: '' }, hist = { replaceState: (a, b, url) => { loc.hash = url.includes('#') ? '#' + url.split('#')[1] : ''; } };
+  const doc = { querySelector: () => (st.ss ? { dataset: { sec: st.ss } } : null) };
+  const run = new Function('location', 'history', 'document', 'URLSearchParams', 'S', 'let curCampId = S.camp, campSec = S.sec, taskView = S.tv, selectedId = S.th; ' + wSrc + '; return { saveWhere, set: (o) => { if ("tab" in o) curTab = o.tab; if ("camp" in o) curCampId = o.camp; if ("sec" in o) campSec = o.sec; if ("tv" in o) taskView = o.tv; if ("th" in o) selectedId = o.th; }, wherePending };');
+  return { loc, ...run(loc, hist, doc, URLSearchParams, st) };
+};
+let w = mkWhere('#tab=campaigns&camp=ABC&sec=audience', { camp: null, sec: 'overview', tv: 'todo', th: null });
+ok('Refresh: the address is read into what to restore', w.wherePending.tab === 'campaigns' && w.wherePending.camp === 'ABC' && w.wherePending.sec === 'audience');
+w.set({ tab: 'campaigns' }); w.saveWhere();
+ok('Refresh: until the campaign list has loaded, the campaign stays in the address', w.loc.hash === '#tab=campaigns&camp=ABC&sec=audience');
+w.set({ camp: 'ABC', sec: 'sequence' }); w.saveWhere();
+ok('Refresh: moving to another section updates the address; Overview is the default and is not written', w.loc.hash === '#tab=campaigns&camp=ABC&sec=sequence');
+w.set({ tab: 'tasks', tv: 'letters' }); w.saveWhere();
+ok('Refresh: on Tasks it keeps the task view and the campaign you had open', w.loc.hash === '#tab=tasks&camp=ABC&sec=sequence&tv=letters');
+w.set({ tab: 'inbox', camp: null, tv: 'todo', th: 'T1' }); w.wherePending.camp = null; w.saveWhere();
+ok('Refresh: the Inbox keeps the open conversation; the default tab is not written', w.loc.hash === '#th=T1');
+ok('Refresh: wired into tabs, campaign, section, task view, settings, conversation and the campaign list', ["curTab = name;", "campSec = name; saveWhere();", "taskView = v; saveWhere();", "selectedId = id; saveWhere();", "restoreWhere();", "restoreCampaign(); //", "|| wherePending.th;"].every((x) => html.includes(x)));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');
