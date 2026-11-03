@@ -210,6 +210,9 @@ const rr = Object.fromEntries(P.rollupByCompany(stoppedByHand, ans).map((r) => [
 ok('Replied, not Stopped: a company that called you (its addresses stopped by your answer) is Replied; one that only bounced stays Stopped (a positive mark alone is not a reply)', rr.cs === 'replied' && rr.cz === 'stopped' && P.rollupByCompany(stoppedByHand).find((r) => r.companyId === 'cs').status === 'stopped' && P.rollupByCompany([{ id: 'a', companyId: 'cs', status: 'active', history: [] }], ans)[0].status === 'active');
 ok('Overview and Audience roll up with the companies that answered', html.includes('rollupByCompany(curEnrols, answeredSet)') && html.includes('rollupByCompany(curEnrols, new Set([...repliesByCompany(curThreads, curEnrols, POSITIVE)]'));
 
+ok('Letters to print: a campaign filter with counts (All campaigns, each campaign, Own tasks); Select all and Print follow it', html.includes('let todoWho') && html.includes("lettersCampaign = 'all'") && html.includes('id="letCamp"') && html.includes("$('letCamp').addEventListener('change'") && html.includes("const list = allLetters.filter(t => lettersCampaign === 'all'"));
+ok('To do: the campaign filter shows the counts under the other filters', html.includes('const cntCamp = (id)') && html.includes('All campaigns (${num(forCamp.length)})'));
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');

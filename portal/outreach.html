@@ -5627,7 +5627,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     const OWNER_FULL = { andre: 'André Rocha', antonio: 'António Carvalho' };
 
     let tasks = [];
-    let todoWho = 'mine', todoChannel = 'all', todoCampaign = 'all';
+    let todoWho = 'mine', todoChannel = 'all', todoCampaign = 'all', lettersCampaign = 'all'; // 3 Nov: Letters to print filters by campaign too
     const coCache = new Map(); // companyId → company doc (task cards and letters)
     // F1: tasks of people campaigns — the person's records ('network:id',
     // 'crm:id', 'broker:id', 'firm:id' → doc) and a company-shaped view of them,
@@ -5882,6 +5882,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       await loadPersonRecords(shown.filter(t => !t.companyId && t.personEmail));
       if (document.activeElement?.closest?.('#todoView .task')) return;
       const campOpts = [...new Set(open.map(t => t.campaignId).filter(Boolean))];
+      // 3 Nov: the campaign filter shows how many tasks each campaign has under the other filters (who, channel), like To approve
+      const forCamp = open.filter(t => (todoWho === 'all' || (todoWho === 'mine' ? mineOrOpen(t) : todoWho === 'none' ? !t.assignee : t.assignee === todoWho)) && (todoChannel === 'all' || t.channel === todoChannel));
+      const cntCamp = (id) => forCamp.filter(t => id === 'own' ? !t.campaignId : t.campaignId === id).length;
       const eot = endOfToday();
       const dueNow = shown.filter(t => tsMs(t.dueAt) <= eot), later = shown.filter(t => tsMs(t.dueAt) > eot);
       const card = (t) => {
@@ -5926,7 +5929,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           <div class="toolbar">
             <div class="chips" id="todoWho">${[['mine', 'Mine'], ...(window.teamDir || []).filter(m => m.active && m.key !== myOwner).map(m => [m.key, m.label]), ['none', 'Unassigned'], ['all', 'All']].map(([k, l]) => `<button class="chip${todoWho === k ? ' on' : ''}" data-who="${k}">${esc(l)}</button>`).join('')}</div>
             <select id="todoCh" aria-label="Channel"><option value="all">All channels</option>${Object.keys(TASK_OUTCOMES).filter(k => k !== 'letter').map(k => `<option value="${k}"${todoChannel === k ? ' selected' : ''}>${esc(CHANNEL_LABELS[k])}</option>`).join('')}</select>
-            <select id="todoCamp" aria-label="Campaign"><option value="all">All campaigns</option>${open.some(t => !t.campaignId) ? `<option value="own"${todoCampaign === 'own' ? ' selected' : ''}>Own tasks</option>` : ''}${campOpts.map(id => `<option value="${esc(id)}"${todoCampaign === id ? ' selected' : ''}>${esc(campaigns.find(c => c.id === id)?.name || 'Campaign')}</option>`).join('')}</select>
+            <select id="todoCamp" aria-label="Campaign"><option value="all">All campaigns (${num(forCamp.length)})</option>${open.some(t => !t.campaignId) ? `<option value="own"${todoCampaign === 'own' ? ' selected' : ''}>Own tasks (${num(cntCamp('own'))})</option>` : ''}${campOpts.map(id => `<option value="${esc(id)}"${todoCampaign === id ? ' selected' : ''}>${esc(campaigns.find(c => c.id === id)?.name || 'Campaign')} (${num(cntCamp(id))})</option>`).join('')}</select>
           </div>
           <p class="hint" style="padding:10px 14px;">Calls, LinkedIn, WhatsApp, visits and other steps from campaigns, and your own tasks (<b>＋ Task or activity</b>). Each outcome is saved on the company's activities (people: on their Investor CRM / Network record); a campaign's sequence waits until its task is done or skipped. Letters are under <b>Letters to print</b>.</p>
         </div>
@@ -5987,7 +5990,11 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     // ── Letters to print (C1: plain A4, address block for a left window envelope, typed signature) ──
     let letterSel = new Set();
     async function renderLetters() {
-      const list = tasks.filter(t => t.channel === 'letter');
+      const allLetters = tasks.filter(t => t.channel === 'letter');
+      // 3 Nov: filter by campaign, with the counts, like To approve
+      const letCounts = allLetters.reduce((o, t) => { const k = t.campaignId || 'own'; o[k] = (o[k] || 0) + 1; return o; }, {});
+      if (lettersCampaign !== 'all' && !letCounts[lettersCampaign]) lettersCampaign = 'all';
+      const list = allLetters.filter(t => lettersCampaign === 'all' || (lettersCampaign === 'own' ? !t.campaignId : t.campaignId === lettersCampaign));
       const LT = isOn('outreach.letterTools'); // 29 Oct: preview, edit, missing-field check
       const info = (t) => (LT ? letterTextOf(t, taskCo(t)) : null);
       await loadCompaniesFor(list.slice(0, 200).map(t => t.companyId));
@@ -5996,6 +6003,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       $('lettersView').innerHTML = `
         <div class="card" style="padding:0;">
           <div class="toolbar">
+            <select id="letCamp" aria-label="Campaign"><option value="all">All campaigns (${num(allLetters.length)})</option>${Object.keys(letCounts).sort((a, b) => (a === 'own') - (b === 'own') || String(campaigns.find(c => c.id === a)?.name || a).localeCompare(String(campaigns.find(c => c.id === b)?.name || b))).map(id => `<option value="${esc(id)}"${id === lettersCampaign ? ' selected' : ''}>${id === 'own' ? 'Own tasks' : esc(allLetters.find(t => t.campaignId === id)?.campaignName || campaigns.find(c => c.id === id)?.name || 'Campaign')} (${num(letCounts[id])})</option>`).join('')}</select>
             <label class="checkline"><input type="checkbox" id="letAll"${list.length && letterSel.size === list.length ? ' checked' : ''}> <span>Select all</span></label>
             <button class="btn btn--primary btn--sm" id="letPrint"${letterSel.size ? '' : ' disabled'}>Print selected (${num(letterSel.size)})</button>
             <button class="btn btn--ghost btn--sm" id="letPosted"${letterSel.size ? '' : ' disabled'}>Mark selected as printed &amp; posted</button>
@@ -6019,6 +6027,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           </table></div>
           <p class="hint" style="padding:10px 14px;">Print on plain A4 and fold into a window envelope (address in the envelope window, set in Settings → General). ${LT ? 'No footer is printed; sign the last page by hand.' : 'The legal entity line from Settings → Email footer (if filled) is printed at the bottom.'} After posting, mark them — the sequence then moves on.</p>
         </div>`;
+      $('letCamp').addEventListener('change', (e) => { lettersCampaign = e.target.value; renderLetters(); });
       const sync = () => { $('letPrint').disabled = $('letPosted').disabled = !letterSel.size; $('letPrint').textContent = `Print selected (${num(letterSel.size)})`; };
       $('lettersView').querySelectorAll('[data-let]').forEach(cb => cb.addEventListener('change', () => { if (cb.checked) letterSel.add(cb.dataset.let); else letterSel.delete(cb.dataset.let); sync(); }));
       $('lettersView').querySelectorAll('[data-lsigner]').forEach(s => s.addEventListener('change', async () => {
