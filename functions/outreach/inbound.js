@@ -216,7 +216,7 @@ async function handleReceived(data) {
   await Usage.bump({ [`email.replies.${thread.isTest ? "test" : "real"}`]: 1 });
   // 30 Oct (switch contacts.trustLabels): a real reply confirms the address it came from.
   if (!autoReply && !thread.isTest && thread.companyId && from.email) {
-    try { if ((await Feat.jobState("contacts.trustLabels")) !== "off") await ReplyConfirm.confirmRepliedAddress(thread.companyId, from.email); }
+    try { if ((await Feat.jobState("contacts.trustLabels")) !== "off") { await ReplyConfirm.confirmRepliedAddress(thread.companyId, from.email); await ReplyConfirm.confirmAnsweredAddresses(thread.companyId, { id: threadRef.id, ...thread }, from.email); } } // 3 Nov: and the address we wrote to
     catch (err) { logger.warn("outreach: confirming the address of a reply failed", { message: err.message }); }
   }
   // Stop rule (Phase 2 §5.4): a human reply ends the company's campaign

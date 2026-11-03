@@ -108,6 +108,32 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   const inboundSrc = require("fs").readFileSync(require("path").join(__dirname, "../outreach/inbound.js"), "utf8");
   ok("the inbound handler confirms the address of a real reply only (not an auto-reply, not a test), behind the switch, and never fails the reply", /!autoReply && !thread\.isTest && thread\.companyId && from\.email/.test(inboundSrc) && /Feat\.jobState\("contacts\.trustLabels"\)\) !== "off"/.test(inboundSrc) && /catch \(err\) \{ logger\.warn\("outreach: confirming the address of a reply failed"/.test(inboundSrc));
 
+  // ── 3 Nov: a reply from ANOTHER address confirms the address we wrote to (the email was forwarded) ──
+  store.set("searchCompanies/qv", { name: "QV, LDA", companyEmail: "geral@qv.com", reach: [{ id: "g1", type: "email", value: "gerencia@qv.com", status: "ok", origin: "database" }], contacts: [] });
+  store.set("outreachSenders/an.rocha@mail.team.example", { status: "active", owner: "x" });
+  store.set("outreachThreads/thq", { companyId: "qv", contactEmail: "geral@qv.com", isTest: false });
+  store.set("outreachMessages/mq1", { threadId: "thq", direction: "out", status: "delivered", to: ["geral@qv.com"], cc: ["gerencia@qv.com", "an.rocha@mail.team.example"], createdAt: { toMillis: () => 1000 } });
+  store.set("outreachMessages/mq0", { threadId: "thq", direction: "out", status: "delivered", to: ["old@qv.com"], createdAt: { toMillis: () => 500 } });
+  const answered = await RC.confirmAnsweredAddresses("qv", { id: "thq", ...store.get("outreachThreads/thq") }, "hfc@sapo.pt");
+  const qvc = store.get("searchCompanies/qv");
+  ok("a reply from another address confirms the address we wrote to (and the Cc'd general one), not our own, not an older email", answered.sort().join() === "geral@qv.com,gerencia@qv.com");
+  ok("…with 'answered' as the reason and where it came from", qvc.companyEmailConfirmedVia === "answered" && qvc.companyEmailConfirmedNote === "answered from hfc@sapo.pt" && T.companyEmailTrust(qvc) === "confirmed" && qvc.reach[0].confirmedVia === "answered" && qvc.reach[0].confirmedNote === "answered from hfc@sapo.pt");
+  ok("the address the reply came from is not confirmed by this (the other function does it)", !(await RC.confirmAnsweredAddresses("qv", { id: "thq", ...store.get("outreachThreads/thq") }, "geral@qv.com")).includes("geral@qv.com"));
+  ok("the inbound handler calls it for a real reply", /confirmAnsweredAddresses\(thread\.companyId/.test(inboundSrc));
+
+  // ── 3 Nov: "Check address" (OpenStreetMap, on request) ──
+  const AC = require("../outreach/address_check.js");
+  const seen = [];
+  const mkFetch = (...answers) => async (url, init) => { seen.push({ url, ua: init.headers["User-Agent"] }); const a = answers.shift(); return a instanceof Error ? Promise.reject(a) : { ok: true, status: 200, json: async () => a }; };
+  const hit = [{ display_name: "Rua da Quinta da Serra, Paradinha, Viseu, 3510-107, Portugal", lat: "40.66", lon: "-7.91", address: { city: "Viseu" } }];
+  let r1 = await AC.checkAddress({ street: "Rua da Quinta da Serra Nº4", postcode: "3510-107", place: "Viseu" }, { fetchImpl: mkFetch(hit), pauseMs: 0 });
+  ok("address found: street + postcode, same place", r1.status === "found" && r1.samePlace === true && r1.lat === 40.66 && /street=4\+Rua\+da\+Quinta\+da\+Serra/.test(seen[0].url) && /postalcode=3510-107/.test(seen[0].url) && /PortalAddressCheck/.test(seen[0].ua));
+  let r2 = await AC.checkAddress({ street: "Rua Inventada 9", postcode: "3510-107", place: "Viseu" }, { fetchImpl: mkFetch([], hit), pauseMs: 0 });
+  ok("street not listed but the postcode exists: says so, not proof either way", r2.status === "postcode_only" && /not proof/.test(r2.note));
+  ok("nothing found: not_found; a different place: samePlace false", (await AC.checkAddress({ street: "X", postcode: "9999-999" }, { fetchImpl: mkFetch([], []), pauseMs: 0 })).status === "not_found" && (await AC.checkAddress({ street: "Rua", postcode: "3510-107", place: "Porto" }, { fetchImpl: mkFetch(hit), pauseMs: 0 })).samePlace === false);
+  ok("a bad postcode or a failing service never throws", (await AC.checkAddress({ street: "Rua", postcode: "35" })).status === "error" && (await AC.checkAddress({ street: "Rua", postcode: "3510-107" }, { fetchImpl: mkFetch(new Error("boom")), pauseMs: 0 })).status === "error");
+  ok("checkAddress is an action of the campaign function, for people who can write", /checkAddress: "out\.write"/.test(require("fs").readFileSync(require("path").join(__dirname, "../outreach/campaigns.js"), "utf8")));
+
   // ── The campaign option is saved ──
   const { normalizeCampaign } = require("../outreach/campaign_util.js");
   const n1 = normalizeCampaign ? normalizeCampaign({ name: "X", useUnverified: true, steps: [] }, null) : null;

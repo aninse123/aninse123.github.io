@@ -803,6 +803,7 @@
     import { isOn, stateOf, currentFlags } from './features.js';
     import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
+    import { extractContacts, compareContacts } from './reply-contacts.js'; // 3 Nov: contact details found in a reply
     import { isUnreadFor, readKeyOf } from './read-state.js'; // 3 Nov: read state per person
     import { addressLines } from './company-primary.js'; // 3 Nov: the envelope address = street, then postcode and municipality, never repeated
     import { ELSE_PATH, MAX_PATHS, MAX_PATH_STEPS, pathsOf, hasPaths, stepsOfPath, stepsFor, PATH_FIELDS, fieldOf, OPS, defaultFilter, parseAmount, amountText, amountReadback, placeholderOf, pathCountText, pathIdOf, isLeftOut, rollupByCompany, repliesByCompany, REPLY_LABEL, firstReplyDelays, START_LABEL, splitShares, startQueue, pathResults, pathCondText, pathColor, pathsTreeHtml, TREE_CSS } from './campaign-paths.js'; // 27 Oct (outreach.paths)
@@ -1845,6 +1846,7 @@
         countSnap(snap, first); first = false;
         threadMessages = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         renderMessages();
+        { const tt = threads.find(x => x.id === selectedId); if (tt) updateReplyContacts(tt); } // 3 Nov: contact details in the latest reply
       }, (e) => { $('msgs').innerHTML = `<div class="empty">Couldn't load messages: ${esc(e.message)}</div>`; });
       renderReplyBox();
     }
@@ -1913,7 +1915,9 @@
     }
     async function saveAddToCompany(t, addr) {
       const pid = $('aacWho').value, at = new Date().toISOString();
-      const entry = (list) => ({ id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type: 'email', value: addr, note: 'From the inbox', source: 'outreach', status: 'ok', primary: !(list || []).some(e => e.type === 'email' && (e.status || 'ok') === 'ok'), addedBy: me, addedAt: at });
+      // 3 Nov: an address that wrote to us is confirmed by that (the reply is the proof), as when it was already in the CRM
+      const replied = threadMessages.some(m => m.direction === 'in' && !m.isAutoReply && addrList(m.from).some(x => x.email === addr));
+      const entry = (list) => ({ id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type: 'email', value: addr, note: 'From the inbox', source: 'outreach', status: 'ok', primary: !(list || []).some(e => e.type === 'email' && (e.status || 'ok') === 'ok'), addedBy: me, addedAt: at, ...(replied ? { origin: 'person', confirmedAt: at, confirmedBy: 'reply', confirmedVia: 'reply' } : {}) });
       const emailsOf = (list) => [...new Set(list.filter(e => e.type === 'email').map(e => String(e.value).trim().toLowerCase()))];
       let who, newKind = '';
       if (pid) {
@@ -1988,6 +1992,94 @@
         el.querySelectorAll('[data-sib]').forEach(a => a.addEventListener('click', ev => { ev.preventDefault(); openThread(a.dataset.sib); }));
       } catch (e) { console.warn('sibling line', e); }
     }
+    // ── 3 Nov (outreach.replyContacts): the contact details found in the latest reply — phones, other emails, website, address, NIPC —
+    // compared with what the CRM has: "already on file" or "new", one click to add. Nothing is saved without the click.
+    const rcRuns = new Map();
+    async function updateReplyContacts(t) {
+      const el = $('replyContacts'); if (!el) return;
+      if (!isOn('outreach.replyContacts') || !t.companyId) { el.innerHTML = ''; return; }
+      const msg = [...threadMessages].reverse().find(m => m.direction === 'in' && !m.isAutoReply && (m.text || m.snippet));
+      if (!msg) { el.innerHTML = ''; return; }
+      const key = t.id + ':' + (msg.id || tsMs(msg.createdAt));
+      let rc = rcRuns.get(key);
+      if (!rc) {
+        await Promise.all([loadCompaniesFor([t.companyId]), loadPeopleFor([t.companyId])]);
+        const co = coCache.get(t.companyId); if (!co) return;
+        const people = peopleCache.get(t.companyId) || [];
+        const from = addrList(msg.from)[0] || { email: '', name: '' };
+        const found = extractContacts(msg.text || msg.snippet, { ignoreEmail: isOurAddr });
+        const sender = people.find(p => (p.emails || []).includes(from.email)) || null;
+        let senderPhones = [];
+        if (sender) { try { const s = await getDoc(doc(db, 'searchPeople', sender.personId)); addReads(1); senderPhones = personDetails(s.data() || {}, 'phone', co); } catch (e) { /* the comparison still works without them */ } }
+        const cmp = compareContacts(found, { company: co, peopleEmails: people.flatMap(p => p.emails || []), senderEmail: from.email, senderPhones, known: t.addresses || [] });
+        rc = { t, msg, co, sender, from, cmp, checks: {} };
+        rcRuns.set(key, rc);
+      }
+      if (selectedId !== t.id) return;
+      renderReplyContacts(rc);
+    }
+    const checkText = (r) => !r ? '' : ({
+      found: `✓ Found on OpenStreetMap${r.samePlace === false ? ` — but in ${r.place}, not the place written` : r.place ? ` (${r.place})` : ''}`,
+      postcode_only: `~ ${r.note}`, not_found: `✗ ${r.note}`, error: r.note,
+    }[r.status] || r.note || '');
+    function renderReplyContacts(rc) {
+      const el = $('replyContacts'); if (!el) return;
+      const { items, nipc } = rc.cmp;
+      if (!items.length && !nipc) { el.innerHTML = ''; return; }
+      const a = window.pageAccess, co = rc.co;
+      const canCompany = !a || a.can('search.editall') || (a.can('search.edit') && !!co?.owner && co.owner === a.key);
+      const canPerson = !a || a.can('search.reach') || a.can('search.editall');
+      const newN = items.filter(i => !i.have).length;
+      const NAME = { phone: 'Phone', email: 'Email', website: 'Website', linkedin: 'LinkedIn', address: 'Address' };
+      const rows = items.map((i, n) => {
+        const toPerson = i.type === 'phone' && i.target === 'person' && rc.sender;
+        const can = toPerson ? canPerson : canCompany;
+        const act = i.have ? '<span class="pill pill--ok">already on file</span>'
+          : can ? `<button class="btn btn--ghost btn--sm" data-rcadd="${n}">Add to ${toPerson ? esc(rc.sender.name.split(' ')[0]) : 'company'}</button>` : '<span class="pill">new</span>';
+        const chk = i.type === 'address' && !i.have ? ` <button class="btn btn--ghost btn--sm" data-rcchk="${n}" title="Looks the address up on OpenStreetMap (free; only when you ask)">Check address</button> <span class="hint">${esc(checkText(rc.checks[n]))}</span>` : '';
+        return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 0;"><span class="hint" style="min-width:92px;">${NAME[i.type]}${i.type === 'phone' ? ' · ' + i.kind : ''}</span><b>${esc(i.value)}</b> ${act}${chk}</div>`;
+      }).join('');
+      const nif = nipc ? `<div style="padding:3px 0;"><span class="hint" style="min-width:92px;display:inline-block;">NIPC</span> <b>${esc(nipc.value)}</b> ${nipc.matches === true ? '<span class="pill pill--ok">matches the company</span>' : nipc.matches === false ? '<span class="pill pill--warn">differs from the company\'s NIF</span>' : '<span class="pill">company has no NIF on file</span>'}</div>` : '';
+      el.innerHTML = `<details style="border:1px solid var(--border);border-radius:8px;padding:6px 10px;"${newN ? ' open' : ''}><summary style="cursor:pointer;font-weight:600;font-size:0.82rem;">Contact details in this reply <span class="hint">(${newN ? newN + ' new' : 'all on file'})</span></summary>${rows}${nif}<div class="hint" style="margin-top:4px;">Read from what ${esc(rc.from.name || rc.from.email || 'they')} wrote. Nothing is saved until you click Add.</div></details>`;
+      el.querySelectorAll('[data-rcadd]').forEach(b => b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { await addReplyContact(rc, items[+b.dataset.rcadd]); renderReplyContacts(rc); } catch (e) { toast(e.message || 'Could not add it.'); b.disabled = false; }
+      }));
+      el.querySelectorAll('[data-rcchk]').forEach(b => b.addEventListener('click', async () => {
+        const n = +b.dataset.rcchk, ad = items[n].address; b.disabled = true; b.textContent = 'Checking…';
+        try { rc.checks[n] = (await callCampaign({ action: 'checkAddress', street: ad.street, postcode: ad.postcode, place: ad.place })).data; }
+        catch (e) { rc.checks[n] = { status: 'error', note: 'The check did not run: ' + (e.message || 'try again.') }; }
+        renderReplyContacts(rc);
+      }));
+    }
+    async function addReplyContact(rc, item) {
+      const at = new Date().toISOString(), day = dayFmt.format(new Date(tsMs(rc.msg.createdAt) || Date.now()));
+      const type = item.type, value = type === 'phone' ? `+351 ${item.norm}` : item.value;
+      const sameOf = (v) => (type === 'phone' ? String(v).replace(/\D/g, '').slice(-9) : String(v).trim().toLowerCase());
+      const mk = (list) => ({ id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type, value, note: `From the reply of ${day}`, source: 'reply', origin: 'person', status: 'ok', primary: !(list || []).some(e => e.type === type && (e.status || 'ok') === 'ok'), addedBy: me, addedAt: at, confirmedAt: at, confirmedBy: 'reply', confirmedVia: 'reply' });
+      if (item.target === 'person' && rc.sender) {
+        const ref = doc(db, 'searchPeople', rc.sender.personId), snap = await getDoc(ref); addReads(1);
+        if (!snap.exists()) throw new Error('That person is no longer in the CRM.');
+        const reach = snap.data().reach || [];
+        if (reach.some(e => e.type === type && sameOf(e.value) === sameOf(value))) throw new Error('It is already on their record.');
+        await updateDoc(ref, { reach: [...reach, mk(reach)], updatedAt: serverTimestamp(), updatedBy: me });
+        await addDoc(collection(db, 'searchActivities'), { companyId: rc.t.companyId, type: 'person_contact_edited', date: serverTimestamp(), title: null, content: `Contact details — ${rc.sender.name}: added ${value} (from the reply)`, status: null, createdAt: serverTimestamp(), createdBy: me });
+        peopleCache.delete(rc.t.companyId); threadPeopleLoaded.delete(rc.t.companyId);
+        toast(`${value} added to ${rc.sender.name}.`);
+      } else {
+        const ref = doc(db, 'searchCompanies', rc.t.companyId), snap = await getDoc(ref); addReads(1);
+        const data = snap.data() || {}, reach = data.reach || [];
+        if (reach.some(e => e.type === type && sameOf(e.value) === sameOf(value))) throw new Error('It is already on the company.');
+        const entry = { ...mk(reach), primary: false }; // the company's own field stays first; this is used after it
+        const patch = { reach: [...reach, entry], updatedAt: serverTimestamp(), updatedBy: me };
+        if (type === 'email') { const keys = new Set(data.emailKeys || []); const add = emailKeysFor([value]).filter(k => !keys.has(k)); if (add.length) patch.emailKeys = [...keys, ...add]; }
+        await updateDoc(ref, patch);
+        Object.assign(rc.co, { reach: patch.reach });
+        await addDoc(collection(db, 'searchActivities'), { companyId: rc.t.companyId, type: 'company_edited', date: serverTimestamp(), title: null, content: `Company contact details: added ${value} (from the reply)`, status: null, createdAt: serverTimestamp(), createdBy: me });
+        toast(`${value} added to ${rc.t.companyName || 'the company'}.`);
+      }
+      item.have = true;
+    }
     function renderThreadHead() {
       const t = threads.find(x => x.id === selectedId); if (!t || !$('viewHead')) return;
       const company = t.companyId
@@ -2000,12 +2092,14 @@
           ${threadPill(t)}${t.campaignId ? `<button type="button" class="pill pill--info" id="campInfoBtn" style="border:0;cursor:pointer;" title="Show the campaign">📣 ${esc(campaigns.find(c => c.id === t.campaignId)?.name || 'Campaign')}${t.pathName ? ' · ' + esc(t.pathName) : ''}</button>` : ''}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}${(t.forwards || []).length ? `<span class="hint" title="${esc(t.forwards.map(f => `${f.to} (by ${f.by})`).join(', '))}">forwarded to ${esc(t.forwards.map(f => localPart(f.to)).join(', '))}</span>` : ''}</div>
         ${t.recipientIssue ? `<div class="banner banner--warn" style="margin:8px 0 4px;"><span>An email in this conversation to several people bounced for one of them (Resend doesn't say which), so nobody was put on the suppression list. Addresses: ${esc((t.recipientIssue.addresses || []).join(', '))}.</span></div>` : ''}
         <div class="hint" id="sibLine" style="margin:6px 0 0;"></div>
+        <div id="replyContacts" style="margin:6px 0 0;"></div>
         <div class="actions" style="margin:6px 0 2px;"><button class="btn btn--ghost btn--sm" id="fwdBtn" data-perm="out.write" title="Send this whole conversation to a team member (or yourself)">↪ Forward</button>
           <button class="btn btn--ghost btn--sm" id="taskBtn" data-perm="out.tasks" title="Plan a call or other task for this company — or record one that already happened">＋ Task or activity</button></div>
         <div class="classify"><span class="classify__label">Classify</span>${CATEGORIES.map(([k, l]) =>
           `<button class="chip${t.responseCategory === k ? ' on' : ''}" data-cat="${k}" data-perm="out.write">${esc(l)}</button>`).join('')}${t.responseCategory && t.responseCategory !== 'excluded' && isOn('outreach.multiRecipient') ? '<button class="chip" data-cat="" data-perm="out.write" title="Remove the classification">Clear</button>' : ''}</div>`;
       $('viewHead').querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => classify(t, b.dataset.cat)));
       if (isOn('outreach.multiRecipient') && t.companyId) updateSibLine(t);
+      updateReplyContacts(t);
       $('assignBtn')?.addEventListener('click', () => assignCompany(t));
       $('viewHead').querySelectorAll('[data-addaddr]').forEach(b => b.addEventListener('click', () => openAddToCompany(t, b.dataset.addaddr)));
       $('fwdBtn')?.addEventListener('click', () => openForward(t));

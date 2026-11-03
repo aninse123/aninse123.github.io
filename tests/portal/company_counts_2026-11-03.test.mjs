@@ -213,6 +213,82 @@ ok('Overview and Audience roll up with the companies that answered', html.includ
 ok('Letters to print: a campaign filter with counts (All campaigns, each campaign, Own tasks); Select all and Print follow it', html.includes('let todoWho') && html.includes("lettersCampaign = 'all'") && html.includes('id="letCamp"') && html.includes("$('letCamp').addEventListener('change'") && html.includes("const list = allLetters.filter(t => lettersCampaign === 'all'"));
 ok('To do: the campaign filter shows the counts under the other filters', html.includes('const cntCamp = (id)') && html.includes('All campaigns (${num(forCamp.length)})'));
 
+const RCm = await import(new URL('../../portal/reply-contacts.js', import.meta.url));
+const QV = `Bom dia
+
+Podemos reunir pessoalmente ou falar online quando quiserem sem qualquer problema.
+
+Com os melhores cumprimentos,
+
+Hermínio Cardoso
+
+Rua da Quinta da Serra Nº4
+
+Paradinha
+
+3510-107 Viseu - Portugal
+
+Tel: (+351) 232 448 531
+
+(Chamada para a rede fixa nacional)
+
+Movel: (+351) 962405366
+
+(Chamada para a rede movel nacional)
+
+e-mail: gerencia@quadroviseu.com <mailto:gerencia@quadroviseu.com>  / hfc.quadroviseu@sapo.pt <mailto:hfc.quadroviseu@sapo.pt>
+
+website: www.quadroviseu.com <http://www.quadroviseu.com/>
+
+De: Quadroviseu Geral <geral@quadroviseu.com>
+Enviada: 3 de novembro de 2026 11:20
+Para: hfc.quadroviseu@sapo.pt
+Assunto: FW: Continuidade da Quadroviseu | Confidencial
+
+Tel: 999 888 777`;
+const qv = RCm.extractContacts(QV, { ignoreEmail: (e) => /douropartners/.test(e) });
+ok('Reply contacts (QUADROVISEU): both phones, kinds, the two emails, the site and the factory address', qv.phones.map((p) => p.norm + ':' + p.kind).join() === '232448531:landline,962405366:mobile' && qv.emails.join() === 'gerencia@quadroviseu.com,hfc.quadroviseu@sapo.pt' && qv.urls[0].host === 'quadroviseu.com' && JSON.stringify(qv.address) === JSON.stringify({ street: 'Rua da Quinta da Serra Nº4, Paradinha', postcode: '3510-107', place: 'Viseu' }));
+ok('Reply contacts: the quoted / forwarded part is never read (its phone is ignored)', !qv.phones.some((p) => p.norm === '999888777') && RCm.ownText(QV).includes('Hermínio Cardoso') && !RCm.ownText(QV).includes('Enviada'));
+const SL = `Obrigado
+
+amontanha@shortlec.com _ *91 460 52 02*
+
+Shortlec - Sistemas Elétricos, Lda
+NIPC_ 513 470 417
+Tel_ 22 328 68 30
+Av. Dom Miguel 150
+4435-678 Baguim do Monte, Porto, Portugal`;
+const sl = RCm.extractContacts(SL);
+ok('Reply contacts (SHORTLEC): 2-3-2-2 numbers, the NIPC is not a phone, the address and the sender email', sl.phones.map((p) => p.norm + ':' + p.kind).join() === '914605202:mobile,223286830:landline' && sl.nipc === '513470417' && sl.address.street === 'Av. Dom Miguel 150' && sl.address.postcode === '4435-678' && sl.address.place === 'Baguim do Monte' && sl.emails.join() === 'amontanha@shortlec.com');
+const AC = RCm.extractContacts(`Tel.: 21 950 3600 / 21 213 7000 (Chamada para rede fixa nacional)
+
+TM: 91 992 4411 (Chamada para rede movel nacional)
+
+ <http://www.acconsulting.pt/> http://www.acconsulting.pt`);
+ok('Reply contacts (AC Consulting): 21 950 3600 style, two landlines and a mobile, one website', AC.phones.map((p) => p.norm).join() === '219503600,212137000,919924411' && AC.urls.length === 1 && AC.urls[0].host === 'acconsulting.pt');
+ok('Reply contacts: no guessing — a postcode line with no street above it, a fax and a NIF are skipped', RCm.findAddress('Maria\n3510-107 Viseu') === null && RCm.findPhones('Fax: 232 448 530\nNIF 509 123 456').length === 0);
+const qvCo = { companyPhone: '+351 232448531', companyEmail: 'geral@quadroviseu.com', website: 'www.quadroviseu.com', postcode: '4465-686', hqAddress: 'RUA X, 42. 4465-686 Matosinhos', nif: '501234567', reach: [], contacts: [] };
+const cq = RCm.compareContacts(qv, { company: qvCo, peopleEmails: ['hfc.quadroviseu@sapo.pt'], senderEmail: 'hfc.quadroviseu@sapo.pt', senderPhones: [] });
+const by = Object.fromEntries(cq.items.map((i) => [i.type + ':' + (i.norm || i.value), i]));
+ok('Compare (QUADROVISEU): the landline and the site are already on file; the mobile, gerencia@ and the factory address are new', by['phone:232448531'].have === true && by['phone:962405366'].have === false && by['phone:962405366'].target === 'person' && by['email:gerencia@quadroviseu.com'].have === false && by['email:hfc.quadroviseu@sapo.pt'].have === true && by['website:https://www.quadroviseu.com'].have === true && cq.items.find((i) => i.type === 'address').have === false);
+ok('Compare: NIPC — matches the company, differs, or the company has none; a second landline on the company reach counts as on file', RCm.compareContacts(sl, { company: { nif: '513470417' } }).nipc.matches === true && RCm.compareContacts(sl, { company: { nif: '500000000' } }).nipc.matches === false && RCm.compareContacts(sl, { company: {} }).nipc.matches === null && RCm.compareContacts(sl, { company: { reach: [{ type: 'phone', value: '+351 22 328 68 30' }] } }).items.find((i) => i.norm === '223286830').have === true);
+ok('Compare: an address with the postcode already on file is "already on file"', RCm.compareContacts(sl, { company: { reach: [{ type: 'address', value: 'Av. Dom Miguel 150, 4435-678 Baguim do Monte' }] } }).items.find((i) => i.type === 'address').have === true);
+const raw0 = fs.readFileSync(new URL('../../portal/outreach.html', import.meta.url), 'utf8');
+ok('Inbox card: under the conversation head, behind outreach.replyContacts, one click to add, Check address on request', raw0.includes('id="replyContacts"') && raw0.includes("if (!isOn('outreach.replyContacts') || !t.companyId)") && raw0.includes('data-rcadd=') && raw0.includes("action: 'checkAddress'") && raw0.includes('updateReplyContacts(tt)') && raw0.includes('Nothing is saved until you click Add.'));
+ok('Inbox: an address added from the inbox that wrote to us is confirmed by the reply', raw0.includes("...(replied ? { origin: 'person', confirmedAt: at, confirmedBy: 'reply', confirmedVia: 'reply' } : {})"));
+ok('The switch exists on both sides', fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8').includes('"outreach.replyContacts"') && fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8').includes("'outreach.replyContacts'"));
+
+const rcStart = raw0.indexOf('    const checkText = (r) =>'), rcEnd = raw0.indexOf('    async function addReplyContact(rc, item)');
+const rcEl = { innerHTML: '', querySelectorAll: () => [] };
+const renderRC = new Function('$', 'esc', 'window', rcEnd > rcStart && rcStart > 0 ? raw0.slice(rcStart, rcEnd) + '; return renderReplyContacts;' : 'throw new Error("not found")')(() => rcEl, (x) => String(x == null ? '' : x), { pageAccess: { can: () => true, key: 'andre' } });
+const rcCo = { owner: 'andre', ...qvCo }, rcCmp = RCm.compareContacts(qv, { company: qvCo, peopleEmails: ['hfc.quadroviseu@sapo.pt'], senderEmail: 'hfc.quadroviseu@sapo.pt' });
+renderRC({ co: rcCo, sender: { personId: 'p1', name: 'Herminio Ferreira Cardoso' }, from: { name: 'Hermínio Cardoso', email: 'hfc.quadroviseu@sapo.pt' }, cmp: rcCmp, checks: {} });
+ok('Inbox card (QUADROVISEU): 3 new (mobile, gerencia@, address), the mobile goes to Herminio, the landline is on file, address offers Check address', rcEl.innerHTML.includes('(3 new)') && rcEl.innerHTML.includes('Add to Herminio') && rcEl.innerHTML.includes('962 405 366') && rcEl.innerHTML.includes('already on file') && rcEl.innerHTML.includes('data-rcchk=') && rcEl.innerHTML.includes('Rua da Quinta da Serra Nº4, Paradinha, 3510-107 Viseu') && rcEl.innerHTML.includes('<details') && rcEl.innerHTML.includes(' open'));
+renderRC({ co: rcCo, sender: null, from: { email: 'x@y.pt' }, cmp: RCm.compareContacts(sl, { company: { nif: '513470417', owner: 'andre' } }), checks: { 3: { status: 'postcode_only', note: 'The postcode exists, but OpenStreetMap does not list that street (common in small places): not proof either way.' } } });
+ok('Inbox card (SHORTLEC): no known sender → the mobile goes to the company; the NIPC says it matches; a check result is shown', rcEl.innerHTML.includes('Add to company') && !rcEl.innerHTML.includes('Add to Herminio') && rcEl.innerHTML.includes('matches the company') && rcEl.innerHTML.includes('not proof either way'));
+renderRC({ co: rcCo, sender: null, from: { email: 'x@y.pt' }, cmp: { items: [], nipc: null }, checks: {} });
+ok('Inbox card: nothing found → nothing shown', rcEl.innerHTML === '');
+
 // switches exist on both sides with the same text
 const cat = fs.readFileSync(new URL('../../functions/features/catalog.js', import.meta.url), 'utf8');
 const pf = fs.readFileSync(new URL('../../portal/features.js', import.meta.url), 'utf8');

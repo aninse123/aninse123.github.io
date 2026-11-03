@@ -1,0 +1,120 @@
+// Contact details found in a reply (3 Nov 2026). The signature of a reply carries phone numbers, other emails, the website, often a postal
+// address and the company's NIPC. This finds them (plain patterns, no AI: Portuguese signatures are regular) and compares them with what the
+// CRM already has, so the Inbox can show "already on file" or "new — add". Nothing is saved here; the page adds one detail per click.
+
+const lc = (s) => String(s || '').trim().toLowerCase();
+const digits = (s) => String(s || '').replace(/\D/g, '');
+
+// What the sender wrote of their own: cut at the first quoted / forwarded block, so the old message's signature is never read.
+export function ownText(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n'), out = [];
+  for (const l of lines) {
+    if (/^\s*(?:de|from|enviad[ao]|sent|para|to|assunto|subject)\s*:/i.test(l) && out.some((x) => x.trim())) break;
+    if (/^\s*-{2,}\s*(?:original|mensagem|forwarded|message)/i.test(l) || /^\s*_{5,}\s*$/.test(l) || /^\s*>/.test(l)) break;
+    if (/^\s*(?:em|on)\s.+(?:escreveu|wrote)\s*:?\s*$/i.test(l)) break;
+    out.push(l);
+  }
+  return out.join('\n');
+}
+
+// Portuguese numbers: 9 digits starting 2 (landline) or 9 (mobile), with or without +351, in any grouping (232 448 531, 91 460 52 02, 21 950 3600)
+export function phoneKind(n9) { return /^9[1236]/.test(n9) ? 'mobile' : /^2\d/.test(n9) ? 'landline' : 'other'; }
+export function findPhones(text) {
+  const out = [], seen = new Set();
+  const re = /(?:(?:\+|00)\s*\(?351\)?[\s.-]*)?\b[29](?:[\s.-]?\d){8}\b/g;
+  for (const line of String(text || '').split('\n')) {
+    if (/\b(?:nipc|nif|contribuinte|fax)(?![a-z])/i.test(line) && !/\b(?:tel|m[oó]vel|tlm|tm)(?![a-z])/i.test(line)) continue; // a tax number or a fax is not a phone
+    let m; re.lastIndex = 0;
+    while ((m = re.exec(line))) {
+      let d = digits(m[0]);
+      if (d.startsWith('00351')) d = d.slice(5); else if (d.startsWith('351') && d.length === 12) d = d.slice(3);
+      if (d.length !== 9 || seen.has(d)) continue;
+      const kind = phoneKind(d); if (kind === 'other') continue;
+      seen.add(d);
+      out.push({ norm: d, kind, display: `${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6)}` });
+    }
+  }
+  return out;
+}
+
+export function findEmails(text, { ignore = () => false } = {}) {
+  const out = [], seen = new Set();
+  for (const m of String(text || '').matchAll(/[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g)) {
+    const e = lc(m[0]).replace(/[.,;:)]+$/, '');
+    if (seen.has(e) || ignore(e) || /^(?:no-?reply|noreply|mailer-daemon)@/.test(e)) continue;
+    seen.add(e); out.push(e);
+  }
+  return out;
+}
+
+export function findUrls(text) {
+  const out = [], seen = new Set();
+  for (const m of String(text || '').matchAll(/\b(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:pt|com|eu|org|net|es|info|biz)(?:\/[^\s<>")]*)?/gi)) {
+    const raw = m[0].replace(/[.,;:)]+$/, '');
+    const before = m.input.slice(Math.max(0, m.index - 1), m.index);
+    if (before === '@' || before === '.' || raw.includes('@')) continue; // the domain of an email address is not a website
+    const host = raw.replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0].toLowerCase();
+    if (!host.includes('.') || seen.has(host)) continue;
+    seen.add(host);
+    out.push({ host, url: /^https?:/i.test(raw) ? raw : 'https://' + raw, linkedin: /linkedin\.com/.test(host) });
+  }
+  return out;
+}
+
+export function findNipc(text) {
+  const m = String(text || '').match(/\b(?:nipc|nif|contribuinte)(?![a-z])[^0-9]{0,14}(\d{3}[\s.]?\d{3}[\s.]?\d{3})\b/i);
+  return m ? digits(m[1]) : '';
+}
+
+// "Rua da Quinta da Serra Nº4 / Paradinha / 3510-107 Viseu - Portugal" → { street, postcode, place }. The street is the line that looks like
+// one (Rua, Avenida, Estrada, Zona Industrial, Lote…), with the locality lines between it and the postcode; a line that does not look like
+// an address (a name, a greeting, a phone) is never taken, and nothing is guessed.
+const STREET = /^(?:r\.?|rua|av\.?|avenida|tv\.?|travessa|largo|lg\.?|pra[cç]a|p[cç]a\.?|estrada|e\.?n\.?|zona|z\.?i\.?|lote|lt\.?|urb\.?|urbaniza[cç][aã]o|parque|edif[ií]cio|beco|caminho|cam\.?|alameda|p[oó]lo|quinta|lugar|apartado|bairro|cal[cç]ada|campo|rotunda|sitio)(?![a-z])/i;
+export function findAddress(text) {
+  const lines = String(text || '').split('\n').map((l) => l.replace(/\s+/g, ' ').trim());
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/(?:^|\s)(\d{4}-\d{3})\s+([^,\n–-]+?)\s*(?:[-–,].*)?$/);
+    if (!m || !/[A-Za-zÀ-ÿ]/.test(m[2])) continue;
+    const prev = [];
+    for (let j = i - 1; j >= 0 && prev.length < 3; j--) {
+      const l = lines[j]; if (!l) continue;
+      if (/@|https?:|www\.|\b(?:tel|tlm|tlf|m[oó]vel|fax|nipc|nif|chamada)(?![a-z])|\(\+?\d{2,3}\)|\b\d{3}\s?\d{3}\s?\d{3}\b/i.test(l)) break;
+      prev.unshift(l);
+    }
+    let k = -1;
+    for (let x = prev.length - 1; x >= 0; x--) if (STREET.test(prev[x])) { k = x; break; }
+    if (k < 0) continue;
+    const rest = prev.slice(k + 1).filter((l) => l.split(' ').length <= 5 && !/\d/.test(l));
+    return { street: [prev[k], ...rest].join(', ').replace(/[,;]+$/, ''), postcode: m[1], place: m[2].trim() };
+  }
+  return null;
+}
+
+export function extractContacts(text, { ignoreEmail = () => false } = {}) {
+  const t = ownText(text);
+  return { phones: findPhones(t), emails: findEmails(t, { ignore: ignoreEmail }), urls: findUrls(t), nipc: findNipc(t), address: findAddress(t) };
+}
+
+// What the CRM has, to compare with. company: the searchCompanies doc; peopleEmails / peoplePhones: those of the people at the company.
+export function compareContacts(found, { company = {}, peopleEmails = [], peoplePhones = [], senderEmail = '', senderPhones = [], known = [] } = {}) {
+  const reachOf = (t) => (company.reach || []).filter((e) => e && e.type === t).map((e) => e.value);
+  const hostOf = (u) => lc(u).replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  const pcOf = (v) => (String(v || '').match(/\d{4}-\d{3}/) || [])[0];
+  const have = {
+    phones: new Set([company.companyPhone, ...reachOf('phone'), ...peoplePhones, ...senderPhones].map((p) => digits(p).slice(-9)).filter(Boolean)),
+    emails: new Set([company.companyEmail, ...reachOf('email'), ...(company.contacts || []).map((c) => c.email), ...peopleEmails, senderEmail, ...known].map(lc).filter(Boolean)),
+    hosts: new Set([company.website, ...reachOf('website')].map(hostOf).filter(Boolean)),
+    postcodes: new Set([company.postcode, pcOf(company.hqAddress), ...reachOf('address').map(pcOf)].filter(Boolean)),
+  };
+  const items = [];
+  for (const p of found.phones) items.push({ type: 'phone', kind: p.kind, value: p.display, norm: p.norm, have: have.phones.has(p.norm), target: p.kind === 'mobile' ? 'person' : 'company' });
+  for (const e of found.emails) items.push({ type: 'email', value: e, have: have.emails.has(e), target: 'company' });
+  for (const u of found.urls) items.push({ type: u.linkedin ? 'linkedin' : 'website', value: u.url, host: u.host, have: u.linkedin ? false : have.hosts.has(u.host), target: 'company' });
+  if (found.address) {
+    const a = found.address;
+    items.push({ type: 'address', value: `${a.street}, ${a.postcode} ${a.place}`, address: a, have: have.postcodes.has(a.postcode), target: 'company' });
+  }
+  const nif = digits(company.nif || company.vatNumber || '').slice(-9);
+  const nipc = found.nipc ? { value: found.nipc, matches: nif ? nif === found.nipc : null } : null;
+  return { items, nipc };
+}
