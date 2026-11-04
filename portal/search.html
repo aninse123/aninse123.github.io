@@ -633,6 +633,7 @@
       <button class="tab" data-tab="contacts">Contacts</button>
       <button class="tab" data-tab="activities">Activities</button>
       <button class="tab" data-tab="deal">Deal</button>
+      <button class="tab" data-tab="files" data-feature="search.companyFiles">Files</button>
       <button class="tab" data-tab="freshness">Data Freshness</button>
     </div>
 
@@ -645,6 +646,7 @@
     <div class="tab-panel" id="panel-contacts"></div>
     <div class="tab-panel" id="panel-activities"></div>
     <div class="tab-panel" id="panel-deal"></div>
+    <div class="tab-panel" id="panel-files" data-feature="search.companyFiles"></div>
     <div class="tab-panel" id="panel-freshness"></div>
   </div>
 
@@ -1363,9 +1365,11 @@
 <script src="./vendor/leaflet/leaflet.markercluster.js"></script>
 <script src="./vendor/pt-postcodes.js?v=cp7-nominatim-1"></script>
 <script type="module">
-import { auth, db, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES, FIRESTORE_PROJECT_ID } from './firebase-config.js';
+import { auth, db, storage, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch, getTodayReads, getTodayWrites, FREE_TIER_DAILY_READS, FREE_TIER_DAILY_WRITES, FIRESTORE_PROJECT_ID } from './firebase-config.js';
 import { guardPage, logExport, editedBadge } from './access.js';
 import { isOn, onFeaturesChange } from './features.js';
+import { TYPES as FILE_TYPES, fileProblem, safeName as fileSafeName, contentTypeFor, fmtSize as fileFmtSize } from './attachments.js'; // 4 Nov (search.companyFiles)
+import { ref as stRef, getDownloadURL, uploadBytes, deleteObject } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
 import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText, isRelatedDecider } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
 import { nameIssues, nameCheckOf } from './email-name-check.js'; // 26 Oct (search.emailNameCheck)
 import { nameCheckPanelHtml, nameCheckNote, wireNameCheck } from './name-check-ui.js';
@@ -1448,6 +1452,8 @@ const ACT = {
   company_created:  { label:'Company created',   icon:'✨', outreach:false },
   company_edited:   { label:'Profile updated',   icon:'✏️', outreach:false },
   stage_changed:    { label:'Stage changed',     icon:'🔀', outreach:false },
+  file_added:       { label:'File added',        icon:'📎', outreach:false },
+  file_removed:     { label:'File removed',      icon:'🗑', outreach:false },
   deal_updated:     { label:'Deal updated',      icon:'🤝', outreach:false },
   financials_updated:{ label:'Financials updated', icon:'📊', outreach:false },
   contact_added:    { label:'Contact added',     icon:'👤', outreach:false },
@@ -3858,6 +3864,7 @@ function renderDetail(){
 
   renderOverview(c); renderFinancials(c); renderOwnership(c); renderContacts(c); renderActivityLog(); renderDeal(c);
   renderLegalCompliance(c); renderAdvisors(c); renderDataFreshness(c); renderOrbisFinancials(c);
+  companyFilesReset(c);
 }
 
 // 18 Oct: the company's municipal holiday, from the scheduler's own table (portal/mun-holidays.js,
@@ -4776,6 +4783,92 @@ function renderActivityLog(){
   }
   document.getElementById('addActivityBtn2').addEventListener('click', () => openActivity('note'));
   document.querySelectorAll('[data-closeact]').forEach(b => b.addEventListener('click', () => openCloseMtg(b.dataset.closeact)));
+}
+
+// ── Company files (4 Nov, switch search.companyFiles) ───────────────────────
+// A file is a document in outreachFiles (source "company", companyId) with its bytes in Storage at outreach/files/<id>/<name>: the same store as
+// the Outreach attachments, so files saved from a reply show here, and files uploaded here show in the Outreach "Company files" line.
+// Read only when the Files tab is opened (not with the company). Uploads and removals are logged in Activities.
+const companyFiles = { coId: null, list: null, busy: false };
+function companyFilesReset(c){
+  companyFiles.coId = c.id; companyFiles.list = null; companyFiles.busy = false;
+  const el = document.getElementById('panel-files'); if (el) el.innerHTML = '';
+  if (document.querySelector('#detailTabs .tab.active')?.dataset.tab === 'files') companyFilesShow();
+}
+async function companyFilesShow(){
+  if (!isOn('search.companyFiles') || !currentCoId) return;
+  if (companyFiles.coId !== currentCoId || !companyFiles.list) {
+    companyFiles.coId = currentCoId;
+    const el = document.getElementById('panel-files');
+    if (el) el.innerHTML = '<div class="card"><div class="sec-title">Files</div><div style="font-size:0.85rem;color:var(--text-light);">Loading…</div></div>';
+    const id = currentCoId;
+    try {
+      const snap = await getDocs(query(collection(db, 'outreachFiles'), where('companyId', '==', id), limit(100)));
+      addReads(snap.size || 1);
+      if (id !== currentCoId) return;
+      companyFiles.list = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (tsToDate(b.createdAt)?.getTime()||0) - (tsToDate(a.createdAt)?.getTime()||0));
+    } catch (e) {
+      if (el) el.innerHTML = `<div class="card"><div class="sec-title">Files</div><div style="font-size:0.85rem;color:#B91C1C;">Could not load the files: ${esc(e.message)}</div></div>`;
+      return;
+    }
+  }
+  companyFilesDraw();
+}
+function companyFilesDraw(){
+  const el = document.getElementById('panel-files'); const c = getCompany(); if (!el || !c || !companyFiles.list) return;
+  const rows = companyFiles.list.map(f => `
+    <div class="info-row" style="align-items:center;gap:10px;">
+      <span class="k" style="flex:1;min-width:0;"><button type="button" class="link" data-fopen="${esc(f.id)}" title="Open">📎 ${esc(f.name || f.filename || 'file')}</button></span>
+      <span class="v" style="white-space:nowrap;font-size:0.8rem;color:var(--text-light);">${esc(fileFmtSize(f.size))} · ${f.source === 'received' ? 'received in a reply' : 'uploaded'} · ${fmtDate(f.createdAt)} · ${esc(String(f.createdBy || '').split('@')[0])}</span>
+      <button type="button" class="btn btn--ghost btn--sm" data-fdel="${esc(f.id)}" data-perm="search.edit" title="Remove this file">✕</button>
+    </div>`).join('');
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap;">
+        <div class="sec-title" style="margin:0;">Files — ${companyFiles.list.length}</div>
+        <label class="btn btn--primary btn--sm" data-perm="search.activity" style="cursor:pointer;margin:0;">＋ Upload files<input type="file" id="coFileInput" multiple hidden accept="${esc(Object.keys(FILE_TYPES).map(e => '.' + e).join(','))}"></label>
+      </div>
+      <div style="font-size:0.78rem;color:var(--text-light);margin-bottom:10px;">Internal: only the team sees these. Documents, spreadsheets, slides and images, up to 10 MB each.</div>
+      <div id="coFileMsg" style="font-size:0.82rem;color:#B91C1C;margin-bottom:6px;" hidden></div>
+      ${rows || '<div style="font-size:0.85rem;color:var(--text-light);">No files yet.</div>'}
+    </div>`;
+  el.querySelectorAll('[data-fopen]').forEach(b => b.addEventListener('click', async () => {
+    const f = companyFiles.list.find(x => x.id === b.dataset.fopen); if (!f) return;
+    try { window.open(await getDownloadURL(stRef(storage, f.storagePath)), '_blank', 'noopener'); } catch (e) { companyFilesMsg('Could not open the file: ' + e.message); }
+  }));
+  el.querySelectorAll('[data-fdel]').forEach(b => b.addEventListener('click', () => companyFileRemove(b.dataset.fdel)));
+  document.getElementById('coFileInput')?.addEventListener('change', (e) => { const fs = [...e.target.files]; e.target.value = ''; companyFilesUpload(fs); });
+}
+function companyFilesMsg(t){ const m = document.getElementById('coFileMsg'); if (m) { m.textContent = t; m.hidden = !t; } }
+async function companyFilesUpload(files){
+  const c = getCompany(); if (!c || !files.length || companyFiles.busy) return;
+  companyFiles.busy = true; companyFilesMsg('');
+  const problems = [];
+  for (const file of files) {
+    const bad = fileProblem(file, []); if (bad) { problems.push(bad); continue; }
+    try {
+      const id = doc(collection(db, 'outreachFiles')).id, filename = fileSafeName(file.name), path = `outreach/files/${id}/${filename}`, ct = contentTypeFor(file.name);
+      await uploadBytes(stRef(storage, path), file, { contentType: ct });
+      const data = { name: file.name, filename, storagePath: path, contentType: ct, size: file.size, library: false, source: 'company', companyId: c.id, createdAt: serverTimestamp(), createdBy: currentUser };
+      await setDoc(doc(db, 'outreachFiles', id), data);
+      companyFiles.list.unshift({ id, ...data, createdAt: Timestamp.now() });
+      await logAuto(c.id, 'file_added', `File added: ${file.name} (${fileFmtSize(file.size)})`);
+    } catch (e) { problems.push(`${file.name}: ${e.message}`); }
+  }
+  companyFiles.busy = false;
+  companyFilesDraw();
+  if (problems.length) companyFilesMsg(problems.join(' · '));
+}
+async function companyFileRemove(fileId){
+  const c = getCompany(); const f = companyFiles.list?.find(x => x.id === fileId); if (!c || !f) return;
+  if (!confirm(`Remove ${f.name || 'this file'} from ${c.name}? This cannot be undone.`)) return;
+  try {
+    try { await deleteObject(stRef(storage, f.storagePath)); } catch (e) { if (!/object-not-found/.test(String(e.code || e.message))) throw e; }
+    await deleteDoc(doc(db, 'outreachFiles', fileId));
+    companyFiles.list = companyFiles.list.filter(x => x.id !== fileId);
+    await logAuto(c.id, 'file_removed', `File removed: ${f.name}`);
+    companyFilesDraw();
+  } catch (e) { companyFilesMsg('Could not remove the file: ' + e.message); }
 }
 
 function renderDeal(c){
@@ -11091,6 +11184,7 @@ async function renderNetworkGraph(container, focusType, focusId){
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 function setActiveTab(name){
   navTab(name);
+  if (name === 'files') companyFilesShow();
   document.querySelectorAll('#detailTabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id==='panel-'+name));
 }
@@ -12243,7 +12337,7 @@ async function recomputeActivityFields(c){
   // lastTouchAt = most recent non-future, non-auto activity
   // email_test: Outreach test-mode sends aren't real touches (they go to our own addresses).
   // task_test: campaign tasks done in test mode (rehearsals) — not real touches either.
-  const AUTO_TYPES = ['company_created','company_edited','stage_changed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold','person_merged',
+  const AUTO_TYPES = ['company_created','company_edited','stage_changed','file_added','file_removed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold','person_merged',
     'person_linked','person_updated','person_unlinked', // 21 Oct: adding, editing or removing a person isn't a touch either
     'outreach_owner','outreach_group']; // 22 Oct (owner-aware): notes about related companies, never a touch
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));

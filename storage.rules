@@ -33,16 +33,16 @@ service firebase.storage {
     // the resendWebhook Cloud Function (Admin SDK, bypasses rules); admins
     // read them from the Outreach tab. No client writes.
     match /outreach/{allPaths=**} {
-      allow read: if isAdmin() || can('out.view');
+      allow read: if isAdmin() || can('out.view') || can('search.view'); // 4 Nov: + the company Files tab
       allow write: if false;
     }
     // 3 Nov: files to attach to outgoing email — documents, spreadsheets, slides, images and calendar invites, at most 10 MB, written by
     // whoever writes email; removed by whoever edits templates. (A more specific rule, so it adds to the one above.)
     match /outreach/files/{fileId}/{fileName} {
-      allow create: if request.resource != null && (isAdmin() || can('out.send') || can('out.draft') || can('out.templates'))
+      allow create: if request.resource != null && (isAdmin() || can('out.send') || can('out.draft') || can('out.templates') || can('search.activity') || can('search.edit') || can('search.editall'))
                     && request.resource.size < 10 * 1024 * 1024
                     && request.resource.contentType.matches('application/pdf|application/msword|application/vnd[.].*|text/plain|text/csv|text/calendar.*|image/(png|jpeg|gif)');
-      allow delete: if isAdmin() || can('out.templates');
+      allow delete: if isAdmin() || can('out.templates') || can('search.edit') || can('search.editall');
     }
   }
 }

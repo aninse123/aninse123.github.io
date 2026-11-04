@@ -110,6 +110,14 @@ const cases = [
   C('Partner: edit a file in the library', PARTNER, 'update', 'outreachFiles/f1', 'ALLOW', { name: 'Y' }, { name: 'X' }),
   C('Partner: delete a file from the library', PARTNER, 'delete', 'outreachFiles/f1', 'ALLOW', null, { name: 'X' }),
   C('Intern: cannot add or delete library files', INTERN, 'delete', 'outreachFiles/f1', 'DENY', null, { name: 'X' }),
+  // 4 Nov (search.companyFiles): files uploaded on a company page
+  C('Company files: someone who can see the CRM reads them', REACH, 'get', 'outreachFiles/f1', 'ALLOW', null, { name: 'X', companyId: 'c1' }),
+  C('Company files: view+reach only cannot upload', REACH, 'create', 'outreachFiles/f1', 'DENY', { name: 'Briefing.pdf', source: 'company', companyId: 'c1', createdBy: REACH.email }),
+  C('Company files: a CRM editor uploads one (own name)', INTERN, 'create', 'outreachFiles/f1', 'ALLOW', { name: 'Briefing.pdf', source: 'company', companyId: 'c1', createdBy: INTERN.email }),
+  C('Company files: not as somebody else', INTERN, 'create', 'outreachFiles/f1', 'DENY', { name: 'Briefing.pdf', source: 'company', companyId: 'c1', createdBy: 'other@x.pt' }),
+  C('Company files: a CRM editor removes a company file', INTERN, 'delete', 'outreachFiles/f1', 'ALLOW', null, { name: 'Briefing.pdf', source: 'company', companyId: 'c1' }),
+  C('Company files: but not a file received in a reply', INTERN, 'delete', 'outreachFiles/f1', 'DENY', null, { name: 'a.pdf', source: 'received', companyId: 'c1' }),
+  C('Company files: view+reach only cannot remove', REACH, 'delete', 'outreachFiles/f1', 'DENY', null, { name: 'Briefing.pdf', source: 'company', companyId: 'c1' }),
   C('Partner: create a list', PARTNER, 'create', 'outreachLists/l1', 'ALLOW', { name: 'X' }),
   C('Partner: add a list member', PARTNER, 'create', 'outreachLists/l1/members/m1', 'ALLOW', { email: 'x@y.pt' }),
   C('Partner: delete a list', PARTNER, 'delete', 'outreachLists/l1', 'ALLOW', null, { name: 'X' }),
@@ -192,6 +200,11 @@ const cases = [
     S('Storage: over 10 MB is refused', PARTNER, 'create', 'outreach/files/f1/Big.pdf', 'DENY', { name: 'outreach/files/f1/Big.pdf', size: 11 * 1024 * 1024, contentType: 'application/pdf' }),
     S('Storage: someone who can only view cannot upload a file to attach', NO_CLAIMS, 'create', 'outreach/files/f1/Deck.pdf', 'DENY', { name: 'outreach/files/f1/Deck.pdf', size: 1000, contentType: 'application/pdf' }),
     S('Storage: partner removes a file from the library', PARTNER, 'delete', 'outreach/files/f1/Deck.pdf', 'ALLOW'),
+    S('Storage: company files — a CRM editor uploads a pdf', INTERN, 'create', 'outreach/files/f2/Briefing.pdf', 'ALLOW', { name: 'outreach/files/f2/Briefing.pdf', size: 1000000, contentType: 'application/pdf' }),
+    S('Storage: company files — view+reach only cannot upload', REACH, 'create', 'outreach/files/f2/Briefing.pdf', 'DENY', { name: 'outreach/files/f2/Briefing.pdf', size: 1000, contentType: 'application/pdf' }),
+    S('Storage: company files — view+reach only reads', REACH, 'get', 'outreach/files/f2/Briefing.pdf', 'ALLOW'),
+    S('Storage: company files — a CRM editor removes one', INTERN, 'delete', 'outreach/files/f2/Briefing.pdf', 'ALLOW'),
+    S('Storage: company files — view+reach only cannot remove', REACH, 'delete', 'outreach/files/f2/Briefing.pdf', 'DENY'),
   ];
   const res = await fetch('https://firebaserules.googleapis.com/v1/projects/douro-partners:test', {
     method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },

@@ -187,9 +187,12 @@ service cloud.firestore {
     // 3 Nov: files to attach to outgoing email (the library, files uploaded on the spot, copies of received attachments). Anyone who writes
     // email adds one; the library is kept by whoever edits templates.
     match /outreachFiles/{id} {
-      allow read: if can('out.view');
-      allow create: if canAny(['out.send', 'out.draft', 'out.templates', 'out.admin']) && createsAsMe();
-      allow update, delete: if canAny(['out.templates', 'out.admin']);
+      allow read: if canAny(['out.view', 'search.view']); // 4 Nov (search.companyFiles): the company page lists them
+      allow create: if (canAny(['out.send', 'out.draft', 'out.templates', 'out.admin'])
+                        || (canAny(['search.activity', 'search.edit', 'search.editall']) && request.resource.data.get('source', '') == 'company'))
+                    && createsAsMe();
+      allow update, delete: if canAny(['out.templates', 'out.admin'])
+                    || (canAny(['search.edit', 'search.editall']) && resource.data.get('source', '') == 'company'); // 4 Nov: a file uploaded on a company
     }
     match /outreachCampaigns/{id} { allow read: if can('out.view') || can('search.view'); }
     match /outreachEnrolments/{id} { allow read: if can('out.view') || can('search.view'); }
