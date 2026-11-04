@@ -750,6 +750,12 @@ async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId }, ca
     if (op === "pause") {
       if (e.status === "paused") return { ok: true, status: "paused" };
       if (!LIVE_ENROLMENT.includes(e.status)) fail("failed-precondition", "not_live", "This company is no longer active in the campaign.");
+      if (e.status === "awaiting_approval" && e.draftMessageId) {
+        // Paused from the approval queue (4 Nov): the waiting draft is dropped and written again when the company is resumed.
+        tx.update(db().doc(`outreachMessages/${e.draftMessageId}`), { status: "cancelled", cancelledReason: `Paused by ${caller} — drafted again when resumed` });
+        tx.update(ref, { status: "paused", pausedFrom: "active", draftMessageId: null, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller });
+        return { ok: true, status: "paused" };
+      }
       tx.update(ref, { status: "paused", pausedFrom: e.status, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller });
       return { ok: true, status: "paused" };
     }

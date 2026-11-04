@@ -157,6 +157,12 @@ const DAY = 86400000;
   ok("resume when not paused refused", (await call({ action: "enrolment", enrolmentId: `${c1}_b`, op: "resume" })).err?.details?.reason === "not_paused");
   ok("remove releases the company", (await call({ action: "enrolment", enrolmentId: `${c1}_b`, op: "remove", reason: "Wrong sector" })).res.status === "removed" && get("searchCompanies/b").activeCampaignId === undefined && get(`outreachEnrolments/${c1}_b`).stopReason === "Wrong sector");
   ok("removing twice refused", (await call({ action: "enrolment", enrolmentId: `${c1}_b`, op: "remove" })).err?.details?.reason === "not_live");
+  // Paused from the approval queue: the waiting draft is dropped, resume brings the company back to "active" to be drafted again
+  store.set("outreachMessages/dq1", { enrolmentId: `${c1}_q`, campaignId: c1, status: "draft" });
+  store.set(`outreachEnrolments/${c1}_q`, { campaignId: c1, companyId: "q", status: "awaiting_approval", draftMessageId: "dq1" });
+  ok("pause from To approve: the draft is cancelled and the company paused", (await call({ action: "enrolment", enrolmentId: `${c1}_q`, op: "pause" })).res.status === "paused" && get("outreachMessages/dq1").status === "cancelled" && /Paused by/.test(get("outreachMessages/dq1").cancelledReason) && get(`outreachEnrolments/${c1}_q`).pausedFrom === "active" && get(`outreachEnrolments/${c1}_q`).draftMessageId === null);
+  ok("…resume puts it back to active (a new draft is written by the scheduler)", (await call({ action: "enrolment", enrolmentId: `${c1}_q`, op: "resume" })).res.status === "active");
+  await call({ action: "enrolment", enrolmentId: `${c1}_q`, op: "remove", reason: "test cleanup" }); store.delete("outreachMessages/dq1"); store.delete(`outreachEnrolments/${c1}_q`);
 
   // Rename keeps the Search CRM badge current
   await call({ action: "save", campaignId: c1, campaign: { name: "Metalurgia Norte 2026" } });

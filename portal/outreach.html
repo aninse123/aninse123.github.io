@@ -5982,7 +5982,8 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
             </div>` : `<div class="actions">
               <button class="btn btn--primary btn--sm" data-dact="approve" data-perm="out.approve">${draftEdits.has(d.id) ? 'Save &amp; approve' : 'Approve'}</button>
               <button class="btn btn--ghost btn--sm" data-dact="skip" data-perm="out.approve" title="Drop this draft; it's written again the next sending day">Skip — try the next sending day</button>
-              <button class="btn btn--danger btn--sm" data-dact="remove" data-perm="out.campaigns">Remove company from the campaign</button>
+              <button class="btn btn--ghost btn--sm" data-dact="pause" data-perm="out.campaigns" title="Keep the company in the campaign but stop its emails until you resume it (campaign → Companies → Resume). This draft is dropped and written again after the resume.">Pause company</button>
+              <button class="btn btn--danger btn--sm" data-dact="remove" data-perm="out.campaigns" title="Take the company out of the campaign for good. The draft is discarded; the company is free for other campaigns.">Remove from the campaign</button>
             </div>`}
           </div>`;
         }).join('') : '<div class="card"><div class="empty">Nothing to approve. Drafts appear here when a campaign step needs approval.</div></div>'}
@@ -6031,7 +6032,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           const act = b.dataset.dact;
           // V7: the clicked button says it's working until the action is done.
           let unbusy = () => {};
-          const goBusy = () => { unbusy = busyBtn(b, { approve: 'Approving…', skip: 'Skipping…', send: 'Sending…', return: 'Returning…', remove: 'Removing…' }[act]); };
+          const goBusy = () => { unbusy = busyBtn(b, { approve: 'Approving…', skip: 'Skipping…', send: 'Sending…', return: 'Returning…', remove: 'Removing…', pause: 'Pausing…' }[act]); };
           document.activeElement?.blur();
           let r;
           // 22 Oct (owner-aware, D6): a related company said no / is in conversation — ask first.
@@ -6061,6 +6062,10 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             goBusy();
             try { await callSend({ action: 'returnDraft', messageId: id, note }); toast('Returned with your note.'); r = true; }
             catch (e) { toast(errText(e)); r = false; }
+          }
+          if (act === 'pause') {
+            goBusy();
+            r = await campCall({ action: 'enrolment', enrolmentId: d.enrolmentId, op: 'pause' }, 'Company paused — resume it in the Companies tab of the campaign. The draft is written again after that.');
           }
           if (act === 'remove') {
             if (!confirm(`Remove ${d.companyName || 'this company'} from "${campName(d.campaignId)}"? The draft is discarded.`)) return;
