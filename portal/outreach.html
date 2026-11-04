@@ -2665,7 +2665,7 @@
         <td style="text-align:right;white-space:nowrap;"><button class="btn btn--ghost btn--sm" data-fopen="${esc(f.id)}">Open</button> <button class="btn btn--danger btn--sm" data-fdel="${esc(f.id)}" data-perm="out.templates">Delete</button></td></tr>`; }).join('')
         : '<tr><td colspan="6" class="empty">No files yet. Upload one, or attach a file to an email and keep it in the library.</td></tr>';
       const rb = $('filesRecvBody');
-      if (rb) rb.innerHTML = filesRecv.length ? filesRecv.map(f => `<tr><td><b>${esc(f.name)}</b></td><td><a href="/portal/search.html?company=${encodeURIComponent(f.companyId || '')}">${esc(coCache.get(f.companyId)?.name || 'Company')}</a></td><td>${esc(fmtSize(f.size))}</td><td class="hint">${f.createdAt ? esc(dayFmt.format(new Date(tsMs(f.createdAt)))) : ''}</td><td style="text-align:right;"><button class="btn btn--ghost btn--sm" data-fopen="${esc(f.id)}">Open</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">None yet. When a reply comes with files, the Inbox offers to save them to the company.</td></tr>';
+      if (rb) rb.innerHTML = filesRecv.length ? filesRecv.map(f => `<tr><td><b>${esc(f.name)}</b>${f.note ? `<div class="hint">${esc(f.note)}</div>` : ''}</td><td><a href="/portal/search.html?company=${encodeURIComponent(f.companyId || '')}">${esc(coCache.get(f.companyId)?.name || 'Company')}</a></td><td>${esc(fmtSize(f.size))}</td><td class="hint">${f.createdAt ? esc(dayFmt.format(new Date(tsMs(f.createdAt)))) : ''}</td><td style="text-align:right;"><button class="btn btn--ghost btn--sm" data-fopen="${esc(f.id)}">Open</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">None yet. When a reply comes with files, the Inbox offers to save them to the company.</td></tr>';
       const sec = $('sec-files'); if (!sec) return;
       sec.querySelectorAll('[data-fopen]').forEach(b => { b.onclick = () => { const f = fileById.get(b.dataset.fopen); if (f) openStoredFile(f); }; });
       sec.querySelectorAll('[data-fdel]').forEach(b => { b.onclick = async () => {
@@ -2694,16 +2694,24 @@
     }
     function wireSaveBars(t) {
       $('msgs').querySelectorAll('[data-attsaveno]').forEach(b => b.addEventListener('click', () => { try { localStorage.setItem('attSaveNo:' + b.dataset.attsaveno, '1'); } catch (e) {} renderMessages(); }));
-      $('msgs').querySelectorAll('[data-attsave]').forEach(b => b.addEventListener('click', async () => {
+      $('msgs').querySelectorAll('[data-attsave]').forEach(b => b.addEventListener('click', () => {
         const m = threadMessages.find(x => x.id === b.dataset.attsave); if (!m) return;
-        b.disabled = true; let n = 0;
-        for (const [i, a] of (m.attachments || []).entries()) {
-          if (!a.storagePath || (m.savedAttachments || []).includes(i)) continue;
-          if (a.flagged && !confirm(`"${a.filename}" is a risky file type. Save it to the company anyway?`)) continue;
-          try { await callCampaign({ action: 'saveReceivedFiles', messageId: m.id, index: i }); n++; } catch (e) { toast('Could not save ' + a.filename + ': ' + errText(e)); }
-        }
-        coFilesCache.delete(t.companyId); updateCompanyFiles(t);
-        if (n) toast(`${n} file${n === 1 ? '' : 's'} saved to ${t.companyName || 'the company'}.`);
+        const todo = (m.attachments || []).map((a, i) => [a, i]).filter(([a, i]) => a.storagePath && !(m.savedAttachments || []).includes(i));
+        if (!todo.length) return;
+        // 4 Nov: ask what the file is, so the company's files say it (optional)
+        openModal(`Save to ${t.companyName || 'the company'}'s files`, `
+          <p class="hint" style="margin-bottom:10px;">Add a note to say what ${todo.length === 1 ? 'it is' : 'each one is'} (optional), for example "logo", "signed ISHA", "price list".</p>
+          ${todo.map(([a, i]) => `<div class="field"><label for="attNote${i}">${esc(a.filename)}${a.flagged ? ' <span class="pill pill--warn">risky type</span>' : ''}</label><input type="text" id="attNote${i}" maxlength="300" placeholder="Note (optional)"></div>`).join('')}`,
+          async () => {
+            let n = 0;
+            for (const [a, i] of todo) {
+              if (a.flagged && !confirm(`"${a.filename}" is a risky file type. Save it to the company anyway?`)) continue;
+              try { await callCampaign({ action: 'saveReceivedFiles', messageId: m.id, index: i, note: $('attNote' + i).value.trim() }); n++; } catch (e) { toast('Could not save ' + a.filename + ': ' + errText(e)); }
+            }
+            coFilesCache.delete(t.companyId); updateCompanyFiles(t);
+            if (n) toast(`${n} file${n === 1 ? '' : 's'} saved to ${t.companyName || 'the company'}.`);
+            return true;
+          }, 'Save');
       }));
     }
     async function updateCompanyFiles(t) {
@@ -2714,7 +2722,7 @@
         try { const s = await getDocs(query(collection(db, 'outreachFiles'), where('companyId', '==', t.companyId), limit(30))); addReads(s.size || 1); list = s.docs.map(d => ({ id: d.id, ...d.data() })); coFilesCache.set(t.companyId, list); list.forEach(f => fileById.set(f.id, f)); } catch (e) { return; }
       }
       if (selectedId !== t.id || !$('coFilesLine')) return;
-      $('coFilesLine').innerHTML = list.length ? `Company files (${list.length}): ${list.map(f => `<button type="button" class="att" data-cofile="${esc(f.id)}" title="Open">📎 ${esc(f.name)}</button>`).join(' ')}` : '';
+      $('coFilesLine').innerHTML = list.length ? `Company files (${list.length}): ${list.map(f => `<button type="button" class="att" data-cofile="${esc(f.id)}" title="${f.note ? esc(f.note) : 'Open'}">📎 ${esc(f.name)}${f.note ? ` <span class="hint">· ${esc(f.note)}</span>` : ''}</button>`).join(' ')}` : '';
       $('coFilesLine').querySelectorAll('[data-cofile]').forEach(b => b.addEventListener('click', () => { const f = fileById.get(b.dataset.cofile); if (f) openStoredFile(f); }));
     }
     async function sendReply(t) {
@@ -6547,7 +6555,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
               const c = taskCo(t);
               const addr = LT && t.letterText?.address ? t.letterText.address.split('\n').join(', ') : addressLines(c).join(', ');
               return `<tr><td><input type="checkbox" data-let="${esc(t.id)}"${letterSel.has(t.id) ? ' checked' : ''}${LT && info(t)?.missing?.length ? ' disabled title="A field is missing — open the letter"' : ''}></td>
-                <td>${c._person ? `${esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
+                <td>${c._person ? `${esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : t.companyId ? `<a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}" style="color:var(--text);" title="Open the company summary">${esc(t.companyName || c.name || '')}</a> <a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}" target="_blank" rel="noopener" data-nomodal title="Open the company in a new tab" aria-label="Open the company in a new tab" style="font-size:0.78rem;">↗</a>` : esc(t.companyName || c.name || '')}${t.isTest ? ' <span class="pill pill--test">TEST</span>' : ''}</td>
                 <td class="clip" title="${esc(addr)}">${addr ? esc(addr) : '<span class="pill pill--bad">no address</span>'}</td>
                 ${isOn('outreach.replyContacts') ? `<td data-lchk="${esc(t.id)}" style="white-space:nowrap;">${letterCheckPill(letterChecks.get(t.id))}</td>` : ''}
                 <td style="font-size:0.8rem;">${t.campaignId ? esc(t.campaignName || '') : 'Own task'}</td>${list.some(x => x.pathName) ? `<td style="font-size:0.8rem;">${esc(t.pathName || '—')}</td>` : ''}<td style="font-size:0.8rem;">${t.campaignId ? esc(t.stepName || '') : esc(t.instructions || '')}</td>

@@ -415,6 +415,10 @@ ok('Step editor: a task step of the Other type has its own Results (default Done
 ok('Task card: Postpone… moves the task to a chosen day (the next working day filled in), not for visits (they have Reschedule); nothing else changes', raw0.includes('data-tpostpone') && raw0.includes("t.channel !== 'visit' ? `<button") && raw0.includes("action: 'updateTask', taskId: t.id, dueAt: when.toISOString()") && raw0.includes("Postpone: 'Postponing…'"));
 const hS = raw0.indexOf("el.querySelector('[data-tpause]')?.addEventListener"), hE = raw0.indexOf("el.querySelector('[data-tsave]')?.addEventListener");
 ok('Task card handlers (pause, remove, postpone, follow-up) use only what is in scope there: no card-only variable c', hS > 0 && hE > hS && !raw0.slice(hS, hE).includes('c._person') && !raw0.slice(hS, hE).includes('c?.'));
+const searchSrc = fs.readFileSync(new URL('../../portal/search.html', import.meta.url), 'utf8');
+ok('Letters: the company name opens its summary (and a ↗ a new tab)', raw0.includes('title="Open the company summary"') && raw0.includes('data-nomodal title="Open the company in a new tab"'));
+ok('Saving a received file asks for a note, and the note is shown with the file', raw0.includes('Add a note to say what') && raw0.includes("note: $('attNote' + i).value.trim()") && raw0.includes('${f.note ? `<div class="hint">${esc(f.note)}</div>` : \'\'}'));
+ok('The Search CRM log says to whom an email went (or from whom it came)', searchSrc.includes("a.type === 'email_received' ? 'from' : 'to'") && searchSrc.includes('${badge} ${via} ${resp} ${who} ${rcpt}'));
 ok('Inbox search: finds a conversation by any of its addresses (the one that replied), also in the older ones', raw0.includes('t.contactEmail, ...(t.addresses || []), t.contactName') && raw0.includes("where('addresses', 'array-contains', q.toLowerCase())"));
 console.log(fail ? `\n${fail} FAILED` : '\nAll passed');
 process.exit(fail ? 1 : 0);

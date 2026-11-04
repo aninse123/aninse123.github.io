@@ -68,7 +68,7 @@ function fromReceived(msgs) {
 }
 
 // A received attachment saved to the company's files, on request (server side copy inside Storage).
-async function saveReceived({ messageId, index, companyId }, caller, { bucket = () => getStorage().bucket() } = {}) {
+async function saveReceived({ messageId, index, companyId, note }, caller, { bucket = () => getStorage().bucket() } = {}) {
   const m = await db().doc(`outreachMessages/${messageId}`).get();
   if (!m.exists) fail("not-found", "message_not_found", "Message not found.");
   const a = (m.data().attachments || [])[Number(index)];
@@ -83,6 +83,7 @@ async function saveReceived({ messageId, index, companyId }, caller, { bucket = 
   await ref.set({
     name: a.filename, filename: safe, storagePath: to, contentType: a.contentType || "application/octet-stream", size: a.size || 0,
     library: false, source: "received", companyId: cid, messageId, flagged: !!a.flagged, createdAt: store.FieldValue.serverTimestamp(), createdBy: caller,
+    ...(String(note || "").trim() ? { note: String(note).replace(/\s+/g, " ").trim().slice(0, 300) } : {}),  // 4 Nov: what the file is, written when it is saved
   });
   return { ok: true, fileId: ref.id };
 }

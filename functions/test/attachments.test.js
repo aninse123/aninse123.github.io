@@ -33,6 +33,10 @@ const put = (id, filename, size = 100, extra = {}) => store.set(`outreachFiles/$
   const saved = await Files.saveReceived({ messageId: "m", index: 0 }, "andre@x.pt");
   const doc = store.get(`outreachFiles/${saved.fileId}`);
   ok("saving a received attachment copies it inside Storage and makes a file for the company", saved.ok && doc.companyId === "co1" && doc.source === "received" && doc.library === false && doc.messageId === "m" && storageFiles.has(doc.storagePath) && storageFiles.get(doc.storagePath).buf.toString() === "BAL!");
+  ok("a saved file has no note unless one is given", doc.note === undefined);
+  const savedN = await Files.saveReceived({ messageId: "m", index: 0, note: "  Balanço   assinado    2025 " }, "andre@x.pt");
+  ok("a note given when saving is kept on the file (trimmed, one line)", store.get(`outreachFiles/${savedN.fileId}`).note === "Balanço assinado 2025");
+  ok("…and is cut at 300 characters", store.get(`outreachFiles/${(await Files.saveReceived({ messageId: "m", index: 0, note: "x".repeat(400) }, "a")).fileId}`).note.length === 300);
   ok("an attachment that was not copied cannot be saved; a missing company is said", (await reason(Files.saveReceived({ messageId: "m", index: 1 }, "x"))) === "no_file" && (await reason((store.set("outreachMessages/m2", { attachments: [{ filename: "a.pdf", storagePath: "p" }] }), Files.saveReceived({ messageId: "m2", index: 0 }, "x")))) === "no_company");
 
   ok("a saved attachment is remembered on its message, so the Inbox stops asking", (store.get("outreachMessages/m").savedAttachments || []).join() === "0");
