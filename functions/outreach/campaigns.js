@@ -44,7 +44,7 @@ const Tracks = require("./tracks"); // several recipients per company (30 Oct, s
 const RL = require("./recipient_list"); // recipient list per company (30 Oct, switch contacts.trustLabels)
 const EN = require("./email_name_check"); // email name check (26 Oct, switch search.emailNameCheck)
 const { addWait, sendingDaysOf, skipHolidaysOf, waitOptsOf, FINAL_GRACE } = require("./schedule_util");
-const { findOutcome, CHANNEL_LABEL } = require("./task_util");
+const { findOutcome, stepOutcome, CHANNEL_LABEL } = require("./task_util");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
@@ -1053,7 +1053,9 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   if (!tSnap.exists) fail("not-found", "task_not_found", "Task not found.");
   const t = tSnap.data();
   if (t.status !== "open") fail("failed-precondition", "task_closed", "This task is already closed.");
-  const o = findOutcome(t.channel, outcome);
+  // 4 Nov: a task step of the "other" type has the results defined on the step.
+  const stepDef = t.channel === "other" && t.campaignId ? (((await db().doc(`outreachCampaigns/${t.campaignId}`).get()).data() || {}).steps || []).find((x) => x.id === t.stepId) : null;
+  const o = stepOutcome(t.channel, stepDef, outcome);
   if (!o) fail("invalid-argument", "bad_outcome", `Unknown outcome "${outcome}" for a ${t.channel} task.`);
   const note = String(notes || "").trim().slice(0, 2000);
   const reopen = o.reopen ? parseDate(reopenAt) : null;

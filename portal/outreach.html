@@ -6091,7 +6091,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       other: [['done', 'Done']],
     };
     // Rule conditions per step type: task outcomes, or "clicked a link" on emails (3d).
-    const ruleOutcomes = (ch) => ch === 'email' ? [['clicked', 'clicked a link']] : (TASK_OUTCOMES[ch] || []);
+    // 4 Nov: a task step of the Other type has results of its own (default: Done)
+    const stepOutcomes = (s) => (s && s.outcomes && s.outcomes.length ? s.outcomes : [{ key: 'done', label: 'Done' }]).map(o => [o.key, o.label]);
+    const ruleOutcomes = (ch, s) => ch === 'email' ? [['clicked', 'clicked a link']] : ch === 'other' ? stepOutcomes(s) : (TASK_OUTCOMES[ch] || []);
     const outcomeLabel = (ch, k) => k === 'skipped' ? 'skipped' : k === 'sent' && ch === 'email' ? 'sent' : ((TASK_OUTCOMES[ch] || []).find(o => o[0] === k) || [k, k])[1].toLowerCase();
     const OWNER_FULL = { andre: 'André Rocha', antonio: 'António Carvalho' };
 
@@ -6360,7 +6362,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         const c = taskCo(t);
         const overdue = tsMs(t.dueAt) < new Date().setHours(0, 0, 0, 0);
         const txt = taskTemplateText(t, c);
-        const outs = TASK_OUTCOMES[t.channel] || [];
+        const outs = t.outcomes && t.outcomes.length ? t.outcomes.map(o => [o.key, o.label]) : (TASK_OUTCOMES[t.channel] || []); // 4 Nov: an Other step's own results
         const waPeople = isOn('search.people') ? (peopleCache.get(t.companyId) || []).slice().sort((a, b) => (b.personId === c?.primaryContact?.personId) - (a.personId === c?.primaryContact?.personId)).find(p => p.phone)?.phone : null; // People merge
         const wa = t.channel === 'whatsapp' ? waNumber(c.companyPhone || (c.contacts || []).find(p => p.phone)?.phone || waPeople) : null;
         return `<div class="task${overdue ? ' task--overdue' : ''}" data-tid="${esc(t.id)}">
@@ -6488,7 +6490,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
 
     // Q1: the outcome chosen on each task card, kept until saved (survives re-renders).
     const taskPick = new Map();
-    const pickedLabel = (t, k) => k === 'skipped' ? 'Skip step' : ((TASK_OUTCOMES[t.channel] || []).find(o => o[0] === k)?.[1] || k);
+    const pickedLabel = (t, k) => k === 'skipped' ? 'Skip step' : (((t.outcomes && t.outcomes.length ? t.outcomes.map(o => [o.key, o.label]) : TASK_OUTCOMES[t.channel]) || []).find(o => o[0] === k)?.[1] || k);
 
     // ── Letters to print (C1: plain A4, address block for a left window envelope, typed signature) ──
     let letterSel = new Set();
@@ -6710,10 +6712,13 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
             <div class="wvars">${tplVars.map(k => { const v = (s.variants || []).find(x => x.key === k); return `<label class="wvar"><input type="checkbox" data-vk="${k}" ${all || chosenKeys.has(k) ? 'checked' : ''}${dis}> ${k} <input type="text" inputmode="numeric" data-vw="${k}" value="${esc(v ? v.weight : 1)}" aria-label="Weight ${k}"${dis}></label>`; }).join('')}</div>
             <span class="hint">Each company gets one variant, picked at random by weight. Results per variant appear in the Overview.</span></div>` : ''}
           ${ch === 'email' && pi > 0 ? `<label class="checkline"><input type="checkbox" data-f="newSubject" ${s.newSubject ? 'checked' : ''}${dis}> <span>Start a new conversation with the template's subject (default: reply in the same conversation, "Re: …", quoting the previous email)</span></label>` : ''}
-          ${ch !== 'other' && ruleOutcomes(ch).length ? `<div class="field" style="margin-bottom:6px;"><label>Rules (optional)<span class="info" title="What happens after an outcome, e.g. &quot;No answer → go to step 4&quot; or &quot;Not interested → end&quot;. Replies, bounces and unsubscribes always stop the sequence." aria-label="What happens after an outcome, e.g. &quot;No answer → go to step 4&quot; or &quot;Not interested → end&quot;. Replies, bounces and unsubscribes always stop the sequence.">i</span></label>
+          ${ch === 'other' ? `<div class="field" style="margin-bottom:6px;"><label>Results<span class="info" title="The buttons on the task card. Each result can have a rule below: end the sequence, or go to a later step. The default is one result, Done." aria-label="The buttons on the task card. Each result can have a rule below: end the sequence, or go to a later step. The default is one result, Done.">i</span></label>
+            ${stepOutcomes(s).map(([k, l], oi, all) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;"><input type="text" data-of="${oi}" value="${esc(l)}" maxlength="40" style="max-width:280px;" aria-label="Result ${oi + 1}"${dis}>${all.length > 1 ? `<button type="button" class="btn btn--ghost btn--sm" data-ofdel="${oi}"${dis}>Remove</button>` : ''}</div>`).join('')}
+            ${stepOutcomes(s).length < 6 ? `<button type="button" class="btn btn--ghost btn--sm" data-ofadd${dis}>＋ Add a result</button>` : ''}</div>` : ''}
+          ${ruleOutcomes(ch, s).length ? `<div class="field" style="margin-bottom:6px;"><label>Rules (optional)<span class="info" title="What happens after an outcome, e.g. &quot;No answer → go to step 4&quot; or &quot;Not interested → end&quot;. Replies, bounces and unsubscribes always stop the sequence." aria-label="What happens after an outcome, e.g. &quot;No answer → go to step 4&quot; or &quot;Not interested → end&quot;. Replies, bounces and unsubscribes always stop the sequence.">i</span></label>
             ${(s.branches || []).map((b, bi) => `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px;" data-br="${bi}">
               <span class="hint">${ch === 'email' ? 'If they' : 'If the outcome is'}</span>
-              <select data-bf="outcome" style="width:auto;"${dis}>${ruleOutcomes(ch).map(([k, l]) => `<option value="${k}"${b.outcome === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+              <select data-bf="outcome" style="width:auto;"${dis}>${ruleOutcomes(ch, s).map(([k, l]) => `<option value="${k}"${b.outcome === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
               <select data-bf="target" style="width:auto;"${dis}>
                 <option value="end"${b.action === 'end' ? ' selected' : ''}>end the sequence</option>
                 ${ps.map(([x], k) => k > pi && x.id ? `<option value="goto:${esc(x.id)}"${b.action === 'goto' && b.stepId === x.id ? ' selected' : ''}>go to step ${k + 1} (${esc(x.name || CHANNEL_LABELS[x.channel || 'email'])})</option>` : '').join('')}
@@ -6849,11 +6854,20 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
         el.querySelectorAll('[data-vk]').forEach(x => x.addEventListener('change', readVariants));
         el.querySelectorAll('[data-vw]').forEach(x => x.addEventListener('input', readVariants));
         el.querySelector('[data-bradd]')?.addEventListener('click', () => {
-          const first = ruleOutcomes(s.channel || 'email')[0]?.[0];
+          const first = ruleOutcomes(s.channel || 'email', s)[0]?.[0];
           s.branches = [...(s.branches || []), { outcome: first, action: 'end', stepId: null }];
           mark(); renderSequence();
         });
         el.querySelectorAll('[data-brdel]').forEach(b => b.addEventListener('click', () => { s.branches.splice(Number(b.dataset.brdel), 1); mark(); renderSequence(); }));
+        // 4 Nov: the results of a task step of the Other type (a rule follows its result by key; a new result gets its own key)
+        const ocs = () => (s.outcomes = s.outcomes && s.outcomes.length ? s.outcomes : [{ key: 'done', label: 'Done' }]);
+        el.querySelectorAll('[data-of]').forEach(inp => inp.addEventListener('change', () => { const o = ocs()[Number(inp.dataset.of)]; if (o) { o.label = inp.value.trim() || o.label; mark(); renderSequence(); } }));
+        el.querySelector('[data-ofadd]')?.addEventListener('click', () => { ocs().push({ key: 'r' + Math.random().toString(36).slice(2, 8), label: 'New result' }); mark(); renderSequence(); });
+        el.querySelectorAll('[data-ofdel]').forEach(b => b.addEventListener('click', () => {
+          const gone = ocs().splice(Number(b.dataset.ofdel), 1)[0];
+          if (gone) s.branches = (s.branches || []).filter(x => x.outcome !== gone.key);
+          mark(); renderSequence();
+        }));
         el.querySelectorAll('[data-br]').forEach(row => {
           const b = s.branches[Number(row.dataset.br)];
           row.querySelector('[data-bf="outcome"]').addEventListener('change', (e) => { b.outcome = e.target.value; mark(); });

@@ -95,6 +95,23 @@ function normalizeWindow(w) {
 
 // `reserved` = ids of the stored steps: a new step never takes an old step's
 // id, so a replaced step can't pass for one that has already run.
+// A task step's own results (4 Nov): up to 6, each with a stable key (kept when the label is edited) and a label; the default is "Done".
+function normalizeOutcomes(list) {
+  const out = [], seen = new Set();
+  for (const o of Array.isArray(list) ? list : []) {
+    const label = cleanText(o?.label, 40);
+    if (!label) continue;
+    let key = /^[a-z0-9_]{1,20}$/.test(String(o?.key || "")) ? String(o.key) : label.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 20) || "r";
+    if (key === "skipped") key = "skipped_";
+    let k = key, n = 2;
+    while (seen.has(k)) k = `${key.slice(0, 17)}_${n++}`;
+    seen.add(k);
+    out.push({ key: k, label });
+    if (out.length >= 6) break;
+  }
+  return out.length ? out : [{ key: "done", label: "Done" }];
+}
+
 function normalizeStep(s, i, usedIds, reserved = new Set()) {
   const channel = s.channel || "email";
   if (!CHANNELS.includes(channel)) bad("bad_channel", `Unknown step type "${channel}".`);
@@ -120,6 +137,7 @@ function normalizeStep(s, i, usedIds, reserved = new Set()) {
     newSubject: channel === "email" && !!s.newSubject, // C2: follow-ups reply in the same conversation unless set
     // Manual steps: what the person should do (shown on the task).
     instructions: channel === "email" ? "" : String(s.instructions ?? "").trim().slice(0, 2000),
+    ...(channel === "other" ? { outcomes: normalizeOutcomes(s.outcomes) } : {}),
     // Phase 2c: what a task outcome does to the sequence. Validated against
     // the final step list in normalizeCampaign (goto must point forward).
     // Email steps: only "clicked a link" (Phase 3d; opens are unreliable, D7).
@@ -164,7 +182,7 @@ function normalizeCampaign(input, existing = null) {
   const startOrder = normalizeStartOrder(src.startOrder, paths, steps);
 
   steps.forEach((st, i) => {
-    const valid = new Set(st.channel === "email" ? ["clicked"] : (OUTCOMES[st.channel] || []).map((o) => o.key));
+    const valid = new Set(st.channel === "email" ? ["clicked"] : st.channel === "other" ? (st.outcomes || []).map((o) => o.key) : (OUTCOMES[st.channel] || []).map((o) => o.key));
     const seen = new Set();
     for (const b of st.branches) {
       if (!valid.has(b.outcome)) bad("bad_branch", `${st.name}: "${b.outcome}" isn't an outcome of a ${st.channel} step.`);

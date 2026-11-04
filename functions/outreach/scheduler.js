@@ -324,7 +324,7 @@ async function createTask(ref, e, campaign, step, now, rand) {
         ...(e.personEmail ? { personEmail: e.personEmail, personName: e.personName || "", org: e.org || "", refs: e.refs || [] } : {}),
         stepId: step.id, stepName: step.name, stepIndex: e.currentStep, stepCount: (campaign.steps || []).length,
         ...((campaign.paths || []).length > 1 && e.pathId ? { pathId: e.pathId, pathName: e.pathName || null } : {}), // paths round 2 (R1)
-        channel: step.channel, instructions: step.instructions || "", templateId: step.templateId || null, variantKey,
+        channel: step.channel, ...(step.channel === "other" && step.outcomes?.length ? { outcomes: step.outcomes } : {}), instructions: step.instructions || "", templateId: step.templateId || null, variantKey,
         assignee: campaign.assignee && campaign.assignee !== "owner" ? campaign.assignee : (e.owner || null),
         dueAt: ts(now), status: "open", outcome: null, notes: "", activityId: null,
         isTest: !!e.isTest, createdAt: FieldValue.serverTimestamp(), completedAt: null, completedBy: null,

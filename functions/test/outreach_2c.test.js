@@ -109,4 +109,23 @@ async function makeCampaign(campaign, ids, source) {
 
   console.log(fail ? `\n${fail} FAILED` : "\nall 2c tests passed");
   process.exit(fail ? 1 : 0);
+  // ── Results of a task step of the Other type (4 Nov) ──
+  ok("an Other step defaults to one result, Done", JSON.stringify(U.normalizeCampaign({ name: "x", steps: [{ channel: "other" }] }).steps[0].outcomes) === JSON.stringify([{ key: "done", label: "Done" }]));
+  const nOut = U.normalizeCampaign({ name: "x", steps: [{ channel: "other", outcomes: [{ key: "arrived", label: "Funds arrived" }, { label: "Not yet" }, { label: "Not yet" }, { label: "" }], branches: [{ outcome: "arrived", action: "end" }] }, { channel: "call" }] });
+  ok("results: kept, a key made from the label, duplicates made unique, empty ones dropped; other steps have none", nOut.steps[0].outcomes.map((o) => o.key).join() === "arrived,not_yet,not_yet_2" && nOut.steps[1].outcomes === undefined && nOut.steps[0].branches.length === 1);
+  ok("a rule on a result that is not on the step is refused", throwsReason(() => U.normalizeCampaign({ name: "x", steps: [{ channel: "other", outcomes: [{ key: "a", label: "A" }], branches: [{ outcome: "done", action: "end" }] }] }), "bad_branch"));
+  seed();
+  const cO = await makeCampaign({ name: "Notice", steps: [
+    { channel: "other", instructions: "Check funds", wait: { days: 0 }, outcomes: [{ key: "arrived", label: "Funds arrived" }, { key: "not_yet", label: "Not yet" }], branches: [{ outcome: "arrived", action: "end" }] },
+    { channel: "other", instructions: "Reminder", wait: { days: 1 } },
+  ] }, ["c1", "c2", "c3"], { type: "manual" });
+  await run("2026-09-29T10:30:00+01:00");
+  const tk = get(`outreachTasks/${stepTaskId(`${cO}_c1`, "s1")}`);
+  ok("the task carries the step's results", tk && tk.outcomes && tk.outcomes.map((o) => o.key).join() === "arrived,not_yet");
+  const badO = await camp({ action: "completeTask", taskId: stepTaskId(`${cO}_c1`, "s1"), outcome: "done" });
+  ok("a result that is not on the step is refused", badO.err?.details?.reason === "bad_outcome");
+  const arr = await camp({ action: "completeTask", taskId: stepTaskId(`${cO}_c1`, "s1"), outcome: "arrived" });
+  ok("'Funds arrived' (rule: end) ends the sequence", arr.sequence === "ended" && get(`outreachEnrolments/${cO}_c1`).status === "completed" && get(`outreachEnrolments/${cO}_c1`).history.slice(-1)[0].result === "arrived");
+  const ny = await camp({ action: "completeTask", taskId: stepTaskId(`${cO}_c2`, "s1"), outcome: "not_yet", notes: "Writes next week" });
+  ok("'Not yet' (no rule) goes to the next step", ny.sequence === "next" && get(`outreachEnrolments/${cO}_c2`).currentStep === 1 && get(`outreachEnrolments/${cO}_c2`).history.slice(-1)[0].result === "not_yet");
 })();

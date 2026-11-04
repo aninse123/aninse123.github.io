@@ -47,8 +47,18 @@ function findOutcome(channel, key) {
   return (OUTCOMES[channel] || []).find((o) => o.key === key) || null;
 }
 
+// 4 Nov: a task step of the "other" type can define its own results (e.g. "Funds arrived" / "Not yet"); the default is the single "Done".
+function stepOutcome(channel, step, key) {
+  if (key === "skipped") return SKIP;
+  if (channel === "other" && Array.isArray(step?.outcomes) && step.outcomes.length) {
+    const o = step.outcomes.find((x) => x.key === key);
+    return o ? { key: o.key, label: o.label, activity: "other" } : null;
+  }
+  return findOutcome(channel, key);
+}
+
 // Task id per enrolment and step (like the step's message id): re-running a
 // due step finds the same task instead of creating a second one.
 const stepTaskId = (enrolmentId, stepId) => `${enrolmentId}_${stepId}`.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120);
 
-module.exports = { OUTCOMES, SKIP, CHANNEL_LABEL, findOutcome, stepTaskId };
+module.exports = { OUTCOMES, SKIP, CHANNEL_LABEL, findOutcome, stepOutcome, stepTaskId };
