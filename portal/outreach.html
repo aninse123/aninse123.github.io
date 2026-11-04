@@ -1905,11 +1905,12 @@
       return `<span>${all.map(a => { const w = ready ? whoIsAddress(a, t) : ''; return `${esc(a)} <span class="hint">· ${ready ? esc(w || 'not in the CRM') : '…'}</span>${ready && !w && canAdd && !t.isTest && a !== coveredByCard ? ` <button type="button" class="camp-link" data-addaddr="${esc(a)}" style="font-size:0.76rem;">Add to company</button>` : ''}`; }).join(' → ')}</span>`;
     }
     // detail (from the Inbox contact card): a phone to add to the person instead of the address; the address that wrote can go along
-    async function openAddToCompany(t, addr, detail = null, onDone = null) {
+    async function openAddToCompany(t, addr, detail = null, onDone = null, prefillName = '') {
       const people = peopleCache.get(t.companyId) || [];
+      const dWord = detail ? (detail.type === 'linkedin' ? 'LinkedIn pages' : 'phones') : 'emails';
       const mailNew = !!detail && !!addr && !people.some(p => (p.emails || []).includes(addr));
       const last = [...threadMessages].reverse().find(m => m.direction === 'in' && addrList(m.from).some(x => x.email === addr));
-      const fromName = last ? (addrList(last.from).find(x => x.email === addr)?.name || '') : '';
+      const fromName = prefillName || (last ? (addrList(last.from).find(x => x.email === addr)?.name || '') : '');
       const key = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/^(mr|mrs|ms|dr|dra|eng|sr|sra)\.?\s+/, '').replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
       const guess = guessPerson(people, fromName, addr)?.personId || ''; // 3 Nov: also "Raul Abraão" = "Raul Jorge Marques Abraao", or rabraao@…
       // 21 Oct (people merge follow-ups): someone new is a contact by default; an
@@ -1917,7 +1918,7 @@
       const co = coCache.get(t.companyId), a = window.pageAccess;
       const canOwners = !a || a.can('search.editall') || (a.can('search.edit') && !!co?.owner && co.owner === a.key);
       openModal('Add to company', `
-        <p class="hint" style="margin-bottom:10px;"><b>${esc(detail ? detail.display : addr)}</b> · ${esc(t.companyName || 'this company')}. It becomes one of the person's ${detail ? 'phones' : 'emails'}; nothing is merged without your choice.</p>
+        <p class="hint" style="margin-bottom:10px;"><b>${esc(detail ? detail.display : addr)}</b> · ${esc(t.companyName || 'this company')}. It becomes one of the person's ${dWord}; nothing is merged without your choice.</p>
         <div class="field"><label for="aacWho">Whose address is it?</label><select id="aacWho">
           ${people.map(p => `<option value="${esc(p.personId)}"${p.personId === guess ? ' selected' : ''}>${esc(p.name)}${p.role ? ' (' + esc(p.role) + ')' : ''}</option>`).join('')}
           <option value=""${guess ? '' : ' selected'}>Someone new</option>
@@ -1971,7 +1972,7 @@
         const snap = await getDoc(doc(db, 'searchPeople', pid)); addReads(1);
         if (!snap.exists()) throw new Error('That person is no longer in the CRM.');
         const reach = snap.data().reach || [];
-        if (reach.some(e => e.type === dType && sameV(e.value) === sameV(dValue))) throw new Error(`It is already one of their ${detail ? 'phones' : 'emails'}.`);
+        if (reach.some(e => e.type === dType && sameV(e.value) === sameV(dValue))) throw new Error(`It is already one of their ${detail ? (detail.type === 'linkedin' ? 'LinkedIn pages' : 'phones') : 'emails'}.`);
         const next = plus(reach);
         await updateDoc(doc(db, 'searchPeople', pid), { reach: next, reachEmails: emailsOf(next), updatedAt: serverTimestamp(), updatedBy: me });
         who = snap.data().name || '';
@@ -2007,7 +2008,7 @@
       await addDoc(collection(db, 'searchActivities'), { companyId: t.companyId, type: pid ? 'person_contact_edited' : 'person_linked', date: serverTimestamp(), title: null, content: pid ? `Contact details — ${who}: added ${dValue} (from the ${detail ? 'reply' : 'inbox'})` : newKind ? `Linked person: ${who} (${newKind}) — ${dValue} (from the ${detail ? 'reply' : 'inbox'})` : `Added contact: ${who} — ${dValue} (from the ${detail ? 'reply' : 'inbox'})`, status: null, createdAt: serverTimestamp(), createdBy: me });
       peopleCache.delete(t.companyId); threadPeopleLoaded.delete(t.companyId);
       if (selectedId === t.id) renderThreadHead();
-      toast(pid ? `Added to ${who}'s ${detail ? 'phones' : 'emails'}.` : `${who} added as ${newKind ? 'an ' + newKind : 'a contact'} of ${t.companyName || 'the company'}.`);
+      toast(pid ? `Added to ${who}'s ${detail ? (detail.type === 'linkedin' ? 'LinkedIn pages' : 'phones') : 'emails'}.` : `${who} added as ${newKind ? 'an ' + newKind : 'a contact'} of ${t.companyName || 'the company'}.`);
       return true;
     }
     function addrTrail(t) {
@@ -6315,6 +6316,18 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       if (p.link) lines.push(`<a href="${esc(p.link)}">Open their record</a>`);
       return lines.map(l => `<div>${l}</div>`).join('');
     }
+    // 4 Nov: who a call / WhatsApp / LinkedIn / visit was to: the contacts the card lists (a company line, its people, its contacts)
+    const WHO_CHANNELS = ['call', 'whatsapp', 'linkedin', 'visit'];
+    function taskContacts(t, c) {
+      if (!WHO_CHANNELS.includes(t.channel) || c?._person) return [];
+      const out = [], seen = new Set(), isLi = t.channel === 'linkedin';
+      const add = (name, detail) => { const d = String(detail || '').trim(), k = (name || '') + '|' + d; if ((!name && !d) || seen.has(k)) return; seen.add(k); out.push({ name: name || '', detail: d, label: [name, d].filter(Boolean).join(' · ') }); };
+      if (!isLi && t.channel !== 'visit' && c?.companyPhone) add('Company line', c.companyPhone);
+      if (isLi && c?.linkedinUrl) add('Company page', c.linkedinUrl);
+      (peopleCache.get(t.companyId) || []).forEach(p => { const d = isLi ? p.linkedin : t.channel === 'visit' ? '' : p.phone; if (d || t.channel === 'visit') add(p.name, d); });
+      (c?.contacts || []).forEach(p => { const d = isLi ? p.linkedin : t.channel === 'visit' ? '' : p.phone; if (d || t.channel === 'visit') add(p.name || 'Contact', d); });
+      return out;
+    }
     function contactBox(t, c) {
       if (c?._person) return personContactBox(t, c._person);
       const lines = [];
@@ -6394,7 +6407,12 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             </div>
           </div>
           <div class="field" style="margin-bottom:8px;"><label>Notes</label><textarea data-tnotes rows="2" placeholder="What happened (saved on the ${c._person ? 'person\'s record' : 'company\'s activity'})">${esc(t.notes || '')}</textarea></div>
-          ${t.channel === 'linkedin' ? '<div class="field" style="margin-bottom:8px;"><label>Profile URL (optional)</label><input type="text" data-tprofile placeholder="https://www.linkedin.com/in/…"></div>' : ''}
+          ${WHO_CHANNELS.includes(t.channel) && !c._person ? (() => { const wl = taskContacts(t, c), li = t.channel === 'linkedin', vis = t.channel === 'visit'; return `<div class="field" style="margin-bottom:8px;"><label>Who${vis ? '' : li ? ' / which profile' : ' / which number'} (optional)</label>
+            <select data-twho style="max-width:440px;"><option value="">—</option>${wl.map((x, i) => `<option value="${i}"${wl.length === 1 ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}<option value="new">A new contact…</option></select>
+            <div data-twhonew hidden style="margin-top:6px;"><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+              <input type="text" data-tnname placeholder="Name (optional)" style="max-width:210px;" aria-label="Name">
+              <input type="text" data-tndetail placeholder="${li ? 'https://www.linkedin.com/in/…' : vis ? 'Role (optional)' : '+351 912 345 678'}" style="max-width:250px;" aria-label="${li ? 'Profile' : vis ? 'Role' : 'Number'}">
+              ${vis || !t.companyId ? '' : '<label class="checkline"><input type="checkbox" data-tncrm checked> <span>Also add to the CRM</span></label>'}</div></div></div>`; })() : ''}
           ${outs.some(o => o[2] === 'reopen') ? '<div class="field" style="margin-bottom:8px;max-width:260px;"><label>Next attempt (for call back / reschedule)</label><input type="date" data-treopen></div>' : ''}
           ${t.campaignId && outs.some(o => o[2] === 'reply') ? `<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this ${c._person ? 'person' : 'company'}</span></label>` : ''}
           <div class="outcomes">${outs.map(([k, l]) => `<button class="btn btn--ghost btn--sm" data-tout="${k}" data-perm="out.tasks" aria-pressed="${taskPick.get(t.id) === k}">${esc(l)}</button>`).join('')}
@@ -6447,6 +6465,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           el.querySelector('[data-tpicked]').innerHTML = taskPick.has(t.id) ? `Selected: <b>${esc(pickedLabel(t, taskPick.get(t.id)))}</b> — nothing is saved until you press Save.` : 'Choose what happened, then Save.';
           el.querySelector('[data-tsave]').disabled = !taskPick.has(t.id);
         }));
+        el.querySelector('[data-twho]')?.addEventListener('change', (e) => { el.querySelector('[data-twhonew]').hidden = e.target.value !== 'new'; });
         el.querySelector('[data-tpause]')?.addEventListener('click', async (ev) => {
           const unbusy = busyBtn(ev.currentTarget, 'Pausing…');
           const r = await campCall({ action: 'enrolment', enrolmentId: t.enrolmentId, op: 'pause' }, 'Paused — resume it in the Companies tab of the campaign. The task is created again after that.');
@@ -6498,13 +6517,24 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             payload.reopenAt = new Date(d + 'T09:00:00').toISOString();
           }
           if (def?.[2] === 'reply') payload.stopSequence = el.querySelector('[data-tstop]')?.checked !== false;
-          if (t.channel === 'linkedin') payload.profileUrl = el.querySelector('[data-tprofile]')?.value || null;
+          // 4 Nov: who / which number it was to (and, for a new contact, adding it to the CRM afterwards)
+          let addCrm = null;
+          const whoSel = el.querySelector('[data-twho]');
+          if (whoSel && whoSel.value === 'new') {
+            const nm = el.querySelector('[data-tnname]').value.trim(), dt = el.querySelector('[data-tndetail]').value.trim();
+            if (nm || dt) payload.contact = { name: nm, detail: dt };
+            if (el.querySelector('[data-tncrm]')?.checked && dt && t.channel !== 'visit') addCrm = { name: nm, type: t.channel === 'linkedin' ? 'linkedin' : 'phone', value: t.channel === 'linkedin' && !/^https?:/i.test(dt) ? 'https://' + dt : dt, display: dt };
+          } else if (whoSel && whoSel.value !== '') {
+            const x = taskContacts(t, taskCo(t))[Number(whoSel.value)];
+            if (x) payload.contact = { name: x.name, detail: x.detail };
+          }
+          payload.profileUrl = t.channel === 'linkedin' && payload.contact?.detail && /linkedin\.|^https?:/i.test(payload.contact.detail) ? payload.contact.detail : null;
           if (outcome === 'skipped' && !confirm(t.campaignId ? 'Skip this step? The sequence moves on without it.' : 'Cancel this task? It closes without an activity.')) return;
           el.querySelectorAll('button').forEach(x => { x.disabled = true; });
           const unbusySave = busyBtn(el.querySelector('[data-tsave]'), 'Saving…');
           document.activeElement?.blur();
           const r = await campCall(payload, (x) => x.status === 'open' ? `Saved — next attempt on ${dayFmt.format(new Date(x.dueAt))}.` : x.sequence === 'stopped' ? `Saved — the sequence stopped for this ${t.companyId ? 'company' : 'person'}.` : outcome === 'skipped' ? 'Step skipped.' : 'Saved.');
-          if (r) taskPick.delete(t.id);
+          if (r) { taskPick.delete(t.id); if (addCrm) openAddToCompany(t, '', { type: addCrm.type, value: addCrm.value, display: addCrm.display }, null, addCrm.name); }
           else { unbusySave(); el.querySelectorAll('button').forEach(x => { x.disabled = false; }); }
         });
       });

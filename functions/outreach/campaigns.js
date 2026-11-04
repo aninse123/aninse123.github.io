@@ -1046,7 +1046,7 @@ const parseDate = (v) => { const d = v ? new Date(v) : null; return d && !isNaN(
 // Records the outcome on the company (a searchActivities touch, like the
 // Search CRM's own "+ Activity"), then moves the sequence on — or stops it
 // when the company answered and "stop the sequence" is ticked.
-async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, reopenAt }, caller) {
+async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, reopenAt, contact }, caller) {
   if (!taskId) fail("invalid-argument", "task_required", "Choose a task.");
   const taskRef = db().doc(`outreachTasks/${taskId}`);
   const tSnap = await taskRef.get();
@@ -1058,6 +1058,9 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   const o = stepOutcome(t.channel, stepDef, outcome);
   if (!o) fail("invalid-argument", "bad_outcome", `Unknown outcome "${outcome}" for a ${t.channel} task.`);
   const note = String(notes || "").trim().slice(0, 2000);
+  // 4 Nov: who / which number it was to (chosen on the card), written on the company's activity
+  const who = contact && typeof contact === "object" ? { name: String(contact.name || "").replace(/\s+/g, " ").trim().slice(0, 80), detail: String(contact.detail || "").replace(/\s+/g, " ").trim().slice(0, 160) } : null;
+  const whoText = who ? [who.name, who.detail].filter(Boolean).join(", ") : "";
   const reopen = o.reopen ? parseDate(reopenAt) : null;
   if (o.reopen && (!reopen || reopen.getTime() < Date.now() - 86400000)) fail("invalid-argument", "date_required", "Pick the date for the next attempt.");
   // Own tasks (12 Oct) have no campaign: no sequence to move, only the touch and the task.
@@ -1083,9 +1086,9 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     activityId = await store.logPersonTask({ refs: t.refs, channel: t.channel, type, title, content: [note, linkedinUrl].filter(Boolean).join("\n") || null, taskId, campaignId: t.campaignId, createdBy: caller, isTest: t.isTest });
   } else if (o.activity) {
     const visitMeet = !t.isTest && t.channel === "visit" && o.key === "met" && await visitMeetingsOn(); // 3 Nov: a visit that happened is a meeting done
-    const title = `${t.isTest ? "[TEST] " : ""}${CHANNEL_LABEL[t.channel]} — ${o.label}${campaign.name ? ` (${campaign.name} · ${t.stepName})` : ""}`;
+    const title = `${t.isTest ? "[TEST] " : ""}${CHANNEL_LABEL[t.channel]} — ${o.label}${whoText ? ` · ${whoText}` : ""}${campaign.name ? ` (${campaign.name} · ${t.stepName})` : ""}`;
     const ref = await db().collection("searchActivities").add({
-      companyId: t.companyId,
+      companyId: t.companyId, ...(whoText ? { contactName: who.name || null, contactDetail: who.detail || null } : {}),
       // Test-mode rehearsals never count as a touch on a real company.
       type: t.isTest ? "task_test" : visitMeet ? "meeting_done" : o.activity,
       date: Timestamp.now(), title, content: note || null, via: t.channel, direction: "out",

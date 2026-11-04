@@ -107,8 +107,6 @@ async function makeCampaign(campaign, ids, source) {
   ok("once per day: a second run the same day adds nothing", !(await run("2026-10-01T07:15:00+01:00")).dynamicAdded);
   ok("campaign counts the dynamic additions", get(`outreachCampaigns/${cD}`).stats.dynamicAdded === 1);
 
-  console.log(fail ? `\n${fail} FAILED` : "\nall 2c tests passed");
-  process.exit(fail ? 1 : 0);
   // ── Results of a task step of the Other type (4 Nov) ──
   ok("an Other step defaults to one result, Done", JSON.stringify(U.normalizeCampaign({ name: "x", steps: [{ channel: "other" }] }).steps[0].outcomes) === JSON.stringify([{ key: "done", label: "Done" }]));
   const nOut = U.normalizeCampaign({ name: "x", steps: [{ channel: "other", outcomes: [{ key: "arrived", label: "Funds arrived" }, { label: "Not yet" }, { label: "Not yet" }, { label: "" }], branches: [{ outcome: "arrived", action: "end" }] }, { channel: "call" }] });
@@ -128,4 +126,16 @@ async function makeCampaign(campaign, ids, source) {
   ok("'Funds arrived' (rule: end) ends the sequence", arr.sequence === "ended" && get(`outreachEnrolments/${cO}_c1`).status === "completed" && get(`outreachEnrolments/${cO}_c1`).history.slice(-1)[0].result === "arrived");
   const ny = await camp({ action: "completeTask", taskId: stepTaskId(`${cO}_c2`, "s1"), outcome: "not_yet", notes: "Writes next week" });
   ok("'Not yet' (no rule) goes to the next step", ny.sequence === "next" && get(`outreachEnrolments/${cO}_c2`).currentStep === 1 && get(`outreachEnrolments/${cO}_c2`).history.slice(-1)[0].result === "not_yet");
+  // ── Who / which number a call was to (4 Nov) ──
+  seed();
+  const cW = await makeCampaign({ name: "Chamadas", steps: [{ channel: "call", templateId: "S", wait: { days: 0 } }] }, ["c1", "c2"], { type: "manual" });
+  await run("2026-09-29T10:30:00+01:00");
+  const w1 = await camp({ action: "completeTask", taskId: stepTaskId(`${cW}_c1`, "s1"), outcome: "no_answer", contact: { name: "  Rui   Costa ", detail: "+351 912 345 678" } });
+  const act1 = [...store.entries()].filter(([k, v]) => k.startsWith("searchActivities/") && v.companyId === "c1" && /Call/.test(v.title || "")).map(([, v]) => v)[0];
+  ok("a call's activity says who / which number it was to (title and fields)", w1.ok && act1 && /Call — No answer · Rui Costa, \+351 912 345 678/.test(act1.title) && act1.contactName === "Rui Costa" && act1.contactDetail === "+351 912 345 678");
+  const w2 = await camp({ action: "completeTask", taskId: stepTaskId(`${cW}_c2`, "s1"), outcome: "no_answer" });
+  const act2 = [...store.entries()].filter(([k, v]) => k.startsWith("searchActivities/") && v.companyId === "c2" && /Call/.test(v.title || "")).map(([, v]) => v)[0];
+  ok("without a contact the activity is as before", w2.ok && act2 && !/·/.test(act2.title.split("(")[0]) && act2.contactName === undefined);
+  console.log(fail ? `\n${fail} FAILED` : "\nall 2c tests passed");
+  process.exit(fail ? 1 : 0);
 })();

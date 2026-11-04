@@ -4764,7 +4764,7 @@ function renderActivityLog(){
     else if (a.status==='cancelled') badge = '<span class="badge badge-grey">Cancelled</span>';
     const via = a.via ? `<span class="badge badge-grey">${esc(String(a.via).replace(/_/g,' '))}</span>` : '';
     const resp = a.responseCategory ? `<span class="badge badge-blue">${esc(RESPONSE_CATS[a.responseCategory]||a.responseCategory)}</span>` : '';
-    const who = a.contactName ? `<span class="badge badge-grey">${esc(a.contactName)}${a.contactRole?' · '+esc(a.contactRole):''}</span>` : '';
+    const who = a.contactName || a.contactDetail ? `<span class="badge badge-grey">${esc(a.contactName || '')}${a.contactRole?' · '+esc(a.contactRole):''}${a.contactDetail?(a.contactName?' · ':'')+esc(a.contactDetail):''}</span>` : '';
     // 4 Nov: an email says to whom it was sent (or from whom it came)
     const rcpt = /^email/.test(a.type || '') && (a.recipientEmails || []).length ? `<span class="badge badge-grey" title="${a.type === 'email_received' ? 'From' : 'To'}: ${esc(a.recipientEmails.join(', '))}">${a.type === 'email_received' ? 'from' : 'to'} ${esc(a.recipientEmails.slice(0, 2).join(', '))}${a.recipientEmails.length > 2 ? ' +' + (a.recipientEmails.length - 2) : ''}</span>` : '';
     const mtg = a.time ? `<span style="font-size:0.78rem;color:var(--text-light);">🕐 ${esc(a.time)}${a.timezone?' '+esc(a.timezone):''}${a.duration?' · '+a.duration+'min':''}${a.guests?' · 👥 '+esc(a.guests):''}</span>` : '';
