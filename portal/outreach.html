@@ -6454,7 +6454,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         el.querySelector('[data-tpostpone]')?.addEventListener('click', () => {
           const d = new Date(); do { d.setDate(d.getDate() + 1); } while ([0, 6].includes(d.getDay())); // the next working day
           openModal('Postpone task', `
-            <p class="hint" style="margin-bottom:10px;">Move this task for <b>${esc(t.companyName || t.personName || t.personEmail || '')}</b> to another day. The sequence stays as it is; nothing is recorded on the ${c._person ? 'person' : 'company'}.</p>
+            <p class="hint" style="margin-bottom:10px;">Move this task for <b>${esc(t.companyName || t.personName || t.personEmail || '')}</b> to another day. The sequence stays as it is; nothing is recorded on the ${t.companyId ? 'company' : 'person'}.</p>
             <div class="field"><label for="ppDue">New day</label><input type="date" id="ppDue" value="${d.toISOString().slice(0, 10)}"></div>`,
             async () => {
               const due = $('ppDue').value; if (!due) throw new Error('Pick the new day.');
