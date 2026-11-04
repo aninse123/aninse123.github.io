@@ -3656,7 +3656,7 @@
       $('modalSave').onclick = async () => {
         $('modalErr').hidden = true;
         // Spinner + "Saving…" while it works (V7); the label follows the button.
-        const BUSY_LABEL = { Save: 'Saving…', Create: 'Creating…', Forward: 'Forwarding…', Send: 'Sending…', Add: 'Adding…', Delete: 'Deleting…', Archive: 'Archiving…', 'Go live': 'Going live…' };
+        const BUSY_LABEL = { Postpone: 'Postponing…', Save: 'Saving…', Create: 'Creating…', Forward: 'Forwarding…', Send: 'Sending…', Add: 'Adding…', Delete: 'Deleting…', Archive: 'Archiving…', 'Go live': 'Going live…' };
         const unbusy = busyBtn($('modalSave'), BUSY_LABEL[saveLabel] || 'Working…');
         try { if (await onSave()) closeModal(); }
         catch (e) { modalError(e.message || String(e)); }
@@ -6395,6 +6395,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <button class="btn btn--primary btn--sm" data-tsave data-perm="out.tasks" style="margin-left:auto;"${taskPick.has(t.id) ? '' : ' disabled'}>Save</button></div>
           <div class="actions" style="margin-top:8px;align-items:center;border-top:1px solid var(--border);padding-top:8px;">
             <button class="btn btn--ghost btn--sm" data-tfollow data-perm="out.tasks" title="Create a new task on the same ${c._person ? 'person' : 'company'} (for example something this one turned up). This task stays as it is until you save it.">＋ Follow-up task</button>
+            ${t.channel !== 'visit' ? `<button class="btn btn--ghost btn--sm" data-tpostpone data-perm="out.tasks" title="Not today: keep the task and the sequence as they are and move the task to another day. Nothing is recorded on the ${c._person ? 'person' : 'company'}.">Postpone…</button>` : ''}
             ${t.campaignId && t.enrolmentId ? `<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
               <button class="btn btn--ghost btn--sm" data-tpause data-perm="out.campaigns" title="Keep the ${c._person ? 'person' : 'company'} in the campaign but stop it until you resume it (campaign → Companies → Resume). This task is closed and created again after the resume.">Pause ${c._person ? 'person' : 'company'}</button>
               <button class="btn btn--danger btn--sm" data-tremove data-perm="out.campaigns" title="Take the ${c._person ? 'person' : 'company'} out of the campaign for good. This task is closed; they are free for other campaigns.">Remove from the campaign</button></span>` : ''}
@@ -6449,6 +6450,19 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           const unbusy = busyBtn(ev.currentTarget, 'Removing…');
           const r = await campCall({ action: 'enrolment', enrolmentId: t.enrolmentId, op: 'remove', reason: reason || 'Removed from the task card' }, 'Removed from the campaign.');
           if (!r) unbusy();
+        });
+        el.querySelector('[data-tpostpone]')?.addEventListener('click', () => {
+          const d = new Date(); do { d.setDate(d.getDate() + 1); } while ([0, 6].includes(d.getDay())); // the next working day
+          openModal('Postpone task', `
+            <p class="hint" style="margin-bottom:10px;">Move this task for <b>${esc(t.companyName || t.personName || t.personEmail || '')}</b> to another day. The sequence stays as it is; nothing is recorded on the ${c._person ? 'person' : 'company'}.</p>
+            <div class="field"><label for="ppDue">New day</label><input type="date" id="ppDue" value="${d.toISOString().slice(0, 10)}"></div>`,
+            async () => {
+              const due = $('ppDue').value; if (!due) throw new Error('Pick the new day.');
+              const when = new Date(due + 'T09:00:00');
+              if (when.getTime() < new Date().setHours(0, 0, 0, 0)) throw new Error('Pick today or a later day.');
+              const r = await campCall({ action: 'updateTask', taskId: t.id, dueAt: when.toISOString() }, `Postponed to ${dayFmt.format(when)}.`);
+              return !!r;
+            }, 'Postpone');
         });
         el.querySelector('[data-tfollow]')?.addEventListener('click', () => {
           const d = new Date(); do { d.setDate(d.getDate() + 1); } while ([0, 6].includes(d.getDay())); // the next working day
