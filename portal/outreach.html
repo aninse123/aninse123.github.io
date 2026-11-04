@@ -6391,6 +6391,12 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <button class="btn btn--ghost btn--sm" data-tout="skipped" data-perm="out.tasks" aria-pressed="${taskPick.get(t.id) === 'skipped'}" style="margin-left:auto;" title="${t.campaignId ? 'Move on without doing this step' : 'Close this task without doing it'}">${t.campaignId ? 'Skip step' : 'Cancel task'}</button></div>
           <div class="actions" style="margin-top:8px;align-items:center;"><span class="hint" data-tpicked>${taskPick.has(t.id) ? `Selected: <b>${esc(pickedLabel(t, taskPick.get(t.id)))}</b> — nothing is saved until you press Save.` : 'Choose what happened, then Save.'}</span>
             <button class="btn btn--primary btn--sm" data-tsave data-perm="out.tasks" style="margin-left:auto;"${taskPick.has(t.id) ? '' : ' disabled'}>Save</button></div>
+          <div class="actions" style="margin-top:8px;align-items:center;border-top:1px solid var(--border);padding-top:8px;">
+            <button class="btn btn--ghost btn--sm" data-tfollow data-perm="out.tasks" title="Create a new task on the same ${c._person ? 'person' : 'company'} (for example something this one turned up). This task stays as it is until you save it.">＋ Follow-up task</button>
+            ${t.campaignId && t.enrolmentId ? `<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn btn--ghost btn--sm" data-tpause data-perm="out.campaigns" title="Keep the ${c._person ? 'person' : 'company'} in the campaign but stop it until you resume it (campaign → Companies → Resume). This task is closed and created again after the resume.">Pause ${c._person ? 'person' : 'company'}</button>
+              <button class="btn btn--danger btn--sm" data-tremove data-perm="out.campaigns" title="Take the ${c._person ? 'person' : 'company'} out of the campaign for good. This task is closed; they are free for other campaigns.">Remove from the campaign</button></span>` : ''}
+          </div>
         </div>`;
       };
       $('todoView').innerHTML = `
@@ -6430,6 +6436,34 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           el.querySelector('[data-tpicked]').innerHTML = taskPick.has(t.id) ? `Selected: <b>${esc(pickedLabel(t, taskPick.get(t.id)))}</b> — nothing is saved until you press Save.` : 'Choose what happened, then Save.';
           el.querySelector('[data-tsave]').disabled = !taskPick.has(t.id);
         }));
+        el.querySelector('[data-tpause]')?.addEventListener('click', async (ev) => {
+          const unbusy = busyBtn(ev.currentTarget, 'Pausing…');
+          const r = await campCall({ action: 'enrolment', enrolmentId: t.enrolmentId, op: 'pause' }, 'Paused — resume it in the Companies tab of the campaign. The task is created again after that.');
+          if (!r) unbusy();
+        });
+        el.querySelector('[data-tremove]')?.addEventListener('click', async (ev) => {
+          const reason = prompt(`Remove ${t.companyName || t.personName || t.personEmail || 'this one'} from "${t.campaignName || 'the campaign'}"? The task is closed. Optional reason:`, '');
+          if (reason === null) return;
+          const unbusy = busyBtn(ev.currentTarget, 'Removing…');
+          const r = await campCall({ action: 'enrolment', enrolmentId: t.enrolmentId, op: 'remove', reason: reason || 'Removed from the task card' }, 'Removed from the campaign.');
+          if (!r) unbusy();
+        });
+        el.querySelector('[data-tfollow]')?.addEventListener('click', () => {
+          const d = new Date(); do { d.setDate(d.getDate() + 1); } while ([0, 6].includes(d.getDay())); // the next working day
+          const day = d.toISOString().slice(0, 10), notes = el.querySelector('[data-tnotes]').value.trim();
+          openModal('Follow-up task', `
+            <p class="hint" style="margin-bottom:10px;">A new task for <b>${esc(t.companyName || t.personName || t.personEmail || '')}</b>. This task stays as it is.</p>
+            <div class="field"><label for="fuWhat">What to do</label><textarea id="fuWhat" rows="3" placeholder="What has to happen next">${esc(notes)}</textarea></div>
+            <div class="field"><label for="fuCh">Type</label><select id="fuCh">${['other', 'call', 'linkedin', 'whatsapp', 'visit'].map(k => `<option value="${k}">${esc(CHANNEL_LABELS[k])}</option>`).join('')}</select></div>
+            <div class="field"><label for="fuDue">Due</label><input type="date" id="fuDue" value="${day}"></div>
+            <div class="field"><label for="fuWho">For</label><select id="fuWho"><option value="">nobody</option>${ownerOpts(myOwner)}</select></div>`,
+            async () => {
+              const what = $('fuWhat').value.trim(); if (!what) throw new Error('Write what has to be done.');
+              const due = $('fuDue').value; if (!due) throw new Error('Pick the due date.');
+              const r = await campCall({ action: 'createTask', fromTaskId: t.id, channel: $('fuCh').value, dueAt: new Date(due + 'T09:00:00').toISOString(), assignee: $('fuWho').value || null, instructions: what }, 'Follow-up task created.');
+              return !!r;
+            }, 'Create');
+        });
         el.querySelector('[data-tsave]')?.addEventListener('click', async () => {
           const outcome = taskPick.get(t.id); if (!outcome) return;
           const def = (TASK_OUTCOMES[t.channel] || []).find(o => o[0] === outcome);

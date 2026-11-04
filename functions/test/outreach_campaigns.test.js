@@ -156,6 +156,22 @@ const DAY = 86400000;
   ok("resume restores the previous state", (await call({ action: "enrolment", enrolmentId: `${c1}_b`, op: "resume" })).res.status === "pending");
   ok("resume when not paused refused", (await call({ action: "enrolment", enrolmentId: `${c1}_b`, op: "resume" })).err?.details?.reason === "not_paused");
   ok("remove releases the company", (await call({ action: "enrolment", enrolmentId: `${c1}_b`, op: "remove", reason: "Wrong sector" })).res.status === "removed" && get("searchCompanies/b").activeCampaignId === undefined && get(`outreachEnrolments/${c1}_b`).stopReason === "Wrong sector");
+  // Paused from a task card: the open task is cancelled, resume brings the company back to "active" to get the task again
+  store.set("outreachTasks/tq1", { campaignId: c1, enrolmentId: `${c1}_w`, companyId: "w", status: "open", channel: "call" });
+  store.set(`outreachEnrolments/${c1}_w`, { campaignId: c1, companyId: "w", status: "awaiting_task", taskId: "tq1" });
+  ok("pause from a task card: the task is cancelled, the company paused", (await call({ action: "enrolment", enrolmentId: `${c1}_w`, op: "pause" })).res.status === "paused" && get("outreachTasks/tq1").status === "cancelled" && get(`outreachEnrolments/${c1}_w`).pausedFrom === "active" && get(`outreachEnrolments/${c1}_w`).taskId === null);
+  ok("…and resume puts it back to active", (await call({ action: "enrolment", enrolmentId: `${c1}_w`, op: "resume" })).res.status === "active");
+  store.delete("outreachTasks/tq1"); store.delete(`outreachEnrolments/${c1}_w`);
+  // Follow-up task from a task: the same company, or the same person in a people campaign
+  seedCo("fu", { name: "FOLLOW LDA", owner: "andre" });
+  store.set("outreachTasks/tfu1", { campaignId: c1, companyId: "fu", companyName: "FOLLOW LDA", status: "open", channel: "call" });
+  const fu = (await call({ action: "createTask", fromTaskId: "tfu1", channel: "other", dueAt: "2026-11-06", assignee: "andre", instructions: "Transfer the leftovers back" })).res;
+  ok("follow-up from a company task: an own task on the same company, linked to the first", fu.ok && get(`outreachTasks/${fu.taskId}`).companyId === "fu" && get(`outreachTasks/${fu.taskId}`).source === "own" && get(`outreachTasks/${fu.taskId}`).campaignId === null && get(`outreachTasks/${fu.taskId}`).fromTaskId === "tfu1" && get(`outreachTasks/${fu.taskId}`).assignee === "andre");
+  store.set("outreachTasks/tfu2", { campaignId: c1, companyId: null, personEmail: "notices@ambit.partners", personName: "Ambit Partners — notices", org: "Ambit Partners", refs: [{ kind: "x" }], status: "open", channel: "other" });
+  const fp = (await call({ action: "createTask", fromTaskId: "tfu2", channel: "other", dueAt: "2026-11-06", assignee: "andre", instructions: "Transfer the leftovers back" })).res;
+  ok("follow-up from a people-campaign task: an own task for the same person", fp.ok && get(`outreachTasks/${fp.taskId}`).companyId === null && get(`outreachTasks/${fp.taskId}`).personEmail === "notices@ambit.partners" && get(`outreachTasks/${fp.taskId}`).org === "Ambit Partners");
+  ok("follow-up from a task that does not exist is refused", (await call({ action: "createTask", fromTaskId: "nope", channel: "other", instructions: "x" })).err?.details?.reason === "task_not_found");
+  for (const k of ["outreachTasks/tfu1", "outreachTasks/tfu2", `outreachTasks/${fu.taskId}`, `outreachTasks/${fp.taskId}`, "searchCompanies/fu"]) store.delete(k);
   ok("removing twice refused", (await call({ action: "enrolment", enrolmentId: `${c1}_b`, op: "remove" })).err?.details?.reason === "not_live");
   // Paused from the approval queue: the waiting draft is dropped, resume brings the company back to "active" to be drafted again
   store.set("outreachMessages/dq1", { enrolmentId: `${c1}_q`, campaignId: c1, status: "draft" });

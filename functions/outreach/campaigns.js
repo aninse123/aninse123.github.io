@@ -756,6 +756,12 @@ async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId }, ca
         tx.update(ref, { status: "paused", pausedFrom: "active", draftMessageId: null, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller });
         return { ok: true, status: "paused" };
       }
+      if (e.status === "awaiting_task" && e.taskId) {
+        // Paused from a task card (4 Nov): the open task is closed and written again when the company is resumed.
+        tx.update(db().doc(`outreachTasks/${e.taskId}`), { status: "cancelled", cancelledReason: `Paused by ${caller} — created again when resumed` });
+        tx.update(ref, { status: "paused", pausedFrom: "active", taskId: null, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller });
+        return { ok: true, status: "paused" };
+      }
       tx.update(ref, { status: "paused", pausedFrom: e.status, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller });
       return { ok: true, status: "paused" };
     }
@@ -1235,9 +1241,17 @@ async function teamKeyOk(key) {
   return /^[a-z][a-z0-9-]{1,19}$/.test(String(key)) && (["andre", "antonio"].includes(key) || (await db().doc(`teamDirectory/${key}`).get()).exists);
 }
 
-async function createTask({ companyId, threadId, channel, dueAt, assignee, instructions, templateId }, caller) {
+async function createTask({ companyId, threadId, channel, dueAt, assignee, instructions, templateId, fromTaskId }, caller) {
   if (!OWN_CHANNELS.includes(channel)) fail("invalid-argument", "bad_channel", "Choose call, LinkedIn, WhatsApp, letter, visit or other.");
-  const { companyId: cid, company, thread } = await taskTarget({ companyId, threadId });
+  // 4 Nov: a follow-up from a task (fromTaskId) stays on the same company, or on the same person for a people campaign's task.
+  let src = null;
+  if (fromTaskId) {
+    const s = await db().doc(`outreachTasks/${String(fromTaskId)}`).get();
+    if (!s.exists) fail("not-found", "task_not_found", "Task not found.");
+    src = s.data();
+  }
+  const person = src && !src.companyId && src.personEmail ? { personEmail: src.personEmail, personName: src.personName || "", org: src.org || "", refs: src.refs || [] } : null;
+  const { companyId: cid, company, thread } = person ? { companyId: null, company: {}, thread: null } : await taskTarget({ companyId: companyId || src?.companyId, threadId });
   const due = dueAt ? parseDate(dueAt) : new Date();
   if (!due) fail("invalid-argument", "bad_date", "Invalid date.");
   let who = assignee === undefined || assignee === "" ? (company.owner || null) : assignee;
@@ -1250,14 +1264,14 @@ async function createTask({ companyId, threadId, channel, dueAt, assignee, instr
   }
   const ref = await db().collection("outreachTasks").add({
     campaignId: null, campaignName: "", enrolmentId: null, stepId: null, stepName: "", stepIndex: null, stepCount: null,
-    companyId: cid, companyName: company.name || "",
+    companyId: cid, companyName: company.name || "", ...(person || {}),
     channel, instructions: String(instructions || "").trim().slice(0, 2000), templateId: tpl, variantKey,
     assignee: who, dueAt: Timestamp.fromDate(due), status: "open", outcome: null, notes: "", activityId: null,
-    source: "own", threadId: thread?.id || null, isTest: !!thread?.isTest,
+    source: "own", threadId: thread?.id || null, isTest: !!thread?.isTest || !!src?.isTest, fromTaskId: src ? String(fromTaskId) : null,
     createdAt: FieldValue.serverTimestamp(), createdBy: caller, completedAt: null, completedBy: null,
   });
   // 3 Nov (outreach.visitMeetings): booking a visit books a meeting.
-  if (channel === "visit" && !thread?.isTest && await visitMeetingsOn()) {
+  if (channel === "visit" && cid && !thread?.isTest && await visitMeetingsOn()) {
     const m = await db().collection("searchActivities").add({
       companyId: cid, type: "meeting_scheduled", date: Timestamp.fromDate(due), title: "Visit — scheduled", content: String(instructions || "").trim().slice(0, 2000) || null,
       via: "visit", direction: "out", outcome: "scheduled", responseCategory: null, status: "open", isTest: false,
