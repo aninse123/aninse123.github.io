@@ -24,6 +24,9 @@ ok('uploads and removals are logged in Activities and are not touches', /logAuto
 ok('removing asks first, deletes the Storage object (a missing one is fine) and the record', /confirm\(`Remove \$\{f\.name/.test(search) && /deleteObject\(stRef\(storage, f\.storagePath\)\)/.test(search) && /object-not-found/.test(search) && /deleteDoc\(doc\(db, 'outreachFiles', fileId\)\)/.test(search));
 ok('buttons follow permissions: upload = search.activity, remove = search.edit', /data-perm="search\.activity"[^>]*>＋ Upload files/.test(search) && /data-fdel="[^"]*" data-perm="search\.edit"/.test(search));
 
+ok('files are small cards (like the investor documents), not a bare list', /\.cf-grid \{ display: grid/.test(search) && /class="cf-card" data-fcard=/.test(search) && /class="cf-name"/.test(search));
+ok('a card has a category and a short note, edited in place and saved on the file record', /const FILE_CATS = \{ briefing/.test(search) && /updateDoc\(doc\(db, 'outreachFiles', fileId\), \{ category, note, noteBy: currentUser, noteAt: serverTimestamp\(\) \}\)/.test(search) && /maxlength="500"/.test(search));
+ok('Note and Remove need search.edit', /data-fedit="[^"]*" data-perm="search\.edit"/.test(search));
 ok('Firestore: anyone who sees the CRM reads the files', /match \/outreachFiles\/\{id\} \{\s*allow read: if canAny\(\['out\.view', 'search\.view'\]\)/.test(fsRules));
 ok('Firestore: CRM editors create only company files, in their own name', /canAny\(\['search\.activity', 'search\.edit', 'search\.editall'\]\) && request\.resource\.data\.get\('source', ''\) == 'company'\)\s*\)\s*&& createsAsMe\(\)/.test(fsRules));
 ok('Firestore: CRM editors remove only company files', /canAny\(\['search\.edit', 'search\.editall'\]\) && resource\.data\.get\('source', ''\) == 'company'/.test(fsRules));

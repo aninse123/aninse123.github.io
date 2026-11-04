@@ -205,6 +205,19 @@
     .info-row:last-child { border-bottom: none; }
     .info-row .k { color: var(--text-light); }
     .info-row .v { font-weight: 500; text-align: right; }
+    /* Company files (4 Nov): small cards, like the investor portal's documents */
+    .cf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+    .cf-card { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 5px; transition: 0.2s; }
+    .cf-card:hover { box-shadow: var(--shadow-sm); }
+    .cf-top { display: flex; align-items: center; gap: 8px; }
+    .cf-icon { font-size: 1.35rem; line-height: 1; }
+    .cf-cat { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--primary); }
+    .cf-name { font-family: var(--font-serif, Georgia, serif); font-size: 0.98rem; color: var(--bg-dark, #1E2A38); word-break: break-word; line-height: 1.3; }
+    .cf-meta { font-size: 0.72rem; color: var(--text-light); }
+    .cf-note { font-size: 0.8rem; color: var(--text-light); line-height: 1.45; white-space: pre-wrap; flex: 1; }
+    .cf-note.empty { font-style: italic; opacity: 0.7; }
+    .cf-actions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+    .cf-edit select, .cf-edit textarea { width: 100%; font: inherit; font-size: 0.82rem; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; box-sizing: border-box; }
 
     /* Fit breakdown */
     .fit-breakdown { display: flex; flex-direction: column; gap: 8px; }
@@ -4814,30 +4827,58 @@ async function companyFilesShow(){
   }
   companyFilesDraw();
 }
+const FILE_CATS = { briefing: 'Briefing', legal: 'NDA / legal', financials: 'Financials', dataroom: 'Data room', other: 'Other' };
+const fileIcon = (name) => { const e = String(name || '').toLowerCase().split('.').pop(); return e === 'pdf' ? '📕' : /^(xls|xlsx|ods|csv)$/.test(e) ? '📊' : /^(ppt|pptx|odp)$/.test(e) ? '📽' : /^(png|jpe?g|gif)$/.test(e) ? '🖼' : /^(doc|docx|odt|txt)$/.test(e) ? '📝' : '📄'; };
 function companyFilesDraw(){
   const el = document.getElementById('panel-files'); const c = getCompany(); if (!el || !c || !companyFiles.list) return;
-  const rows = companyFiles.list.map(f => `
-    <div class="info-row" style="align-items:center;gap:10px;">
-      <span class="k" style="flex:1;min-width:0;"><button type="button" class="link" data-fopen="${esc(f.id)}" title="Open">📎 ${esc(f.name || f.filename || 'file')}</button></span>
-      <span class="v" style="white-space:nowrap;font-size:0.8rem;color:var(--text-light);">${esc(fileFmtSize(f.size))} · ${f.source === 'received' ? 'received in a reply' : 'uploaded'} · ${fmtDate(f.createdAt)} · ${esc(String(f.createdBy || '').split('@')[0])}</span>
-      <button type="button" class="btn btn--ghost btn--sm" data-fdel="${esc(f.id)}" data-perm="search.edit" title="Remove this file">✕</button>
-    </div>`).join('');
+  const cards = companyFiles.list.map(f => {
+    const cat = FILE_CATS[f.category] || (f.source === 'received' ? 'Received' : 'File');
+    return `
+    <div class="cf-card" data-fcard="${esc(f.id)}">
+      <div class="cf-top"><span class="cf-icon">${fileIcon(f.name)}</span><span class="cf-cat">${esc(cat)}</span></div>
+      <div class="cf-name">${esc(f.name || f.filename || 'file')}</div>
+      <div class="cf-meta">${esc(fileFmtSize(f.size))} · ${fmtDate(f.createdAt)} · ${esc(String(f.createdBy || '').split('@')[0])}${f.source === 'received' ? ' · from a reply' : ''}</div>
+      <div class="cf-note${f.note ? '' : ' empty'}">${f.note ? esc(f.note) : 'No note'}</div>
+      <div class="cf-actions">
+        <button type="button" class="btn btn--primary btn--sm" data-fopen="${esc(f.id)}">Open</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-fedit="${esc(f.id)}" data-perm="search.edit">Note</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-fdel="${esc(f.id)}" data-perm="search.edit" title="Remove this file">Remove</button>
+      </div>
+    </div>`; }).join('');
   el.innerHTML = `
     <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;flex-wrap:wrap;">
         <div class="sec-title" style="margin:0;">Files — ${companyFiles.list.length}</div>
         <label class="btn btn--primary btn--sm" data-perm="search.activity" style="cursor:pointer;margin:0;">＋ Upload files<input type="file" id="coFileInput" multiple hidden accept="${esc(Object.keys(FILE_TYPES).map(e => '.' + e).join(','))}"></label>
       </div>
-      <div style="font-size:0.78rem;color:var(--text-light);margin-bottom:10px;">Internal: only the team sees these. Documents, spreadsheets, slides and images, up to 10 MB each.</div>
+      <div style="font-size:0.78rem;color:var(--text-light);margin-bottom:12px;">Internal: only the team sees these. Documents, spreadsheets, slides and images, up to 10 MB each.</div>
       <div id="coFileMsg" style="font-size:0.82rem;color:#B91C1C;margin-bottom:6px;" hidden></div>
-      ${rows || '<div style="font-size:0.85rem;color:var(--text-light);">No files yet.</div>'}
+      ${cards ? `<div class="cf-grid">${cards}</div>` : '<div style="font-size:0.85rem;color:var(--text-light);">No files yet.</div>'}
     </div>`;
   el.querySelectorAll('[data-fopen]').forEach(b => b.addEventListener('click', async () => {
     const f = companyFiles.list.find(x => x.id === b.dataset.fopen); if (!f) return;
     try { window.open(await getDownloadURL(stRef(storage, f.storagePath)), '_blank', 'noopener'); } catch (e) { companyFilesMsg('Could not open the file: ' + e.message); }
   }));
   el.querySelectorAll('[data-fdel]').forEach(b => b.addEventListener('click', () => companyFileRemove(b.dataset.fdel)));
+  el.querySelectorAll('[data-fedit]').forEach(b => b.addEventListener('click', () => companyFileEdit(b.dataset.fedit)));
   document.getElementById('coFileInput')?.addEventListener('change', (e) => { const fs = [...e.target.files]; e.target.value = ''; companyFilesUpload(fs); });
+}
+// Category and a short note on a file, edited inside its card.
+function companyFileEdit(fileId){
+  const f = companyFiles.list?.find(x => x.id === fileId); const card = document.querySelector(`[data-fcard="${CSS.escape(fileId)}"]`); if (!f || !card) return;
+  card.querySelector('.cf-note').outerHTML = `<div class="cf-edit">
+    <select data-fcat>${Object.entries(FILE_CATS).map(([k, v]) => `<option value="${k}"${(f.category || 'other') === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+    <textarea data-fnote rows="3" maxlength="500" placeholder="What is this file? Anything to remember.">${esc(f.note || '')}</textarea></div>`;
+  const act = card.querySelector('.cf-actions');
+  act.innerHTML = '<button type="button" class="btn btn--primary btn--sm" data-fsave>Save</button><button type="button" class="btn btn--ghost btn--sm" data-fcancel>Cancel</button>';
+  card.querySelector('[data-fcancel]').addEventListener('click', companyFilesDraw);
+  card.querySelector('[data-fsave]').addEventListener('click', async () => {
+    const category = card.querySelector('[data-fcat]').value, note = card.querySelector('[data-fnote]').value.trim().slice(0, 500);
+    try {
+      await updateDoc(doc(db, 'outreachFiles', fileId), { category, note, noteBy: currentUser, noteAt: serverTimestamp() });
+      f.category = category; f.note = note; companyFilesDraw();
+    } catch (e) { companyFilesMsg('Could not save: ' + e.message); }
+  });
 }
 function companyFilesMsg(t){ const m = document.getElementById('coFileMsg'); if (m) { m.textContent = t; m.hidden = !t; } }
 async function companyFilesUpload(files){
