@@ -1246,7 +1246,7 @@ async function teamKeyOk(key) {
   return /^[a-z][a-z0-9-]{1,19}$/.test(String(key)) && (["andre", "antonio"].includes(key) || (await db().doc(`teamDirectory/${key}`).get()).exists);
 }
 
-async function createTask({ companyId, threadId, channel, dueAt, assignee, instructions, templateId, fromTaskId }, caller) {
+async function createTask({ companyId, threadId, channel, dueAt, assignee, instructions, templateId, fromTaskId, inviteUid }, caller) {
   if (!OWN_CHANNELS.includes(channel)) fail("invalid-argument", "bad_channel", "Choose call, LinkedIn, WhatsApp, letter, visit or other.");
   // 4 Nov: a follow-up from a task (fromTaskId) stays on the same company, or on the same person for a people campaign's task.
   let src = null;
@@ -1272,10 +1272,11 @@ async function createTask({ companyId, threadId, channel, dueAt, assignee, instr
     companyId: cid, companyName: company.name || "", ...(person || {}),
     channel, instructions: String(instructions || "").trim().slice(0, 2000), templateId: tpl, variantKey,
     assignee: who, dueAt: Timestamp.fromDate(due), status: "open", outcome: null, notes: "", activityId: null,
-    source: "own", threadId: thread?.id || null, isTest: !!thread?.isTest || !!src?.isTest, fromTaskId: src ? String(fromTaskId) : null,
+    source: "own", threadId: thread?.id || null, isTest: !!thread?.isTest || !!src?.isTest, fromTaskId: src ? String(fromTaskId) : null, inviteUid: inviteUid ? String(inviteUid).slice(0, 120) : null,
     createdAt: FieldValue.serverTimestamp(), createdBy: caller, completedAt: null, completedBy: null,
   });
   // 3 Nov (outreach.visitMeetings): booking a visit books a meeting.
+  let meetingId = null;
   if (channel === "visit" && cid && !thread?.isTest && await visitMeetingsOn()) {
     const m = await db().collection("searchActivities").add({
       companyId: cid, type: "meeting_scheduled", date: Timestamp.fromDate(due), title: "Visit — scheduled", content: String(instructions || "").trim().slice(0, 2000) || null,
@@ -1284,7 +1285,10 @@ async function createTask({ companyId, threadId, channel, dueAt, assignee, instr
       createdAt: FieldValue.serverTimestamp(), createdBy: caller,
     });
     await ref.update({ meetingActivityId: m.id });
+    meetingId = m.id;
   }
+  // 5 Nov (outreach.inviteManage): the invite knows its visit task and its meeting, so a change or a cancellation follows them
+  if (inviteUid) await db().doc(`outreachInvites/${require("./invites").idOf(inviteUid)}`).update({ taskId: ref.id, meetingActivityId: meetingId }).catch(() => {});
   return { ok: true, taskId: ref.id };
 }
 

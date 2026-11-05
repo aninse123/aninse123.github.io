@@ -36,7 +36,7 @@ global.fetch = async (url, opts = {}) => {
 };
 
 const fns = require("../index.js");
-const { store, storageFiles } = F;
+const { store, storageFiles, Timestamp } = F;
 
 let fail = 0;
 const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : "FAIL"}  ${label}`); };
@@ -302,6 +302,40 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   storageFiles.set("outreach/t/in1/Balanco.pdf", { size: 5, meta: {}, buf: Buffer.from("BALAN") });
   r = await call(fns.outreachSend, { action: "forward", threadId: sigThread, to: "antonio.carvalho@douropartners.pt", note: "Com o balanço", includeFiles: true });
   ok("Forward with the files of the conversation: the copied, not risky ones go along as attachments (the received one with its content)", r.res?.ok === true && (lastSend().body.attachments || []).some((x) => x.filename === "Balanco.pdf" && x.content === Buffer.from("BALAN").toString("base64")) && r.res.files === lastSend().body.attachments.length);
+
+  // ── Calendar invites as objects (5 Nov): registered when sent, updated / cancelled with the same UID, answers filed quietly ──
+  const Inv = require("../outreach/invites.js");
+  store.set("config/features", { flags: { "outreach.inviteManage": { staging: "on", production: "on" } } }); require("../features")._reset();
+  const icsReq = Inv.buildIcs({ method: "REQUEST", uid: "abc123@invite", sequence: 0, title: "Reunião — Glass Soft", start: new Date("2026-11-11T14:30:00Z"), end: new Date("2026-11-11T15:30:00Z"), location: "Marinha Grande", link: "https://meet.google.com/abc", description: "Notas aqui", organizer: { name: "André", email: "an.rocha@mail.example.test" }, attendees: [{ email: "dono@empresa.pt", name: "Dono" }, { email: "andre.rocha@douropartners.pt", name: "André" }] });
+  storageFiles.set("outreach/files/ivf1/convite.ics", { size: icsReq.length, meta: {}, buf: Buffer.from(icsReq) });
+  store.set("outreachFiles/ivf1", { name: "convite.ics", filename: "convite.ics", storagePath: "outreach/files/ivf1/convite.ics", contentType: "text/calendar; method=REQUEST; charset=UTF-8", size: icsReq.length, library: false });
+  r = await call(fns.outreachSend, { threadId: sigThread, body: "Segue o convite.", attachments: ["ivf1"], replyTo: ["antonio.carvalho@douropartners.pt"], replyCc: [] });
+  const invDoc = store.get("outreachInvites/abc123_invite");
+  ok("an email with an invite registers it: the guests, who it went to, the thread, the notes without the link line", r.res?.ok === true && invDoc && invDoc.status === "active" && invDoc.threadId === sigThread && invDoc.to.join() === "antonio.carvalho@douropartners.pt" && invDoc.cc.length === 0 && invDoc.guests.length === 2 && invDoc.guests[0].status === "NEEDS-ACTION" && invDoc.notes === "Notas aqui" && invDoc.link === "https://meet.google.com/abc");
+  store.set("outreachTasks/ivtask", { channel: "visit", status: "open", companyId: "co1", dueAt: Timestamp.fromDate(new Date("2026-11-11T14:30:00Z")) });
+  store.set("searchActivities/ivact", { companyId: "co1", type: "meeting_scheduled", status: "open", date: Timestamp.fromDate(new Date("2026-11-11T14:30:00Z")) });
+  store.set("outreachInvites/abc123_invite", { ...invDoc, taskId: "ivtask", meetingActivityId: "ivact" });
+  r = await call(fns.outreachSend, { action: "inviteUpdate", uid: "abc123@invite", start: "2026-11-12T10:00:00Z", minutes: 45, title: "Reunião — Glass Soft (nova hora)", where: "Lisboa", link: "", notes: "Notas novas", guests: [{ email: "dono@empresa.pt", name: "Dono" }, { email: "novo@empresa.pt" }], note: "Mudámos a hora." });
+  const sentUpd = lastSend(), updAtt = (sentUpd.body.attachments || []).find((x) => /ics/.test(x.filename));
+  const updIcs = updAtt ? Inv.parseIcs(Buffer.from(updAtt.content, "base64").toString("utf8")) : {};
+  ok("Update: the same UID, SEQUENCE 1, the new time and guests, as a REQUEST attached to a reply in the same conversation", r.res?.ok === true && updIcs.uid === "abc123@invite" && updIcs.sequence === 1 && updIcs.method === "REQUEST" && updIcs.start.toISOString() === "2026-11-12T10:00:00.000Z" && updIcs.end.toISOString() === "2026-11-12T10:45:00.000Z" && updIcs.attendees.map((x) => x.email).join() === "dono@empresa.pt,novo@empresa.pt" && sentUpd.body.to.join() === "antonio.carvalho@douropartners.pt" && sentUpd.body.text.includes("Mudámos a hora."));
+  ok("Update: it goes to the original To and Cc and to whoever sends (André, who was not in the original); the invite, the visit task and the meeting follow", sentUpd.body.cc.includes("andre.rocha@douropartners.pt") && store.get("outreachInvites/abc123_invite").sequence === 1 && store.get("outreachInvites/abc123_invite").title === "Reunião — Glass Soft (nova hora)" && store.get("outreachInvites/abc123_invite").guests.every((g) => g.status === "NEEDS-ACTION") && store.get("outreachTasks/ivtask").dueAt.toDate().toISOString() === "2026-11-12T10:00:00.000Z" && store.get("searchActivities/ivact").date.toDate().toISOString() === "2026-11-12T10:00:00.000Z");
+  const replyIcs = Inv.buildIcs({ method: "REPLY", uid: "abc123@invite", sequence: 1, title: "x", start: new Date("2026-11-12T10:00:00Z"), end: new Date("2026-11-12T10:45:00Z"), organizer: { name: "A", email: "an.rocha@mail.example.test" }, attendees: [{ email: "dono@empresa.pt", name: "Dono" }] }).replace("METHOD:REPLY", "METHOD:REPLY").replace("PARTSTAT=NEEDS-ACTION", "PARTSTAT=ACCEPTED");
+  storageFiles.set("outreach/t/ivr/invite.ics", { size: replyIcs.length, meta: {}, buf: Buffer.from(replyIcs) });
+  const ans = await Inv.applyReply([{ filename: "invite.ics", contentType: "text/calendar; method=REPLY", storagePath: "outreach/t/ivr/invite.ics" }]);
+  ok("A calendar answer (Accepted) updates that guest's line and is recognised as an answer", ans && ans.uid === "abc123@invite" && store.get("outreachInvites/abc123_invite").guests.find((g) => g.email === "dono@empresa.pt").status === "ACCEPTED" && store.get("outreachInvites/abc123_invite").guests.find((g) => g.email === "novo@empresa.pt").status === "NEEDS-ACTION");
+  ok("An .ics that is not an answer to one of our invites is ignored", (await Inv.applyReply([{ filename: "x.ics", contentType: "text/calendar", storagePath: "outreach/files/ivf1/convite.ics" }])) === null);
+  r = await call(fns.outreachSend, { action: "inviteCancel", uid: "abc123@invite", note: "Cancelamos." });
+  const sentCan = lastSend(), canIcs = Inv.parseIcs(Buffer.from((sentCan.body.attachments || []).find((x) => /ics/.test(x.filename)).content, "base64").toString("utf8"));
+  ok("Cancel: the same UID, SEQUENCE 2, METHOD:CANCEL; the invite is cancelled, the visit task closed and the meeting cancelled", r.res?.ok === true && canIcs.method === "CANCEL" && canIcs.uid === "abc123@invite" && canIcs.sequence === 2 && store.get("outreachInvites/abc123_invite").status === "cancelled" && store.get("outreachTasks/ivtask").status === "cancelled" && store.get("searchActivities/ivact").status === "cancelled");
+  r = await call(fns.outreachSend, { action: "inviteCancel", uid: "abc123@invite" });
+  ok("a cancelled meeting cannot be changed or cancelled again", r.err?.details?.reason === "invite_closed");
+  r = await call(fns.outreachSend, { action: "inviteUpdate", uid: "nope@invite", start: "2026-11-12T10:00:00Z", minutes: 30, guests: [{ email: "a@b.pt" }] });
+  ok("an invite that is not registered is refused", r.err?.details?.reason === "invite_not_found");
+  store.delete("config/features"); require("../features")._reset();
+  for (const k of ["outreachInvites/abc123_invite", "outreachTasks/ivtask", "searchActivities/ivact", "outreachFiles/ivf1"]) store.delete(k);
+  for (const k of [...storageFiles.keys()]) if (/(convite|invite)\.ics$/.test(k)) storageFiles.delete(k);
+  for (const [k] of [...store.entries()]) if (k.startsWith("outreachFiles/") && !k.endsWith("/f1")) { const d = store.get(k); if (d && d.source === "invite") store.delete(k); }
   r = await call(fns.outreachSend, { action: "forward", threadId: sigThread, to: "antonio.carvalho@douropartners.pt", note: "Sem ficheiros" });
   ok("Forward without asking for files sends none", r.res?.ok === true && lastSend().body.attachments === undefined);
   storageFiles.delete("outreach/t/in1/Balanco.pdf");

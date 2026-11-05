@@ -27,6 +27,7 @@ const { REGION, RESEND_SEND_KEY, RESEND_READ_KEY, UNSUBSCRIBE_SECRET, orgName } 
 const { normEmail } = require("./util");
 const { prepareEmail, deliverEmail, fail } = require("./send_core");
 const Files = require("./files"); // 3 Nov: attachments
+const Invites = require("./invites"); // 5 Nov: calendar invites as objects (update / cancel / answers)
 const store = require("./store");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 
@@ -111,6 +112,7 @@ async function send(request, callerEmail) {
   }
 
   const res = await deliverEmail(p);
+  await Invites.registerSent({ p, res, callerEmail }); // 5 Nov: an invite in this email is registered (best effort)
   const stoppedCampaigns = await stopAfterReply(request, req, p, callerEmail);
   await P.loadIdentity();
   return { ...res, stoppedCampaigns, sentBy: callerEmail, sentByOwner: request.auth?.token?.key || P.keyOf(callerEmail) || null };
@@ -152,6 +154,7 @@ async function approveDraft(request, callerEmail) {
       attachments: req.attachments || null, // 3 Nov
     });
     const res = await deliverEmail(p);
+    await Invites.registerSent({ p, res, callerEmail });
     const stoppedCampaigns = await stopAfterReply(request, req, p, draft.writtenBy || callerEmail).catch(() => 0);
     await sendRef.update({ writtenBy: draft.writtenBy, draftId: draftRef.id }).catch(() => {});
     // "draftSent", not "sent": the email itself is sendRef; this record only says it went out.
@@ -206,6 +209,62 @@ async function forwardThread(request, callerEmail) {
   await ref.update({ forwards: FieldValue.arrayUnion({ to: want, by: callerEmail, at: Timestamp.now() }) });
   return { ok: true, to: want, messages: msgs.length, files: files.length };
 }
+// 5 Nov (switch outreach.inviteManage): update or cancel an invite that was sent. A new .ics with the SAME UID and SEQUENCE + 1 (METHOD:REQUEST for
+// an update, METHOD:CANCEL for a cancellation) goes as a reply in the same conversation to the same people as the original (To and Cc), and to
+// whoever sends it (so the organiser's partner has it in their own calendar). The visit task and the meeting on the company follow.
+// Request: { uid, note?, cc?: [email] }  and for an update { title, start (ISO), minutes, where, link, notes, guests: [{ email, name }] }.
+async function inviteChange(request, callerEmail, cancel) {
+  if (!P.hasPerm(request, "out.send")) fail("permission-denied", "not_admin", "You don't have permission to send outreach email.");
+  await Feat.requireFeature(request, "outreach.inviteManage");
+  const d = request.data || {};
+  const ref = db().doc(`outreachInvites/${Invites.idOf(d.uid)}`), snap = await ref.get();
+  if (!snap.exists) fail("not-found", "invite_not_found", "This invite is not registered, so it cannot be changed from here.");
+  const inv = snap.data();
+  if (inv.status !== "active") fail("failed-precondition", "invite_closed", "This meeting was already cancelled.");
+  const isEmail = (e) => /^[^\s@,;<>]+@[^\s@,;<>]+\.[A-Za-z]{2,}$/.test(String(e || "").trim());
+  let start = inv.start.toDate(), end = inv.end.toDate(), title = inv.title, where = inv.location || "", link = inv.link || "", notes = inv.notes || "", guests = inv.guests || [];
+  if (!cancel) {
+    start = new Date(d.start); const minutes = Number(d.minutes);
+    if (isNaN(start) || !(minutes >= 5 && minutes <= 720)) fail("invalid-argument", "bad_time", "Give the new day and time, and an end within 12 hours of the start.");
+    end = new Date(start.getTime() + minutes * 60000);
+    title = String(d.title || "").replace(/\s+/g, " ").trim().slice(0, 200) || inv.title;
+    where = String(d.where ?? "").trim().slice(0, 300); link = String(d.link ?? "").trim().slice(0, 500); notes = String(d.notes ?? "").trim().slice(0, 2000);
+    if (link && !/^https?:\/\/\S+$/i.test(link)) fail("invalid-argument", "bad_link", "The meeting link must start with https://");
+    const seen = new Set();
+    guests = (Array.isArray(d.guests) ? d.guests : []).map((g) => ({ email: normEmail(g?.email), name: String(g?.name || "").slice(0, 80) })).filter((g) => isEmail(g.email) && !seen.has(g.email) && seen.add(g.email));
+    if (!guests.length) fail("invalid-argument", "no_guests", "A meeting needs at least one guest.");
+  }
+  const seq = (inv.sequence || 0) + 1;
+  const ics = Invites.buildIcs({ method: cancel ? "CANCEL" : "REQUEST", uid: inv.uid, sequence: seq, title, start, end, location: where, description: notes, link, organizer: inv.organizer, attendees: guests });
+  // the file, like one uploaded from the page (outreachFiles + Storage)
+  const fileRef = db().collection("outreachFiles").doc();
+  const path = `outreach/files/${fileRef.id}/convite.ics`, ctype = `text/calendar; method=${cancel ? "CANCEL" : "REQUEST"}; charset=UTF-8`;
+  await require("firebase-admin/storage").getStorage().bucket().file(path).save(Buffer.from(ics, "utf8"), { contentType: ctype, resumable: false });
+  await fileRef.set({ name: "convite.ics", filename: "convite.ics", storagePath: path, contentType: ctype, size: Buffer.byteLength(ics), library: false, source: "invite", createdAt: FieldValue.serverTimestamp(), createdBy: callerEmail });
+  // who: the original To and Cc, whoever sends, and any guest the sender ticked
+  const to = (inv.to || []).map(normEmail).filter(Boolean), have = new Set(to);
+  const cc = [];
+  for (const e of [...(inv.cc || []), callerEmail, ...(Array.isArray(d.cc) ? d.cc : [])].map(normEmail)) if (e && !have.has(e)) { have.add(e); cc.push(e); }
+  const when = new Intl.DateTimeFormat("pt-PT", { dateStyle: "full", timeStyle: "short", timeZone: "Europe/Lisbon" }).format(start);
+  const body = String(d.note || "").trim() || (cancel
+    ? `Bom dia,\n\nLamentamos, mas tivemos de cancelar a reunião "${title}" prevista para ${when}. Entraremos em contacto para remarcar.\n\nCumprimentos,`
+    : `Bom dia,\n\nAtualizámos o convite da reunião "${title}": ${when}${where ? ", " + where : ""}. O convite em anexo substitui o anterior.\n\nCumprimentos,`);
+  const res = await send({ ...request, data: { threadId: inv.threadId, body, replyTo: to, replyCc: cc, attachments: [fileRef.id] } }, callerEmail);
+  if (!res || res.ok === false) fail("internal", "send_failed", "The email could not be sent.");
+  // the invite, the meeting on the company and the visit task follow
+  await ref.update({
+    sequence: seq, status: cancel ? "cancelled" : "active", updatedAt: FieldValue.serverTimestamp(), updatedBy: callerEmail, lastMessageId: res.messageId || null,
+    ...(cancel ? { cancelledAt: FieldValue.serverTimestamp(), cancelledBy: callerEmail } : {
+      title, start: Timestamp.fromDate(start), end: Timestamp.fromDate(end), location: where, link, notes,
+      guests: guests.map((g) => ({ ...g, status: "NEEDS-ACTION" })), cc: [...new Set([...(inv.cc || []), ...cc])],
+    }),
+  });
+  const taskLine = [`${title}${where ? " — " + where : ""}`, link ? `Link: ${link}` : "", `Guests: ${guests.map((g) => g.email).join(", ")}`].filter(Boolean).join("\n");
+  if (inv.taskId) await db().doc(`outreachTasks/${inv.taskId}`).update(cancel ? { status: "cancelled", cancelledReason: `Meeting cancelled by ${callerEmail}` } : { dueAt: Timestamp.fromDate(start), instructions: taskLine }).catch(() => {});
+  if (inv.meetingActivityId) await db().doc(`searchActivities/${inv.meetingActivityId}`).update(cancel ? { status: "cancelled", closedAt: FieldValue.serverTimestamp(), closedBy: callerEmail } : { date: Timestamp.fromDate(start), content: taskLine }).catch(() => {});
+  return { ok: true, sequence: seq, messageId: res.messageId || null, to, cc, cancelled: !!cancel };
+}
+
 function ms(t) {
   if (!t) return 0;
   if (typeof t.toMillis === "function") return t.toMillis();
@@ -223,6 +282,7 @@ exports.outreachSend = onCall({ region: REGION, memory: "1GiB", timeoutSeconds: 
     if (!P.hasPerm(request, "out.approve")) fail("permission-denied", "not_admin", "You don't have permission to approve emails.");
     return action === "approveDraft" ? approveDraft(request, callerEmail) : returnDraft(request, callerEmail);
   }
+  if (action === "inviteUpdate" || action === "inviteCancel") return inviteChange(request, callerEmail, action === "inviteCancel");
   if (action === "forward") {
     if (!P.hasPerm(request, "out.send") && !P.hasPerm(request, "out.draft")) fail("permission-denied", "not_admin", "You don't have permission to forward emails.");
     return forwardThread(request, callerEmail);

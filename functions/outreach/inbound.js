@@ -19,6 +19,7 @@ const Tracks = require("./tracks"); // several recipients per company (30 Oct, s
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const Feat = require("../features"); // feature switches (one inbox, 19 Oct)
 const ReplyConfirm = require("./reply_confirm"); // 30 Oct: a reply confirms the address it came from
+const Invites = require("./invites"); // 5 Nov: calendar answers to our invites
 
 const { db, FieldValue, Timestamp } = store;
 
@@ -140,7 +141,7 @@ async function handleReceived(data) {
 
   const text = full.text || htmlToText(full.html);
   const snippet = stripQuoted(text).slice(0, 2000);
-  const autoReply = isAutoReply(headers, subject);
+  let autoReply = isAutoReply(headers, subject);
 
   const inboxSt = await Feat.jobState("outreach.oneInbox");
   const match = await matchThread({ refIds, fromEmail: from.email, senderId: sender?.id || null, byAddresses: inboxSt === "on" || (inboxSt === "test" && !!settings.testMode), testMode: !!settings.testMode });
@@ -178,6 +179,10 @@ async function handleReceived(data) {
   }
   const hasAttachments = (full.attachments && full.attachments.length) || (data.attachments && data.attachments.length);
   const attachments = hasAttachments ? await saveAttachments(emailId, threadRef.id, messageRef.id) : [];
+  // 5 Nov (outreach.inviteManage): an Accepted / Declined / Tentative answer to one of our invites updates the guest's line and is filed quietly:
+  // not a reply from the company (no "replied", no unread, no stop of the sequence).
+  const calAnswer = attachments.length ? await Invites.applyReply(attachments) : null;
+  if (calAnswer) autoReply = true;
 
   await messageRef.set({
     threadId: threadRef.id, companyId: thread.companyId || null, companyName: thread.companyName || null,
@@ -187,15 +192,14 @@ async function handleReceived(data) {
     subject, text, html, htmlStoragePath, snippet,
     templateId: null, variantKey: null, senderId: thread.senderId || null, sentBy: null, source: "inbound",
     status: "received", events: [{ type: "received", at: Timestamp.now() }], attachments,
-    isAutoReply: autoReply, suggestUnsubscribe: looksLikeUnsubscribe(snippet), matchRule: match?.rule || "none",
+    isAutoReply: autoReply, ...(calAnswer ? { isCalendarReply: true, calendarAnswers: calAnswer.answers } : {}), suggestUnsubscribe: looksLikeUnsubscribe(snippet), matchRule: match?.rule || "none",
     isTest: !!thread.isTest, createdAt: now,
   });
 
   // 12 Oct: whether the last email received was automatic (out of office…) —
   // the Inbox "Auto-reply" tag / filter and the tag in Sent.
   const threadUpd = {
-    lastMessageAt: Timestamp.now(), lastInboundAt: Timestamp.now(), lastDirection: "in", unread: true, // 3 Nov: lastInboundAt — who has read it is kept per person (readBy)
-    lastInboundAuto: !!autoReply, ...(autoReply ? { autoReplyAt: Timestamp.now() } : {}),
+    lastMessageAt: Timestamp.now(), ...(calAnswer ? {} : { lastInboundAt: Timestamp.now(), lastDirection: "in", unread: true, lastInboundAuto: !!autoReply, ...(autoReply ? { autoReplyAt: Timestamp.now() } : {}) }), // 3 Nov: lastInboundAt — who has read it is kept per person (readBy); a calendar answer changes none of it
     ...(from.email ? { addresses: FieldValue.arrayUnion(from.email) } : {}),
     ...(rfcMessageId ? { rfcIds: FieldValue.arrayUnion(rfcMessageId), lastInboundRfcId: rfcMessageId } : {}),
   };
@@ -205,12 +209,14 @@ async function handleReceived(data) {
   }
   await threadRef.update(threadUpd);
 
-  await store.writeActivity({
-    companyId: thread.companyId, direction: "in", subject, content: snippet, threadId: threadRef.id,
-    messageId: messageRef.id, contactName: from.name || null, contactEmail: from.email,
-    createdBy: "resend-webhook", isTest: thread.isTest,
-  });
-  await store.touchCompany(thread.companyId, { direction: "in", isAutoReply: autoReply, isTest: thread.isTest, channel: "email" });
+  if (!calAnswer) {
+    await store.writeActivity({
+      companyId: thread.companyId, direction: "in", subject, content: snippet, threadId: threadRef.id,
+      messageId: messageRef.id, contactName: from.name || null, contactEmail: from.email,
+      createdBy: "resend-webhook", isTest: thread.isTest,
+    });
+    await store.touchCompany(thread.companyId, { direction: "in", isAutoReply: autoReply, isTest: thread.isTest, channel: "email" });
+  }
   // Received mail costs quota but must not eat into a sender's send cap, so no senderId here.
   await store.bumpDaily("received", { owner: thread.owner });
   await Usage.bump({ [`email.replies.${thread.isTest ? "test" : "real"}`]: 1 });
