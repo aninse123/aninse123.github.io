@@ -194,6 +194,8 @@ service cloud.firestore {
       allow update, delete: if canAny(['out.templates', 'out.admin'])
                     || (canAny(['search.edit', 'search.editall']) && resource.data.get('source', '') == 'company'); // 4 Nov: a file uploaded on a company
     }
+    // 5 Nov (outreach.inviteManage): calendar invites as objects — written by the Cloud Functions only; read by whoever sees Outreach.
+    match /outreachInvites/{id} { allow read: if can('out.view'); }
     match /outreachCampaigns/{id} { allow read: if can('out.view') || can('search.view'); }
     match /outreachEnrolments/{id} { allow read: if can('out.view') || can('search.view'); }
     match /outreachTasks/{id} { allow read: if can('out.view'); }

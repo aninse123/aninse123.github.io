@@ -1220,7 +1220,7 @@
     let senders = [];
     let threads = [];
     let selectedId = null;
-    let msgUnsub = null;
+    let msgUnsub = null, invUnsub = null, threadInvites = [];
     let threadMessages = [];
     let usageDoc = {}, dailyDoc = {};
     let ownerFilter = 'mine', stateFilter = 'all';
@@ -1860,7 +1860,8 @@
       if (msgUnsub) msgUnsub();
       threadMessages = [];
       replyMode = null; replyEdited = false;
-      $('threadView').innerHTML = '<div class="view__head" id="viewHead"></div><div class="msgs" id="msgs"><div class="empty">Loading…</div></div><div id="replyBox"></div>';
+      $('threadView').innerHTML = '<div class="view__head" id="viewHead"></div><div class="msgs" id="msgs"><div class="empty">Loading…</div></div><div id="inviteCards"></div><div id="replyBox"></div>';
+      watchInvites(id);
       renderThreadHead();
       const t = threads.find(x => x.id === id);
       if (t && isUnread(t)) updateDoc(doc(db, 'outreachThreads', id), { ['readBy.' + readKeyOf(me)]: serverTimestamp() }).catch(() => {}); // 3 Nov: it is read for me; the other partner still sees it unread
@@ -2353,7 +2354,7 @@
       $('msgs').innerHTML = threadMessages.map(m => {
         const out = m.direction === 'out';
         const tags = [out ? pill(STATUS_PILL, m.status) : '', m.via === 'gmail' ? '<span class="pill">from Gmail</span>' : '',
-          m.isAutoReply ? '<span class="pill pill--warn">Auto-reply</span>' : '', m.error ? `<span class="pill pill--bad" title="${esc(m.error)}">Error</span>` : ''].join(' ');
+          m.isCalendarReply ? `<span class="pill pill--info" title="An answer to a calendar invite: it updates the guest in the invite card; it does not count as a reply from the company">Calendar response${(m.calendarAnswers || [])[0] ? ': ' + esc(INVITE_STATUS[(m.calendarAnswers[0].status || '').toUpperCase()]?.[0] || m.calendarAnswers[0].status) : ''}</span>` : m.isAutoReply ? '<span class="pill pill--warn">Auto-reply</span>' : '', m.error ? `<span class="pill pill--bad" title="${esc(m.error)}">Error</span>` : ''].join(' ');
         const unsub = (!out && m.suggestUnsubscribe && t && t.status !== 'closed')
           ? `<div class="banner banner--warn" style="margin-top:10px;"><span>This reply looks like a removal request.</span><button class="btn btn--ghost btn--sm" data-perm="out.write" data-unsub="${esc(m.id)}">Add to suppression list</button></div>` : '';
         const atts = (m.attachments || []).length ? `<div class="atts">${m.attachments.map((a, i) => attChip(m, a, i)).join('')}</div>` : '';
@@ -2618,9 +2619,10 @@
           const minutes = Math.round((finish - start) / 60000);
           if (!(minutes >= 5 && minutes <= 720)) { modalError('The end must be after the start (and within 12 hours).'); return false; }
           const where = $('ivWhere').value.trim();
-          const ics = buildIcs({ uid: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}@invite`, title, start, minutes, location: where, description: $('ivNote').value.trim(), link, organizer: ctx.organizer, attendees: guests });
+          const uid = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}@invite`;
+          const ics = buildIcs({ uid, title, start, minutes, location: where, description: $('ivNote').value.trim(), link, organizer: ctx.organizer, attendees: guests });
           const id = await uploadFile(new File([ics], 'convite.ics', { type: 'text/calendar' }), { keep: false, source: 'invite', contentType: 'text/calendar; method=REQUEST; charset=UTF-8' });
-          inviteMeta.set(id, { title, start: start.toISOString(), minutes, where, link, guests: guests.map(g => g.email), zone });
+          inviteMeta.set(id, { title, start: start.toISOString(), minutes, where, link, guests: guests.map(g => g.email), zone, uid });
           done(id);
           return true;
         }, 'Attach the invite');
@@ -2636,6 +2638,90 @@
       $('ivGuest').addEventListener('change', pendingGuest);
       redraw();
     }
+    // 5 Nov (switch outreach.inviteManage): the invites of this conversation as cards — the guests and their answers, Change and Cancel meeting.
+    const INVITE_STATUS = { ACCEPTED: ['accepted', '✓'], DECLINED: ['declined', '✗'], TENTATIVE: ['maybe', '?'], 'NEEDS-ACTION': ['no answer yet', '…'] };
+    function watchInvites(threadId) {
+      if (invUnsub) { invUnsub(); invUnsub = null; }
+      threadInvites = [];
+      if (!isOn('outreach.inviteManage')) return;
+      invUnsub = onSnapshot(query(collection(db, 'outreachInvites'), where('threadId', '==', threadId)), (snap) => {
+        threadInvites = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => tsMs(a.start) - tsMs(b.start));
+        renderInviteCards();
+      }, (e) => console.warn('invites', e));
+    }
+    const inviteWhen = (inv) => new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Lisbon' }).format(new Date(tsMs(inv.start)));
+    function renderInviteCards() {
+      const el = $('inviteCards'); if (!el) return;
+      if (!threadInvites.length) { el.innerHTML = ''; return; }
+      const can = isOn('outreach.inviteManage') && (window.pageAccess ? window.pageAccess.can('out.send') : true);
+      el.innerHTML = threadInvites.map(inv => {
+        const cancelled = inv.status === 'cancelled';
+        const guests = (inv.guests || []).map(g => { const [label, mark] = INVITE_STATUS[g.status] || INVITE_STATUS['NEEDS-ACTION']; return `<span class="pill${g.status === 'ACCEPTED' ? ' pill--ok' : g.status === 'DECLINED' ? ' pill--bad' : g.status === 'TENTATIVE' ? ' pill--warn' : ''}" title="${esc(g.email)} — ${label}">${mark} ${esc(g.name || g.email)}</span>`; }).join(' ');
+        return `<div class="card" style="margin:10px 0;padding:10px 14px;${cancelled ? 'opacity:0.7;' : ''}" data-invid="${esc(inv.id)}">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><b>📅 ${esc(inv.title || 'Meeting')}</b>${cancelled ? ' <span class="pill pill--bad">cancelled</span>' : ''}<span class="hint">${esc(inviteWhen(inv))}${inv.location ? ' · ' + esc(inv.location) : ''}${inv.link ? ` · <a href="${esc(inv.link)}" target="_blank" rel="noopener">link</a>` : ''}</span>
+            ${cancelled || !can ? '' : `<span style="margin-left:auto;display:flex;gap:6px;"><button class="btn btn--ghost btn--sm" data-invchange="${esc(inv.id)}" data-perm="out.send">Change…</button><button class="btn btn--danger btn--sm" data-invcancel="${esc(inv.id)}" data-perm="out.send">Cancel meeting</button></span>`}</div>
+          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">${guests || '<span class="hint">No guests</span>'}</div>
+          ${cancelled ? '' : '<div class="hint" style="margin-top:4px;">An answer from a guest (Accepted, Declined, Maybe) updates the line above. Only those who got the email can answer.</div>'}
+        </div>`;
+      }).join('');
+      el.querySelectorAll('[data-invchange]').forEach(b => b.addEventListener('click', () => openInviteChange(threadInvites.find(x => x.id === b.dataset.invchange))));
+      el.querySelectorAll('[data-invcancel]').forEach(b => b.addEventListener('click', () => openInviteCancel(threadInvites.find(x => x.id === b.dataset.invcancel))));
+    }
+    // Change…: the invite form, filled in with what the invite says now. Sends an updated invite (the same event) to the same people.
+    function openInviteChange(inv) {
+      if (!inv) return;
+      const startD = new Date(tsMs(inv.start)), endD = new Date(tsMs(inv.end));
+      const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon', year: 'numeric', month: '2-digit', day: '2-digit' }).format(startD);
+      const hm = (d) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Lisbon', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d);
+      let guests = (inv.guests || []).map(g => ({ email: g.email, name: g.name || '' }));
+      const recipients = new Set([...(inv.to || []), ...(inv.cc || [])].map(x => String(x).toLowerCase()));
+      const chips = () => guests.map((g, i) => `<span class="att">${esc(g.name ? g.name + ' ' : '')}<span class="hint">${esc(g.email)}</span> <button type="button" class="link" data-ivrm="${i}" aria-label="Remove ${esc(g.email)}">✕</button></span>`).join(' ');
+      const missing = () => guests.filter(g => !recipients.has(String(g.email).toLowerCase()) && String(g.email).toLowerCase() !== String(me).toLowerCase());
+      const note = () => {
+        const w = new Intl.DateTimeFormat('pt-PT', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Europe/Lisbon' });
+        return `Bom dia,\n\nAtualizámos o convite da reunião "${$('ivcTitle')?.value || inv.title}": ${w.format(new Date(($('ivcDate')?.value || ymd) + 'T' + ($('ivcTime')?.value || hm(startD)) + ':00'))}${$('ivcWhere')?.value ? ', ' + $('ivcWhere').value : ''}. O convite em anexo substitui o anterior.\n\nCumprimentos,`;
+      };
+      openModal('Change the meeting', `
+        <p class="hint" style="margin-bottom:10px;">The guests get an updated invite: the same event is replaced in their calendars. It goes to ${esc([...recipients].join(', ') || 'the same people as the original')}, and to you.</p>
+        <div class="field"><label for="ivcTitle">Title</label><input type="text" id="ivcTitle" value="${esc(inv.title || '')}"></div>
+        <div class="row2"><div class="field"><label for="ivcDate">Date</label><input type="date" id="ivcDate" value="${ymd}"></div><div class="field"><label>Time zone</label><input type="text" value="Lisboa" disabled></div></div>
+        <div class="row2"><div class="field"><label for="ivcTime">Starts</label><input type="time" id="ivcTime" value="${hm(startD)}"></div><div class="field"><label for="ivcEnd">Ends</label><input type="time" id="ivcEnd" value="${hm(endD)}"></div></div>
+        <div class="field"><label for="ivcWhere">Where</label><input type="text" id="ivcWhere" value="${esc(inv.location || '')}"></div>
+        <div class="field"><label for="ivcLink">Meeting link (optional)</label><input type="url" id="ivcLink" value="${esc(inv.link || '')}"></div>
+        <div class="field"><label for="ivcGuest">Guests</label><div id="ivcGuests" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">${chips()}</div>
+          <input type="email" id="ivcGuest" placeholder="Add a guest: type an email, then Enter" autocomplete="off"><div id="ivcMissing"></div></div>
+        <div class="field"><label for="ivcNotes">Notes in the invite (optional)</label><textarea id="ivcNotes" rows="2">${esc(inv.notes || '')}</textarea></div>
+        <div class="field"><label for="ivcNote">Message with the update (you can edit it)</label><textarea id="ivcNote" rows="4">${esc(note())}</textarea></div>`,
+        async () => {
+          pending();
+          const title = $('ivcTitle').value.trim(), date = $('ivcDate').value, time = $('ivcTime').value, end = $('ivcEnd').value;
+          if (!title || !date || !time || !end) { modalError('Give the title, the date and the start and end times.'); return false; }
+          const start = zoneToUtc(date, time, 'Europe/Lisbon'), finish = zoneToUtc(date, end, 'Europe/Lisbon'), minutes = Math.round((finish - start) / 60000);
+          if (!(minutes >= 5 && minutes <= 720)) { modalError('The end must be after the start (and within 12 hours).'); return false; }
+          if (!guests.length) { modalError('Add at least one guest.'); return false; }
+          const extraCc = [...document.querySelectorAll('[data-ivcmiss]:checked')].map(x => x.dataset.ivcmiss);
+          await callSend({ action: 'inviteUpdate', uid: inv.uid, title, start: start.toISOString(), minutes, where: $('ivcWhere').value.trim(), link: $('ivcLink').value.trim(), notes: $('ivcNotes').value.trim(), guests, note: $('ivcNote').value, cc: extraCc });
+          toast('Updated invite sent.');
+          return true;
+        }, 'Send update');
+      const redraw = () => {
+        $('ivcGuests').innerHTML = chips(); $('ivcGuests').querySelectorAll('[data-ivrm]').forEach(b => b.addEventListener('click', () => { guests.splice(Number(b.dataset.ivrm), 1); redraw(); }));
+        const miss = missing();
+        $('ivcMissing').innerHTML = miss.length ? `<div class="note" style="margin-top:6px;"><b>These guests will not get the email:</b> ${miss.map(g => `<label class="checkline"><input type="checkbox" data-ivcmiss="${esc(g.email)}" checked> <span>Add ${esc(g.name || g.email)} <span class="hint">${esc(g.email)}</span> to Cc</span></label>`).join('')}</div>` : '';
+      };
+      const pending = () => { const raw = $('ivcGuest').value.trim(); if (!raw) return; if (!isEmail(raw)) { modalError(`"${raw}" is not an email address.`); return; } guests = mergeGuests(guests, [{ email: raw, name: '' }]); $('ivcGuest').value = ''; redraw(); };
+      $('ivcGuest').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); pending(); } });
+      $('ivcGuest').addEventListener('change', pending);
+      ['ivcTitle', 'ivcDate', 'ivcTime', 'ivcWhere'].forEach(id => $(id).addEventListener('change', () => { $('ivcNote').value = note(); }));
+      redraw();
+    }
+    function openInviteCancel(inv) {
+      if (!inv) return;
+      openModal('Cancel the meeting', `
+        <p class="hint" style="margin-bottom:10px;"><b>${esc(inv.title || 'The meeting')}</b> — ${esc(inviteWhen(inv))}. The guests get a cancellation and the event is removed from their calendars. The visit task is closed and the meeting is marked cancelled on the company.</p>
+        <div class="field"><label for="ivxNote">Message with the cancellation (you can edit it)</label><textarea id="ivxNote" rows="4">Bom dia,\n\nLamentamos, mas tivemos de cancelar a reunião "${esc(inv.title || '')}" prevista para ${esc(inviteWhen(inv))}. Entraremos em contacto para remarcar.\n\nCumprimentos,</textarea></div>`,
+        async () => { await callSend({ action: 'inviteCancel', uid: inv.uid, note: $('ivxNote').value }); toast('Cancellation sent.'); return true; }, 'Cancel meeting');
+    }
     // The invite went out with the email: book the meeting on the company and in the tasks (a visit task books "meeting scheduled").
     async function bookInviteMeetings(ids, { companyId, threadId = null }) {
       for (const id of ids || []) {
@@ -2643,7 +2729,7 @@
         inviteMeta.delete(id);
         if (!companyId) continue;
         try {
-          await callCampaign({ action: 'createTask', companyId, threadId, channel: 'visit', dueAt: m.start, assignee: myOwner || null,
+          await callCampaign({ action: 'createTask', companyId, threadId, channel: 'visit', dueAt: m.start, assignee: myOwner || null, ...(m.uid ? { inviteUid: m.uid } : {}),
             instructions: [`${m.title}${m.where ? ' — ' + m.where : ''}`, m.link ? `Link: ${m.link}` : '', `Guests: ${m.guests.join(', ')}`].filter(Boolean).join('\n') });
           toast('Meeting added to the company and to your tasks.');
         } catch (e) { toast('The invite went out, but the meeting could not be added to the tasks: ' + errText(e)); }
@@ -6421,6 +6507,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             <button class="btn btn--primary btn--sm" data-tsave data-perm="out.tasks" style="margin-left:auto;"${taskPick.has(t.id) ? '' : ' disabled'}>Save</button></div>
           <div class="actions" style="margin-top:8px;align-items:center;border-top:1px solid var(--border);padding-top:8px;">
             ${isOn('outreach.taskActions') ? `<button class="btn btn--ghost btn--sm" data-tfollow data-perm="out.tasks" title="Create a new task on the same ${c._person ? 'person' : 'company'} (for example something this one turned up). This task stays as it is until you save it.">＋ Follow-up task</button>` : ''}
+            ${isOn('outreach.inviteManage') && t.inviteUid ? `<button class="btn btn--ghost btn--sm" data-tinvite title="Change or cancel the calendar invite this meeting came from">Change the invite…</button>` : ''}
             ${isOn('outreach.taskActions') && t.channel !== 'visit' ? `<button class="btn btn--ghost btn--sm" data-tpostpone data-perm="out.tasks" title="Not today: keep the task and the sequence as they are and move the task to another day. Nothing is recorded on the ${c._person ? 'person' : 'company'}.">Postpone…</button>` : ''}
             ${isOn('outreach.taskActions') && t.campaignId && t.enrolmentId ? `<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
               <button class="btn btn--ghost btn--sm" data-tpause data-perm="out.campaigns" title="Keep the ${c._person ? 'person' : 'company'} in the campaign but stop it until you resume it (campaign → Companies → Resume). This task is closed and created again after the resume.">Pause ${c._person ? 'person' : 'company'}</button>
@@ -6466,6 +6553,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           el.querySelector('[data-tsave]').disabled = !taskPick.has(t.id);
         }));
         el.querySelector('[data-twho]')?.addEventListener('change', (e) => { el.querySelector('[data-twhonew]').hidden = e.target.value !== 'new'; });
+        el.querySelector('[data-tinvite]')?.addEventListener('click', async () => {
+          try { const s = await getDoc(doc(db, 'outreachInvites', t.inviteUid.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120))); if (!s.exists()) { toast('This invite is not registered.'); return; } const inv = { id: s.id, ...s.data() }; if (inv.status === 'cancelled') { toast('This meeting was already cancelled.'); return; } openInviteChange(inv); } catch (e) { toast(errText(e)); }
+        });
         el.querySelector('[data-tpause]')?.addEventListener('click', async (ev) => {
           const unbusy = busyBtn(ev.currentTarget, 'Pausing…');
           const r = await campCall({ action: 'enrolment', enrolmentId: t.enrolmentId, op: 'pause' }, 'Paused — resume it in the Companies tab of the campaign. The task is created again after that.');

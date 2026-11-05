@@ -110,6 +110,8 @@ const cases = [
   C('Partner: edit a file in the library', PARTNER, 'update', 'outreachFiles/f1', 'ALLOW', { name: 'Y' }, { name: 'X' }),
   C('Partner: delete a file from the library', PARTNER, 'delete', 'outreachFiles/f1', 'ALLOW', null, { name: 'X' }),
   C('Intern: cannot add or delete library files', INTERN, 'delete', 'outreachFiles/f1', 'DENY', null, { name: 'X' }),
+  C('Partner: read a calendar invite', PARTNER, 'get', 'outreachInvites/i1', 'ALLOW', null, { title: 'X' }),
+  C('Partner: cannot write a calendar invite (Cloud Functions only)', PARTNER, 'update', 'outreachInvites/i1', 'DENY', { title: 'Y' }, { title: 'X' }),
   // 4 Nov (search.companyFiles): files uploaded on a company page
   C('Company files: someone who can see the CRM reads them', REACH, 'get', 'outreachFiles/f1', 'ALLOW', null, { name: 'X', companyId: 'c1' }),
   C('Company files: view+reach only cannot upload', REACH, 'create', 'outreachFiles/f1', 'DENY', { name: 'Briefing.pdf', source: 'company', companyId: 'c1', createdBy: REACH.email }),
