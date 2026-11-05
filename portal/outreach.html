@@ -4912,7 +4912,7 @@ Optional note for them:`, '');
               <td style="font-size:0.76rem;">${lv ? waitingFor(x, c) : ''}</td>
               <td></td>
               <td class="clip" style="font-size:0.76rem;" title="${esc(nt)}">${esc(nt)}</td>
-              <td style="white-space:nowrap;text-align:right;">${lv && liveG.length > 1 ? `<button class="btn btn--ghost btn--sm" data-eop="remove" data-addr="1" data-perm="out.campaigns" data-eid="${esc(x.id)}" title="Stop writing to this address only">Stop</button>` : ''}</td></tr>`;
+              <td style="white-space:nowrap;text-align:right;">${x.status === 'paused' ? `<button class="btn btn--primary btn--sm" data-eop="resume" data-addr="1" data-perm="out.campaigns" data-eid="${esc(x.id)}" title="Start writing to this address again (an address added to a running campaign waits for approval)">Resume</button> ` : ''}${lv && liveG.length > 1 ? `<button class="btn btn--ghost btn--sm" data-eop="remove" data-addr="1" data-perm="out.campaigns" data-eid="${esc(x.id)}" title="Stop writing to this address only">Stop</button>` : ''}</td></tr>`;
           }).join('');
           return head + subs;
         }).join('');
@@ -4993,7 +4993,7 @@ Optional note for them:`, '');
         let reason = null;
         if (op === 'remove') { reason = prompt(`Remove ${b.dataset.addr ? (e?.recipient?.email || e?.contactEmail || 'this address') : (e?.companyName || 'this company')} from the campaign? Optional reason:`, ''); if (reason === null) return; }
         const unbusy = busyBtn(b, op === 'remove' ? 'Removing…' : op === 'pause' ? 'Pausing…' : 'Resuming…');
-        const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? (b.dataset.addr ? 'Address removed from the campaign.' : 'Company removed from the campaign.') : op === 'pause' ? 'Company paused.' : 'Company resumed.');
+        const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? (b.dataset.addr ? 'Address removed from the campaign.' : 'Company removed from the campaign.') : op === 'pause' ? 'Company paused.' : (b.dataset.addr ? 'Address resumed.' : 'Company resumed.'));
         if (r) loadCampaignData(); else unbusy();
       }));
     }
