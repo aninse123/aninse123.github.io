@@ -1449,6 +1449,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
   if (["recipientsFor", "setRecipients", "previewRecipient"].includes(data.action)) await Feat.requireFeature(request, "contacts.trustLabels"); // 30 Oct
   if (data.action === "checkAddress") await Feat.requireFeature(request, "outreach.replyContacts"); // 3 Nov
   if (data.action === "saveReceivedFiles") await Feat.requireFeature(request, "outreach.attachments"); // 3 Nov
+  if (data.action === "createTask" && data.fromTaskId) await Feat.requireFeature(request, "outreach.taskActions"); // 5 Nov
+  if (data.action === "completeTask" && data.contact) await Feat.requireFeature(request, "outreach.taskContact"); // 5 Nov
   if (["tracksFor", "restartCompany"].includes(data.action) || (data.action === "setRecipients" && data.all === true)) await Feat.requireFeature(request, "outreach.multiRecipient"); // 30 Oct
   if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
   if (data.action === "save" && Array.isArray(data.campaign?.cc) && data.campaign.cc.length) await Feat.requireFeature(request, "outreach.campaignCc"); // 28 Oct
