@@ -49,18 +49,21 @@ async function resolveAttachments(ids) {
 const describe = (list) => (list || []).map((a) => ({ filename: a.filename, contentType: a.contentType, size: a.size, storagePath: a.storagePath, fileId: a.fileId, outgoing: true, flagged: false, skippedReason: null }));
 
 // What Resend needs: the bytes, base64.
-async function payload(list, { bucket = () => getStorage().bucket() } = {}) {
+async function payload(list, { bucket = () => getStorage().bucket(), lenient = false } = {}) {
   const out = [];
   for (const a of list || []) {
-    const [buf] = await bucket().file(a.storagePath).download();
+    let buf;
+    // lenient (a forward): a file that was removed from the library since is left out, the forward still goes
+    try { [buf] = await bucket().file(a.storagePath).download(); } catch (e) { if (lenient) continue; throw e; }
     out.push({ filename: a.filename, content: buf.toString("base64"), content_type: a.contentType });
   }
   return out;
 }
 
-// The attachments received in a conversation, for an internal forward: copied files only, at most 5 and 20 MB together (the biggest are left out).
+// The attachments of a conversation, for an internal forward: the ones received and the ones we sent (a calendar invite, a deck), copied files only,
+// at most 5 and 20 MB together (the biggest are left out). 5 Nov: our own were left out before, so a forward lost the invite.
 function fromReceived(msgs) {
-  const all = (msgs || []).filter((m) => m.direction === "in").flatMap((m) => (m.attachments || []).filter((a) => a && a.storagePath && !a.flagged))
+  const all = (msgs || []).flatMap((m) => (m.attachments || []).filter((a) => a && a.storagePath && !a.flagged))
     .map((a) => ({ filename: a.filename, contentType: a.contentType || "application/octet-stream", size: Number(a.size) || 0, storagePath: a.storagePath }));
   const out = []; let total = 0;
   for (const a of all.sort((x, y) => x.size - y.size)) { if (out.length >= MAX_FILES || a.size > MAX_EACH || total + a.size > MAX_TOTAL) continue; out.push(a); total += a.size; }

@@ -201,8 +201,8 @@ async function forwardThread(request, callerEmail) {
   const sender = (await db().doc(`outreachSenders/${th.senderId || "_"}`).get()).data();
   if (!sender) fail("failed-precondition", "sender_missing", "The conversation's sending address is no longer set up.");
   // 3 Nov (outreach.attachments): the attachments received in the conversation can go along (internal forward: any copied file, up to the limits)
-  const files = includeFiles === true ? Files.fromReceived(msgs) : [];
-  await sendEmail(RESEND_SEND_KEY.value(), { from: `${sender.displayName || orgName()} <${th.senderId}>`, to: [want], subject: `Fwd: ${th.subject || ""}`.slice(0, 300), text, ...(files.length ? { attachments: await Files.payload(files) } : {}) }, `fwd_${threadId}_${Date.now()}`);
+  const files = includeFiles === true ? await Files.payload(Files.fromReceived(msgs), { lenient: true }) : [];
+  await sendEmail(RESEND_SEND_KEY.value(), { from: `${sender.displayName || orgName()} <${th.senderId}>`, to: [want], subject: `Fwd: ${th.subject || ""}`.slice(0, 300), text, ...(files.length ? { attachments: files } : {}) }, `fwd_${threadId}_${Date.now()}`);
   await ref.update({ forwards: FieldValue.arrayUnion({ to: want, by: callerEmail, at: Timestamp.now() }) });
   return { ok: true, to: want, messages: msgs.length, files: files.length };
 }

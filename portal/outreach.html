@@ -2332,13 +2332,13 @@
     }
     // I15: forward the conversation to a team member (internal only).
     function openForward(t) {
-      const nFiles = isOn('outreach.attachments') ? threadMessages.filter(m => m.direction === 'in').flatMap(m => (m.attachments || []).filter(a => a.storagePath && !a.flagged)).length : 0;
+      const nFiles = isOn('outreach.attachments') ? threadMessages.flatMap(m => (m.attachments || []).filter(a => a.storagePath && !a.flagged)).length : 0;
       const team = (window.teamDir || []).filter(m => m.active !== false && m.contactEmail);
       const opts = [...new Map([[String(me || '').toLowerCase(), 'Me'], ...team.map(m => [String(m.contactEmail).toLowerCase(), m.label])]).entries()];
       openModal('Forward this conversation', `
         <div class="field"><label for="fwdTo">To</label><select id="fwdTo">${opts.map(([e, l]) => `<option value="${esc(e)}">${esc(l)} — ${esc(e)}</option>`).join('')}</select></div>
         <div class="field"><label for="fwdNote">Note on top (optional)</label><textarea id="fwdNote" rows="3" placeholder="e.g. Can you call them this week?"></textarea></div>
-        ${nFiles ? `<label class="checkline"><input type="checkbox" id="fwdFiles" checked> <span>Include the ${nFiles} file${nFiles === 1 ? '' : 's'} received in this conversation</span></label>` : ''}
+        ${nFiles ? `<label class="checkline"><input type="checkbox" id="fwdFiles" checked> <span>Include the ${nFiles} file${nFiles === 1 ? '' : 's'} of this conversation (received and sent, calendar invites too)</span></label>` : ''}
         <p class="hint">The whole conversation goes as plain text, from ${esc(t.senderId || 'its address')}. Only team addresses — to copy someone outside, reply instead.</p>`,
         async () => {
           const r = (await callSend({ action: 'forward', threadId: t.id, to: $('fwdTo').value, note: $('fwdNote').value, ...($('fwdFiles')?.checked ? { includeFiles: true } : {}) })).data;
