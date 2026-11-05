@@ -2468,7 +2468,7 @@
         <div class="banner banner--bad" id="replyErr" hidden style="margin-bottom:10px;"></div>
         <button class="btn btn--primary" id="replyBtn" data-perm="out.write">${esc(SEND_LABEL(true))}</button>`;
       $('replyBtn').addEventListener('click', () => sendReply(t));
-      replyAtt.ids = []; renderAttachBox('replyAtt', replyAtt, { invite: true, inviteCtx: () => replyInviteCtx(t) }); // 3 Nov
+      replyAtt.ids = []; renderAttachBox('replyAtt', replyAtt, { invite: true, inviteCtx: () => replyInviteCtx(t), onInvite: (id) => addTeamGuestsToCc(id) }); // 3 Nov
       $('replyFwdBtn')?.addEventListener('click', () => openForward(t));
       $('replyTaskBtn')?.addEventListener('click', () => openThreadTask(t));
       box.querySelectorAll('[data-rmode]').forEach(b => b.addEventListener('click', () => { replyMode = b.dataset.rmode; replyEdited = false; fillReplyRecipients(); }));
@@ -2546,7 +2546,7 @@
       const again = () => { renderAttachBox(domId, state, opts); opts.onChange?.(); };
       el.querySelectorAll('[data-attrm]').forEach(b => b.addEventListener('click', () => { state.ids = state.ids.filter(x => x !== b.dataset.attrm); again(); }));
       el.querySelector('[data-attadd]')?.addEventListener('click', () => openAttachPicker(state, again, opts));
-      el.querySelector('[data-attcal]')?.addEventListener('click', () => openInviteModal(opts.inviteCtx?.() || {}, (id) => { state.ids.push(id); again(); }));
+      el.querySelector('[data-attcal]')?.addEventListener('click', () => openInviteModal(opts.inviteCtx?.() || {}, (id) => { state.ids.push(id); again(); opts.onInvite?.(id); }));
       el.onattrefresh = null; el.addEventListener('attrefresh', () => renderAttachBox(domId, state, opts), { once: true });
     }
     function openAttachPicker(state, done, opts = {}) {
@@ -2581,6 +2581,23 @@
       const people = (ctx.companyId && peopleCache.get(ctx.companyId)) || [];
       const team = (window.teamDir || []).filter(m => m.active !== false && m.contactEmail).map(m => ({ email: m.contactEmail, name: m.label }));
       return mergeGuests([], [...team, ...people.flatMap(p => (p.emails || []).map(e => ({ email: e, name: p.name }))), ...(ctx.attendees || [])]);
+    }
+    // 5 Nov: a guest only gets the invite if the email reaches them. The team guests (the partners) go into Cc by themselves, on a reply; and before
+    // sending, any guest who is in neither To nor Cc is named, with the choice to add them to Cc or to send without them.
+    const teamEmails = () => new Set((window.teamDir || []).filter(m => m.active !== false && m.contactEmail).map(m => String(m.contactEmail).toLowerCase()));
+    function addTeamGuestsToCc(id) {
+      const m = inviteMeta.get(id), field = $('replyCc'), to = $('replyTo'); if (!m || !field || !to) return;
+      const have = new Set([...addrList(to.value), ...addrList(field.value)].map(a => a.email));
+      const team = teamEmails(), add = (m.guests || []).map(g => String(g).toLowerCase()).filter(e => team.has(e) && !have.has(e) && !isOurAddr(e));
+      if (!add.length) return;
+      field.value = [...addrList(field.value).map(a => a.email), ...add].join(', ');
+      toast(`${add.join(', ')} added to Cc, so the invite reaches their calendar. Remove them from Cc if you do not want that.`);
+    }
+    // Guests of the invites on this email that are not among the recipients (the sender is not counted: they have the sending address).
+    function inviteGuestGaps(ids, recipients) {
+      const have = new Set((recipients || []).map(e => String(e).toLowerCase())), gaps = new Set();
+      for (const id of ids || []) for (const g of inviteMeta.get(id)?.guests || []) { const e = String(g).toLowerCase(); if (!have.has(e) && !isOurAddr(e)) gaps.add(e); }
+      return [...gaps];
     }
     function openInviteModal(ctx, done) {
       const tomorrow = new Date(Date.now() + 86400000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -2823,12 +2840,20 @@
       if (ours.length) { err.textContent = `Remove our own address${ours.length > 1 ? 'es' : ''}: ${ours.join(', ')}`; err.hidden = false; return; }
       const replyTo = addrList($('replyTo').value).map(a => a.email), replyCc = addrList($('replyCc').value).map(a => a.email).filter(e => !replyTo.includes(e));
       if (!replyTo.length) { err.textContent = 'Add at least one address in To.'; err.hidden = false; return; }
+      let replyCcSend = replyCc;
+      if (isOn('outreach.inviteManage') && replyAtt.ids.length) {
+        const gaps = inviteGuestGaps(replyAtt.ids, [...replyTo, ...replyCc]);
+        if (gaps.length) {
+          if (confirm(`These guests are in the invite but not in To or Cc, so they will NOT receive it:\n\n${gaps.join('\n')}\n\nAdd them to Cc and send?`)) { replyCcSend = [...replyCc, ...gaps]; $('replyCc').value = replyCcSend.join(', '); }
+          else if (!confirm('Send without them?')) return;
+        }
+      }
       const btn = $('replyBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
       try {
         const stopCampaign = !!($('replyStopWrap') && !$('replyStopWrap').hidden && $('replyStop')?.checked);
-        const res = await sendWithConfirm({ threadId: t.id, body, replyTo, replyCc, requestId: requestId(), footer: !!$('replyFooter')?.checked, ...(stopCampaign ? { stopCampaign: true } : {}), ...(replyAtt.ids.length ? { attachments: replyAtt.ids } : {}) });
+        const res = await sendWithConfirm({ threadId: t.id, body, replyTo, replyCc: replyCcSend, requestId: requestId(), footer: !!$('replyFooter')?.checked, ...(stopCampaign ? { stopCampaign: true } : {}), ...(replyAtt.ids.length ? { attachments: replyAtt.ids } : {}) });
         if (res && !res.draft) await bookInviteMeetings(replyAtt.ids, { companyId: t.companyId, threadId: t.id }); // 3 Nov: the invite went out: the meeting is booked
-        if (res) { replyAtt.ids = []; renderAttachBox('replyAtt', replyAtt, { invite: true, inviteCtx: () => replyInviteCtx(t) }); }
+        if (res) { replyAtt.ids = []; renderAttachBox('replyAtt', replyAtt, { invite: true, inviteCtx: () => replyInviteCtx(t), onInvite: (id) => addTeamGuestsToCc(id) }); }
         if (res?.draft) { $('replyText').value = ''; toast('Reply saved — it waits in Tasks → To approve until André or António sends it.' + (stopCampaign ? ' The campaign stops when it\'s sent.' : '')); }
         else if (res) { $('replyText').value = ''; if ($('replyStopWrap')) $('replyStopWrap').hidden = true; toast((res.warnings?.length ? 'Reply sent. ' + res.warnings[0] : 'Reply sent.') + (res.stoppedCampaigns ? ' The company\'s campaign is stopped.' : '')); }
       } catch (e) { err.textContent = errText(e); err.hidden = false; }
@@ -3425,6 +3450,10 @@
       if (tid) { payload.templateId = tid; payload.variantKey = key; }
       if (!payload.companyId && !$('noCompany').checked) { err.textContent = 'Choose a company (or tick "Test send without a company").'; err.hidden = false; return; }
       if (!payload.senderId) { err.textContent = 'No active sender address — see Settings.'; err.hidden = false; return; }
+      if (isOn('outreach.inviteManage') && composeAtt.ids.length) {
+        const gaps = inviteGuestGaps(composeAtt.ids, [payload.to, payload.recipient?.email].filter(Boolean));
+        if (gaps.length && !confirm(`A new email goes to one address only. These guests are in the invite but will NOT receive it:\n\n${gaps.join('\n')}\n\nSend anyway? (To reach them, send the invite as a reply in the conversation, where you can use Cc.)`)) return;
+      }
       const btn = $('sendBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner-sm"></span>Sending…';
       try {
         const res = await sendWithConfirm(payload);

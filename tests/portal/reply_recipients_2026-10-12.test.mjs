@@ -34,7 +34,7 @@ ok('…switch off: as before, the last person who wrote', J(R.replyRecipients([O
 ok('…once João answers, Reply goes to whoever wrote last', J(R.replyRecipients([OUT, AUTO, TO_JOAO, { ...AUTO, from: 'João <joao@empresa.pt>' }], 'geral@empresa.pt', 'reply', true)) === J({ to: ['joao@empresa.pt'], cc: [] }));
 ok('…Reply all unchanged', J(R.replyRecipients([OUT, AUTO, TO_JOAO], 'geral@empresa.pt', 'all', true)) === J({ to: ['geral@empresa.pt', 'a.rocha@mail.douropartners-team.pt'].filter((e) => !R.isOurAddr(e)), cc: [] }));
 ok('page passes the switch to Reply', page.includes("replyRecipients(threadMessages, t.contactEmail, replyMode, isOn('outreach.oneInbox'))"));
-ok('page sends replyTo / replyCc and shows To / Cc lines', page.includes('sendWithConfirm({ threadId: t.id, body, replyTo, replyCc,') && page.includes('${rcptLine(m)}'));
+ok('page sends replyTo / replyCc and shows To / Cc lines', page.includes('sendWithConfirm({ threadId: t.id, body, replyTo, replyCc: replyCcSend,') && page.includes('${rcptLine(m)}'));
 
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); }
 console.log('\nALL PASSED');
