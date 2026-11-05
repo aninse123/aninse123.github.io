@@ -78,6 +78,12 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   const S = "an.rocha@mail.douropartners-team.pt";
   let r = await call(fns.outreachSend, { companyId: "co1", senderId: S, subject: "x", body: "y" }, { auth: { token: { email: "someone@gmail.com" } } });
   ok("non-admin refused", r.err?.code === "permission-denied");
+  // 5 Nov: an extra general address of the company (added in Addresses → searchCompanies.reach) is one of its addresses, not "someone else's"
+  store.set("searchCompanies/co1", { ...store.get("searchCompanies/co1"), reach: [{ id: "rx1", type: "email", value: "extra@metalurgica-silva.pt", status: "ok", primary: false }] });
+  r = await call(fns.outreachSend, { companyId: "co1", senderId: S, subject: "x", body: "y", recipient: { email: "extra@metalurgica-silva.pt" } });
+  ok("an extra company address from Addresses is accepted as a recipient (not refused as not the company's)", r.err?.details?.reason !== "recipient_not_found");
+  r = await call(fns.outreachSend, { companyId: "co1", senderId: S, subject: "x", body: "y", recipient: { email: "stranger@elsewhere.pt" } });
+  ok("an address that is not the company's is still refused", r.err?.details?.reason === "recipient_not_found");
   r = await call(fns.outreachSend, { companyId: "co1", senderId: S, subject: "x", body: "y" });
   ok("test mode refuses the real company email", r.err?.details?.reason === "test_mode");
   r = await call(fns.outreachSend, { companyId: "co1", senderId: "rocha.andre@mail.douropartners-team.pt", to: "andrenorocha@gmail.com", subject: "x", body: "y" });

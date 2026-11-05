@@ -118,7 +118,9 @@ async function prepareEmail(opts) {
     const want = normEmail(opts.recipient.email);
     // People merge (Stage 4): a person's own emails are accepted whatever the switch says —
     // what the page offers follows the switch; checking belonging stays permissive.
-    recipient = (await companyRecipients(companyId, company, { usePeople: true })).find((r) => r.email === want) || null;
+    // 5 Nov: the company's other general addresses (searchCompanies.reach, added in Addresses) belong here too; without trust the list left them out and an
+    // extra address of a company was refused as "not this company's address". Permissive: the campaign's own rules (verified or not) are applied when it picks.
+    recipient = (await companyRecipients(companyId, company, { usePeople: true, trust: { on: true, includeUnverified: true } })).find((r) => r.email === want) || null;
     if (!recipient) fail("invalid-argument", "recipient_not_found", `${want} isn't this company's address, one of its contacts or a person linked to it.`);
   }
   const person = !isReply && opts.person?.email ? { email: normEmail(opts.person.email), name: String(opts.person.name || ""), org: String(opts.person.org || ""), refs: Array.isArray(opts.person.refs) ? opts.person.refs.slice(0, 10) : [] } : null;
