@@ -630,7 +630,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         type: kind === 'expense' ? 'cost' : 'revenue',                  // keeps the v1 page readable if the switch is turned Off
         category: existing?.category || (kind === 'expense' ? 'Other' : 'Other'),
         periodicity: existing?.periodicity || 'one_time',
-        categoryId: expense ? cat : '', subtype: expense && cat === 'team-pay' ? $('f-subtype').value : '',
+        categoryId: expense || kind === 'plan' ? cat : '', subtype: expense && cat === 'team-pay' ? $('f-subtype').value : '',
         purposeId: expense || kind === 'plan' ? $('f-purpose').value : '',
         tags: parseTags($('f-tags').value),
         incomeType: kind === 'income' ? $('f-income').value : '', counterparty: kind === 'income' ? $('f-counter').value.trim() : '',

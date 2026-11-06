@@ -4837,9 +4837,9 @@ async function companyFilesShow(){
 // ── Costs tab (7 Nov 2026, switch budget.companyCosts) ──
 // The field visits to this company (budgetVisits, companyId) and what the Budget charges to them (budgetItems whose visitIds name those
 // visits). Read only when the tab is opened. "+ Add visit" writes a visit; costs are charged to it from the Budget page.
-const companyCosts = { coId: null, data: null };
+const companyCosts = { coId: null, co: null, data: null };
 function companyCostsReset(c){
-  companyCosts.coId = c.id; companyCosts.data = null;
+  companyCosts.coId = c.id; companyCosts.co = c; companyCosts.data = null;
   const el = document.getElementById('panel-costs'); if (el) el.innerHTML = '';
   if (document.querySelector('#detailTabs .tab.active')?.dataset.tab === 'costs') companyCostsShow();
 }
@@ -4871,7 +4871,7 @@ async function companyCostsShow(){
   companyCostsDraw();
 }
 function companyCostsDraw(){
-  const el = document.getElementById('panel-costs'), c = getCompany(), d = companyCosts.data; if (!el || !c || !d) return;
+  const el = document.getElementById('panel-costs'), c = companyCosts.co || getCompany(), d = companyCosts.data; if (!el || !c || !d) return;
   const eurF = new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR' });
   const rep = visitReport(d.items, d.visits.filter(v => !v.archived));
   const ids = new Set(d.visits.map(v => v.id));
