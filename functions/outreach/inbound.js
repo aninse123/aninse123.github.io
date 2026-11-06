@@ -34,7 +34,7 @@ async function findSenderByAlias(toList) {
 }
 
 // Thread matching, in order (spec §7.3).
-async function matchThread({ refIds, fromEmail, senderId, byAddresses = false, testMode = false }) {
+async function matchThread({ refIds, fromEmail, senderId, byAddresses = false, testMode = false, subject = "", text = "" }) {
   // 1. Reply headers point at a Message-ID we sent or stored.
   if (refIds.length) {
     const snap = await db().collection("outreachThreads").where("rfcIds", "array-contains-any", refIds.slice(-10)).limit(1).get();
@@ -68,6 +68,17 @@ async function matchThread({ refIds, fromEmail, senderId, byAddresses = false, t
   if (domain && !isFreeMail(domain)) {
     const snap = await db().collection("outreachThreads").where("contactDomain", "==", domain).orderBy("lastMessageAt", "desc").limit(1).get();
     if (!snap.empty) return { ref: null, data: snap.docs[0].data(), rule: "domain" };
+  }
+  // 4. 6 Nov: a message a partner forwards to the portal from a personal address ("FW: ..."): no headers, and a free-mail sender is never matched by
+  // domain. The addresses written in the forwarded text are looked up instead: when they all belong to ONE company we wrote to, it goes there.
+  if (domain && isFreeMail(domain) && /^\s*(fw|fwd|enc|rv)\s*:/i.test(subject || "")) {
+    const found = [...new Set((String(text || "").match(/[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g) || []).map((e) => domainOf(normEmail(e))).filter((d) => d && !isFreeMail(d)))].slice(0, 6);
+    const hits = new Map();
+    for (const d of found) {
+      const snap = await db().collection("outreachThreads").where("contactDomain", "==", d).orderBy("lastMessageAt", "desc").limit(1).get();
+      if (!snap.empty && snap.docs[0].data().companyId) hits.set(snap.docs[0].data().companyId, snap.docs[0].data());
+    }
+    if (hits.size === 1) return { ref: null, data: [...hits.values()][0], rule: "forwarded" };
   }
   return null;
 }
@@ -144,7 +155,7 @@ async function handleReceived(data) {
   let autoReply = isAutoReply(headers, subject);
 
   const inboxSt = await Feat.jobState("outreach.oneInbox");
-  const match = await matchThread({ refIds, fromEmail: from.email, senderId: sender?.id || null, byAddresses: inboxSt === "on" || (inboxSt === "test" && !!settings.testMode), testMode: !!settings.testMode });
+  const match = await matchThread({ refIds, fromEmail: from.email, senderId: sender?.id || null, byAddresses: inboxSt === "on" || (inboxSt === "test" && !!settings.testMode), testMode: !!settings.testMode, subject, text });
 
   let threadRef, thread;
   const now = FieldValue.serverTimestamp();
@@ -183,6 +194,12 @@ async function handleReceived(data) {
   // not a reply from the company (no "replied", no unread, no stop of the sequence).
   const calAnswer = attachments.length ? await Invites.applyReply(attachments) : null;
   if (calAnswer) autoReply = true;
+  // 6 Nov: matching by sender address could put the answer in another conversation of the same address (André answered from his Gmail, which also
+  // had an unmatched forward): the invite knows its own conversation, so the answer is filed there; a thread made only for it is removed.
+  if (calAnswer?.threadId && calAnswer.threadId !== threadRef.id) {
+    const target = await db().doc(`outreachThreads/${calAnswer.threadId}`).get();
+    if (target.exists) { if (!match?.ref) await threadRef.delete().catch(() => {}); threadRef = target.ref; thread = target.data(); }
+  }
 
   await messageRef.set({
     threadId: threadRef.id, companyId: thread.companyId || null, companyName: thread.companyName || null,

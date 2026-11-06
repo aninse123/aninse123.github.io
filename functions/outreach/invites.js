@@ -113,7 +113,7 @@ async function applyReply(attachments) {
         else { guests.push({ email: att.email, name: att.name || "", status, answeredAt: Timestamp.now(), extra: true }); changed = true; }
       }
       if (changed) await ref.update({ guests, updatedAt: FieldValue.serverTimestamp() });
-      return { id: ref.id, uid: ics.uid, answers: ics.attendees.map((x) => ({ email: x.email, status: x.status })) };
+      return { id: ref.id, uid: ics.uid, threadId: snap.data().threadId || null, answers: ics.attendees.map((x) => ({ email: x.email, status: x.status })) };
     }
   } catch (e) { console.warn("invites: could not apply a calendar answer", e.message); }
   return null;

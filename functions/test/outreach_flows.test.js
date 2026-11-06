@@ -13,12 +13,14 @@ let nextSendError = null;
 let bounceDuringSend = false;
 let quotaDaily = 41;
 const receivedEmails = {};
+const icsFiles = {};
 global.fetch = async (url, opts = {}) => {
   const u = String(url);
   calls.push({ url: u, method: opts.method || "GET", headers: opts.headers || {}, body: opts.body ? JSON.parse(opts.body) : null });
   if (u.endsWith("/emails") && opts.method === "POST" && !nextSendError) quotaDaily++; // Resend's header reflects the send just made
   const hdrs = new Map([["x-resend-daily-quota", String(quotaDaily)], ["x-resend-monthly-quota", String(900 + quotaDaily)]]);
   const resp = (status, obj) => ({ ok: status < 300, status, headers: { get: (h) => hdrs.get(h.toLowerCase()) ?? null }, text: async () => JSON.stringify(obj), arrayBuffer: async () => Buffer.alloc(obj.__size || 10) });
+  if (u.startsWith("https://files.test/ics/")) { const body = icsFiles[u] || ""; return { ok: true, status: 200, headers: { get: () => null }, text: async () => body, arrayBuffer: async () => Buffer.from(body) }; }
   if (u.startsWith("https://files.test/")) return resp(200, { __size: Number(u.split("/").pop()) });
   if (u.endsWith("/emails") && opts.method === "POST") {
     if (nextSendError) { const e = nextSendError; nextSendError = e.persist ? e : null; return resp(e.status, { name: e.name, message: e.message }); }
@@ -229,6 +231,29 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   await webhook({ type: "email.received", data: { email_id: "in3", from: "promo@spammy.biz", to: ["an.rocha@teniokarau.resend.app"] } });
   const in3 = docs("outreachMessages").find((m) => m.resendId === "in3");
   ok("unknown sender → unmatched thread, no company", store.get("outreachThreads/" + in3.threadId).unmatched === true && !store.get("outreachThreads/" + in3.threadId).companyId);
+  // 6 Nov: a message a partner forwards from a personal address is filed by the company addresses written in it; a calendar answer goes to its invite's conversation
+  receivedEmails["fw5"] = { from: "partner.me@gmail.com", subject: "FW: Reunião Metalúrgica Silva", message_id: "<fw-1@gmail.com>", text: "Bom dia André,\n\n-----Compromisso original-----\nPara: partner.me@gmail.com; geral@metalurgica-silva.pt; alguem@gmail.com\nAssunto: Reunião", headers: { from: "Partner <partner.me@gmail.com>" } };
+  await webhook({ type: "email.received", data: { email_id: "fw5", from: "partner.me@gmail.com", to: ["an.rocha@teniokarau.resend.app"] } });
+  const fw5 = docs("outreachMessages").find((m) => m.resendId === "fw5");
+  ok("a forward from a personal address is filed under the one company whose address is in it (not unmatched)", fw5.matchRule === "forwarded" && store.get("outreachThreads/" + fw5.threadId).companyId === "co1" && store.get("outreachThreads/" + fw5.threadId).unmatched === false);
+  receivedEmails["fw6"] = { from: "partner.you@gmail.com", subject: "Reunião Metalúrgica Silva", message_id: "<fw-2@gmail.com>", text: "geral@metalurgica-silva.pt", headers: { from: "partner.you@gmail.com" } };
+  await webhook({ type: "email.received", data: { email_id: "fw6", from: "partner.you@gmail.com", to: ["an.rocha@teniokarau.resend.app"] } });
+  ok("…only a FW:/Fwd: message (the same text without it stays unmatched)", store.get("outreachThreads/" + docs("outreachMessages").find((m) => m.resendId === "fw6").threadId).unmatched === true);
+  receivedEmails["fw7"] = { from: "partner.him@gmail.com", subject: "FW: dois", message_id: "<fw-3@gmail.com>", text: "geral@metalurgica-silva.pt e info@spammy.biz", headers: { from: "partner.him@gmail.com" } };
+  store.set("outreachThreads/tOther", { companyId: "co9", companyName: "OUTRA, LDA", contactEmail: "info@outra.pt", contactDomain: "outra.pt", senderId: S, lastMessageAt: F.Timestamp.now(), rfcIds: [], isTest: true });
+  receivedEmails["fw7"].text = "geral@metalurgica-silva.pt e info@outra.pt";
+  await webhook({ type: "email.received", data: { email_id: "fw7", from: "partner.him@gmail.com", to: ["an.rocha@teniokarau.resend.app"] } });
+  ok("…and not when the addresses belong to two companies (nothing is guessed)", store.get("outreachThreads/" + docs("outreachMessages").find((m) => m.resendId === "fw7").threadId).unmatched === true);
+  store.delete("outreachThreads/tOther");
+  store.set("config/features", { flags: { "outreach.inviteManage": { staging: "on", production: "on" } } }); require("../features")._reset();
+  store.set("outreachInvites/zz1_invite", { uid: "zz1@invite", threadId: "tDom", status: "active", title: "Reunião", guests: [{ email: "dono@empresa.pt", name: "Dono", status: "NEEDS-ACTION" }] });
+  icsFiles["https://files.test/ics/zz1"] = "BEGIN:VCALENDAR\nMETHOD:REPLY\nBEGIN:VEVENT\nUID:zz1@invite\nSEQUENCE:0\nATTENDEE;CN=Partner;PARTSTAT=ACCEPTED:mailto:partner.me@gmail.com\nEND:VEVENT\nEND:VCALENDAR\n";
+  receivedEmails["cal8"] = { from: "partner.me@gmail.com", subject: "Accepted: Reunião", message_id: "<cal-1@gmail.com>", text: "Partner has accepted this invitation.", headers: { from: "Partner <partner.me@gmail.com>" },
+    attachments: [{ id: "cal1", filename: "invite.ics", size: 200, content_type: "application/ics", content_disposition: "attachment", download_url: "https://files.test/ics/zz1" }] };
+  await webhook({ type: "email.received", data: { email_id: "cal8", from: "partner.me@gmail.com", to: ["an.rocha@teniokarau.resend.app"], attachments: [{ id: "cal1" }] } });
+  const cal8 = docs("outreachMessages").find((m) => m.resendId === "cal8");
+  ok("a calendar answer is filed in its invite's conversation (not the one the sender's address matched), quietly, and updates the guest line", cal8.isCalendarReply === true && cal8.threadId === "tDom" && store.get("outreachInvites/zz1_invite").guests.some((g) => g.email === "partner.me@gmail.com" && g.status === "ACCEPTED") && store.get("outreachThreads/tDom").lastDirection !== "in");
+  store.delete("outreachInvites/zz1_invite"); store.delete("config/features"); require("../features")._reset();
   receivedEmails["in4"] = { from: "andrenorocha@gmail.com", subject: "Resposta automática: Search funds", message_id: "<auto@x>", text: "Estou ausente até dia 30.", headers: { "auto-submitted": "auto-replied", "in-reply-to": "<om-reqAAAAAAAAAAAA1@mail.douropartners-team.pt>" } };
   const repliedAtBefore = store.get("outreachThreads/" + thread1Id).status;
   await webhook({ type: "email.received", data: { email_id: "in4", from: "andrenorocha@gmail.com", to: ["an.rocha@teniokarau.resend.app"] } });
