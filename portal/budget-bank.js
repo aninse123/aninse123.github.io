@@ -174,7 +174,7 @@ export function findSupplier(desc, suppliers) {
 
 // ── Investors (step 2.8) ──
 // Words that name a kind of company, not the company: left out when comparing names.
-const GENERIC = new Set(['fund', 'funds', 'capital', 'partners', 'partner', 'holding', 'holdings', 'sa', 'lda', 'fc', 'sl', 'sarl', 'limited', 'ltd', 'gmbh', 'ab', 'llc', 'inc', 'group', 'sgps', 'the', 'of', 'and', 'i', 'ii', 'iii', 'iv', 'v', 'vi', 'investments', 'investimentos', 'ventures', 'equity', 'search']);
+const GENERIC = new Set(['fund', 'funds', 'capital', 'partners', 'partner', 'holding', 'holdings', 'sa', 'lda', 'fc', 'sl', 'sarl', 'limited', 'ltd', 'gmbh', 'ab', 'llc', 'inc', 'group', 'sgps', 'the', 'of', 'and', 'i', 'ii', 'iii', 'iv', 'v', 'vi', 'investments', 'investimentos', 'ventures', 'equity', 'search', 'asset', 'assets', 'management', 'family', 'office', 'advisors', 'advisory']);
 const sigWords = (s) => [...new Set(words(s).filter((w) => !GENERIC.has(w)))];
 // How a sender name in a bank line relates to one investor: 'alias' (a remembered bank name), 'name' (every distinctive word
 // of the investor's name is in the line), or ''. A single very short word (under 4 letters) never counts on its own.
@@ -187,7 +187,8 @@ export function investorMatch(text, investor) {
   }
   const sig = sigWords(investor.name || '');
   const have = new Set(words(text));
-  if (!sig.length || !sig.every((w) => have.has(w))) return '';
+  const squashed = t.replace(/ /g, '');   // "ONE TO ONE" is also "ONEtoONE"
+  if (!sig.length || !sig.every((w) => have.has(w) || (w.length >= 6 && squashed.includes(w)))) return '';
   if (sig.length === 1 && sig[0].length < 4) return '';
   return 'name';
 }
