@@ -321,6 +321,24 @@ service cloud.firestore {
       allow read: if can('budget.view');
       allow write: if can('budget.edit');
     }
+    // Budget v2 Stage 1: suppliers (anyone we pay) are part of the budget.
+    match /budgetSuppliers/{id} {
+      allow read: if can('budget.view');
+      allow write: if can('budget.edit');
+    }
+    // Company bank accounts and cards: only people with budget.accounts (Partners by default).
+    match /budgetAccounts/{id} {
+      allow read, write: if can('budget.accounts');
+    }
+    match /budgetCards/{id} {
+      allow read, write: if can('budget.accounts');
+    }
+    // A partner's own IBAN profile (document id = their team key): Partners and the Admin read all,
+    // each person edits only their own; the Admin edits all (catch-all above).
+    match /budgetPeople/{key} {
+      allow read: if can('budget.accounts');
+      allow write: if can('budget.accounts') && request.auth.token.get('key', '') == key;
+    }
     match /activityLog/{entryId} {
       allow read: if can('log.view');
       allow create: if isStaff() && request.resource.data.email == me();

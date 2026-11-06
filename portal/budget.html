@@ -139,7 +139,10 @@
 
     <nav class="nav" id="siteNav"></nav>
 
-    <main class="main">
+    <!-- Budget v2 (switch budget.v2): portal/budget-v2.js fills this and hides the v1 page below. -->
+    <main class="main" id="v2root" style="display:none;"></main>
+
+    <main class="main" id="v1main">
 
       <!-- ── Summary ── -->
       <div class="section">
@@ -295,6 +298,7 @@
     import { auth, db, storage, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
     import { nifStatus, cleanCompanyDetails } from './budget-fiscal.js';
     import { guardPage } from './access.js';
+    import { isOn } from './features.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
@@ -342,6 +346,22 @@
       startSharedReadsWatch();
       document.getElementById('loadingScreen').style.display = 'none';
       document.getElementById('app').style.display = 'block';
+      if (isOn('budget.v2')) {
+        document.getElementById('v1main').style.display = 'none';
+        const v2 = document.getElementById('v2root');
+        v2.style.display = '';
+        try {
+          const { mountBudgetV2 } = await import('./budget-v2.js');
+          await mountBudgetV2({ root: v2, access: pageAccess, logEvent, refreshReads });
+        } catch (e) {
+          console.error('Budget v2 failed to start, showing the original page:', e);
+          v2.style.display = 'none';
+          document.getElementById('v1main').style.display = '';
+          populateCategorySelects();
+          await loadAll();
+        }
+        return;
+      }
       populateCategorySelects();
       await loadAll();
     });

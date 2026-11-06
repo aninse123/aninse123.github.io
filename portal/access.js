@@ -60,6 +60,7 @@ export const PERMS = [
   ["portal.viewas", "Admin", "Investor view: see the portal as any investor, incl. their documents (read only)"],
   ["budget.view", "Budget", "See the budget"],
   ["budget.edit", "Budget", "Edit the budget"],
+  ["budget.accounts", "Budget", "See and edit the company bank accounts and cards, and the partners' IBAN profiles"],
   ["log.view", "Activity Log", "See the portal activity log"],
   ["features.test", "Team & access", "Test features before release (sees features switched to Test) (Admin)"],
   ["features.manage", "Team & access", "Manage feature switches: Off / Test / On, testers, kill switches (Admin)"],
