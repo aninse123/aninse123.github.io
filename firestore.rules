@@ -316,6 +316,11 @@ service cloud.firestore {
       allow read: if can('budget.view');
       allow write: if can('budget.edit');
     }
+    // Budget v2 (switch budget.v2): company details as they must appear on invoices (and, later, the allocation key).
+    match /budgetSettings/{id} {
+      allow read: if can('budget.view');
+      allow write: if can('budget.edit');
+    }
     match /activityLog/{entryId} {
       allow read: if can('log.view');
       allow create: if isStaff() && request.resource.data.email == me();

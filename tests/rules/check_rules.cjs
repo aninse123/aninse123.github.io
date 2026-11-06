@@ -136,6 +136,11 @@ const cases = [
   C('Partner: investor access list', PARTNER, 'update', 'config/allowedEmailHashes', 'ALLOW', { hashes: ['a'] }, { hashes: [] }),
   C('Partner: add a budget item', PARTNER, 'create', 'budgetItems/b1', 'ALLOW', { amount: 1 }),
   C('Partner: delete a budget item', PARTNER, 'delete', 'budgetItems/b1', 'ALLOW', null, { amount: 1 }),
+  // 6 Nov (budget.v2, step 0.3): company details as they must appear on invoices
+  C('Partner: read the budget settings', PARTNER, 'get', 'budgetSettings/main', 'ALLOW', null, { companyNif: '600084779' }),
+  C('Partner: save the budget settings', PARTNER, 'update', 'budgetSettings/main', 'ALLOW', { companyNif: '600084779', updatedBy: me }, { companyNif: '' }),
+  C('Intern: cannot read the budget settings', INTERN, 'get', 'budgetSettings/main', 'DENY', null, { companyNif: '600084779' }),
+  C('Intern: cannot save the budget settings', INTERN, 'update', 'budgetSettings/main', 'DENY', { companyNif: '1' }, { companyNif: '' }),
   C('Partner: read the Activity Log', PARTNER, 'get', 'activityLog/e1', 'ALLOW', null, { email: 'x', type: 'login' }),
   C('Partner: record an export in the Activity Log', PARTNER, 'create', 'activityLog/e2', 'ALLOW', { email: me, type: 'data_export' }),
   C('Partner: shared read counter', PARTNER, 'update', 'dailyReadCounters/2026-09-30', 'ALLOW', { count: 2 }, { count: 1 }),

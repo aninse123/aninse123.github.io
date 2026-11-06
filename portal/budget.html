@@ -175,6 +175,8 @@
           <div class="section-actions">
             <button class="btn btn--ghost" id="groupToggleBtn">Group by category</button>
             <button class="btn btn--ghost" id="exportBtn">↓ Export CSV</button>
+            <button class="btn btn--ghost" id="backupBtn" data-feature="budget.v2" title="Every item exactly as stored, as one JSON file. Take one before any migration.">↓ Backup (JSON)</button>
+            <button class="btn btn--ghost" id="companyBtn" data-feature="budget.v2" title="Company name, NIF and address as they must appear on invoices">Company details</button>
             <button class="btn btn--primary" id="addItemBtn" data-perm="budget.edit">+ New Item</button>
           </div>
         </div>
@@ -263,13 +265,40 @@
     </div>
   </div>
 
+  <!-- ── Company details (budget.v2, step 0.3) ── -->
+  <div class="modal-overlay" id="companyModal" data-feature="budget.v2">
+    <div class="modal">
+      <h2>Company details</h2>
+      <p class="hint" style="margin:-12px 0 18px;">Shown as a reminder wherever an invoice is entered: ask the supplier for the invoice in exactly this name, NIF and address.</p>
+      <div class="form-group">
+        <label for="cName">Company name</label>
+        <input type="text" id="cName" maxlength="200" placeholder="As on the commercial registry">
+      </div>
+      <div class="form-group">
+        <label for="cNif">NIF</label>
+        <input type="text" id="cNif" inputmode="numeric" maxlength="14" placeholder="9 digits">
+        <div class="hint" id="cNifHint">The Portuguese taxpayer number. A VAT ID is "PT" plus the NIF.</div>
+      </div>
+      <div class="form-group">
+        <label for="cAddress">Address on invoices</label>
+        <textarea id="cAddress" maxlength="500" placeholder="Street, postal code, city"></textarea>
+      </div>
+      <div class="hint" id="cMeta"></div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="cancelCompanyBtn">Close</button>
+        <button class="btn btn--primary" id="saveCompanyBtn" data-perm="budget.edit">Save</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module">
-    import { auth, db, storage, addReads, addDoc, updateDoc, deleteDoc } from './firebase-config.js';
+    import { auth, db, storage, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
+    import { nifStatus, cleanCompanyDetails } from './budget-fiscal.js';
     import { guardPage } from './access.js';
     import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import {
-      collection, getDocs,
+      collection, getDocs, getDoc,
       doc, serverTimestamp, query, orderBy
     } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import {
@@ -583,7 +612,85 @@
       a.click(); URL.revokeObjectURL(a.href);
     }
 
+    // ── Backup (budget.v2, step 0.2): every item exactly as stored ──
+    const plain = v => {
+      if (v && typeof v.toDate === 'function') return v.toDate().toISOString();
+      if (Array.isArray(v)) return v.map(plain);
+      if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, plain(x)]));
+      return v;
+    };
+    async function backupJson() {
+      const btn = document.getElementById('backupBtn');
+      btn.disabled = true;
+      try {
+        const snap = await getDocs(collection(db, 'budgetItems'));
+        addReads(snap.docs.length);
+        refreshReads();
+        const items = snap.docs.map(d => ({ id: d.id, ...plain(d.data()) }));
+        const out = { exportedAt: new Date().toISOString(), exportedBy: adminEmail, collection: 'budgetItems', count: items.length, items };
+        const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+        const a = Object.assign(document.createElement('a'), {
+          href: URL.createObjectURL(blob),
+          download: `douro-budget-backup-${new Date().toISOString().slice(0, 10)}.json`,
+        });
+        a.click(); URL.revokeObjectURL(a.href);
+        logEvent('budget_backup', { count: items.length });
+      } catch (e) {
+        alert('Backup failed: ' + e.message);
+      } finally { btn.disabled = false; }
+    }
+
+    // ── Company details (budget.v2, step 0.3): budgetSettings/main ──
+    const NIF_HINTS = {
+      empty:     'The Portuguese taxpayer number. A VAT ID is "PT" plus the NIF.',
+      ok:        '✓ Valid NIF.',
+      badFormat: 'A NIF has 9 digits (a leading "PT" is fine).',
+      badCheck:  'These 9 digits do not pass the NIF check, so there is probably a typo. You can still save it.',
+    };
+    function showNifHint() {
+      const st = nifStatus(document.getElementById('cNif').value);
+      const h = document.getElementById('cNifHint');
+      h.textContent = NIF_HINTS[st];
+      h.style.color = st === 'ok' ? 'var(--secondary)' : (st === 'empty' ? '' : 'var(--danger)');
+    }
+    async function openCompanyModal() {
+      document.getElementById('companyModal').classList.add('open');
+      ['cName', 'cNif', 'cAddress'].forEach(id => { document.getElementById(id).value = ''; });
+      document.getElementById('cMeta').textContent = 'Loading…';
+      try {
+        const snap = await getDoc(doc(db, 'budgetSettings', 'main'));
+        addReads(1); refreshReads();
+        const d = snap.exists() ? snap.data() : {};
+        document.getElementById('cName').value = d.companyName || '';
+        document.getElementById('cNif').value = d.companyNif || '';
+        document.getElementById('cAddress').value = d.companyAddress || '';
+        document.getElementById('cMeta').textContent = d.updatedBy ? `Last saved by ${d.updatedBy}.` : (snap.exists() ? '' : 'Not filled in yet.');
+      } catch (e) { document.getElementById('cMeta').textContent = 'Could not load: ' + e.message; }
+      showNifHint();
+    }
+    async function saveCompany() {
+      const data = cleanCompanyDetails({
+        companyName: document.getElementById('cName').value,
+        companyNif: document.getElementById('cNif').value,
+        companyAddress: document.getElementById('cAddress').value,
+      });
+      if (data.companyNif && nifStatus(data.companyNif) === 'badFormat') { alert('A NIF has 9 digits.'); return; }
+      const btn = document.getElementById('saveCompanyBtn');
+      btn.disabled = true;
+      try {
+        await setDoc(doc(db, 'budgetSettings', 'main'), { ...data, updatedAt: serverTimestamp(), updatedBy: adminEmail }, { merge: true });
+        logEvent('budget_company_saved', { itemName: data.companyName });
+        document.getElementById('companyModal').classList.remove('open');
+      } catch (e) { alert('Failed to save: ' + e.message); }
+      finally { btn.disabled = false; }
+    }
+
     // ── Wiring ─────────────────────────────────────────────────
+    document.getElementById('backupBtn').addEventListener('click', backupJson);
+    document.getElementById('companyBtn').addEventListener('click', openCompanyModal);
+    document.getElementById('saveCompanyBtn').addEventListener('click', saveCompany);
+    document.getElementById('cancelCompanyBtn').addEventListener('click', () => document.getElementById('companyModal').classList.remove('open'));
+    document.getElementById('cNif').addEventListener('input', showNifHint);
     document.getElementById('addItemBtn').addEventListener('click', () => openItemModal(null));
     document.getElementById('cancelItemBtn').addEventListener('click', () => document.getElementById('itemModal').classList.remove('open'));
     document.getElementById('saveItemBtn').addEventListener('click', saveItem);
