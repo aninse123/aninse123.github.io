@@ -153,6 +153,11 @@ const cases = [
   C('Partner: edits their own IBAN profile', PARTNER, 'update', 'budgetPeople/antonio', 'ALLOW', { iban: 'PT50' }, { iban: '' }),
   C('Partner: cannot edit the other partner\u2019s IBAN profile', PARTNER, 'update', 'budgetPeople/andre', 'DENY', { iban: 'PT51' }, { iban: 'PT50' }),
   C('Intern: cannot read an IBAN profile', INTERN, 'get', 'budgetPeople/andre', 'DENY', null, { iban: 'PT50' }),
+  // 7 Nov (budget.v2, Stage 5): accountant packs
+  C('Partner: create a pack', PARTNER, 'create', 'budgetPacks/p1', 'ALLOW', { from: '2026-10-01' }),
+  C('Partner: read a pack', PARTNER, 'get', 'budgetPacks/p1', 'ALLOW', null, { from: '2026-10-01' }),
+  C('Intern: cannot read a pack', INTERN, 'get', 'budgetPacks/p1', 'DENY', null, { from: '2026-10-01' }),
+  C('Intern: cannot create a pack', INTERN, 'create', 'budgetPacks/p2', 'DENY', { from: '2026-10-01' }),
   // 7 Nov (budget.v2, Stage 3): field visits
   C('Partner: add a visit', PARTNER, 'create', 'budgetVisits/v1', 'ALLOW', { companyName: 'X' }),
   C('Partner: read a visit', PARTNER, 'get', 'budgetVisits/v1', 'ALLOW', null, { companyName: 'X' }),

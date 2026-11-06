@@ -5,6 +5,8 @@ import { db, storage, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch
 import { loadDirectory } from './team-dir.js';
 import { INSTANCE } from './instance-config.js';
 import { isOn } from './features.js';
+import { monthRange, packHash, changedSince, packCandidates, packSummary, packSheets, packFileName } from './budget-pack.js';
+import { buildXlsx, XLSX_MIME } from './xlsx-write.js';
 import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDescription, matchCandidates, findInvestor } from './budget-bank.js';
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
@@ -121,7 +123,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // ── State ──
   const S = {
     tab: 'overview', items: [], accounts: [], cards: [], suppliers: [], people: {}, company: {}, lists: { categories: [], purposes: [] },
-    movements: [], imports: [], investors: [], visits: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '', reimb: '' },
+    movements: [], imports: [], investors: [], visits: [], packs: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '', reimb: '' },
     sort: { field: 'date', dir: 'desc' }, selected: new Set(), edit: null,
   };
   const reads = (n) => { try { addReads(n); refreshReads(); } catch (e) { /* counter only */ } };
@@ -129,7 +131,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   if (!document.getElementById('v2style')) { const st = document.createElement('style'); st.id = 'v2style'; st.textContent = CSS; document.head.appendChild(st); }
 
   async function loadAll() {
-    const [it, ac, cd, su, pe, main, lst, dir, mv, im, vi] = await Promise.all([
+    const [it, ac, cd, su, pe, main, lst, dir, mv, im, vi, pk] = await Promise.all([
       getDocs(collection(db, 'budgetItems')),
       can('budget.accounts') ? getDocs(collection(db, 'budgetAccounts')).catch(() => null) : null,
       can('budget.accounts') ? getDocs(collection(db, 'budgetCards')).catch(() => null) : null,
@@ -141,10 +143,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       can('budget.accounts') ? getDocs(collection(db, 'budgetMovements')).catch(() => null) : null,
       can('budget.accounts') ? getDocs(collection(db, 'budgetImports')).catch(() => null) : null,
       getDocs(collection(db, 'budgetVisits')).catch(() => null),
+      getDocs(collection(db, 'budgetPacks')).catch(() => null),
     ]);
     const n = (x) => (x ? x.docs.length : 0);
     reads(n(it) + n(ac) + n(cd) + n(su) + n(pe) + n(mv) + n(im) + n(vi) + 2);
     S.visits = vi ? vi.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
+    S.packs = pk ? pk.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.createdAtIso || '').localeCompare(String(a.createdAtIso || ''))) : [];
     S.movements = mv ? mv.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
     S.imports = im ? im.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.createdAtIso || '').localeCompare(String(a.createdAtIso || ''))) : [];
     S.items = it.docs.map((d) => normalizeItem({ id: d.id, ...d.data() }));
@@ -211,6 +215,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <button data-tab="items">Items${unrev ? `<span class="cnt" title="Old items to review">${unrev}</span>` : ''}</button>
         <button data-tab="visits">Visits</button>
         <button data-tab="reports">Reports</button>
+        <button data-tab="packs" data-perm="budget.edit">Packs</button>
         <button data-tab="inbox" data-perm="budget.accounts">Inbox${inboxCount() ? `<span class="cnt" title="Bank lines waiting">${inboxCount()}</span>` : ''}</button>
         <button data-tab="accounts" data-perm="budget.accounts">Accounts</button>
         <button data-tab="bank" data-perm="budget.import">Bank</button>
@@ -225,7 +230,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   function render() {
     root.querySelectorAll('#v2tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.tab));
     const body = root.querySelector('#v2body');
-    ({ overview: renderOverview, items: renderItems, visits: renderVisits, reports: renderReports, inbox: renderInbox, bank: renderBank, accounts: renderAccounts, suppliers: renderSuppliers, settings: renderSettings }[S.tab] || renderOverview)(body);
+    ({ overview: renderOverview, items: renderItems, visits: renderVisits, reports: renderReports, packs: renderPacks, inbox: renderInbox, bank: renderBank, accounts: renderAccounts, suppliers: renderSuppliers, settings: renderSettings }[S.tab] || renderOverview)(body);
   }
   const openModal = (html) => { root.querySelector('#v2modalBox').innerHTML = html; root.querySelector('#v2modal').classList.add('open'); };
   const closeModal = () => { root.querySelector('#v2modal').classList.remove('open'); S.edit = null; };
@@ -336,7 +341,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <td>${i.kind === 'expense' ? `<span class="badge-doc ${ds.level}" title="${esc(ds.missing.length ? 'Missing: ' + ds.missing.join(', ') : ds.label)}">${esc(ds.label)}</span>` : ''}</td>
       <td class="num">${vatBucket(i) !== 'none' ? `<span title="${esc(VAT_BUCKETS[vatBucket(i)].label)}">${eur.format(Number(i.vatAmount))}</span>` : ''}</td>
       <td>${i.tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t)}">${esc(t)}</button>`).join('')}</td>
-      <td>${i.sharedAt ? `<span title="Shared ${esc(String(i.sharedAt).slice(0, 10))} by ${esc(i.sharedBy || '')}" style="color:var(--secondary);font-weight:700">✓</span>${i.changedSinceShared ? '<span title="Changed since it was shared" style="color:#8A5A00"> ⚠</span>' : ''}` : ''}</td>
+      <td>${i.sharedAt ? `<span title="Shared ${esc(String(i.sharedAt).slice(0, 10))} by ${esc(i.sharedBy || '')}" style="color:var(--secondary);font-weight:700">✓</span>${changedSince(i) ? '<span title="Changed since it was shared: it can go in the next pack" style="color:#8A5A00"> ⚠</span>' : ''}` : ''}</td>
       <td>${att}</td>
       <td style="white-space:nowrap;text-align:right"><button class="icon-btn" data-edit="${i.id}" data-perm="budget.edit" title="Edit">✎</button><button class="icon-btn" data-del="${i.id}" data-perm="budget.edit" title="Delete">🗑</button></td></tr>`;
   }
@@ -424,8 +429,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       for (const id of ids) {
         const it = S.items.find((x) => x.id === id); if (!it) continue;
         let p = null;
-        if (action === 'share') p = { sharedAt: new Date().toISOString(), sharedBy: access.email, changedSinceShared: false };
-        else if (action === 'unshare') p = { sharedAt: '', sharedBy: '', changedSinceShared: false };
+        if (action === 'share') p = { sharedAt: new Date().toISOString(), sharedBy: access.email, changedSinceShared: false, sharedHash: packHash(it) };
+        else if (action === 'unshare') p = { sharedAt: '', sharedBy: '', changedSinceShared: false, sharedHash: '', packId: '' };
         else if (action === 'tag') p = { tags: parseTags([...it.tags, tag]) };
         else if (action === 'classify') { if (it.kind === 'income') continue; p = { ...(bCat && it.kind === 'expense' ? { categoryId: bCat } : {}), ...(bPur ? { purposeId: bPur } : {}) }; if (!Object.keys(p).length) continue; }
         else if (action === 'archive') p = { archived: true };
@@ -674,9 +679,10 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       if (kind === 'income' && $('f-income').value === 'partner_loan' && !data.partnerKey) { alert('Choose which partner lent the money.'); btn.disabled = false; btn.textContent = 'Save'; return; }
       if (expense && data.paidWith === 'personal' && !data.paidPersonallyBy) { alert('Choose who paid personally.'); btn.disabled = false; btn.textContent = 'Save'; return; }
       const wasShared = !!existing?.sharedAt, nowShared = $('f-shared').checked;
-      if (nowShared && !wasShared) { data.sharedAt = new Date().toISOString(); data.sharedBy = access.email; data.changedSinceShared = false; }
-      else if (!nowShared) { data.sharedAt = ''; data.sharedBy = ''; data.changedSinceShared = false; }
-      else data.changedSinceShared = true;   // it was already sent and this save may change it (Stage 5 refines this)
+      const merged = { ...(existing || {}), ...data };
+      if (nowShared && !wasShared) { data.sharedAt = new Date().toISOString(); data.sharedBy = access.email; data.changedSinceShared = false; data.sharedHash = packHash(merged); }
+      else if (!nowShared) { data.sharedAt = ''; data.sharedBy = ''; data.changedSinceShared = false; data.sharedHash = ''; data.packId = ''; }
+      else data.changedSinceShared = existing?.sharedHash ? packHash(merged) !== existing.sharedHash : true;   // changed only if what the accountant sees changed
       // A new supplier name is saved for next time.
       if (expense && supplierName && !S.suppliers.some((s) => s.name.toLowerCase() === supplierName.toLowerCase())) {
         const sid = await addDoc(collection(db, 'budgetSuppliers'), { name: supplierName, taxId, country: data.country, type: 'other', defaultCategoryId: cat, defaultPurposeId: data.purposeId, aliases: [], notes: '', archived: false, createdAt: serverTimestamp(), createdBy: access.email });
@@ -1299,6 +1305,84 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <p class="mini">The plan is made of "Plan allocation" items with a category and/or a purpose. Add them in Items.</p>`;
     body.querySelector('#rFrom').addEventListener('change', (e) => { repRange.from = e.target.value; renderReports(body); });
     body.querySelector('#rTo').addEventListener('change', (e) => { repRange.to = e.target.value; renderReports(body); });
+  }
+
+  // ── Packs (Stage 5a): the monthly pack for the accountant ──
+  const downloadBytes = (name, bytes) => { const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([bytes], { type: XLSX_MIME })), download: name }); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); };
+  const strip = (h) => String(h).replace(/<[^>]*>/g, '').replace(/&amp;/g, '&');
+  const packUi = { ym: (() => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); })(), includeSent: false, off: new Set() };
+  function packContext(range, createdAt) {
+    return {
+      company: S.company || {}, createdBy: access.email, createdAt, period: range,
+      catLabel: (id) => labelOf(S.lists.categories, id, ''), purLabel: (id) => labelOf(S.lists.purposes, id, ''), personLabel,
+      paidWithLabel: (it) => strip(paidWithLabel(it)).replace(/^—$/, ''), countryName: (c) => COUNTRY_NAME[c] || c || '', accountName: (id) => accountOf(id)?.name || '',
+      movements: can('budget.accounts') ? S.movements : undefined,
+    };
+  }
+  function renderPacks(body) {
+    const range = monthRange(packUi.ym), cand = packCandidates(S.items, { ...range, includeSent: packUi.includeSent });
+    const sel = cand.filter((c) => !packUi.off.has(c.item.id)), sum = packSummary(sel);
+    const stateTag = (st) => st === 'new' ? '<span class="pill pill--income">New</span>' : st === 'changed' ? '<span class="pill pill--review" title="Sent before, and changed since">Changed since sent</span>' : '<span class="pill" style="background:#F0EDE8;color:var(--text-light)">Already sent</span>';
+    body.innerHTML = `
+      <div class="section"><div class="section-header"><h2 class="section-title">Accountant pack</h2></div>
+        <p class="mini" style="margin:-6px 0 14px">Pick a month. The pack holds every expense and money received dated in it that has not been sent yet, plus anything changed after it was sent. Untick what you want to leave out; nothing is marked as sent until you create the pack.</p>
+        <div class="card" style="padding:16px 18px;margin-bottom:16px"><div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+          <label class="filter-bar__label">Month <input type="month" id="pk-month" value="${esc(packUi.ym)}" style="margin-left:8px;padding:7px 12px;border:1.5px solid var(--border);border-radius:8px;font:inherit"></label>
+          <label class="mini" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="pk-sent" ${packUi.includeSent ? 'checked' : ''}> Include items already sent</label></div></div>
+        <div class="summary-grid">
+          <div class="stat-card"><div class="stat-card__label">Expenses</div><div class="stat-card__value">${sum.expenses}</div><div class="stat-card__sub">${eur.format(sum.expenseTotal)}</div></div>
+          <div class="stat-card"><div class="stat-card__label">Money received</div><div class="stat-card__value">${sum.income}</div><div class="stat-card__sub">${eur.format(sum.incomeTotal)}</div></div>
+          <div class="stat-card"><div class="stat-card__label">Receipt files</div><div class="stat-card__value">${sum.files}</div><div class="stat-card__sub">Named by date, supplier and amount</div></div>
+          <div class="stat-card"><div class="stat-card__label">VAT on these expenses</div><div class="stat-card__value">${eur.format(sum.vatTotal)}</div><div class="stat-card__sub">${sum.warnCount ? `${sum.warnCount} with paperwork to fix` : 'Paperwork in order'}</div></div></div>
+        ${sum.warnCount ? `<div class="warnbox warn" style="margin-top:14px"><strong>${sum.warnCount} expense${sum.warnCount === 1 ? '' : 's'} with missing or wrong paperwork.</strong> You can still create the pack: they are listed on its "Missing documents" sheet with what to ask the supplier for.<div style="margin-top:6px">${sum.warn.slice(0, 6).map((w) => `<button class="btn btn--ghost btn--sm" data-pedit="${w.item.id}" style="margin:2px 6px 2px 0">${esc((w.item.name || '').slice(0, 24))} · ${esc(docStatus(w.item).label)}</button>`).join('')}${sum.warnCount > 6 ? ` and ${sum.warnCount - 6} more` : ''}</div></div>` : ''}
+        ${sum.changed ? `<div class="warnbox na" style="margin-top:10px">${sum.changed} item${sum.changed === 1 ? '' : 's'} sent before ${sum.changed === 1 ? 'has' : 'have'} changed since. They go in again so the accountant has the current version.</div>` : ''}
+        <div class="card" style="margin-top:16px"><div class="table-wrap"><table><thead><tr><th class="chk"><input type="checkbox" id="pk-all" aria-label="Select all" ${cand.length && !packUi.off.size ? 'checked' : ''}></th><th>Date</th><th>Item</th><th>Kind</th><th class="num">Amount</th><th>Paperwork</th><th>Status</th><th>Files</th></tr></thead>
+          <tbody>${cand.length ? cand.map((c) => { const i = c.item, ds = docStatus(i); return `<tr style="${packUi.off.has(i.id) ? 'opacity:.45' : ''}"><td class="chk"><input type="checkbox" data-poff="${i.id}" ${packUi.off.has(i.id) ? '' : 'checked'} aria-label="Include"></td><td style="white-space:nowrap">${fmtDate(i.date)}</td><td><strong>${esc(i.name || '—')}</strong>${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}</td><td>${kindPill(i)}</td><td class="num ${i.kind === 'income' ? 'amt-in' : ''}">${i.kind === 'income' ? '+' : ''}${eur.format(i.amount)}</td><td>${i.kind === 'expense' ? `<span class="badge-doc ${ds.level}">${esc(ds.label)}</span>` : ''}</td><td>${stateTag(c.state)}</td><td>${i.attachments.length || ''}</td></tr>`; }).join('') : `<tr class="empty-row"><td colspan="8">Nothing to send for ${esc(packUi.ym)}.</td></tr>`}</tbody></table></div></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;align-items:center">
+          <button class="btn btn--ghost" id="pk-preview" ${sel.length ? '' : 'disabled'}>↓ Download Excel preview</button>
+          <button class="btn btn--primary" id="pk-create" data-perm="budget.edit" ${sel.length ? '' : 'disabled'}>Create pack and mark ${sel.length} item${sel.length === 1 ? '' : 's'} as shared</button>
+          <span class="mini">The preview changes nothing. Creating the pack saves a frozen copy below and ticks "shared" on the items.</span></div></div>
+      <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Packs created</h2></div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Created</th><th>Period</th><th class="num">Expenses</th><th class="num">Total</th><th class="num">Items</th><th>By</th><th></th></tr></thead>
+          <tbody>${S.packs.length ? S.packs.map((k) => `<tr style="${k.status === 'undone' ? 'opacity:.5' : ''}"><td style="white-space:nowrap">${fmtDate(String(k.createdAtIso || '').slice(0, 10))}</td><td style="white-space:nowrap">${fmtDate(k.from)} – ${fmtDate(k.to)}</td><td class="num">${esc(k.counts?.expenses ?? '')}</td><td class="num">${eur.format(k.totals?.expenses || 0)}</td><td class="num">${(k.itemIds || []).length}</td><td class="mini">${esc(String(k.createdBy || '').split('@')[0])}</td><td style="text-align:right;white-space:nowrap">${k.status === 'undone' ? '<span class="mini">unmarked</span>' : `<button class="btn btn--ghost btn--sm" data-pdl="${k.id}">↓ Excel</button> <button class="btn btn--ghost btn--sm" data-pundo="${k.id}" data-perm="budget.edit" title="Take the shared mark off the items again">Undo</button>`}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="7">No packs yet.</td></tr>'}</tbody></table></div></div></div>`;
+    body.querySelector('#pk-month').addEventListener('change', (e) => { packUi.ym = e.target.value || packUi.ym; packUi.off.clear(); renderPacks(body); });
+    body.querySelector('#pk-sent').addEventListener('change', (e) => { packUi.includeSent = e.target.checked; packUi.off.clear(); renderPacks(body); });
+    body.querySelector('#pk-all').addEventListener('change', (e) => { packUi.off.clear(); if (!e.target.checked) cand.forEach((c) => packUi.off.add(c.item.id)); renderPacks(body); });
+    body.querySelectorAll('[data-poff]').forEach((c) => c.addEventListener('change', () => { c.checked ? packUi.off.delete(c.dataset.poff) : packUi.off.add(c.dataset.poff); renderPacks(body); }));
+    body.querySelectorAll('[data-pedit]').forEach((b) => b.addEventListener('click', () => openItem(b.dataset.pedit)));
+    body.querySelector('#pk-preview').addEventListener('click', () => { const now = new Date().toISOString(); downloadBytes(packFileName(INSTANCE.orgName, range).replace('.xlsx', '-preview.xlsx'), buildXlsx(packSheets(sel, packContext(range, now)).sheets)); });
+    body.querySelector('#pk-create').addEventListener('click', () => createPack(sel, range, sum));
+    body.querySelectorAll('[data-pdl]').forEach((b) => b.addEventListener('click', () => { const k = S.packs.find((x) => x.id === b.dataset.pdl); try { downloadBytes(packFileName(INSTANCE.orgName, { from: k.from, to: k.to }), buildXlsx(JSON.parse(k.sheetsJson))); } catch (e) { alert('Could not rebuild this pack: ' + e.message); } }));
+    body.querySelectorAll('[data-pundo]').forEach((b) => b.addEventListener('click', () => undoPack(b.dataset.pundo)));
+  }
+  async function createPack(sel, range, sum) {
+    if (!sel.length) return;
+    const msg = `Create the pack for ${range.from} to ${range.to}?\n\n${sum.expenses} expense(s) ${eur.format(sum.expenseTotal)}, ${sum.income} money received ${eur.format(sum.incomeTotal)}, ${sum.files} receipt file(s).${sum.warnCount ? `\n\n${sum.warnCount} expense(s) still have missing or wrong paperwork and will be listed as missing.` : ''}\n\nThe ${sel.length} item(s) are marked as shared with the accountant.`;
+    if (!confirm(msg)) return;
+    const at = new Date().toISOString(), P = packSheets(sel, packContext(range, at)), json = JSON.stringify(P.sheets);
+    if (json.length > 900000) { alert('This pack is too large to save as one copy. Choose a shorter period.'); return; }
+    const btn = document.querySelector('#pk-create'); if (btn) btn.disabled = true;
+    try {
+      const k = await addDoc(collection(db, 'budgetPacks'), { from: range.from, to: range.to, status: 'created', createdAt: serverTimestamp(), createdAtIso: at, createdBy: access.email, itemIds: sel.map((c) => c.item.id), counts: P.counts, totals: P.totals, sheetsJson: json });
+      for (let i = 0; i < sel.length; i += 400) {
+        const wb = writeBatch(db);
+        sel.slice(i, i + 400).forEach((c) => wb.update(doc(db, 'budgetItems', c.item.id), { sharedAt: at, sharedBy: access.email, packId: k.id, sharedHash: packHash(c.item), changedSinceShared: false }));
+        await wb.commit();
+      }
+      logEvent('budget_pack_created', { itemName: `${range.from} to ${range.to}`, amount: sel.length });
+      downloadBytes(packFileName(INSTANCE.orgName, range), buildXlsx(P.sheets));
+      packUi.off.clear(); await refresh(); S.tab = 'packs'; render();
+    } catch (e) { alert('Could not create the pack: ' + e.message); if (btn) btn.disabled = false; }
+  }
+  async function undoPack(id) {
+    const k = S.packs.find((x) => x.id === id); if (!k) return;
+    const its = S.items.filter((i) => i.packId === id);
+    if (!confirm(`Undo this pack?\n\n${its.length} item(s) lose their "shared" mark and go back into the next pack. The saved copy stays in the list as unmarked.`)) return;
+    try {
+      for (let i = 0; i < its.length; i += 400) { const wb = writeBatch(db); its.slice(i, i + 400).forEach((it) => wb.update(doc(db, 'budgetItems', it.id), { sharedAt: '', sharedBy: '', packId: '', sharedHash: '', changedSinceShared: false })); await wb.commit(); }
+      await updateDoc(doc(db, 'budgetPacks', id), { status: 'undone' });
+      logEvent('budget_pack_undone', { amount: its.length }); await refresh(); S.tab = 'packs'; render();
+    } catch (e) { alert('Could not undo: ' + e.message); }
   }
 
   // ── Go ──
