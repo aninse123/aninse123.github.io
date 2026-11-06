@@ -333,6 +333,11 @@ service cloud.firestore {
     match /budgetCards/{id} {
       allow read, write: if can('budget.accounts');
     }
+    // Budget v2 Stage 3: field visits (a company and a date; expenses are charged to them).
+    match /budgetVisits/{id} {
+      allow read: if can('budget.view');
+      allow write: if can('budget.edit');
+    }
     // Budget v2 Stage 2: imported bank lines (document id = the line's fingerprint) and their import batches.
     // Bank data: seen by people who see the accounts, written by people who may import.
     match /budgetMovements/{id} {

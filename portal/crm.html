@@ -1503,7 +1503,27 @@ async function renderCapital() {
       ${mine.length ? `<div class="commit-block-sub">${mine.length} transfer${mine.length === 1 ? '' : 's'}${target ? ` · ${pct}% of the ${hard ? 'hard' : 'wired'} commitment (${fmtEur(target)})` : ''}</div>` : '<div class="commit-block-sub">No transfer linked yet.</div>'}
       ${wired && Math.abs(total - wired) > 0.005 && mine.length ? `<div class="commit-block-sub" style="color:#8A5A00;">Wired commitment says ${fmtEur(wired)}: ${total > wired ? 'received is higher' : 'received is lower'}.</div>` : ''}</div>
     ${mine.length ? `<div style="margin-top:10px;font-size:0.82rem;">${mine.map(i => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--border);"><span>${esc(i.date || '')} · ${esc(i.counterparty || i.name || '')}</span><strong>${fmtEur(i.amount)}</strong></div>`).join('')}</div>` : ''}
-    ${maybe.length ? `<div style="margin-top:12px;font-size:0.8rem;color:var(--text-light);">Transfers that look like this investor's:</div>${maybe.map(i => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;font-size:0.82rem;"><span>${esc(i.date || '')} · ${esc(i.counterparty || i.name || '')} · <strong>${fmtEur(i.amount)}</strong></span><button class="btn btn--ghost btn--sm" data-caplink="${esc(i.id)}" data-perm="budget.edit">Link</button></div>`).join('')}` : ''}`;
+    ${maybe.length ? `<div style="margin-top:12px;font-size:0.8rem;color:var(--text-light);">Transfers that look like this investor's:</div>${maybe.map(i => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;font-size:0.82rem;"><span>${esc(i.date || '')} · ${esc(i.counterparty || i.name || '')} · <strong>${fmtEur(i.amount)}</strong></span><button class="btn btn--ghost btn--sm" data-caplink="${esc(i.id)}" data-perm="budget.edit">Link</button></div>`).join('')}` : ''}
+    <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border);">
+      <div style="font-size:0.8rem;color:var(--text-light);margin-bottom:6px;" title="The names this investor's money arrives under in the bank file. A transfer from one of these names is recognised as theirs.">Names in bank lines</div>
+      <div id="bankNamesList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">${(inv.bankNames || []).length ? (inv.bankNames || []).map((n, k) => `<span class="badge badge-grey" style="display:inline-flex;gap:6px;align-items:center;">${esc(n)}<span data-bndel="${k}" data-perm="icrm.edit" title="Remove" style="cursor:pointer;opacity:.6;">×</span></span>`).join('') : '<span style="font-size:0.8rem;color:var(--text-light);">None yet. The name is remembered when you link a transfer.</span>'}</div>
+      <div data-perm="icrm.edit" style="display:flex;gap:6px;"><input type="text" id="bankNameNew" class="field" maxlength="60" placeholder="e.g. APEX UNITAS LIMITED" style="flex:1;"><button class="btn btn--ghost btn--sm" id="bankNameAdd">Add</button></div></div>`;
+  const saveBankNames = async (bankNames) => {
+    try {
+      await updateDoc(doc(db, 'crmInvestors', id), { bankNames });
+      crmInvestors = crmInvestors.map(x => x.id === id ? { ...x, bankNames } : x);
+      renderCapital();
+    } catch (e) { alert('Could not save: ' + e.message); }
+  };
+  box.querySelector('#bankNameAdd')?.addEventListener('click', () => {
+    const v = box.querySelector('#bankNameNew').value.trim(); if (v.length < 4) { alert('Type at least 4 characters of the name as it appears in the bank line.'); return; }
+    const cur = inv.bankNames || []; if (cur.some(x => x.toLowerCase() === v.toLowerCase())) return;
+    saveBankNames([...cur, v].slice(0, 20));
+  });
+  box.querySelectorAll('[data-bndel]').forEach(b => b.addEventListener('click', () => {
+    const cur = inv.bankNames || [], name = cur[Number(b.dataset.bndel)];
+    if (confirm(`Stop recognising "${name}" as ${inv.name}?`)) saveBankNames(cur.filter((_, k) => k !== Number(b.dataset.bndel)));
+  }));
   box.querySelectorAll('[data-caplink]').forEach(b => b.addEventListener('click', async () => {
     const item = capitalCache.items.find(x => x.id === b.dataset.caplink); if (!item) return;
     if (!confirm(`Link ${fmtEur(item.amount)} from "${item.counterparty || item.name}" to ${inv.name}?`)) return;

@@ -297,6 +297,92 @@ export function cardFromDescription(desc) {
   return m ? m[1] : '';
 }
 
+// ── Split lines, visits, reports (Stage 3) ──
+// An expense is one or more lines. A line has a weight (its share of the amount, equal by default), a category, a purpose and
+// optionally a visit. An expense with no lines is one line made of the item's own fields.
+export function itemLines(item) {
+  const it = item || {};
+  if ((it.kind || 'expense') !== 'expense') return [];
+  const lines = Array.isArray(it.lines) ? it.lines.filter(Boolean) : [];
+  if (lines.length) {
+    const parts = splitShares(it.amount, lines.map((l, i) => ({ key: 'l' + i, weight: Number(l.weight) > 0 ? Number(l.weight) : 1 })));
+    return lines.map((l, i) => ({ amount: parts[i].amount, categoryId: l.categoryId || it.categoryId || 'other', purposeId: l.purposeId ?? it.purposeId ?? '', visitId: l.visitId || '' }));
+  }
+  return [{ amount: Number(it.amount) || 0, categoryId: it.categoryId || 'other', purposeId: it.purposeId || '', visitId: it.visitId || '' }];
+}
+// The visits an expense is charged to (stored on the item as visitIds so a company page can find them with one query).
+export function visitIdsOf(item) {
+  return [...new Set(itemLines(item).map((l) => l.visitId).filter(Boolean))];
+}
+const inRange = (d, from, to) => (!from || (d && d >= from)) && (!to || (d && d <= to));
+const live = (it) => !it.archived && (it.kind || 'expense') === 'expense';
+// Cost per visit: what is charged to each visit, by category. Visits are picked by the visit's own date.
+export function visitReport(items, visits, { from = '', to = '' } = {}) {
+  const rows = new Map((visits || []).filter((v) => !v.archived && inRange(v.date, from, to)).map((v) => [v.id, { visit: v, total: 0, count: 0, byCategory: {} }]));
+  for (const raw of items || []) {
+    const it = raw.legacy === undefined ? normalizeItem(raw) : raw;
+    if (!live(it)) continue;
+    const touched = new Set();
+    for (const l of itemLines(it)) {
+      const r = rows.get(l.visitId); if (!r) continue;
+      r.total = round2(r.total + l.amount); r.byCategory[l.categoryId] = round2((r.byCategory[l.categoryId] || 0) + l.amount); touched.add(l.visitId);
+    }
+    touched.forEach((id) => { rows.get(id).count++; });
+  }
+  const list = [...rows.values()].sort((a, b) => String(b.visit.date || '').localeCompare(String(a.visit.date || '')));
+  const total = round2(list.reduce((x, r) => x + r.total, 0));
+  const costed = list.filter((r) => r.total > 0);
+  const byCategory = {};
+  list.forEach((r) => Object.entries(r.byCategory).forEach(([k, v]) => { byCategory[k] = round2((byCategory[k] || 0) + v); }));
+  return {
+    rows: list, total, visits: list.length, costed: costed.length,
+    average: list.length ? round2(total / list.length) : 0,           // over every visit, including ones with no cost entered yet
+    averageCosted: costed.length ? round2(total / costed.length) : 0, // over visits that have costs
+    byCategory,
+  };
+}
+// Cost per company: the visits of one company added together.
+export function companyReport(report) {
+  const m = new Map();
+  for (const r of report.rows) {
+    const k = r.visit.companyId || r.visit.companyName || '?';
+    const cur = m.get(k) || { companyId: r.visit.companyId || '', name: r.visit.companyName || '', visits: 0, total: 0 };
+    cur.visits++; cur.total = round2(cur.total + r.total); m.set(k, cur);
+  }
+  return [...m.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+}
+// Cost per person: each line is shared by the "used by" weights; an expense used by nobody in particular goes to the Company bucket.
+export function personReport(items, { from = '', to = '' } = {}) {
+  const people = new Map();
+  const company = { total: 0, byCategory: {} };
+  const add = (box, cat, amt) => { box.total = round2(box.total + amt); box.byCategory[cat] = round2((box.byCategory[cat] || 0) + amt); };
+  for (const raw of items || []) {
+    const it = raw.legacy === undefined ? normalizeItem(raw) : raw;
+    if (!live(it) || !inRange(it.date, from, to)) continue;
+    const who = (it.usedBy || []).filter((u) => u && u.key);
+    for (const l of itemLines(it)) {
+      if (!who.length) { add(company, l.categoryId, l.amount); continue; }
+      const parts = splitShares(l.amount, who);
+      parts.forEach((p) => { const box = people.get(p.key) || { key: p.key, total: 0, byCategory: {} }; add(box, l.categoryId, p.amount); people.set(p.key, box); });
+    }
+  }
+  return { people: [...people.values()].sort((a, b) => b.total - a.total), company, total: round2([...people.values()].reduce((x, p) => x + p.total, 0) + company.total) };
+}
+// Plan against actual, by category and by purpose. Plan lines are items of kind "plan" with a category and/or a purpose.
+export function planVsActual(items, { from = '', to = '' } = {}) {
+  const cat = new Map(), pur = new Map();
+  const bump = (m, id, field, amt) => { if (!id) return; const c = m.get(id) || { id, planned: 0, actual: 0 }; c[field] = round2(c[field] + amt); m.set(id, c); };
+  for (const raw of items || []) {
+    const it = raw.legacy === undefined ? normalizeItem(raw) : raw;
+    if (it.archived) continue;
+    if (it.kind === 'plan') { bump(cat, it.categoryId, 'planned', it.amount); bump(pur, it.purposeId, 'planned', it.amount); continue; }
+    if (it.kind !== 'expense' || !inRange(it.date, from, to)) continue;
+    for (const l of itemLines(it)) { bump(cat, l.categoryId, 'actual', l.amount); bump(pur, l.purposeId, 'actual', l.amount); }
+  }
+  const fin = (m) => [...m.values()].map((r) => ({ ...r, pct: r.planned > 0 ? Math.round((r.actual / r.planned) * 100) : null, left: round2(r.planned - r.actual) })).sort((a, b) => b.actual - a.actual || b.planned - a.planned);
+  return { categories: fin(cat), purposes: fin(pur) };
+}
+
 // ── Small helpers ──
 export const eur2 = (n) => round2(n);
 export function labelOf(list, id, fallback = '—') {

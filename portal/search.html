@@ -645,6 +645,7 @@
       <button class="tab" data-tab="advisors">Advisors</button>
       <button class="tab" data-tab="contacts">Contacts</button>
       <button class="tab" data-tab="activities">Activities</button>
+      <button class="tab" data-tab="costs" data-feature="budget.v2 budget.companyCosts" data-perm="budget.view">Costs</button>
       <button class="tab" data-tab="deal">Deal</button>
       <button class="tab" data-tab="files" data-feature="search.companyFiles">Files</button>
       <button class="tab" data-tab="freshness">Data Freshness</button>
@@ -658,6 +659,7 @@
     <div class="tab-panel" id="panel-advisors"></div>
     <div class="tab-panel" id="panel-contacts"></div>
     <div class="tab-panel" id="panel-activities"></div>
+    <div class="tab-panel" id="panel-costs" data-feature="budget.v2 budget.companyCosts"></div>
     <div class="tab-panel" id="panel-deal"></div>
     <div class="tab-panel" id="panel-files" data-feature="search.companyFiles"></div>
     <div class="tab-panel" id="panel-freshness"></div>
@@ -1394,6 +1396,7 @@ import { genderOfFirstName } from './recipient-fields.js'; // 30 Oct: gender of 
 document.head.insertAdjacentHTML('beforeend', `<style>${TRUST_CSS}</style>`);
 import { stepsFor } from './campaign-paths.js'; // 27 Oct (outreach.paths)
 import { applyDirectory } from './team-dir.js';
+import { visitReport, itemLines, normalizeItem, mergeLists, DEFAULT_CATEGORIES, labelOf as budgetLabelOf } from './budget-lib.js'; // 7 Nov (budget.companyCosts)
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
@@ -3877,6 +3880,7 @@ function renderDetail(){
 
   renderOverview(c); renderFinancials(c); renderOwnership(c); renderContacts(c); renderActivityLog(); renderDeal(c);
   renderLegalCompliance(c); renderAdvisors(c); renderDataFreshness(c); renderOrbisFinancials(c);
+  companyCostsReset(c);
   companyFilesReset(c);
 }
 
@@ -4829,6 +4833,83 @@ async function companyFilesShow(){
   }
   companyFilesDraw();
 }
+
+// ── Costs tab (7 Nov 2026, switch budget.companyCosts) ──
+// The field visits to this company (budgetVisits, companyId) and what the Budget charges to them (budgetItems whose visitIds name those
+// visits). Read only when the tab is opened. "+ Add visit" writes a visit; costs are charged to it from the Budget page.
+const companyCosts = { coId: null, data: null };
+function companyCostsReset(c){
+  companyCosts.coId = c.id; companyCosts.data = null;
+  const el = document.getElementById('panel-costs'); if (el) el.innerHTML = '';
+  if (document.querySelector('#detailTabs .tab.active')?.dataset.tab === 'costs') companyCostsShow();
+}
+async function companyCostsShow(){
+  if (!isOn('budget.v2') || !isOn('budget.companyCosts') || !currentCoId) return;
+  const el = document.getElementById('panel-costs'); if (!el) return;
+  if (companyCosts.coId !== currentCoId || !companyCosts.data) {
+    companyCosts.coId = currentCoId;
+    el.innerHTML = '<div class="card"><div class="sec-title">Costs</div><div style="font-size:0.85rem;color:var(--text-light);">Loading…</div></div>';
+    const id = currentCoId;
+    try {
+      const vs = await getDocs(query(collection(db, 'budgetVisits'), where('companyId', '==', id), limit(100)));
+      const visits = vs.docs.map(d => ({ id: d.id, ...d.data() }));
+      const items = [];
+      for (let i = 0; i < visits.length; i += 30) {
+        const ids = visits.slice(i, i + 30).map(v => v.id);
+        const sn = await getDocs(query(collection(db, 'budgetItems'), where('visitIds', 'array-contains-any', ids)));
+        sn.docs.forEach(d => { if (!items.some(x => x.id === d.id)) items.push(normalizeItem({ id: d.id, ...d.data() })); });
+      }
+      const ls = await getDoc(doc(db, 'budgetSettings', 'lists')).catch(() => null);
+      addReads(vs.size + items.length + 1);
+      if (id !== currentCoId) return;
+      companyCosts.data = { visits, items, cats: mergeLists(ls && ls.exists() ? ls.data().categories : null, DEFAULT_CATEGORIES) };
+    } catch (e) {
+      el.innerHTML = `<div class="card"><div class="sec-title">Costs</div><div style="font-size:0.85rem;color:#B91C1C;">Could not load the costs: ${esc(e.message)}</div></div>`;
+      return;
+    }
+  }
+  companyCostsDraw();
+}
+function companyCostsDraw(){
+  const el = document.getElementById('panel-costs'), c = getCompany(), d = companyCosts.data; if (!el || !c || !d) return;
+  const eurF = new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR' });
+  const rep = visitReport(d.items, d.visits.filter(v => !v.archived));
+  const ids = new Set(d.visits.map(v => v.id));
+  const label = (k) => budgetLabelOf(d.cats, k);
+  const top = (m) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${esc(label(k))} ${eurF.format(v)}`).join(' · ');
+  const when = (v) => v ? new Date(v + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+  const charged = d.items.filter(i => i.kind === 'expense' && !i.archived).map(i => ({ i, amt: itemLines(i).filter(l => ids.has(l.visitId)).reduce((x, l) => x + l.amount, 0) })).filter(x => x.amt > 0).sort((a, b) => String(b.i.date || '').localeCompare(String(a.i.date || '')));
+  el.innerHTML = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap;">
+      <div class="sec-title" style="margin-bottom:0;">Costs of pursuing ${esc(c.name || 'this company')}</div>
+      <button class="btn btn--ghost btn--sm" id="ccAddVisit" data-perm="budget.edit">＋ Add visit</button></div>
+    <div id="ccForm" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border);border-radius:8px;">
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <label style="font-size:0.8rem;">Date <input type="date" id="ccDate" class="field" style="width:auto;display:inline-block;" value="${new Date().toISOString().slice(0,10)}"></label>
+        ${Object.entries(OWNER_LABELS).map(([k, l]) => `<label style="font-size:0.85rem;"><input type="checkbox" data-ccatt="${esc(k)}"> ${esc(l)}</label>`).join('')}</div>
+      <input type="text" id="ccNote" class="field" placeholder="Note (optional)" maxlength="300" style="margin-bottom:10px;">
+      <button class="btn btn--primary btn--sm" id="ccSave">Save visit</button> <button class="btn btn--ghost btn--sm" id="ccCancel">Cancel</button></div>
+    <div style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:16px;">
+      <div><div class="commit-block-label">Visits</div><div class="commit-block-value">${rep.visits}</div></div>
+      <div><div class="commit-block-label">Charged so far</div><div class="commit-block-value">${eurF.format(rep.total)}</div></div>
+      <div><div class="commit-block-label">Average per visit</div><div class="commit-block-value">${rep.visits ? eurF.format(rep.average) : '—'}</div></div></div>
+    ${rep.rows.length ? `<table style="width:100%;font-size:0.85rem;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-light);"><th>Date</th><th>Who went</th><th style="text-align:right;">Cost</th><th>Mostly</th></tr></thead><tbody>${rep.rows.map(r => `<tr style="border-top:1px solid var(--border);"><td style="padding:6px 0;">${when(r.visit.date)}</td><td>${esc((r.visit.attendees || []).map(k => OWNER_LABELS[k] || k).join(', ') || '—')}</td><td style="text-align:right;">${eurF.format(r.total)}</td><td style="color:var(--text-light);">${top(r.byCategory)}</td></tr>`).join('')}</tbody></table>` : '<div style="font-size:0.85rem;color:var(--text-light);">No visits recorded for this company yet.</div>'}
+    ${charged.length ? `<div style="margin-top:14px;font-size:0.8rem;color:var(--text-light);">Expenses charged to these visits</div>${charged.map(x => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--border);font-size:0.85rem;"><span>${when(x.i.date)} · ${esc(x.i.name || '')}</span><strong>${eurF.format(x.amt)}</strong></div>`).join('')}` : ''}
+    <div style="margin-top:12px;font-size:0.75rem;color:var(--text-light);">Only costs charged to a visit count. Charge an expense to a visit with the Visit field on the item in the Budget.</div></div>`;
+  const form = el.querySelector('#ccForm');
+  el.querySelector('#ccAddVisit').addEventListener('click', () => { form.style.display = form.style.display === 'none' ? 'block' : 'none'; });
+  el.querySelector('#ccCancel').addEventListener('click', () => { form.style.display = 'none'; });
+  el.querySelector('#ccSave').addEventListener('click', async () => {
+    const date = el.querySelector('#ccDate').value; if (!date) { alert('Choose the date of the visit.'); return; }
+    const attendees = [...el.querySelectorAll('[data-ccatt]:checked')].map(x => x.dataset.ccatt);
+    const btn = el.querySelector('#ccSave'); btn.disabled = true;
+    try {
+      await addDoc(collection(db, 'budgetVisits'), { companyId: c.id, companyName: c.name || '', date, trip: '', attendees, note: el.querySelector('#ccNote').value.trim(), archived: false, createdAt: serverTimestamp(), createdBy: currentUser });
+      companyCosts.data = null; companyCostsShow();
+    } catch (e) { alert('Could not save the visit: ' + e.message); btn.disabled = false; }
+  });
+}
+
 const FILE_CATS = { briefing: 'Briefing', legal: 'NDA / legal', financials: 'Financials', dataroom: 'Data room', other: 'Other' };
 const fileIcon = (name) => { const e = String(name || '').toLowerCase().split('.').pop(); return e === 'pdf' ? '📕' : /^(xls|xlsx|ods|csv)$/.test(e) ? '📊' : /^(ppt|pptx|odp)$/.test(e) ? '📽' : /^(png|jpe?g|gif)$/.test(e) ? '🖼' : /^(doc|docx|odt|txt)$/.test(e) ? '📝' : '📄'; };
 function companyFilesDraw(){
@@ -11228,6 +11309,7 @@ async function renderNetworkGraph(container, focusType, focusId){
 function setActiveTab(name){
   navTab(name);
   if (name === 'files') companyFilesShow();
+  if (name === 'costs') companyCostsShow();
   document.querySelectorAll('#detailTabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id==='panel-'+name));
 }

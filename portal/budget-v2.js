@@ -9,11 +9,11 @@ import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDes
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
   DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
-  docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, isValidIban, ibanStatus, formatIban, cleanIban,
+  docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, itemLines, visitIdsOf, visitReport, companyReport, personReport, planVsActual, isValidIban, ibanStatus, formatIban, cleanIban,
   last4, labelOf, mergeLists, activeOnly, newListId,
 } from './budget-lib.js';
 import {
-  collection, getDocs, getDoc, doc, serverTimestamp,
+  collection, getDocs, getDoc, doc, serverTimestamp, query, where, limit,
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
 
@@ -50,6 +50,8 @@ const TIPS = {
   waived: 'Tick for items that never get an invoice (a tip, a toll). Say why; it stops the document warning.',
   counterparty: 'Who the money came from, as written in the bank line.',
   investor: 'The investor in the Investor CRM this money belongs to. The investor card there then shows what has been received. The sender name is remembered for next time.',
+  visit: 'The field visit this expense belongs to (a company, a date, who went). The cost then shows on the visit, in the reports and on the company page.',
+  split: 'Share one expense between several visits or categories, for example a car rental used for two company visits, or a hotel invoice with meals. Each line gets a weight (equal by default); the amounts always add up to the total.',
   subtype: 'For Team pay: salary, searcher services invoiced by their own company, or social contributions.',
   iban: 'Two check digits inside an IBAN catch most typing mistakes. A valid IBAN does not prove the account exists.',
   fileAccountNo: 'The account number as it appears in the bank’s export files. Used later to match imported bank lines to this account.',
@@ -117,7 +119,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // ── State ──
   const S = {
     tab: 'overview', items: [], accounts: [], cards: [], suppliers: [], people: {}, company: {}, lists: { categories: [], purposes: [] },
-    movements: [], imports: [], investors: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '' },
+    movements: [], imports: [], investors: [], visits: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '' },
     sort: { field: 'date', dir: 'desc' }, selected: new Set(), edit: null,
   };
   const reads = (n) => { try { addReads(n); refreshReads(); } catch (e) { /* counter only */ } };
@@ -125,7 +127,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   if (!document.getElementById('v2style')) { const st = document.createElement('style'); st.id = 'v2style'; st.textContent = CSS; document.head.appendChild(st); }
 
   async function loadAll() {
-    const [it, ac, cd, su, pe, main, lst, dir, mv, im] = await Promise.all([
+    const [it, ac, cd, su, pe, main, lst, dir, mv, im, vi] = await Promise.all([
       getDocs(collection(db, 'budgetItems')),
       can('budget.accounts') ? getDocs(collection(db, 'budgetAccounts')).catch(() => null) : null,
       can('budget.accounts') ? getDocs(collection(db, 'budgetCards')).catch(() => null) : null,
@@ -136,9 +138,11 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       loadDirectory().catch(() => []),
       can('budget.accounts') ? getDocs(collection(db, 'budgetMovements')).catch(() => null) : null,
       can('budget.accounts') ? getDocs(collection(db, 'budgetImports')).catch(() => null) : null,
+      getDocs(collection(db, 'budgetVisits')).catch(() => null),
     ]);
     const n = (x) => (x ? x.docs.length : 0);
-    reads(n(it) + n(ac) + n(cd) + n(su) + n(pe) + n(mv) + n(im) + 2);
+    reads(n(it) + n(ac) + n(cd) + n(su) + n(pe) + n(mv) + n(im) + n(vi) + 2);
+    S.visits = vi ? vi.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
     S.movements = mv ? mv.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
     S.imports = im ? im.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.createdAtIso || '').localeCompare(String(a.createdAtIso || ''))) : [];
     S.items = it.docs.map((d) => normalizeItem({ id: d.id, ...d.data() }));
@@ -188,6 +192,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const parts = splitShares(it.amount, u);
     return u.map((x, i) => `${esc(personLabel(x.key))} ${parts[i] ? Math.round((parts[i].amount / (it.amount || 1)) * 100) : ''}%`).join(' / ');
   };
+  const visitLabel = (v) => (v ? `${fmtDate(v.date)} · ${esc(v.companyName || 'No company')}` : '');
+  const visitOf = (id) => S.visits.find((v) => v.id === id);
+  const visitOptions = (sel) => `<option value="">None</option>${S.visits.filter((v) => !v.archived || v.id === sel).sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).map((v) => `<option value="${esc(v.id)}"${v.id === sel ? ' selected' : ''}>${esc((v.date || '') + ' · ' + (v.companyName || 'No company'))}</option>`).join('')}`;
   const incomeLabel = (id) => labelOf(INCOME_TYPES, id, 'Money received');
   const allTags = () => [...new Set(S.items.flatMap((i) => i.tags))].sort((a, b) => a.localeCompare(b));
 
@@ -200,6 +207,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="v2-tabs" id="v2tabs">
         <button data-tab="overview">Overview</button>
         <button data-tab="items">Items${unrev ? `<span class="cnt" title="Old items to review">${unrev}</span>` : ''}</button>
+        <button data-tab="visits">Visits</button>
+        <button data-tab="reports">Reports</button>
         <button data-tab="inbox" data-perm="budget.accounts">Inbox${inboxCount() ? `<span class="cnt" title="Bank lines waiting">${inboxCount()}</span>` : ''}</button>
         <button data-tab="accounts" data-perm="budget.accounts">Accounts</button>
         <button data-tab="bank" data-perm="budget.import">Bank</button>
@@ -214,7 +223,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   function render() {
     root.querySelectorAll('#v2tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.tab));
     const body = root.querySelector('#v2body');
-    ({ overview: renderOverview, items: renderItems, inbox: renderInbox, bank: renderBank, accounts: renderAccounts, suppliers: renderSuppliers, settings: renderSettings }[S.tab] || renderOverview)(body);
+    ({ overview: renderOverview, items: renderItems, visits: renderVisits, reports: renderReports, inbox: renderInbox, bank: renderBank, accounts: renderAccounts, suppliers: renderSuppliers, settings: renderSettings }[S.tab] || renderOverview)(body);
   }
   const openModal = (html) => { root.querySelector('#v2modalBox').innerHTML = html; root.querySelector('#v2modal').classList.add('open'); };
   const closeModal = () => { root.querySelector('#v2modal').classList.remove('open'); S.edit = null; };
@@ -228,7 +237,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
     const owed = Object.entries(o.owedToPartners).filter(([, v]) => v > 0);
     const byCat = {}, byPur = {};
-    costs.forEach((i) => { byCat[i.categoryId || 'other'] = (byCat[i.categoryId || 'other'] || 0) + i.amount; byPur[i.purposeId || ''] = (byPur[i.purposeId || ''] || 0) + i.amount; });
+    costs.forEach((i) => itemLines(i).forEach((l) => { byCat[l.categoryId || 'other'] = (byCat[l.categoryId || 'other'] || 0) + l.amount; byPur[l.purposeId || ''] = (byPur[l.purposeId || ''] || 0) + l.amount; }));
     const tbl = (m, lab) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(lab(k) || 'No purpose yet')}</td><td class="num">${eur.format(v)}</td></tr>`).join('') || '<tr class="empty-row"><td colspan="2">Nothing yet.</td></tr>';
     const tags = tagTotals(S.items).slice(0, 12);
     body.innerHTML = `
@@ -272,8 +281,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       if (f.review && !(i.legacy && i.needsReview)) return false;
       if (q && !`${i.name || ''} ${i.comments || ''} ${i.supplierName || ''} ${i.counterparty || ''}`.toLowerCase().includes(q)) return false;
       if (f.kind && i.kind !== f.kind) return false;
-      if (f.category && i.categoryId !== f.category) return false;
-      if (f.purpose && i.purposeId !== f.purpose) return false;
+      if (f.category && !(i.kind === 'expense' ? itemLines(i).some((l) => l.categoryId === f.category) : i.categoryId === f.category)) return false;
+      if (f.purpose && !(i.kind === 'expense' ? itemLines(i).some((l) => l.purposeId === f.purpose) : i.purposeId === f.purpose)) return false;
       if (f.tag && !i.tags.some((t) => t.toLowerCase() === f.tag.toLowerCase())) return false;
       if (f.doc === 'warn' && docStatus(i).level !== 'warn') return false;
       if (f.doc && f.doc !== 'warn' && docStatus(i).code !== f.doc) return false;
@@ -312,9 +321,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     return `<tr style="${i.archived ? 'opacity:.5' : ''}">
       <td class="chk"><input type="checkbox" data-sel="${i.id}" ${S.selected.has(i.id) ? 'checked' : ''} aria-label="Select"></td>
       <td style="white-space:nowrap">${fmtDate(i.date)}</td>
-      <td><strong>${esc(i.name || '—')}</strong>${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}${i.counterparty ? `<div class="mini">${esc(i.counterparty)}</div>` : ''}${i.investorName ? `<div class="mini">Investor: ${esc(i.investorName)}</div>` : ''} ${rev}</td>
+      <td><strong>${esc(i.name || '—')}</strong>${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}${i.kind === 'expense' && (i.visitIds || []).length ? `<div class="mini">Visit: ${(i.visitIds || []).map((id) => visitLabel(visitOf(id)) || '?').join(' · ')}</div>` : ''}${i.counterparty ? `<div class="mini">${esc(i.counterparty)}</div>` : ''}${i.investorName ? `<div class="mini">Investor: ${esc(i.investorName)}</div>` : ''} ${rev}</td>
       <td>${kindPill(i)}</td>
-      <td>${i.kind === 'expense' ? esc(catLabel(i.categoryId)) : ''}${i.kind === 'expense' && i.subtype ? `<div class="mini">${esc(labelOf(TEAM_PAY_SUBTYPES, i.subtype))}</div>` : ''}</td>
+      <td>${i.kind === 'expense' ? (Array.isArray(i.lines) && i.lines.length > 1 ? `<span title="Shared between ${i.lines.length} lines">Split · ${i.lines.length} lines</span>` : esc(catLabel(i.categoryId))) : ''}${i.kind === 'expense' && i.subtype ? `<div class="mini">${esc(labelOf(TEAM_PAY_SUBTYPES, i.subtype))}</div>` : ''}</td>
       <td>${esc(purLabel(i.purposeId))}</td>
       <td class="num ${i.kind === 'income' ? 'amt-in' : ''}">${sign}${eur.format(i.amount)}</td>
       <td>${i.kind === 'expense' ? paidWithLabel(i) : ''}</td>
@@ -455,7 +464,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   }
   function openItem(id, preset) {
     const it = id ? S.items.find((x) => x.id === id) : null;
-    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [], movementId: preset?.movementId || null };
+    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [], movementId: preset?.movementId || null, lines: Array.isArray((it || preset || {}).lines) && (it || preset || {}).lines.length > 1 ? (it || preset).lines.map((l) => ({ ...l })) : [{ weight: 1 }, { weight: 1 }] };
     const d = it || preset || { kind: 'expense', date: today(), country: 'PT', currency: 'EUR', issuedToCompany: 'unknown', docType: 'none', usedBy: [], tags: [], paidWith: '' };
     const sub = TEAM_PAY_SUBTYPES;
     openModal(`
@@ -473,6 +482,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="form-row">${fld('Category', 'category', `<select id="f-category">${opts(activeOnly(S.lists.categories, d.categoryId), d.categoryId || (it ? 'other' : ''), it ? null : 'Choose…')}</select>`)}
           ${fld('Purpose', 'purpose', `<select id="f-purpose">${opts(activeOnly(S.lists.purposes, d.purposeId), d.purposeId || '', 'None')}</select>`)}</div>
         <div id="f-subwrap">${fld('Team pay type', 'subtype', `<select id="f-subtype"><option value="">—</option>${sub.map((s) => `<option value="${s.id}"${d.subtype === s.id ? ' selected' : ''}>${s.label}</option>`).join('')}</select>`)}</div>
+        ${fld('Visit', 'visit', `<select id="f-visit">${visitOptions(d.visitId || '')}</select>`, 'id="f-visitwrap"')}
+        <div class="checkline" style="margin-bottom:14px"><input type="checkbox" id="f-split" ${Array.isArray(d.lines) && d.lines.length > 1 ? 'checked' : ''}><label for="f-split">Split between several visits or categories${tip('split')}</label></div>
+        <div id="f-splitwrap" style="margin-bottom:10px"><div id="f-lines"></div><button type="button" class="btn btn--ghost btn--sm" id="f-addline">+ Add line</button> <span class="mini" id="f-linesum"></span></div>
         ${fld('Tags', 'tags', `<input type="text" id="f-tags" list="f-taglist" value="${esc((d.tags || []).join(', '))}" placeholder="Spain trip, Frutas Mangas field visit"><datalist id="f-taglist">${allTags().map((t) => `<option value="${esc(t)}">`).join('')}</datalist>`)}
       </div>
       <div class="sect" id="f-who"><div class="sect-title">Who and how it was paid</div>
@@ -526,6 +538,10 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       $('f-personalwrap').style.display = $('f-paidwith').value === 'personal' ? '' : 'none';
       $('f-origwrap').style.display = $('f-currency').value !== 'EUR' ? '' : 'none';
       $('f-waivedwrap').style.display = $('f-waived').checked ? '' : 'none';
+      const split = $('f-split').checked && expense;
+      $('f-splitwrap').style.display = split ? '' : 'none'; $('f-visitwrap').style.display = expense && !split ? '' : 'none';
+      $('f-split').closest('.checkline').style.display = expense ? '' : 'none';
+      if (split) paintLines();
       m.querySelectorAll('[data-used]').forEach((c) => { const w = m.querySelector(`[data-weight="${c.dataset.used}"]`); w.style.visibility = c.checked ? '' : 'hidden'; });
       const ds = docStatus(readDraft()), box = $('f-warn');
       const reminder = company.companyName || company.companyNif ? `Ask for the invoice in the name of <strong>${esc(company.companyName || '')}</strong>${company.companyNif ? `, NIF <strong>${esc(company.companyNif)}</strong>` : ''}${company.companyAddress ? `, ${esc(String(company.companyAddress).replace(/\n/g, ', '))}` : ''}.` : 'Fill in Company details in Settings to see the name and NIF to ask for.';
@@ -533,6 +549,24 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       box.className = 'warnbox ' + ds.level;
       box.innerHTML = `<strong>${esc(ds.label)}.</strong> ${msgs[ds.code]}${ds.level === 'warn' ? `<div style="margin-top:4px">${reminder}</div>` : ''}`;
     };
+    // Split lines: weight, category, purpose, visit per line; the amounts shown are the shares of the total.
+    const lineRow = (l, i, amt) => `<div class="share-row" style="flex-wrap:wrap;margin-bottom:8px" data-line="${i}">
+        <input type="number" min="0" step="any" data-lw="${i}" value="${esc(l.weight ?? 1)}" title="Weight (share)" style="width:70px;padding:6px 8px">
+        <select data-lc="${i}" style="max-width:150px">${opts(activeOnly(S.lists.categories, l.categoryId), l.categoryId || '', 'Same category')}</select>
+        <select data-lp="${i}" style="max-width:150px">${opts(activeOnly(S.lists.purposes, l.purposeId), l.purposeId || '', 'Same purpose')}</select>
+        <select data-lv="${i}" style="max-width:190px">${visitOptions(l.visitId || '')}</select>
+        <strong style="min-width:70px;text-align:right" data-la="${i}">${amt == null ? '' : eur.format(amt)}</strong>
+        <button type="button" class="icon-btn" data-ldel="${i}" title="Remove line">×</button></div>`;
+    const readLines = () => [...m.querySelectorAll('[data-line]')].map((r) => ({ weight: Number(r.querySelector('[data-lw]').value) > 0 ? Number(r.querySelector('[data-lw]').value) : 1, categoryId: r.querySelector('[data-lc]').value, purposeId: r.querySelector('[data-lp]').value, visitId: r.querySelector('[data-lv]').value }));
+    const paintLines = () => {
+      const box = $('f-lines'), total = parseFloat($('f-amount').value) || 0;
+      if (!box.dataset.painted) { box.innerHTML = S.edit.lines.map((l, i) => lineRow(l, i, null)).join(''); box.dataset.painted = '1'; }
+      const cur = readLines(), parts = splitShares(total, cur.map((l, i) => ({ key: 'l' + i, weight: l.weight })));
+      m.querySelectorAll('[data-la]').forEach((el) => { const p2 = parts[Number(el.dataset.la)]; el.textContent = p2 ? eur.format(p2.amount) : ''; });
+      $('f-linesum').textContent = cur.length ? `${cur.length} lines · total ${eur.format(total)}` : '';
+    };
+    $('f-addline').addEventListener('click', () => { S.edit.lines = readLines(); S.edit.lines.push({ weight: 1 }); $('f-lines').dataset.painted = ''; $('f-lines').innerHTML = ''; sync(); });
+    $('f-lines').addEventListener('click', (e) => { const b = e.target.closest('[data-ldel]'); if (!b) return; S.edit.lines = readLines(); if (S.edit.lines.length <= 2) { alert('A split needs at least two lines. Untick "Split" to go back to one.'); return; } S.edit.lines.splice(Number(b.dataset.ldel), 1); $('f-lines').dataset.painted = ''; $('f-lines').innerHTML = ''; sync(); });
     m.addEventListener('input', sync); m.addEventListener('change', sync);
     const renderAtt = () => {
       const el = $('f-attlist');
@@ -603,6 +637,14 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         ...(() => { const nm = capitalOn() && kind === 'income' && $('f-income').value === 'capital_call' ? $('f-investor').value.trim() : ''; const iv = nm ? S.investors.find((x) => x.name.toLowerCase() === nm.toLowerCase()) : null; return { investorId: iv ? iv.id : '', investorName: iv ? iv.name : '' }; })(),
         paidWith, paidPersonallyBy: expense && paidWith === 'personal' ? $('f-personal').value : '',
         usedBy: expense ? usedBy : [],
+        ...(() => {
+          if (!expense) return { lines: [], visitId: '', visitIds: [] };
+          if ($('f-split').checked) {
+            const lines = [...m.querySelectorAll('[data-line]')].map((r) => ({ weight: Number(r.querySelector('[data-lw]').value) > 0 ? Number(r.querySelector('[data-lw]').value) : 1, categoryId: r.querySelector('[data-lc]').value, purposeId: r.querySelector('[data-lp]').value, visitId: r.querySelector('[data-lv]').value }));
+            return lines.length > 1 ? { lines, visitId: '', visitIds: visitIdsOf({ kind: 'expense', amount, lines }) } : { lines: [], visitId: '', visitIds: [] };
+          }
+          const v = $('f-visit').value; return { lines: [], visitId: v, visitIds: v ? [v] : [] };
+        })(),
         docType: expense ? $('f-doctype').value : '', issuedToCompany: expense ? $('f-issued').value : '',
         supplierName, supplierTaxId: taxId, docNumber: expense ? $('f-docnum').value.trim() : '', atcud: expense ? $('f-atcud').value.trim() : '',
         invoiceDate: expense ? $('f-invdate').value || '' : '', country: expense ? $('f-country').value : '',
@@ -1077,6 +1119,107 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     body.querySelector('#i-alldocs')?.addEventListener('click', () => { S.filter = { ...S.filter, doc: 'warn', review: false, vat: '' }; S.tab = 'items'; render(); });
     body.querySelector('#i-notshared')?.addEventListener('click', () => { S.filter = { ...S.filter, shared: 'no', doc: '', review: false, vat: '' }; S.tab = 'items'; render(); });
     body.querySelector('#i-showign')?.addEventListener('click', () => { showIgnored = !showIgnored; renderInbox(body); });
+  }
+
+
+  // ── Visits (Stage 3) ──
+  const deburr = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Search the Search CRM companies by name (first word through the name index, the rest filtered here) or by NIF.
+  async function searchCompanies(text) {
+    const raw = String(text || '').trim();
+    if (raw.length < 2) return [];
+    let docs;
+    if (/^\d{3,9}$/.test(raw)) docs = (await getDocs(query(collection(db, 'searchCompanies'), where('nif', '>=', raw), where('nif', '<', raw + '\uf8ff'), limit(15)))).docs;
+    else {
+      const tokens = deburr(raw.replace(/[.,\-–—&/]/g, ' ')).toUpperCase().split(/\s+/).filter((w) => w.length > 1);
+      if (!tokens.length) return [];
+      docs = (await getDocs(query(collection(db, 'searchCompanies'), where('namePrefixes', 'array-contains', tokens[0]), limit(40)))).docs;
+      docs = docs.filter((d) => tokens.every((t) => (d.data().nameTokens || []).some((x) => x.startsWith(t)) || String(d.data().nameKey || '').includes(t)));
+    }
+    reads(docs.length || 1);
+    return docs.slice(0, 12).map((d) => ({ id: d.id, name: d.data().name || d.data().nameKey || '', nif: d.data().nif || '' }));
+  }
+  let showArchivedVisits = false;
+  function renderVisits(body) {
+    const rep = visitReport(S.items, S.visits.filter((v) => showArchivedVisits || !v.archived));
+    const costOf = Object.fromEntries(rep.rows.map((r) => [r.visit.id, r]));
+    const list = S.visits.filter((v) => showArchivedVisits || !v.archived).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    body.innerHTML = `<div class="section"><div class="section-header"><h2 class="section-title">Field visits</h2><div class="section-actions"><label class="mini" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="vArch" ${showArchivedVisits ? 'checked' : ''}> Show archived</label><button class="btn btn--primary" id="v-new" data-perm="budget.edit">+ New visit</button></div></div>
+      <p class="mini" style="margin:-6px 0 14px">A visit is a company and a date. Charge an expense to it with the Visit field on the item, or split one expense between several visits. Costs then show here, in Reports and on the company page.</p>
+      <div class="card"><div class="table-wrap"><table><thead><tr><th>Date</th><th>Company</th><th>Who went</th><th>Trip</th><th class="num">Cost</th><th></th></tr></thead><tbody>${list.length ? list.map((v) => { const c = costOf[v.id]; return `<tr style="${v.archived ? 'opacity:.5' : ''}"><td style="white-space:nowrap">${fmtDate(v.date)}</td><td><strong>${esc(v.companyName || '—')}</strong>${v.companyId ? '' : '<div class="mini">Not linked to a CRM company</div>'}${v.note ? `<div class="mini">${esc(v.note)}</div>` : ''}</td><td>${esc((v.attendees || []).map(personLabel).join(', ') || '—')}</td><td>${v.trip ? `<button class="tagchip" data-tagfilter="${esc(v.trip)}">${esc(v.trip)}</button>` : ''}</td><td class="num">${eur.format(c ? c.total : 0)}<div class="mini">${c ? c.count : 0} item${c && c.count === 1 ? '' : 's'}</div></td><td style="text-align:right"><button class="icon-btn" data-vedit="${v.id}" data-perm="budget.edit" title="Edit">✎</button></td></tr>`; }).join('') : '<tr class="empty-row"><td colspan="6">No visits yet. Add one, then charge expenses to it.</td></tr>'}</tbody>
+        <tfoot><tr><td colspan="4">${rep.visits} visit${rep.visits === 1 ? '' : 's'}</td><td class="num">${eur.format(rep.total)}</td><td></td></tr></tfoot></table></div></div></div>`;
+    body.querySelector('#vArch').addEventListener('change', (e) => { showArchivedVisits = e.target.checked; renderVisits(body); });
+    body.querySelector('#v-new').addEventListener('click', () => openVisit(null));
+    body.querySelectorAll('[data-vedit]').forEach((b) => b.addEventListener('click', () => openVisit(b.dataset.vedit)));
+    body.querySelectorAll('[data-tagfilter]').forEach((b) => b.addEventListener('click', () => { S.filter.tag = b.dataset.tagfilter; S.tab = 'items'; render(); }));
+  }
+  function openVisit(id) {
+    const v = id ? visitOf(id) : { date: today(), attendees: myKey ? [myKey] : [] };
+    openModal(`<h2>${id ? 'Edit visit' : 'New visit'}</h2>
+      <div class="form-group"><label for="v-co">Company</label><input type="text" id="v-co" autocomplete="off" value="${esc(v.companyName || '')}" placeholder="Type a name or NIF to search the Search CRM"><div id="v-results" class="mini" style="margin-top:6px"></div>
+        <div class="hint" id="v-colink">${v.companyId ? '✓ Linked to a company in the Search CRM.' : 'Pick a result to link the visit to the CRM company. You can also keep a typed name that is not in the CRM.'}</div></div>
+      <div class="form-row"><div class="form-group"><label for="v-date">Date</label><input type="date" id="v-date" value="${esc(v.date || '')}"></div>
+        <div class="form-group"><label for="v-trip">Trip (optional)</label><input type="text" id="v-trip" list="v-triplist" value="${esc(v.trip || '')}" placeholder="e.g. Spain trip"><datalist id="v-triplist">${[...new Set(S.visits.map((x) => x.trip).filter(Boolean))].map((t) => `<option value="${esc(t)}">`).join('')}</datalist></div></div>
+      <div class="form-group"><label>Who went</label><div class="shares">${S.dir.filter((m) => m.active || (v.attendees || []).includes(m.key)).map((m) => `<div class="share-row"><label><input type="checkbox" data-att="${esc(m.key)}" ${(v.attendees || []).includes(m.key) ? 'checked' : ''}> ${esc(m.label)}</label></div>`).join('')}</div></div>
+      <div class="form-group"><label for="v-note">Note</label><textarea id="v-note">${esc(v.note || '')}</textarea></div>
+      ${id ? `<div class="checkline" style="margin-bottom:6px"><input type="checkbox" id="v-arch" ${v.archived ? 'checked' : ''}><label for="v-arch">Archived (hidden from new items and reports)</label></div>` : ''}
+      <div class="modal-actions">${id ? '<button class="btn btn--danger" id="v-del" style="margin-right:auto">Delete</button>' : ''}<button class="btn btn--ghost" id="v-cancel">Cancel</button><button class="btn btn--primary" id="v-save">Save</button></div>`);
+    const m = root.querySelector('#v2modalBox'); let companyId = v.companyId || '', companyName = v.companyName || '', timer = null, seq = 0;
+    const co = m.querySelector('#v-co');
+    co.addEventListener('input', () => {
+      companyId = ''; companyName = co.value.trim(); m.querySelector('#v-colink').textContent = 'Pick a result to link the visit to the CRM company.';
+      clearTimeout(timer); const my = ++seq;
+      timer = setTimeout(async () => {
+        const out = m.querySelector('#v-results'); if (!out) return;
+        try { const r = await searchCompanies(co.value); if (my !== seq) return; out.innerHTML = r.length ? r.map((c) => `<button type="button" class="tagchip" data-pick="${esc(c.id)}" data-pname="${esc(c.name)}" style="margin:2px 4px 2px 0">${esc(c.name)}${c.nif ? ' · ' + esc(c.nif) : ''}</button>`).join('') : (co.value.trim().length > 1 ? 'No company found.' : ''); }
+        catch (e) { out.textContent = 'Search failed: ' + e.message; }
+      }, 350);
+    });
+    m.querySelector('#v-results').addEventListener('click', (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; companyId = b.dataset.pick; companyName = b.dataset.pname; co.value = companyName; m.querySelector('#v-results').innerHTML = ''; m.querySelector('#v-colink').textContent = '✓ Linked to a company in the Search CRM.'; });
+    m.querySelector('#v-cancel').addEventListener('click', closeModal);
+    m.querySelector('#v-save').addEventListener('click', async () => {
+      companyName = companyName || co.value.trim();
+      if (!companyName) { alert('Choose or type the company visited.'); return; }
+      const data = { companyId, companyName, date: m.querySelector('#v-date').value || '', trip: m.querySelector('#v-trip').value.trim(), attendees: [...m.querySelectorAll('[data-att]:checked')].map((c) => c.dataset.att), note: m.querySelector('#v-note').value.trim(), archived: !!m.querySelector('#v-arch')?.checked };
+      if (!data.date) { alert('Choose the date of the visit.'); return; }
+      try { if (id) await updateDoc(doc(db, 'budgetVisits', id), data); else await addDoc(collection(db, 'budgetVisits'), { ...data, createdAt: serverTimestamp(), createdBy: access.email }); logEvent('budget_visit_saved', { itemName: companyName }); closeModal(); await refresh(); } catch (e) { alert('Failed to save: ' + e.message); }
+    });
+    const del = m.querySelector('#v-del');
+    if (del) del.addEventListener('click', async () => {
+      const used = S.items.filter((i) => (i.visitIds || []).includes(id)).length;
+      if (used) { alert(`${used} item(s) are charged to this visit, so it can't be deleted. Archive it instead (tick Archived), or take the visit off those items first.`); return; }
+      if (!confirm(`Delete the visit to ${v.companyName}?`)) return;
+      try { await deleteDoc(doc(db, 'budgetVisits', id)); closeModal(); await refresh(); } catch (e) { alert('Failed: ' + e.message); }
+    });
+  }
+
+  // ── Reports (Stage 3) ──
+  const repRange = { from: '', to: '' };
+  function renderReports(body) {
+    const r = visitReport(S.items, S.visits, repRange), comp = companyReport(r), pr = personReport(S.items, repRange), pv = planVsActual(S.items, repRange);
+    const top = (m, n = 3) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${esc(catLabel(k))} ${eur.format(v)}`).join(' · ');
+    const bar = (pct) => pct == null ? '' : `<div class="progress" style="margin-top:4px;width:120px"><div class="progress__bar" style="width:${Math.min(100, pct)}%;${pct > 100 ? 'background:var(--danger)' : ''}"></div></div>`;
+    const planTable = (rows, lab) => `<div class="card"><div class="table-wrap"><table><thead><tr><th></th><th class="num">Planned</th><th class="num">Spent</th><th class="num">Used</th><th class="num">Left</th></tr></thead><tbody>${rows.length ? rows.map((x) => `<tr><td>${esc(lab(x.id) || x.id)}</td><td class="num">${x.planned ? eur.format(x.planned) : '—'}</td><td class="num">${eur.format(x.actual)}</td><td class="num">${x.pct == null ? '—' : x.pct + '%'}${bar(x.pct)}</td><td class="num" style="${x.planned && x.left < 0 ? 'color:var(--danger)' : ''}">${x.planned ? eur.format(x.left) : '—'}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">Nothing yet.</td></tr>'}</tbody></table></div></div>`;
+    body.innerHTML = `<div class="section"><div class="section-header"><h2 class="section-title">Reports</h2>
+        <div class="section-actions"><span class="filter-bar__label">From</span><input type="date" id="rFrom" value="${esc(repRange.from)}"><span class="filter-bar__label">To</span><input type="date" id="rTo" value="${esc(repRange.to)}"></div></div>
+        <p class="mini" style="margin:-6px 0 0">Visits are picked by the visit's date; people and plan by the expense's date. Archived items are left out.</p></div>
+      <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per field visit</h2></div>
+        <div class="summary-grid">
+          <div class="stat-card"><div class="stat-card__label">Visits</div><div class="stat-card__value">${r.visits}</div><div class="stat-card__sub">${r.costed} with costs recorded</div></div>
+          <div class="stat-card"><div class="stat-card__label">Charged to visits</div><div class="stat-card__value">${eur.format(r.total)}</div><div class="stat-card__sub">${top(r.byCategory) || 'Nothing charged yet'}</div></div>
+          <div class="stat-card" title="Total divided by every visit, including visits whose costs are not entered yet"><div class="stat-card__label">Average per visit</div><div class="stat-card__value">${eur.format(r.average)}</div><div class="stat-card__sub">Over all ${r.visits} visits</div></div>
+          <div class="stat-card"><div class="stat-card__label">Average per costed visit</div><div class="stat-card__value">${eur.format(r.averageCosted)}</div><div class="stat-card__sub">Over ${r.costed} visits with costs</div></div></div>
+        <p class="mini" style="margin-top:8px">Only costs charged to a visit count. Searcher salaries and shared overhead are not part of a visit's cost.</p>
+        <div class="two" style="margin-top:16px"><div class="card"><div class="table-wrap"><table><thead><tr><th>Date</th><th>Company</th><th class="num">Cost</th><th>Mostly</th></tr></thead><tbody>${r.rows.length ? r.rows.map((x) => `<tr><td style="white-space:nowrap">${fmtDate(x.visit.date)}</td><td>${esc(x.visit.companyName || '—')}</td><td class="num">${eur.format(x.total)}</td><td class="mini">${top(x.byCategory, 2)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="4">No visits in this period.</td></tr>'}</tbody></table></div></div>
+          <div class="card"><div class="table-wrap"><table><thead><tr><th>Company</th><th class="num">Visits</th><th class="num">Cost</th></tr></thead><tbody>${comp.length ? comp.map((x) => `<tr><td>${esc(x.name || '—')}</td><td class="num">${x.visits}</td><td class="num">${eur.format(x.total)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="3">—</td></tr>'}</tbody></table></div></div></div></div>
+      <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per person</h2></div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Person</th><th class="num">Direct cost</th><th>Mostly</th></tr></thead><tbody>${pr.people.map((p) => `<tr><td><strong>${esc(personLabel(p.key))}</strong></td><td class="num">${eur.format(p.total)}</td><td class="mini">${top(p.byCategory)}</td></tr>`).join('')}<tr><td><strong>Company</strong><div class="mini">Used by nobody in particular</div></td><td class="num">${eur.format(pr.company.total)}</td><td class="mini">${top(pr.company.byCategory)}</td></tr></tbody><tfoot><tr><td>All expenses</td><td class="num">${eur.format(pr.total)}</td><td></td></tr></tfoot></table></div></div>
+        <p class="mini" style="margin-top:8px">An expense used by several people is shared by their weights. Expenses with nobody chosen in "Used by" stay in the Company line.</p></div>
+      <div class="two"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by category</h2></div>${planTable(pv.categories, catLabel)}</div>
+        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by purpose</h2></div>${planTable(pv.purposes, purLabel)}</div></div>
+      <p class="mini">The plan is made of "Plan allocation" items with a category and/or a purpose. Add them in Items.</p>`;
+    body.querySelector('#rFrom').addEventListener('change', (e) => { repRange.from = e.target.value; renderReports(body); });
+    body.querySelector('#rTo').addEventListener('change', (e) => { repRange.to = e.target.value; renderReports(body); });
   }
 
   // ── Go ──
