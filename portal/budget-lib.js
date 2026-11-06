@@ -46,6 +46,7 @@ export const INCOME_TYPES = [
   { id: 'capital_call', label: 'Capital call', hint: 'Money an investor paid in', reducesCosts: false },
   { id: 'partner_loan', label: 'Partner loan', hint: 'A partner lent money to the company; it has to be paid back', reducesCosts: false },
   { id: 'interest', label: 'Interest received', hint: 'Interest paid to us by the bank', reducesCosts: false },
+  { id: 'vat_refund', label: 'VAT refund', hint: 'VAT paid back by the tax authority (Financas or a foreign one); it lowers costs', reducesCosts: true },
   { id: 'supplier_refund', label: 'Supplier refund', hint: 'A supplier gave money back; it lowers costs', reducesCosts: true },
   { id: 'partner_reimbursement', label: 'Partner reimbursement', hint: 'A partner paid back a private use of company money; it lowers costs', reducesCosts: true },
   { id: 'other', label: 'Other', hint: '', reducesCosts: false },
@@ -170,6 +171,49 @@ export function overview(items) {
     plan: round2(t.plan), pctOfPlan: t.plan > 0 ? Math.min(999, (costs / t.plan) * 100) : null,
     unreviewed: t.unreviewed, owedToPartners: t.owedToPartners,
   };
+}
+
+// ── VAT (IVA) paid, grouped for the accountant (André 6 Nov: "group only, accountant decides") ──
+export const DEDUCTIBLE = [
+  { id: 'ask', label: 'Ask the accountant' },
+  { id: 'yes', label: 'Yes' },
+  { id: 'no', label: 'No' },
+];
+export const VAT_BUCKETS = {
+  recoverable: { label: 'Potentially recoverable', hint: 'Portuguese VAT on an expense whose invoice is complete and shows our NIF' },
+  atRisk: { label: 'At risk', hint: 'VAT on an expense with a receipt only, no NIF on the invoice, missing details or no document: fix the paperwork to recover it' },
+  foreign: { label: 'Foreign VAT', hint: 'VAT charged abroad: usually reclaimed through a separate procedure, ask the accountant' },
+  notDeductible: { label: 'Not deductible', hint: 'Marked "No" on the item' },
+};
+// Which group an expense's VAT falls in; 'none' when there is no VAT amount (or it is not an expense).
+export function vatBucket(item) {
+  const it = item || {};
+  if ((it.kind || 'expense') !== 'expense' || it.archived) return 'none';
+  const v = Number(it.vatAmount);
+  if (!(v > 0)) return 'none';
+  if (it.vatDeductible === 'no') return 'notDeductible';
+  if (it.country && it.country !== 'PT') return 'foreign';
+  return docStatus(it).code === 'ok' ? 'recoverable' : 'atRisk';
+}
+export function vatSummary(items) {
+  const t = { recoverable: 0, atRisk: 0, foreign: 0, notDeductible: 0 };
+  let missing = 0;
+  for (const raw of items || []) {
+    const it = raw.legacy === undefined ? normalizeItem(raw) : raw;
+    if (it.kind !== 'expense' || it.archived) continue;
+    const b = vatBucket(it);
+    if (b !== 'none') t[b] += Number(it.vatAmount);
+    else if (docStatus(it).code === 'ok' && it.vatAmount == null) missing++;   // a complete invoice with no VAT amount typed yet
+  }
+  const r = (n) => Math.round(n * 100) / 100;
+  // Money already back from the tax authority (VAT refund lines in money received).
+  let recovered = 0;
+  for (const raw of items || []) {
+    const it = raw.legacy === undefined ? normalizeItem(raw) : raw;
+    if (it.kind === 'income' && it.incomeType === 'vat_refund' && !it.archived) recovered += it.amount;
+  }
+  const claimable = t.recoverable + t.foreign;   // At risk becomes claimable once its paperwork is fixed; Not deductible never is
+  return { recoverable: r(t.recoverable), atRisk: r(t.atRisk), foreign: r(t.foreign), notDeductible: r(t.notDeductible), total: r(t.recoverable + t.atRisk + t.foreign + t.notDeductible), recovered: r(recovered), toRecover: r(Math.max(0, claimable - recovered)), missing };
 }
 
 // ── Tags (step 1.7) ──

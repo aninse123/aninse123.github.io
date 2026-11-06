@@ -6,7 +6,7 @@ import { loadDirectory } from './team-dir.js';
 import { INSTANCE } from './instance-config.js';
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
-  DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS,
+  DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
   docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, isValidIban, ibanStatus, formatIban, cleanIban,
   last4, labelOf, mergeLists, activeOnly, newListId,
 } from './budget-lib.js';
@@ -40,7 +40,8 @@ const TIPS = {
   invoiceDate: 'The date on the invoice. It can differ from the payment date.',
   country: 'The country the expense belongs to (where it was bought or the supplier is). Foreign invoices usually need separate VAT treatment; your accountant decides.',
   vatRate: 'The VAT (IVA) percentage on the invoice, for example 23 on the mainland.',
-  vatAmount: 'The VAT amount on the invoice. Filled in from the rate when left empty.',
+  vatAmount: 'The VAT amount on the invoice. Filled in from the rate (assuming the amount includes VAT) while you have not typed it. With several rates on one invoice, type the total VAT shown on it.',
+  vatDeductible: 'Whether the company can get this VAT back. The app does not decide: leave "Ask the accountant" unless they told you. "No" takes the item out of the recoverable total.',
   currency: 'The currency of the invoice. The amount above is always the euros that left the bank.',
   shared: 'Tick when this item has been sent to the accountant. The date and your name are saved.',
   incomeType: 'Capital call = an investor paid in. Partner loan = a partner lent money. Refunds and partner reimbursements lower costs.',
@@ -113,7 +114,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // ── State ──
   const S = {
     tab: 'overview', items: [], accounts: [], cards: [], suppliers: [], people: {}, company: {}, lists: { categories: [], purposes: [] },
-    dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false },
+    dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '' },
     sort: { field: 'date', dir: 'desc' }, selected: new Set(), edit: null,
   };
   const reads = (n) => { try { addReads(n); refreshReads(); } catch (e) { /* counter only */ } };
@@ -195,7 +196,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
 
   // ── Overview ──
   function renderOverview(body) {
-    const o = overview(S.items);
+    const o = overview(S.items), vat = vatSummary(S.items);
     const costs = S.items.filter((i) => i.kind === 'expense' && !i.archived);
     const warn = costs.filter((i) => docStatus(i).level === 'warn').length;
     const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
@@ -218,13 +219,22 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           ${owed.length ? `<span class="mini">Owed to partners (paid personally, not reimbursed): ${owed.map(([k, v]) => `${esc(personLabel(k))} ${eur.format(v)}`).join(' · ')}</span>` : ''}
         </div>
       </div>
+      <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">VAT paid ${tip('vatDeductible')}</h2></div>
+        <div class="summary-grid">
+          <div class="stat-card" title="All VAT on expenses, whatever its status"><div class="stat-card__label">Total VAT paid</div><div class="stat-card__value">${eur.format(vat.total)}</div><div class="stat-card__sub">On ${costs.filter((i) => vatBucket(i) !== 'none').length} expense${costs.filter((i) => vatBucket(i) !== 'none').length === 1 ? '' : 's'} with a VAT amount</div></div>
+          <div class="stat-card" title="VAT refunds booked in Items as money received"><div class="stat-card__label">VAT recovered</div><div class="stat-card__value stat-card__value--good">${eur.format(vat.recovered)}</div><div class="stat-card__sub">Booked as "VAT refund" in money received</div></div>
+          <div class="stat-card" title="Potentially recoverable plus foreign VAT, minus what is already back"><div class="stat-card__label">Still to recover</div><div class="stat-card__value">${eur.format(vat.toRecover)}</div><div class="stat-card__sub">Potential, the accountant decides</div></div>
+          <div class="stat-card" title="${esc(VAT_BUCKETS.atRisk.hint)}"><div class="stat-card__label">At risk</div><div class="stat-card__value ${vat.atRisk > 0 ? 'stat-card__value--bad' : ''}">${eur.format(vat.atRisk)}</div><div class="stat-card__sub">${vat.atRisk > 0 ? '<button class="btn btn--ghost btn--sm" data-go="vatrisk">Show them</button>' : 'Paperwork is in order'}</div></div>
+        </div>
+        <p class="mini" style="margin-top:10px">Of the total: ${eur.format(vat.recoverable)} potentially recoverable (complete invoice with our NIF), ${eur.format(vat.atRisk)} at risk (paperwork to fix), ${eur.format(vat.foreign)} foreign, ${eur.format(vat.notDeductible)} marked not deductible. The app only groups the VAT; your accountant decides what can be recovered. When a refund arrives, add it in Items as money received, type "VAT refund".${vat.missing ? ` ${vat.missing} complete invoice${vat.missing === 1 ? ' has' : 's have'} no VAT amount typed yet.` : ''}</p>
+      </div>
       <div class="two">
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Costs by category</h2></div><div class="card"><table><tbody>${tbl(byCat, catLabel)}</tbody></table></div></div>
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Costs by purpose</h2></div><div class="card"><table><tbody>${tbl(byPur, purLabel)}</tbody></table></div></div>
       </div>
       <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per tag</h2></div>
         <div class="card" style="padding:14px 16px;">${tags.length ? tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t.tag)}">${esc(t.tag)} · ${eur.format(t.total)}<small>${t.count}</small></button>`).join('') : '<span class="mini">No tags yet. Add tags such as "Spain trip" on an item.</span>'}</div></div>`;
-    body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { S.filter = { ...S.filter, doc: b.dataset.go === 'doc' ? 'warn' : '', review: b.dataset.go === 'review' }; S.tab = 'items'; render(); }));
+    body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { S.filter = { ...S.filter, doc: b.dataset.go === 'doc' ? 'warn' : '', review: b.dataset.go === 'review', vat: b.dataset.go === 'vatrisk' ? 'atRisk' : '' }; S.tab = 'items'; render(); }));
     body.querySelectorAll('[data-tagfilter]').forEach((b) => b.addEventListener('click', () => { S.filter.tag = b.dataset.tagfilter; S.tab = 'items'; render(); }));
   }
 
@@ -244,6 +254,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       if (f.shared === 'yes' && !i.sharedAt) return false;
       if (f.shared === 'no' && (i.sharedAt || i.kind === 'plan')) return false;
       if (f.usedBy && !i.usedBy.some((u) => u.key === f.usedBy)) return false;
+      if (f.vat && vatBucket(i) !== f.vat) return false;
       if (f.from && (!i.date || i.date < f.from)) return false;
       if (f.to && (!i.date || i.date > f.to)) return false;
       return true;
@@ -283,6 +294,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <td>${i.kind === 'expense' ? paidWithLabel(i) : ''}</td>
       <td class="mini">${i.kind === 'expense' ? usedByLabel(i) : ''}</td>
       <td>${i.kind === 'expense' ? `<span class="badge-doc ${ds.level}" title="${esc(ds.missing.length ? 'Missing: ' + ds.missing.join(', ') : ds.label)}">${esc(ds.label)}</span>` : ''}</td>
+      <td class="num">${vatBucket(i) !== 'none' ? `<span title="${esc(VAT_BUCKETS[vatBucket(i)].label)}">${eur.format(Number(i.vatAmount))}</span>` : ''}</td>
       <td>${i.tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t)}">${esc(t)}</button>`).join('')}</td>
       <td>${i.sharedAt ? `<span title="Shared ${esc(String(i.sharedAt).slice(0, 10))} by ${esc(i.sharedBy || '')}" style="color:var(--secondary);font-weight:700">✓</span>${i.changedSinceShared ? '<span title="Changed since it was shared" style="color:#8A5A00"> ⚠</span>' : ''}` : ''}</td>
       <td>${att}</td>
@@ -310,6 +322,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
             <select id="fPurpose">${opts(S.lists.purposes, f.purpose, 'All purposes')}</select>
             <select id="fTag">${opts(allTags().map((t) => ({ id: t, label: t })), f.tag, 'All tags')}</select>
             <select id="fDoc"><option value="">Any paperwork</option><option value="warn"${f.doc === 'warn' ? ' selected' : ''}>⚠ Needs attention</option>${Object.entries(DOC_STATUS).map(([k, v]) => `<option value="${k}"${f.doc === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select>
+            <select id="fVat"><option value="">Any VAT</option>${Object.entries(VAT_BUCKETS).map(([k, v]) => `<option value="${k}"${f.vat === k ? ' selected' : ''}>VAT: ${v.label}</option>`).join('')}</select>
             <select id="fShared"><option value="">Shared or not</option><option value="no"${f.shared === 'no' ? ' selected' : ''}>Not shared with accountant</option><option value="yes"${f.shared === 'yes' ? ' selected' : ''}>Shared with accountant</option></select>
             <select id="fUsed">${opts(S.dir.map((m) => ({ id: m.key, label: m.label })), f.usedBy, 'Used by anyone')}</select>
             <span class="filter-bar__label">From</span><input type="date" id="fFrom" value="${esc(f.from)}">
@@ -328,15 +341,15 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
             <button class="btn btn--ghost btn--sm" data-bulk="clear">Clear</button>
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th class="chk"><input type="checkbox" id="selAll" aria-label="Select all shown"></th>${th('date', 'Date')}${th('name', 'Item')}<th>Kind</th><th>Category</th><th>Purpose</th>${th('amount', 'Amount', 'num')}<th>Paid with</th><th>Used by</th><th>Paperwork</th><th>Tags</th><th title="Shared with accountant">Shared</th><th>📎</th><th></th></tr></thead>
-            <tbody>${list.length ? list.map(itemRow).join('') : '<tr class="empty-row"><td colspan="14">No items match the filter.</td></tr>'}</tbody>
-            <tfoot><tr><td colspan="6">Shown: ${list.length} item${list.length === 1 ? '' : 's'}</td><td class="num">${eur.format(costs)}</td><td colspan="7" class="mini">expenses${recv ? ` · received ${eur.format(recv)}` : ''}</td></tr></tfoot>
+            <thead><tr><th class="chk"><input type="checkbox" id="selAll" aria-label="Select all shown"></th>${th('date', 'Date')}${th('name', 'Item')}<th>Kind</th><th>Category</th><th>Purpose</th>${th('amount', 'Amount', 'num')}<th>Paid with</th><th>Used by</th><th>Paperwork</th><th class="num">VAT</th><th>Tags</th><th title="Shared with accountant">Shared</th><th>📎</th><th></th></tr></thead>
+            <tbody>${list.length ? list.map(itemRow).join('') : '<tr class="empty-row"><td colspan="15">No items match the filter.</td></tr>'}</tbody>
+            <tfoot><tr><td colspan="6">Shown: ${list.length} item${list.length === 1 ? '' : 's'}</td><td class="num">${eur.format(costs)}</td><td colspan="3"></td><td class="num">${eur.format(list.reduce((s, i) => s + (vatBucket(i) !== 'none' ? Number(i.vatAmount) : 0), 0))}</td><td colspan="4" class="mini">VAT · expenses${recv ? ` · received ${eur.format(recv)}` : ''}</td></tr></tfoot>
           </table></div>
         </div>
       </div>`;
     const re = () => renderItems(body);
     const bind = (id, key, ev = 'change') => { const el = body.querySelector('#' + id); if (!el) return; el.addEventListener(ev, () => { S.filter[key] = el.type === 'checkbox' ? el.checked : el.value; re(); if (id === 'fSearch') { const n = body.querySelector('#fSearch'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); };
-    bind('fSearch', 'search', 'input'); bind('fKind', 'kind'); bind('fCategory', 'category'); bind('fPurpose', 'purpose'); bind('fTag', 'tag'); bind('fDoc', 'doc'); bind('fShared', 'shared'); bind('fUsed', 'usedBy'); bind('fFrom', 'from'); bind('fTo', 'to'); bind('fArch', 'archived'); bind('fReview', 'review');
+    bind('fSearch', 'search', 'input'); bind('fKind', 'kind'); bind('fCategory', 'category'); bind('fPurpose', 'purpose'); bind('fTag', 'tag'); bind('fDoc', 'doc'); bind('fShared', 'shared'); bind('fVat', 'vat'); bind('fUsed', 'usedBy'); bind('fFrom', 'from'); bind('fTo', 'to'); bind('fArch', 'archived'); bind('fReview', 'review');
     body.querySelectorAll('[data-sort]').forEach((t) => t.addEventListener('click', () => { const fl = t.dataset.sort; if (S.sort.field === fl) S.sort.dir = S.sort.dir === 'asc' ? 'desc' : 'asc'; else S.sort = { field: fl, dir: fl === 'date' ? 'desc' : 'asc' }; re(); }));
     body.querySelectorAll('[data-sel]').forEach((c) => c.addEventListener('change', () => { c.checked ? S.selected.add(c.dataset.sel) : S.selected.delete(c.dataset.sel); re(); }));
     body.querySelector('#selAll').addEventListener('change', (e) => { list.forEach((i) => (e.target.checked ? S.selected.add(i.id) : S.selected.delete(i.id))); re(); });
@@ -387,10 +400,10 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   function exportCsv(list) {
     if (!list.length) { alert('No items to export.'); return; }
     const cell = (v) => { const s = String(v == null ? '' : v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g, '""')}"`; };
-    const head = ['Date', 'Item', 'Kind', 'Money received type', 'Category', 'Purpose', 'Amount (EUR)', 'Paid with', 'Paid personally by', 'Used by', 'Supplier', 'Supplier NIF / VAT ID', 'Document type', 'Invoice number', 'ATCUD', 'Invoice date', 'Invoice shows our NIF', 'VAT rate %', 'VAT amount', 'Country', 'Paperwork status', 'Tags', 'Shared with accountant', 'Shared on', 'Comments', 'Files'];
+    const head = ['Date', 'Item', 'Kind', 'Money received type', 'Category', 'Purpose', 'Amount (EUR)', 'Paid with', 'Paid personally by', 'Used by', 'Supplier', 'Supplier NIF / VAT ID', 'Document type', 'Invoice number', 'ATCUD', 'Invoice date', 'Invoice shows our NIF', 'VAT rate %', 'VAT amount', 'VAT deductible', 'VAT group', 'Country', 'Paperwork status', 'Tags', 'Shared with accountant', 'Shared on', 'Comments', 'Files'];
     const strip = (h) => String(h).replace(/<[^>]*>/g, '').replace(/&amp;/g, '&');
     const rows = list.map((i) => [i.date, i.name, labelOf(KINDS, i.kind), i.kind === 'income' ? incomeLabel(i.incomeType) : '', i.kind === 'expense' ? catLabel(i.categoryId) : '', purLabel(i.purposeId), i.amount.toFixed(2),
-      i.kind === 'expense' ? strip(paidWithLabel(i)) : '', i.paidPersonallyBy ? personLabel(i.paidPersonallyBy) : '', (i.usedBy || []).map((u) => personLabel(u.key)).join(' / '), i.supplierName, i.supplierTaxId, labelOf(DOC_TYPES, i.docType, ''), i.docNumber, i.atcud, i.invoiceDate, i.issuedToCompany || '', i.vatRate ?? '', i.vatAmount ?? '', i.country ? (COUNTRY_NAME[i.country] || i.country) : '', i.kind === 'expense' ? docStatus(i).label : '', i.tags.join(', '), i.sharedAt ? 'Yes' : 'No', i.sharedAt ? String(i.sharedAt).slice(0, 10) : '', i.comments, i.attachments.length].map(cell).join(','));
+      i.kind === 'expense' ? strip(paidWithLabel(i)) : '', i.paidPersonallyBy ? personLabel(i.paidPersonallyBy) : '', (i.usedBy || []).map((u) => personLabel(u.key)).join(' / '), i.supplierName, i.supplierTaxId, labelOf(DOC_TYPES, i.docType, ''), i.docNumber, i.atcud, i.invoiceDate, i.issuedToCompany || '', i.vatRate ?? '', i.vatAmount ?? '', i.kind === 'expense' ? labelOf(DEDUCTIBLE, i.vatDeductible || 'ask') : '', vatBucket(i) !== 'none' ? VAT_BUCKETS[vatBucket(i)].label : '', i.country ? (COUNTRY_NAME[i.country] || i.country) : '', i.kind === 'expense' ? docStatus(i).label : '', i.tags.join(', '), i.sharedAt ? 'Yes' : 'No', i.sharedAt ? String(i.sharedAt).slice(0, 10) : '', i.comments, i.attachments.length].map(cell).join(','));
     const csv = [head.map(cell).join(','), ...rows].join('\r\n');
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })), download: `douro-budget-${today()}.csv` });
     a.click(); URL.revokeObjectURL(a.href);
@@ -445,6 +458,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           ${fld('Country', 'country', `<select id="f-country">${COUNTRIES.map(([c, n]) => `<option value="${c}"${(d.country || 'PT') === c ? ' selected' : ''}>${n}</option>`).join('')}</select>`)}</div>
         <div class="form-row">${fld('VAT rate %', 'vatRate', `<input type="number" id="f-vatrate" step="any" min="0" value="${esc(d.vatRate ?? '')}" list="f-vatlist"><datalist id="f-vatlist">${[0, 4, 6, 9, 12, 13, 16, 22, 23].map((v) => `<option value="${v}">`).join('')}</datalist>`)}
           ${fld('VAT amount', 'vatAmount', `<input type="number" id="f-vatamt" step="0.01" min="0" value="${esc(d.vatAmount ?? '')}">`)}</div>
+        ${fld('VAT deductible?', 'vatDeductible', `<select id="f-vatded">${DEDUCTIBLE.map((x) => `<option value="${x.id}"${(d.vatDeductible || 'ask') === x.id ? ' selected' : ''}>${x.label}</option>`).join('')}</select>`)}
         <div class="form-row">${fld('Currency', 'currency', `<select id="f-currency">${['EUR', 'GBP', 'USD', 'CHF', 'SEK', 'DKK', 'PLN'].map((c) => `<option${(d.currency || 'EUR') === c ? ' selected' : ''}>${c}</option>`).join('')}</select>`)}
           <div id="f-origwrap">${fld('Amount in that currency', '', `<input type="number" id="f-orig" step="0.01" min="0" value="${esc(d.originalAmount ?? '')}">`)}</div></div>
         <div class="checkline" style="margin-bottom:14px"><input type="checkbox" id="f-waived" ${d.docWaived ? 'checked' : ''}><label for="f-waived">No document needed for this item${tip('waived')}</label></div>
@@ -465,7 +479,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const readDraft = () => ({
       kind: $('f-kind').value, categoryId: $('f-category').value, amount: parseFloat($('f-amount').value) || 0, docType: $('f-doctype').value,
       issuedToCompany: $('f-issued').value, supplierName: $('f-supplier').value, supplierTaxId: $('f-taxid').value, docNumber: $('f-docnum').value,
-      attachments: S.edit.attachments, docWaived: $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
+      // Files picked but not saved yet count too, so the warning clears as soon as a file is chosen.
+      attachments: [...S.edit.attachments, ...Array.from($('f-files').files || []).map((f) => ({ name: f.name }))],
+      docWaived: $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
     });
     const sync = () => {
       const k = $('f-kind').value, expense = k === 'expense', income = k === 'income';
@@ -537,7 +553,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       const expense = kind === 'expense';
       const cat = $('f-category').value;
       const supplierName = expense ? $('f-supplier').value.trim() : '';
-      const taxId = expense ? $('f-taxid').value.trim() : '';
+      const taxRaw = expense ? $('f-taxid').value.trim() : '';
+      // A Portuguese NIF is kept as 9 digits ("PT 600 084 779" → 600084779); a foreign VAT ID is kept as typed.
+      const taxId = $('f-country').value === 'PT' && /^\s*(PT)?[\s.\-\d]+$/i.test(taxRaw) ? normalizeNif(taxRaw) : taxRaw;
       const paidWith = expense ? $('f-paidwith').value : '';
       const data = {
         kind, name, amount, date: $('f-date').value || '',
@@ -555,6 +573,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         invoiceDate: expense ? $('f-invdate').value || '' : '', country: expense ? $('f-country').value : '',
         vatRate: expense && $('f-vatrate').value !== '' ? Number($('f-vatrate').value) : null,
         vatAmount: expense && $('f-vatamt').value !== '' ? Number($('f-vatamt').value) : null,
+        vatDeductible: expense ? $('f-vatded').value : '',
         currency: expense ? $('f-currency').value : 'EUR', originalAmount: expense && $('f-currency').value !== 'EUR' && $('f-orig').value !== '' ? Number($('f-orig').value) : null,
         docWaived: expense && $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
         comments: $('f-comments').value.trim(), attachments,
@@ -674,10 +693,10 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // ── Suppliers ──
   function renderSuppliers(body) {
     const spent = (s) => S.items.filter((i) => !i.archived && i.kind === 'expense' && (i.supplierId === s.id || (i.supplierName || '').toLowerCase() === s.name.toLowerCase()));
-    const rows = S.suppliers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((s) => { const its = spent(s), tot = its.reduce((x, i) => x + i.amount, 0), w = its.filter((i) => docStatus(i).level === 'warn').length; return `<tr style="${s.archived ? 'opacity:.5' : ''}"><td><strong>${esc(s.name)}</strong>${s.aliases?.length ? `<div class="mini">Bank lines: ${esc(s.aliases.join(', '))}</div>` : ''}</td><td>${esc(SUPPLIER_TYPE_NAME[s.type] || '')}</td><td>${esc(s.taxId || '')}</td><td>${esc(COUNTRY_NAME[s.country] || s.country || '')}</td><td>${esc(catLabel(s.defaultCategoryId))}${s.defaultPurposeId ? `<div class="mini">${esc(purLabel(s.defaultPurposeId))}</div>` : ''}</td><td class="num">${eur.format(tot)}<div class="mini">${its.length} item${its.length === 1 ? '' : 's'}${w ? ` · <span style="color:#8A5A00">${w} ⚠</span>` : ''}</div></td><td style="text-align:right"><button class="icon-btn" data-sup="${s.id}" data-perm="budget.edit" title="Edit">✎</button></td></tr>`; }).join('');
+    const rows = S.suppliers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((s) => { const its = spent(s), tot = its.reduce((x, i) => x + i.amount, 0), w = its.filter((i) => docStatus(i).level === 'warn').length; return `<tr style="${s.archived ? 'opacity:.5' : ''}"><td><strong>${esc(s.name)}</strong>${s.aliases?.length ? `<div class="mini">Bank lines: ${esc(s.aliases.join(', '))}</div>` : ''}</td><td>${esc(SUPPLIER_TYPE_NAME[s.type] || '')}</td><td>${esc(s.taxId || '')}</td><td>${esc(COUNTRY_NAME[s.country] || s.country || '')}</td><td>${esc(catLabel(s.defaultCategoryId))}${s.defaultPurposeId ? `<div class="mini">${esc(purLabel(s.defaultPurposeId))}</div>` : ''}</td><td class="num">${eur.format(tot)}<div class="mini">${its.length} item${its.length === 1 ? '' : 's'}${w ? ` · <span style="color:#8A5A00">${w} ⚠</span>` : ''}</div></td><td class="num">${eur.format(its.reduce((x, i) => x + (vatBucket(i) !== 'none' ? Number(i.vatAmount) : 0), 0))}</td><td style="text-align:right"><button class="icon-btn" data-sup="${s.id}" data-perm="budget.edit" title="Edit">✎</button></td></tr>`; }).join('');
     body.innerHTML = `<div class="section"><div class="section-header"><h2 class="section-title">Suppliers</h2><div class="section-actions"><button class="btn btn--primary" id="s-new" data-perm="budget.edit">+ Supplier</button></div></div>
       <p class="mini" style="margin:-6px 0 14px">Anyone we pay: the accountant, the lawyer, the office, Uber, a searcher's own company. A new supplier name typed on an item is saved here automatically.</p>
-      <div class="card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>NIF / VAT ID</th><th>Country</th><th>Defaults</th><th class="num">Spent</th><th></th></tr></thead><tbody>${rows || '<tr class="empty-row"><td colspan="7">No suppliers yet.</td></tr>'}</tbody></table></div></div></div>`;
+      <div class="card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>NIF / VAT ID</th><th>Country</th><th>Defaults</th><th class="num">Spent</th><th class="num">VAT</th><th></th></tr></thead><tbody>${rows || '<tr class="empty-row"><td colspan="8">No suppliers yet.</td></tr>'}</tbody></table></div></div></div>`;
     body.querySelector('#s-new').addEventListener('click', () => openSupplier(null));
     body.querySelectorAll('[data-sup]').forEach((b) => b.addEventListener('click', () => openSupplier(b.dataset.sup)));
   }

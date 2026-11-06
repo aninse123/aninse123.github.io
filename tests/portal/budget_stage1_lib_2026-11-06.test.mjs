@@ -1,7 +1,7 @@
 // Budget v2, Stage 1 (6 Nov 2026): the pure logic in portal/budget-lib.js — document status, legacy items, totals, tags, shares, IBAN.
 import {
   docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares,
-  isValidIban, ibanStatus, formatIban, cardFromDescription, newListId, mergeLists, activeOnly,
+  isValidIban, ibanStatus, formatIban, cardFromDescription, newListId, mergeLists, activeOnly, vatBucket, vatSummary,
   DEFAULT_CATEGORIES, DEFAULT_PURPOSES, INCOME_TYPES,
 } from '../../portal/budget-lib.js';
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
@@ -46,7 +46,19 @@ ok('overview: paid personally and not reimbursed adds up per partner', (() => {
   const o = overview([mk({ amount: 30, paidPersonallyBy: 'andre' }), mk({ amount: 20, paidPersonallyBy: 'andre' }), mk({ amount: 15, paidPersonallyBy: 'antonio', reimbursement: { status: 'reimbursed' } }), mk({ amount: 99 })]);
   return o.owedToPartners.andre === 50 && !o.owedToPartners.antonio;
 })());
-ok('every money-received type is listed once, and refunds / partner reimbursements are the ones that lower costs', INCOME_TYPES.length === 6 && new Set(INCOME_TYPES.map((t) => t.id)).size === 6 && INCOME_TYPES.filter((t) => t.reducesCosts).map((t) => t.id).join() === 'supplier_refund,partner_reimbursement');
+ok('every money-received type is listed once, and VAT refunds / supplier refunds / partner reimbursements are the ones that lower costs', INCOME_TYPES.length === 7 && new Set(INCOME_TYPES.map((t) => t.id)).size === 7 && INCOME_TYPES.filter((t) => t.reducesCosts).map((t) => t.id).join() === 'vat_refund,supplier_refund,partner_reimbursement');
+
+// ── VAT ──
+const inv = (o) => ({ kind: 'expense', docType: 'invoice', attachments: f, issuedToCompany: 'yes', supplierName: 'S', supplierTaxId: '1', docNumber: '1', country: 'PT', categoryId: 'transport', ...o });
+ok('VAT group: complete Portuguese invoice = recoverable; receipt only / no NIF / no file = at risk', vatBucket(inv({ vatAmount: 23 })) === 'recoverable' && vatBucket(inv({ vatAmount: 23, docType: 'receipt' })) === 'atRisk' && vatBucket(inv({ vatAmount: 23, issuedToCompany: 'no' })) === 'atRisk' && vatBucket(inv({ vatAmount: 23, attachments: [] })) === 'atRisk');
+ok('VAT group: a foreign country = foreign, marked No = not deductible (even abroad), no VAT amount or not an expense = none', vatBucket(inv({ vatAmount: 5, country: 'ES' })) === 'foreign' && vatBucket(inv({ vatAmount: 5, vatDeductible: 'no' })) === 'notDeductible' && vatBucket(inv({ vatAmount: 5, country: 'ES', vatDeductible: 'no' })) === 'notDeductible' && vatBucket(inv({})) === 'none' && vatBucket(inv({ vatAmount: 0 })) === 'none' && vatBucket({ kind: 'income', vatAmount: 5 }) === 'none' && vatBucket(inv({ vatAmount: 5, archived: true })) === 'none');
+ok('VAT "Ask the accountant" (the default) does not change the group', vatBucket(inv({ vatAmount: 23, vatDeductible: 'ask' })) === 'recoverable' && vatBucket(inv({ vatAmount: 23, vatDeductible: 'yes' })) === 'recoverable');
+ok('VAT summary: totals per group, total VAT paid, recovered from VAT refund lines, still to recover = recoverable + foreign − recovered (never below 0)', (() => {
+  const s = vatSummary([normalizeItem(inv({ vatAmount: 100 })), normalizeItem(inv({ vatAmount: 50, country: 'ES' })), normalizeItem(inv({ vatAmount: 30, docType: 'receipt' })), normalizeItem(inv({ vatAmount: 20, vatDeductible: 'no' })), normalizeItem({ kind: 'income', incomeType: 'vat_refund', amount: 60 }), normalizeItem(inv({ vatAmount: 999, archived: true }))]);
+  return s.recoverable === 100 && s.foreign === 50 && s.atRisk === 30 && s.notDeductible === 20 && s.total === 200 && s.recovered === 60 && s.toRecover === 90;
+})());
+ok('VAT summary: a refund bigger than the claimable VAT leaves 0 to recover; a complete invoice with no VAT amount is counted as missing', vatSummary([normalizeItem(inv({ vatAmount: 10 })), normalizeItem({ kind: 'income', incomeType: 'vat_refund', amount: 50 })]).toRecover === 0 && vatSummary([normalizeItem(inv({}))]).missing === 1 && vatSummary([]).total === 0);
+ok('a VAT refund lowers costs and is not counted as money received (capital, loans, interest)', (() => { const o = overview([mk({ amount: 200 }), mk({ kind: 'income', incomeType: 'vat_refund', amount: 40 })]); return o.costs === 160 && o.received === 0; })());
 
 // ── Tags ──
 ok('tags: split on comma / semicolon / new line, trimmed, duplicates ignored whatever the case', parseTags(' Spain trip, spain TRIP ;Frutas Mangas field visit\n, ').join('|') === 'Spain trip|Frutas Mangas field visit');
