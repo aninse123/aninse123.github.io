@@ -386,6 +386,11 @@
         </div>
         <div id="commitDisplay"></div>
       </div>
+      <!-- Capital received (switch budget.capital): money booked in the Budget as a capital call from this investor -->
+      <div class="card" id="capitalCard" data-feature="budget.v2 budget.capital" data-perm="budget.view" style="margin-bottom:12px;">
+        <div class="sec-title">Capital received</div>
+        <div id="capitalBody"><span style="color:var(--text-light);font-size:0.85rem;">Loading…</span></div>
+      </div>
       <div class="card" style="margin-bottom:0;">
         <div class="sec-title">Portal Access</div>
         <div id="portalSection"></div>
@@ -818,6 +823,8 @@
 import { auth, db, ADMIN_EMAILS, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
 import { guardPage, logExport, editedBadge } from './access.js';
 import { applyDirectory } from './team-dir.js';
+import { isOn } from './features.js';
+import { unlinkedForInvestor } from './budget-bank.js';
 import { sendPeopleEmail, sendNote, syncFooterTick } from './people-send.js';
 import { initNav, setNavEmail, refreshReads, startSharedReadsWatch } from './nav.js';
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
@@ -1326,6 +1333,7 @@ function renderDetail() {
 
   renderContacts();
   renderCommitDisplay();
+  renderCapital();
   renderPortalSection();
   renderActivityLog();
 }
@@ -1462,6 +1470,55 @@ async function runDuplicateToNetwork(inv, contactsToDuplicate, btn) {
   } finally {
     if (btn) { btn.disabled = false; }
   }
+}
+
+// ── Capital received (switch budget.capital) ──
+// Capital calls booked in the Budget (income, type capital_call) that carry this investor's id; transfers that look like theirs
+// but are not linked yet are offered with a Link button. Read only when the card is shown for an investor, once per investor.
+let capitalCache = { id: null, items: [] };
+async function renderCapital() {
+  const box = document.getElementById('capitalBody');
+  if (!box || !isOn('budget.capital') || !isOn('budget.v2')) return;
+  const inv = getInvestor(); if (!inv) return;
+  const id = inv.id;
+  if (capitalCache.id !== id) {
+    box.innerHTML = '<span style="color:var(--text-light);font-size:0.85rem;">Loading…</span>';
+    try {
+      const snap = await getDocs(query(collection(db, 'budgetItems'), where('incomeType', '==', 'capital_call')));
+      addReads(snap.docs.length);
+      capitalCache = { id, items: snap.docs.map(d => ({ id: d.id, ...d.data() })) };
+    } catch (e) { box.innerHTML = '<span style="color:var(--text-light);font-size:0.85rem;">Not available.</span>'; return; }
+  }
+  if (currentInvId !== id) return;
+  const all = capitalCache.items.filter(i => i.kind === 'income' && !i.archived);
+  const mine = all.filter(i => i.investorId === id).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const maybe = unlinkedForInvestor(all, { name: inv.name, bankNames: inv.bankNames || [] });
+  const total = mine.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const hard = Number(inv.hardCommitment?.value) || 0, wired = Number(inv.wiredCommitment?.value) || 0;
+  const target = hard || wired;
+  const pct = target ? Math.min(999, Math.round(total / target * 100)) : null;
+  box.innerHTML = `
+    <div class="commit-block"><div class="commit-block-label">Received so far</div>
+      <div class="commit-block-value">${mine.length ? fmtEur(total) : '—'}</div>
+      ${mine.length ? `<div class="commit-block-sub">${mine.length} transfer${mine.length === 1 ? '' : 's'}${target ? ` · ${pct}% of the ${hard ? 'hard' : 'wired'} commitment (${fmtEur(target)})` : ''}</div>` : '<div class="commit-block-sub">No transfer linked yet.</div>'}
+      ${wired && Math.abs(total - wired) > 0.005 && mine.length ? `<div class="commit-block-sub" style="color:#8A5A00;">Wired commitment says ${fmtEur(wired)}: ${total > wired ? 'received is higher' : 'received is lower'}.</div>` : ''}</div>
+    ${mine.length ? `<div style="margin-top:10px;font-size:0.82rem;">${mine.map(i => `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--border);"><span>${esc(i.date || '')} · ${esc(i.counterparty || i.name || '')}</span><strong>${fmtEur(i.amount)}</strong></div>`).join('')}</div>` : ''}
+    ${maybe.length ? `<div style="margin-top:12px;font-size:0.8rem;color:var(--text-light);">Transfers that look like this investor's:</div>${maybe.map(i => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;font-size:0.82rem;"><span>${esc(i.date || '')} · ${esc(i.counterparty || i.name || '')} · <strong>${fmtEur(i.amount)}</strong></span><button class="btn btn--ghost btn--sm" data-caplink="${esc(i.id)}" data-perm="budget.edit">Link</button></div>`).join('')}` : ''}`;
+  box.querySelectorAll('[data-caplink]').forEach(b => b.addEventListener('click', async () => {
+    const item = capitalCache.items.find(x => x.id === b.dataset.caplink); if (!item) return;
+    if (!confirm(`Link ${fmtEur(item.amount)} from "${item.counterparty || item.name}" to ${inv.name}?`)) return;
+    b.disabled = true;
+    try {
+      await updateDoc(doc(db, 'budgetItems', item.id), { investorId: id, investorName: inv.name });
+      const sender = String(item.counterparty || '').trim();
+      if (sender.length >= 4 && sender.toLowerCase() !== String(inv.name || '').toLowerCase() && !(inv.bankNames || []).some(x => x.toLowerCase() === sender.toLowerCase())) {
+        const bankNames = [...(inv.bankNames || []), sender].slice(0, 20);
+        await updateDoc(doc(db, 'crmInvestors', id), { bankNames });
+        crmInvestors = crmInvestors.map(x => x.id === id ? { ...x, bankNames } : x);
+      }
+      capitalCache = { id: null, items: [] }; renderCapital();
+    } catch (e) { alert('Could not link: ' + e.message); b.disabled = false; }
+  }));
 }
 
 function renderCommitDisplay() {

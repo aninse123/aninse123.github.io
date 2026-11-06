@@ -4,7 +4,8 @@
 import { db, storage, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch } from './firebase-config.js';
 import { loadDirectory } from './team-dir.js';
 import { INSTANCE } from './instance-config.js';
-import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDescription, matchCandidates } from './budget-bank.js';
+import { isOn } from './features.js';
+import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDescription, matchCandidates, findInvestor } from './budget-bank.js';
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
   DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
@@ -47,7 +48,8 @@ const TIPS = {
   shared: 'Tick when this item has been sent to the accountant. The date and your name are saved.',
   incomeType: 'Capital call = an investor paid in. Partner loan = a partner lent money. Refunds and partner reimbursements lower costs.',
   waived: 'Tick for items that never get an invoice (a tip, a toll). Say why; it stops the document warning.',
-  counterparty: 'Who the money came from, for example the investor.',
+  counterparty: 'Who the money came from, as written in the bank line.',
+  investor: 'The investor in the Investor CRM this money belongs to. The investor card there then shows what has been received. The sender name is remembered for next time.',
   subtype: 'For Team pay: salary, searcher services invoiced by their own company, or social contributions.',
   iban: 'Two check digits inside an IBAN catch most typing mistakes. A valid IBAN does not prove the account exists.',
   fileAccountNo: 'The account number as it appears in the bank’s export files. Used later to match imported bank lines to this account.',
@@ -115,7 +117,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // ── State ──
   const S = {
     tab: 'overview', items: [], accounts: [], cards: [], suppliers: [], people: {}, company: {}, lists: { categories: [], purposes: [] },
-    movements: [], imports: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '' },
+    movements: [], imports: [], investors: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '' },
     sort: { field: 'date', dir: 'desc' }, selected: new Set(), edit: null,
   };
   const reads = (n) => { try { addReads(n); refreshReads(); } catch (e) { /* counter only */ } };
@@ -148,6 +150,21 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const l = lst && lst.exists() ? lst.data() : {};
     S.lists = { categories: mergeLists(l.categories, DEFAULT_CATEGORIES), purposes: mergeLists(l.purposes, DEFAULT_PURPOSES) };
     S.dir = dir;
+    S.investors = [];
+    if (isOn('budget.capital') && can('icrm.view')) {
+      try {
+        const iv = await getDocs(collection(db, 'crmInvestors')); reads(iv.docs.length);
+        S.investors = iv.docs.map((d) => ({ id: d.id, name: d.data().name || '', bankNames: d.data().bankNames || [] })).filter((x) => x.name).sort((a, b) => a.name.localeCompare(b.name));
+      } catch (e) { S.investors = []; }
+    }
+  }
+  const capitalOn = () => isOn('budget.capital') && S.investors.length > 0;
+  // The sender names an investor has used in bank lines are remembered on the investor, so the next transfer is recognised.
+  async function rememberSender(investorId, sender) {
+    const inv = S.investors.find((x) => x.id === investorId), s = String(sender || '').trim();
+    if (!inv || s.length < 4 || !can('icrm.edit')) return;
+    if ((inv.bankNames || []).some((x) => x.toLowerCase() === s.toLowerCase()) || s.toLowerCase() === inv.name.toLowerCase()) return;
+    try { await updateDoc(doc(db, 'crmInvestors', investorId), { bankNames: [...(inv.bankNames || []), s].slice(0, 20) }); inv.bankNames = [...(inv.bankNames || []), s]; } catch (e) { /* the link is saved either way */ }
   }
 
   // ── Small lookups ──
@@ -295,7 +312,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     return `<tr style="${i.archived ? 'opacity:.5' : ''}">
       <td class="chk"><input type="checkbox" data-sel="${i.id}" ${S.selected.has(i.id) ? 'checked' : ''} aria-label="Select"></td>
       <td style="white-space:nowrap">${fmtDate(i.date)}</td>
-      <td><strong>${esc(i.name || '—')}</strong>${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}${i.counterparty ? `<div class="mini">${esc(i.counterparty)}</div>` : ''} ${rev}</td>
+      <td><strong>${esc(i.name || '—')}</strong>${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}${i.counterparty ? `<div class="mini">${esc(i.counterparty)}</div>` : ''}${i.investorName ? `<div class="mini">Investor: ${esc(i.investorName)}</div>` : ''} ${rev}</td>
       <td>${kindPill(i)}</td>
       <td>${i.kind === 'expense' ? esc(catLabel(i.categoryId)) : ''}${i.kind === 'expense' && i.subtype ? `<div class="mini">${esc(labelOf(TEAM_PAY_SUBTYPES, i.subtype))}</div>` : ''}</td>
       <td>${esc(purLabel(i.purposeId))}</td>
@@ -449,7 +466,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="form-group"><label for="f-name">Name</label><input type="text" id="f-name" value="${esc(d.name || '')}" placeholder="e.g. Train Lisbon–Porto, Accounting (October)"></div>
         <div class="form-row">${fld('Amount in euros', '', `<input type="number" id="f-amount" step="0.01" min="0" value="${esc(d.amount ?? '')}" placeholder="0.00">`)}
           <div id="f-incomewrap">${fld('Type of money received', 'incomeType', `<select id="f-income">${INCOME_TYPES.map((t) => `<option value="${t.id}"${d.incomeType === t.id ? ' selected' : ''} title="${esc(t.hint)}">${t.label}</option>`).join('')}</select>`)}</div></div>
-        <div id="f-counterwrap">${fld('From', 'counterparty', `<input type="text" id="f-counter" value="${esc(d.counterparty || '')}" placeholder="e.g. investor name">`)}</div>
+        <div id="f-counterwrap">${fld('From', 'counterparty', `<input type="text" id="f-counter" value="${esc(d.counterparty || '')}" placeholder="e.g. the name in the bank line">`)}
+          <div id="f-investorwrap" style="${capitalOn() ? '' : 'display:none'}">${fld('Investor', 'investor', `<input type="text" id="f-investor" list="f-invlist" value="${esc(d.investorName || '')}" placeholder="Choose an investor from the Investor CRM"><datalist id="f-invlist">${S.investors.map((x) => `<option value="${esc(x.name)}">`).join('')}</datalist>`)}</div></div>
       </div>
       <div class="sect" id="f-classify"><div class="sect-title">Classification</div>
         <div class="form-row">${fld('Category', 'category', `<select id="f-category">${opts(activeOnly(S.lists.categories, d.categoryId), d.categoryId || (it ? 'other' : ''), it ? null : 'Choose…')}</select>`)}
@@ -501,6 +519,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const sync = () => {
       const k = $('f-kind').value, expense = k === 'expense', income = k === 'income';
       $('f-incomewrap').style.display = income ? '' : 'none'; $('f-counterwrap').style.display = income ? '' : 'none';
+      $('f-investorwrap').style.display = capitalOn() && income && $('f-income').value === 'capital_call' ? '' : 'none';
       $('f-classify').style.display = expense || k === 'plan' ? '' : 'none';
       $('f-who').style.display = expense ? '' : 'none'; $('f-docsect').style.display = expense ? '' : 'none';
       $('f-subwrap').style.display = expense && $('f-category').value === 'team-pay' ? '' : 'none';
@@ -581,6 +600,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         purposeId: expense || kind === 'plan' ? $('f-purpose').value : '',
         tags: parseTags($('f-tags').value),
         incomeType: kind === 'income' ? $('f-income').value : '', counterparty: kind === 'income' ? $('f-counter').value.trim() : '',
+        ...(() => { const nm = capitalOn() && kind === 'income' && $('f-income').value === 'capital_call' ? $('f-investor').value.trim() : ''; const iv = nm ? S.investors.find((x) => x.name.toLowerCase() === nm.toLowerCase()) : null; return { investorId: iv ? iv.id : '', investorName: iv ? iv.name : '' }; })(),
         paidWith, paidPersonallyBy: expense && paidWith === 'personal' ? $('f-personal').value : '',
         usedBy: expense ? usedBy : [],
         docType: expense ? $('f-doctype').value : '', issuedToCompany: expense ? $('f-issued').value : '',
@@ -610,6 +630,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         const added = await addDoc(collection(db, 'budgetItems'), { ...data, createdAt: serverTimestamp(), createdBy: access.email });
         if (movementId) await updateDoc(doc(db, 'budgetMovements', movementId), { status: 'linked', itemId: added.id });
         logEvent('budget_added', { itemName: name, amount });
+        if (data.investorId && data.counterparty) await rememberSender(data.investorId, data.counterparty);
       }
       closeModal(); await refresh();
     } catch (e) { alert('Failed to save: ' + e.message); btn.disabled = false; btn.textContent = 'Save'; }
@@ -817,7 +838,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   };
   const recCtx = (accountId) => ({
     partners: S.dir.filter((m) => m.partner).map((m) => ({ key: m.key, name: m.name || m.label })),
-    suppliers: S.suppliers, cards: S.cards, accountId,
+    suppliers: S.suppliers, cards: S.cards, accountId, investors: capitalOn() ? S.investors : [],
   });
   const KIND_TEXT = { expense: 'Expense', income: 'Money in', settlement: 'To a partner' };
   let bankPlans = [];
@@ -928,7 +949,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   function draftFromMovement(m, over = {}) {
     const g = { ...(m.sug || {}), ...over }, amt = Math.abs(m.amount);
     if (g.kind === 'income') {
-      return { movementId: m.id, kind: 'income', name: g.name || cleanDescription(m.description), amount: amt, date: m.posted, incomeType: g.incomeType || 'other', counterparty: g.counterparty || '', paidWith: g.paidWith || '', comments: '', tags: [], usedBy: [] };
+      return { movementId: m.id, kind: 'income', name: g.name || cleanDescription(m.description), amount: amt, date: m.posted, incomeType: g.incomeType || 'other', counterparty: g.counterparty || '', investorId: g.investorId || '', investorName: g.investorName || '', paidWith: g.paidWith || '', comments: '', tags: [], usedBy: [] };
     }
     return { movementId: m.id, kind: 'expense', name: g.name || cleanDescription(m.description), amount: amt, date: m.posted, categoryId: g.categoryId || '', purposeId: g.purposeId || '', paidWith: g.paidWith || '', supplierName: g.supplierName || '', supplierId: g.supplierId || '', docType: g.docWaived ? 'none' : 'none', docWaived: g.docWaived || false, country: 'PT', currency: 'EUR', issuedToCompany: 'unknown', tags: [], usedBy: [] };
   }
@@ -936,7 +957,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const exp = d.kind === 'expense';
     return {
       kind: d.kind, name: d.name, amount: d.amount, date: d.date, type: exp ? 'cost' : 'revenue', category: 'Other', periodicity: 'one_time',
-      categoryId: exp ? d.categoryId : '', subtype: '', purposeId: exp ? d.purposeId || '' : '', tags: [], incomeType: exp ? '' : d.incomeType, counterparty: exp ? '' : d.counterparty,
+      categoryId: exp ? d.categoryId : '', subtype: '', purposeId: exp ? d.purposeId || '' : '', tags: [], incomeType: exp ? '' : d.incomeType, counterparty: exp ? '' : d.counterparty, investorId: exp ? '' : d.investorId || '', investorName: exp ? '' : d.investorName || '',
       paidWith: d.paidWith || '', paidPersonallyBy: '', usedBy: [], docType: exp ? 'none' : '', issuedToCompany: exp ? 'unknown' : '', supplierName: d.supplierName || '', supplierId: d.supplierId || '', supplierTaxId: '', docNumber: '', atcud: '', invoiceDate: '', country: exp ? 'PT' : '', vatRate: null, vatAmount: null, vatDeductible: exp ? 'ask' : '', currency: 'EUR', originalAmount: null, docWaived: exp ? d.docWaived || false : false,
       comments: 'From the bank file', attachments: [], sharedAt: '', sharedBy: '', changedSinceShared: false, movementId: d.movementId,
     };
@@ -961,6 +982,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         });
         await wb.commit();
       }
+      for (const x of ok) if (x.d && x.d.investorId && x.d.counterparty) await rememberSender(x.d.investorId, x.d.counterparty);
       logEvent('budget_bank_accept', { amount: ok.length });
       inboxSel.clear(); await refresh(); S.tab = 'inbox'; render();
       if (skip.length) alert(`${ok.length} booked. ${skip.length} line(s) still need a category and stay in the Inbox.`);

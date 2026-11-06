@@ -1,6 +1,6 @@
 // Budget v2, Stage 2 (6 Nov 2026): the bank file reader in portal/budget-bank.js — Santander "Tabulado" files, duplicates, gaps, recognisers.
 // The sample below is made up in the real file's layout (no real names or amounts).
-import { parseTabulado, decodeBank, fingerprint, planImport, recognise, cleanDescription, matchPartner, findSupplier, matchCandidates } from '../../portal/budget-bank.js';
+import { parseTabulado, decodeBank, fingerprint, planImport, recognise, cleanDescription, matchPartner, findSupplier, matchCandidates, investorMatch, findInvestor, unlinkedForInvestor } from '../../portal/budget-bank.js';
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 
 const pad = (n) => (n < 0 ? '-' : '+') + String(Math.abs(n).toFixed(2)).replace('.', ',').padStart(22, '0');
@@ -57,5 +57,26 @@ ok('descriptions are cleaned for item names', cleanDescription('COMPRA ESTRANG*0
 const items = [{ id: 'i1', kind: 'expense', amount: 8.98, date: '2026-11-03' }, { id: 'i2', kind: 'expense', amount: 8.98, date: '2026-10-01' }, { id: 'i3', kind: 'expense', amount: 8.98, date: '2026-11-04', movementId: 'm9' }, { id: 'i4', kind: 'expense', amount: 8.98, date: '2026-11-04', paidPersonallyBy: 'andre' }, { id: 'i5', kind: 'income', amount: 8.98, date: '2026-11-03' }, { id: 'i6', kind: 'expense', amount: 8.98, date: '2026-11-04', archived: true }, { id: 'i7', kind: 'expense', amount: 9.01, date: '2026-11-03' }];
 ok('candidates: same amount, within 10 days, not already linked, not paid personally, not archived; nearest first', matchCandidates(p.rows[4], items).map((i) => i.id).join() === 'i1');
 ok('candidates: money in never matches an expense', matchCandidates(p.rows[3], items).length === 0);
+
+
+// ── Investors (step 2.8) ──
+const invs = [{ id: 'v1', name: 'Alfa Capital', bankNames: [] }, { id: 'v2', name: 'Beta Fund I', bankNames: ['BETA HOLDING SARL'] }, { id: 'v3', name: 'Gama Partners', bankNames: [] }, { id: 'v4', name: 'Gama Capital', bankNames: [] }, { id: 'v5', name: 'One to One Great Search', bankNames: [] }, { id: 'v6', name: 'Ana', bankNames: [] }];
+ok('investor name: the distinctive words of the investor are in the sender ("Alfa Capital" ~ "FUNDO ALFA F.C.")', investorMatch('FUNDO ALFA F.C.', invs[0]) === 'name' && investorMatch('ALFA CAPITAL III F.C.', invs[0]) === 'name' && investorMatch('BETA FUND II', invs[1]) === 'name');
+ok('investor name: accents and case do not matter; a different name does not match', investorMatch('álfa capital', invs[0]) === 'name' && investorMatch('DELTA FUND', invs[0]) === '');
+ok('investor name: several distinctive words must all be there ("One to One Great Search")', investorMatch('ONE TO ONE GREAT SEARCH', invs[4]) === 'name' && investorMatch('ONE SOMETHING', invs[4]) === '');
+ok('a single short word (3 letters) never matches on its own', investorMatch('ANA PEREIRA', invs[5]) === '');
+ok('a remembered bank name wins ("BETA HOLDING SARL" is investor Beta)', investorMatch('TRANSF BETA HOLDING SARL LUX', invs[1]) === 'alias');
+ok('findInvestor: one clear match; two investors matching the same way is never guessed', findInvestor('ALFA CAPITAL III', invs)?.investor.id === 'v1' && findInvestor('GAMA PARTNERS CAPITAL', invs) === null && findInvestor('NOBODY LTD', invs) === null);
+ok('findInvestor: a remembered name beats a looser name match', findInvestor('BETA HOLDING SARL', [...invs, { id: 'v9', name: 'Beta Holding', bankNames: [] }])?.investor.id === 'v2');
+ok('a money-in bank line from a known investor is suggested for that investor (remembered sender = sure)', (() => {
+  const a = recognise({ description: 'TRF CRED SEPA+ DE FUNDO ALFA F.C.-44100001', amount: 5000 }, { ...ctx, investors: invs });
+  const b = recognise({ description: 'TRF CRED SEPA+ DE BETA HOLDING SARL-441', amount: 100 }, { ...ctx, investors: invs });
+  return a.investorId === 'v1' && a.investorName === 'Alfa Capital' && a.sure === false && /name matches/.test(a.reason) && b.investorId === 'v2' && b.sure === true && !a.autoAccept && !b.autoAccept && a.counterparty === 'FUNDO ALFA F.C.';
+})());
+ok('without investors in the context money in is still just a probable capital call', recognise({ description: 'TRF CRED SEPA+ DE FUNDO ALFA F.C.-44100001', amount: 5000 }, ctx).investorId === undefined);
+ok('unlinked capital calls that look like an investor are offered; linked, archived, other types and expenses are not', (() => {
+  const items = [{ id: 'a', kind: 'income', incomeType: 'capital_call', counterparty: 'ALFA CAPITAL II' }, { id: 'b', kind: 'income', incomeType: 'capital_call', counterparty: 'ALFA CAPITAL', investorId: 'v1' }, { id: 'c', kind: 'income', incomeType: 'capital_call', counterparty: 'ALFA CAPITAL', archived: true }, { id: 'd', kind: 'income', incomeType: 'interest', counterparty: 'ALFA CAPITAL' }, { id: 'e', kind: 'expense', name: 'ALFA CAPITAL' }, { id: 'f', kind: 'income', incomeType: 'capital_call', counterparty: 'OTHER FUND' }];
+  return unlinkedForInvestor(items, invs[0]).map((i) => i.id).join() === 'a';
+})());
 
 console.log(fail ? `\n${fail} FAILED` : '\nall budget stage 2 bank tests passed'); process.exit(fail ? 1 : 0);

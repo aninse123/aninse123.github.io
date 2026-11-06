@@ -152,6 +152,8 @@ export function recognise(line, ctx = {}) {
   if (partnerKey) return { ...out, kind: 'settlement', partnerKey, name: clean, reason: 'Transfer to a partner (reimbursement)', sure: true };
   if (line.amount > 0) {
     const who = /^[\d\s]+$/.test(clean) ? '' : clean;   // some lines carry only a reference number, no name
+    const hit = who ? findInvestor(who, ctx.investors) : null;
+    if (hit) return { ...out, kind: 'income', incomeType: 'capital_call', name: `Received from ${hit.investor.name}`, counterparty: who, investorId: hit.investor.id, investorName: hit.investor.name, reason: hit.how === 'alias' ? `Investor ${hit.investor.name} (remembered sender)` : `Investor ${hit.investor.name} (name matches)`, sure: hit.how === 'alias' };
     return { ...out, kind: 'income', incomeType: 'capital_call', name: who ? `Received from ${who}` : `Transfer received (ref ${clean})`, counterparty: who, reason: 'Money in: probably an investor (confirm)', sure: false };
   }
   if (supplier) {
@@ -168,6 +170,38 @@ export function findSupplier(desc, suppliers) {
     if (keys.some((k) => text.includes(k))) return s;
   }
   return null;
+}
+
+// ── Investors (step 2.8) ──
+// Words that name a kind of company, not the company: left out when comparing names.
+const GENERIC = new Set(['fund', 'funds', 'capital', 'partners', 'partner', 'holding', 'holdings', 'sa', 'lda', 'fc', 'sl', 'sarl', 'limited', 'ltd', 'gmbh', 'ab', 'llc', 'inc', 'group', 'sgps', 'the', 'of', 'and', 'i', 'ii', 'iii', 'iv', 'v', 'vi', 'investments', 'investimentos', 'ventures', 'equity', 'search']);
+const sigWords = (s) => [...new Set(words(s).filter((w) => !GENERIC.has(w)))];
+// How a sender name in a bank line relates to one investor: 'alias' (a remembered bank name), 'name' (every distinctive word
+// of the investor's name is in the line), or ''. A single very short word (under 4 letters) never counts on its own.
+export function investorMatch(text, investor) {
+  const t = norm(text).replace(/[^a-z0-9 ]+/g, ' ');
+  if (!t.trim() || !investor) return '';
+  for (const a of investor.bankNames || []) {
+    const k = norm(a).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (k.length >= 4 && t.replace(/\s+/g, ' ').includes(k)) return 'alias';
+  }
+  const sig = sigWords(investor.name || '');
+  const have = new Set(words(text));
+  if (!sig.length || !sig.every((w) => have.has(w))) return '';
+  if (sig.length === 1 && sig[0].length < 4) return '';
+  return 'name';
+}
+// The one investor a sender belongs to, or null (no match, or two investors match the same way: never guessed).
+export function findInvestor(text, investors) {
+  const hits = (investors || []).map((i) => ({ i, how: investorMatch(text, i) })).filter((h) => h.how);
+  const alias = hits.filter((h) => h.how === 'alias');
+  const pool = alias.length ? alias : hits;
+  return pool.length === 1 ? { investor: pool[0].i, how: pool[0].how } : null;
+}
+// Money-in items (capital calls) that could be this investor's and are not linked to anyone yet.
+export function unlinkedForInvestor(items, investor) {
+  return (items || []).filter((i) => i.kind === 'income' && i.incomeType === 'capital_call' && !i.investorId && !i.archived
+    && investorMatch(`${i.counterparty || ''} ${i.name || ''}`, investor));
 }
 
 // Expenses entered by hand that this bank line could be the payment of: same amount, date within a few days.
