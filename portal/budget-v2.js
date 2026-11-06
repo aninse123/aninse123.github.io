@@ -1,9 +1,10 @@
 // Budget v2 — the page itself (plan "Budget v2 - Plan.md", Stage 1; switch budget.v2).
 // budget.html loads this only when the switch is available to the viewer and hides the v1 page; with the switch Off
 // nothing here runs. Pure logic lives in budget-lib.js / budget-fiscal.js (tested in Node).
-import { db, storage, addReads, addDoc, setDoc, updateDoc, deleteDoc } from './firebase-config.js';
+import { db, storage, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch } from './firebase-config.js';
 import { loadDirectory } from './team-dir.js';
 import { INSTANCE } from './instance-config.js';
+import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDescription, matchCandidates } from './budget-bank.js';
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
   DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
@@ -114,7 +115,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // ── State ──
   const S = {
     tab: 'overview', items: [], accounts: [], cards: [], suppliers: [], people: {}, company: {}, lists: { categories: [], purposes: [] },
-    dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '' },
+    movements: [], imports: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '' },
     sort: { field: 'date', dir: 'desc' }, selected: new Set(), edit: null,
   };
   const reads = (n) => { try { addReads(n); refreshReads(); } catch (e) { /* counter only */ } };
@@ -122,7 +123,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   if (!document.getElementById('v2style')) { const st = document.createElement('style'); st.id = 'v2style'; st.textContent = CSS; document.head.appendChild(st); }
 
   async function loadAll() {
-    const [it, ac, cd, su, pe, main, lst, dir] = await Promise.all([
+    const [it, ac, cd, su, pe, main, lst, dir, mv, im] = await Promise.all([
       getDocs(collection(db, 'budgetItems')),
       can('budget.accounts') ? getDocs(collection(db, 'budgetAccounts')).catch(() => null) : null,
       can('budget.accounts') ? getDocs(collection(db, 'budgetCards')).catch(() => null) : null,
@@ -131,9 +132,13 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       getDoc(doc(db, 'budgetSettings', 'main')).catch(() => null),
       getDoc(doc(db, 'budgetSettings', 'lists')).catch(() => null),
       loadDirectory().catch(() => []),
+      can('budget.accounts') ? getDocs(collection(db, 'budgetMovements')).catch(() => null) : null,
+      can('budget.accounts') ? getDocs(collection(db, 'budgetImports')).catch(() => null) : null,
     ]);
     const n = (x) => (x ? x.docs.length : 0);
-    reads(n(it) + n(ac) + n(cd) + n(su) + n(pe) + 2);
+    reads(n(it) + n(ac) + n(cd) + n(su) + n(pe) + n(mv) + n(im) + 2);
+    S.movements = mv ? mv.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
+    S.imports = im ? im.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.createdAtIso || '').localeCompare(String(a.createdAtIso || ''))) : [];
     S.items = it.docs.map((d) => normalizeItem({ id: d.id, ...d.data() }));
     S.accounts = ac ? ac.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
     S.cards = cd ? cd.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
@@ -169,6 +174,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   const incomeLabel = (id) => labelOf(INCOME_TYPES, id, 'Money received');
   const allTags = () => [...new Set(S.items.flatMap((i) => i.tags))].sort((a, b) => a.localeCompare(b));
 
+  const inboxCount = () => S.movements.filter((m) => m.status === 'new').length;
+
   // ── Shell ──
   function shell() {
     const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
@@ -176,7 +183,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="v2-tabs" id="v2tabs">
         <button data-tab="overview">Overview</button>
         <button data-tab="items">Items${unrev ? `<span class="cnt" title="Old items to review">${unrev}</span>` : ''}</button>
+        <button data-tab="inbox" data-perm="budget.accounts">Inbox${inboxCount() ? `<span class="cnt" title="Bank lines waiting">${inboxCount()}</span>` : ''}</button>
         <button data-tab="accounts" data-perm="budget.accounts">Accounts</button>
+        <button data-tab="bank" data-perm="budget.import">Bank</button>
         <button data-tab="suppliers">Suppliers</button>
         <button data-tab="settings">Settings</button>
       </div>
@@ -188,7 +197,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   function render() {
     root.querySelectorAll('#v2tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.tab));
     const body = root.querySelector('#v2body');
-    ({ overview: renderOverview, items: renderItems, accounts: renderAccounts, suppliers: renderSuppliers, settings: renderSettings }[S.tab] || renderOverview)(body);
+    ({ overview: renderOverview, items: renderItems, inbox: renderInbox, bank: renderBank, accounts: renderAccounts, suppliers: renderSuppliers, settings: renderSettings }[S.tab] || renderOverview)(body);
   }
   const openModal = (html) => { root.querySelector('#v2modalBox').innerHTML = html; root.querySelector('#v2modal').classList.add('open'); };
   const closeModal = () => { root.querySelector('#v2modal').classList.remove('open'); S.edit = null; };
@@ -336,6 +345,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
             <button class="btn btn--ghost btn--sm" data-bulk="unshare">Mark not shared</button>
             <input type="text" id="bulkTag" placeholder="Tag to add…" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font:inherit;font-size:.8rem">
             <button class="btn btn--ghost btn--sm" data-bulk="tag">Add tag</button>
+            <select id="bulkCat" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font:inherit;font-size:.8rem">${opts(activeOnly(S.lists.categories), '', 'Category…')}</select>
+            <select id="bulkPur" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font:inherit;font-size:.8rem">${opts(activeOnly(S.lists.purposes), '', 'Purpose…')}</select>
+            <button class="btn btn--ghost btn--sm" data-bulk="classify">Set category / purpose</button>
             <button class="btn btn--ghost btn--sm" data-bulk="archive">Archive</button>
             <button class="btn btn--ghost btn--sm" data-bulk="restore">Restore</button>
             <button class="btn btn--ghost btn--sm" data-bulk="clear">Clear</button>
@@ -373,6 +385,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     if (!ids.length) return;
     const tag = body.querySelector('#bulkTag').value.trim();
     if (action === 'tag' && !tag) { alert('Type the tag to add first.'); return; }
+    const bCat = body.querySelector('#bulkCat')?.value || '', bPur = body.querySelector('#bulkPur')?.value || '';
+    if (action === 'classify' && !bCat && !bPur) { alert('Choose a category and/or a purpose first.'); return; }
     if (action === 'archive' && !confirm(`Archive ${ids.length} item(s)? They stop counting in totals and can be restored.`)) return;
     try {
       for (const id of ids) {
@@ -381,6 +395,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         if (action === 'share') p = { sharedAt: new Date().toISOString(), sharedBy: access.email, changedSinceShared: false };
         else if (action === 'unshare') p = { sharedAt: '', sharedBy: '', changedSinceShared: false };
         else if (action === 'tag') p = { tags: parseTags([...it.tags, tag]) };
+        else if (action === 'classify') { if (it.kind === 'income') continue; p = { ...(bCat && it.kind === 'expense' ? { categoryId: bCat } : {}), ...(bPur ? { purposeId: bPur } : {}) }; if (!Object.keys(p).length) continue; }
         else if (action === 'archive') p = { archived: true };
         else if (action === 'restore') p = { archived: false };
         if (p) await updateDoc(doc(db, 'budgetItems', id), p);
@@ -421,10 +436,10 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const people = [...S.dir.filter((m) => m.active || sel[m.key]).map((m) => ({ key: m.key, label: m.label })), { key: 'external', label: 'External' }];
     return `<div class="shares">${people.map((p) => `<div class="share-row"><label><input type="checkbox" data-used="${esc(p.key)}" ${sel[p.key] ? 'checked' : ''}> ${esc(p.label)}</label><input type="number" min="0" step="any" data-weight="${esc(p.key)}" value="${esc(sel[p.key] || 1)}" title="Weight (share)" style="${sel[p.key] ? '' : 'visibility:hidden'}"></div>`).join('')}</div>`;
   }
-  function openItem(id) {
+  function openItem(id, preset) {
     const it = id ? S.items.find((x) => x.id === id) : null;
-    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [] };
-    const d = it || { kind: 'expense', date: today(), country: 'PT', currency: 'EUR', issuedToCompany: 'unknown', docType: 'none', usedBy: [], tags: [], paidWith: '' };
+    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [], movementId: preset?.movementId || null };
+    const d = it || preset || { kind: 'expense', date: today(), country: 'PT', currency: 'EUR', issuedToCompany: 'unknown', docType: 'none', usedBy: [], tags: [], paidWith: '' };
     const sub = TEAM_PAY_SUBTYPES;
     openModal(`
       <h2>${it ? 'Edit item' : 'New item'}${it && it.legacy ? ' <span class="pill pill--review" style="vertical-align:middle">old item</span>' : ''}</h2>
@@ -589,7 +604,13 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         data.supplierId = sid.id;
       } else if (expense && supplierName) data.supplierId = S.suppliers.find((s) => s.name.toLowerCase() === supplierName.toLowerCase())?.id || '';
       if (existing) { await updateDoc(doc(db, 'budgetItems', existing.id), data); logEvent('budget_edited', { itemName: name, amount }); }
-      else { await addDoc(collection(db, 'budgetItems'), { ...data, createdAt: serverTimestamp(), createdBy: access.email }); logEvent('budget_added', { itemName: name, amount }); }
+      else {
+        const movementId = S.edit?.movementId || '';
+        if (movementId) data.movementId = movementId;
+        const added = await addDoc(collection(db, 'budgetItems'), { ...data, createdAt: serverTimestamp(), createdBy: access.email });
+        if (movementId) await updateDoc(doc(db, 'budgetMovements', movementId), { status: 'linked', itemId: added.id });
+        logEvent('budget_added', { itemName: name, amount });
+      }
       closeModal(); await refresh();
     } catch (e) { alert('Failed to save: ' + e.message); btn.disabled = false; btn.textContent = 'Save'; }
   }
@@ -783,6 +804,257 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' })), download: `douro-budget-backup-${today()}.json` });
       a.click(); URL.revokeObjectURL(a.href); logEvent('budget_backup', { count: items.length });
     } catch (e) { alert('Backup failed: ' + e.message); }
+  }
+
+
+  // ── Bank (Stage 2): import Santander files ──
+  const digits = (v) => String(v || '').replace(/\D/g, '');
+  const fmtMoney = (n) => eur.format(Number(n) || 0);
+  const lastStored = (accountId) => {
+    const key = (m) => `${m.posted}|${m.batchAt || ''}|${String(m.lineNo || 0).padStart(6, '0')}`;
+    const mine = S.movements.filter((m) => m.accountId === accountId).sort((a, b) => (key(a) < key(b) ? 1 : -1));
+    return mine.length ? { balance: mine[0].balance, posted: mine[0].posted } : null;
+  };
+  const recCtx = (accountId) => ({
+    partners: S.dir.filter((m) => m.partner).map((m) => ({ key: m.key, name: m.name || m.label })),
+    suppliers: S.suppliers, cards: S.cards, accountId,
+  });
+  const KIND_TEXT = { expense: 'Expense', income: 'Money in', settlement: 'To a partner' };
+  let bankPlans = [];
+
+  function renderBank(body) {
+    const accs = S.accounts.filter((a) => a.kind !== 'cash');
+    body.innerHTML = `
+      <div class="section"><div class="section-header"><h2 class="section-title">Import a bank file</h2></div>
+        <div class="card" style="padding:20px 22px">
+          <p class="hint" style="margin:0 0 14px">Santander: Exportar, then "Tabulado Excel" (or "Tabulado (Folha de Cálculo)"). Pick several files at once if you like, for example one per month: lines already imported are skipped, so overlapping files are safe. Nothing is booked yet; the lines go to the Inbox.</p>
+          <div class="form-row"><div class="form-group"><label for="b-acc">Account</label><select id="b-acc">${accs.length ? opts(accs.map((a) => ({ id: a.id, label: a.name })), '', null) : '<option value="">Add a bank account first (Accounts tab)</option>'}</select></div>
+            <div class="form-group"><label for="b-files">File(s)</label><input type="file" id="b-files" accept=".csv,.txt" multiple></div></div>
+          <button class="btn btn--primary" id="b-read" ${accs.length ? '' : 'disabled'}>Read files</button>
+          <div id="b-preview" style="margin-top:18px"></div></div></div>
+      <div class="section"><div class="section-header"><h2 class="section-title">Imports so far</h2></div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>When</th><th>File</th><th>Account</th><th>Period</th><th class="num">New lines</th><th class="num">Skipped</th><th>By</th><th></th></tr></thead>
+          <tbody>${S.imports.length ? S.imports.map((b) => `<tr style="${b.status === 'undone' ? 'opacity:.5' : ''}"><td style="white-space:nowrap">${fmtDate(String(b.createdAtIso || '').slice(0, 10))}</td><td>${esc(b.fileName || '')}</td><td>${esc(accountOf(b.accountId)?.name || '')}</td><td style="white-space:nowrap">${fmtDate(b.from)} – ${fmtDate(b.to)}</td><td class="num">${esc(b.newLines)}</td><td class="num">${esc(b.dups)}</td><td class="mini">${esc(String(b.createdBy || '').split('@')[0])}</td><td style="text-align:right">${b.status === 'undone' ? '<span class="mini">undone</span>' : `<button class="btn btn--ghost btn--sm" data-undo="${b.id}">Undo</button>`}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="8">No imports yet.</td></tr>'}</tbody></table></div></div></div>`;
+    body.querySelector('#b-read').addEventListener('click', () => readBankFiles(body));
+    body.querySelectorAll('[data-undo]').forEach((b) => b.addEventListener('click', () => undoImport(b.dataset.undo)));
+    if (bankPlans.length) showBankPreview(body);
+  }
+
+  async function readBankFiles(body) {
+    const accountId = body.querySelector('#b-acc').value, files = [...body.querySelector('#b-files').files];
+    const prev = body.querySelector('#b-preview');
+    if (!accountId) { prev.innerHTML = '<div class="warnbox warn">Choose the account first.</div>'; return; }
+    if (!files.length) { prev.innerHTML = '<div class="warnbox warn">Choose one or more files.</div>'; return; }
+    prev.innerHTML = '<span class="mini">Reading…</span>';
+    const acc = accountOf(accountId), existing = new Set(S.movements.map((m) => m.id));
+    const parsed = [];
+    for (const f of files) { const p = parseTabulado(decodeBank(await f.arrayBuffer())); parsed.push({ file: f, p, from: p.rows[0]?.posted || '9999' }); }
+    parsed.sort((a, b) => a.from.localeCompare(b.from));         // oldest first, so each file is checked against the one before
+    let last = lastStored(accountId);
+    bankPlans = [];
+    for (const { file, p } of parsed) {
+      const block = [];
+      if (!p.rows.length) block.push('No readable lines in this file. Is it the "Tabulado" export?');
+      if (p.accountNos.length > 1) block.push('The file mixes several accounts.');
+      if (p.accountNo && acc.fileAccountNo && digits(p.accountNo) !== digits(acc.fileAccountNo)) block.push(`This file is for account ${p.accountNo}, but "${acc.name}" is set to ${acc.fileAccountNo}. Pick the right account.`);
+      const ids = await Promise.all(p.rows.map((r) => fingerprint(r, p.accountNo)));
+      const plan = planImport({ rows: p.rows, ids, existing, last, opening: acc.openingBalance });
+      if (!p.chainOk) plan.warnings.push({ code: 'chain', text: `The balances in this file do not add up from line ${p.chainBreak + 1} (a line may be missing or out of order).` });
+      const ctx = recCtx(accountId);
+      plan.fresh.forEach((l) => { l.sug = recognise(l, ctx); });
+      bankPlans.push({ file, name: file.name, accountId, accountNo: p.accountNo, plan, errors: p.errors, block, on: !block.length && plan.fresh.length > 0, setFileNo: !acc.fileAccountNo && !!p.accountNo });
+      plan.fresh.forEach((l) => existing.add(l.id));
+      if (plan.lines.length) { const lastLine = plan.lines[plan.lines.length - 1]; last = { balance: lastLine.balance, posted: lastLine.posted }; }
+    }
+    showBankPreview(body);
+  }
+  function showBankPreview(body) {
+    const prev = body.querySelector('#b-preview');
+    const total = bankPlans.filter((b) => b.on).reduce((s2, b) => s2 + b.plan.fresh.length, 0);
+    prev.innerHTML = bankPlans.map((b, i) => {
+      const pl = b.plan;
+      return `<div class="sect"><div class="sect-title">${esc(b.name)}</div>
+        ${b.block.map((t) => `<div class="warnbox warn">${esc(t)}</div>`).join('')}
+        ${pl.warnings.map((w) => `<div class="warnbox warn"><strong>Check:</strong> ${esc(w.text)}</div>`).join('')}
+        ${b.errors.length ? `<div class="warnbox warn">${b.errors.length} line(s) could not be read and will be skipped (line ${b.errors.slice(0, 5).map((e) => e.lineNo).join(', ')}).</div>` : ''}
+        <p style="margin-bottom:10px"><strong>${pl.fresh.length} new</strong> · ${pl.dups} already imported · ${fmtDate(pl.from)} – ${fmtDate(pl.to)} · in ${fmtMoney(pl.sumIn)} · out ${fmtMoney(Math.abs(pl.sumOut))} · balance ${pl.openingBalance == null ? '' : fmtMoney(pl.openingBalance) + ' → '}${pl.closingBalance == null ? '' : fmtMoney(pl.closingBalance)}</p>
+        ${pl.fresh.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Line</th><th class="num">Amount</th><th>Looks like</th></tr></thead><tbody>${pl.fresh.slice(0, 12).map((l) => `<tr><td style="white-space:nowrap">${fmtDate(l.posted)}</td><td>${esc(cleanDescription(l.description))}</td><td class="num ${l.amount > 0 ? 'amt-in' : ''}">${fmtMoney(l.amount)}</td><td class="mini">${esc(KIND_TEXT[l.sug.kind] || '')} · ${esc(l.sug.reason)}</td></tr>`).join('')}</tbody></table></div>${pl.fresh.length > 12 ? `<div class="mini" style="margin-top:6px">…and ${pl.fresh.length - 12} more.</div>` : ''}` : ''}
+        ${b.setFileNo ? `<p class="mini" style="margin-top:8px">The account will remember number ${esc(b.accountNo)} for next time.</p>` : ''}
+        <div class="checkline" style="margin:10px 0 12px"><input type="checkbox" id="b-on-${i}" data-on="${i}" ${b.on ? 'checked' : ''} ${b.block.length || !pl.fresh.length ? 'disabled' : ''}><label for="b-on-${i}">Import this file</label></div></div>`;
+    }).join('') + `<button class="btn btn--primary" id="b-go" ${total ? '' : 'disabled'}>Import ${total} new line${total === 1 ? '' : 's'}</button>`;
+    prev.querySelectorAll('[data-on]').forEach((c) => c.addEventListener('change', () => { bankPlans[Number(c.dataset.on)].on = c.checked; showBankPreview(body); }));
+    prev.querySelector('#b-go').addEventListener('click', () => doImport(body));
+  }
+  async function doImport(body) {
+    const go = body.querySelector('#b-go'); go.disabled = true; go.textContent = 'Importing…';
+    try {
+      let n = 0;
+      for (const b of bankPlans.filter((x) => x.on)) {
+        const pl = b.plan, at = new Date().toISOString();
+        const batch = await addDoc(collection(db, 'budgetImports'), { accountId: b.accountId, accountNo: b.accountNo, fileName: b.name, lines: pl.lines.length, newLines: pl.fresh.length, dups: pl.dups, from: pl.from, to: pl.to, openingBalance: pl.openingBalance, closingBalance: pl.closingBalance, status: 'done', createdAt: serverTimestamp(), createdAtIso: at, createdBy: access.email });
+        for (let i = 0; i < pl.fresh.length; i += 400) {
+          const wb = writeBatch(db);
+          pl.fresh.slice(i, i + 400).forEach((l) => {
+            const sug = Object.fromEntries(Object.entries(l.sug).filter(([, v]) => v !== undefined && v !== ''));
+            wb.set(doc(db, 'budgetMovements', l.id), { accountId: b.accountId, accountNo: b.accountNo, posted: l.posted, value: l.value, description: l.description, amount: l.amount, balance: l.balance, code2: l.code2, code3: l.code3, cardLast4: l.cardLast4, lineNo: l.lineNo, batchId: batch.id, batchAt: at, status: 'new', sug, createdAt: serverTimestamp(), createdBy: access.email });
+          });
+          await wb.commit();
+        }
+        if (b.setFileNo) await updateDoc(doc(db, 'budgetAccounts', b.accountId), { fileAccountNo: b.accountNo });
+        n += pl.fresh.length;
+        logEvent('budget_bank_import', { itemName: b.name, amount: pl.fresh.length });
+      }
+      bankPlans = [];
+      await refresh();
+      S.tab = 'inbox'; render();
+      alert(`${n} bank line${n === 1 ? '' : 's'} imported. They are waiting in the Inbox.`);
+    } catch (e) { alert('Import failed: ' + e.message); go.disabled = false; go.textContent = 'Try again'; }
+  }
+  async function undoImport(batchId) {
+    const mine = S.movements.filter((m) => m.batchId === batchId), used = mine.filter((m) => m.status === 'linked' || m.status === 'settlement');
+    if (!confirm(`Undo this import?\n\n${mine.length - used.length} bank line(s) are removed from the Inbox.${used.length ? `\n${used.length} line(s) are already booked or marked as partner transfers and stay.` : ''}`)) return;
+    try {
+      const gone = mine.filter((m) => m.status === 'new' || m.status === 'ignored');
+      for (let i = 0; i < gone.length; i += 400) { const wb = writeBatch(db); gone.slice(i, i + 400).forEach((m) => wb.delete(doc(db, 'budgetMovements', m.id))); await wb.commit(); }
+      await updateDoc(doc(db, 'budgetImports', batchId), { status: 'undone' });
+      logEvent('budget_bank_undo', { amount: gone.length });
+      await refresh(); S.tab = 'bank'; render();
+    } catch (e) { alert('Undo failed: ' + e.message); }
+  }
+
+  // ── Inbox (Stage 2): what needs a decision ──
+  const inboxSel = new Set();
+  let showIgnored = false;
+  function draftFromMovement(m, over = {}) {
+    const g = { ...(m.sug || {}), ...over }, amt = Math.abs(m.amount);
+    if (g.kind === 'income') {
+      return { movementId: m.id, kind: 'income', name: g.name || cleanDescription(m.description), amount: amt, date: m.posted, incomeType: g.incomeType || 'other', counterparty: g.counterparty || '', paidWith: g.paidWith || '', comments: '', tags: [], usedBy: [] };
+    }
+    return { movementId: m.id, kind: 'expense', name: g.name || cleanDescription(m.description), amount: amt, date: m.posted, categoryId: g.categoryId || '', purposeId: g.purposeId || '', paidWith: g.paidWith || '', supplierName: g.supplierName || '', supplierId: g.supplierId || '', docType: g.docWaived ? 'none' : 'none', docWaived: g.docWaived || false, country: 'PT', currency: 'EUR', issuedToCompany: 'unknown', tags: [], usedBy: [] };
+  }
+  function itemDocFromDraft(d) {
+    const exp = d.kind === 'expense';
+    return {
+      kind: d.kind, name: d.name, amount: d.amount, date: d.date, type: exp ? 'cost' : 'revenue', category: 'Other', periodicity: 'one_time',
+      categoryId: exp ? d.categoryId : '', subtype: '', purposeId: exp ? d.purposeId || '' : '', tags: [], incomeType: exp ? '' : d.incomeType, counterparty: exp ? '' : d.counterparty,
+      paidWith: d.paidWith || '', paidPersonallyBy: '', usedBy: [], docType: exp ? 'none' : '', issuedToCompany: exp ? 'unknown' : '', supplierName: d.supplierName || '', supplierId: d.supplierId || '', supplierTaxId: '', docNumber: '', atcud: '', invoiceDate: '', country: exp ? 'PT' : '', vatRate: null, vatAmount: null, vatDeductible: exp ? 'ask' : '', currency: 'EUR', originalAmount: null, docWaived: exp ? d.docWaived || false : false,
+      comments: 'From the bank file', attachments: [], sharedAt: '', sharedBy: '', changedSinceShared: false, movementId: d.movementId,
+    };
+  }
+  async function acceptMovements(list, over = {}) {
+    const ok = [], skip = [];
+    for (const m of list) {
+      const g = { ...(m.sug || {}), ...over };
+      if (g.kind === 'settlement') { ok.push({ m, settle: true }); continue; }
+      if (g.kind === 'expense' && !g.categoryId) { skip.push(m); continue; }
+      ok.push({ m, d: draftFromMovement(m, over) });
+    }
+    if (!ok.length) { alert('Nothing to accept: these lines still need a category. Use "Categorise…" on a line, or pick a category above first.'); return; }
+    try {
+      for (let i = 0; i < ok.length; i += 200) {
+        const wb = writeBatch(db);
+        ok.slice(i, i + 200).forEach(({ m, d, settle }) => {
+          if (settle) { wb.update(doc(db, 'budgetMovements', m.id), { status: 'settlement', partnerKey: (m.sug || {}).partnerKey || '' }); return; }
+          const iref = doc(collection(db, 'budgetItems'));
+          wb.set(iref, { ...itemDocFromDraft(d), createdAt: serverTimestamp(), createdBy: access.email });
+          wb.update(doc(db, 'budgetMovements', m.id), { status: 'linked', itemId: iref.id });
+        });
+        await wb.commit();
+      }
+      logEvent('budget_bank_accept', { amount: ok.length });
+      inboxSel.clear(); await refresh(); S.tab = 'inbox'; render();
+      if (skip.length) alert(`${ok.length} booked. ${skip.length} line(s) still need a category and stay in the Inbox.`);
+    } catch (e) { alert('Could not save: ' + e.message); }
+  }
+  async function setMovementStatus(ids, status, extra = {}) {
+    try {
+      const wb = writeBatch(db);
+      ids.forEach((id) => wb.update(doc(db, 'budgetMovements', id), { status, ...extra }));
+      await wb.commit(); inboxSel.clear(); await refresh(); S.tab = 'inbox'; render();
+    } catch (e) { alert('Could not save: ' + e.message); }
+  }
+  async function linkMovement(m, itemId) {
+    try {
+      const wb = writeBatch(db);
+      wb.update(doc(db, 'budgetMovements', m.id), { status: 'linked', itemId });
+      wb.update(doc(db, 'budgetItems', itemId), { movementId: m.id, paidWith: (m.sug || {}).paidWith || S.items.find((x) => x.id === itemId)?.paidWith || '' });
+      await wb.commit(); logEvent('budget_bank_link', { amount: Math.abs(m.amount) }); await refresh(); S.tab = 'inbox'; render();
+    } catch (e) { alert('Could not save: ' + e.message); }
+  }
+
+  function renderInbox(body) {
+    const accountsOn = can('budget.accounts');
+    const lines = S.movements.filter((m) => m.status === 'new').sort((a, b) => (a.posted < b.posted ? 1 : a.posted > b.posted ? -1 : (b.lineNo || 0) - (a.lineNo || 0)));
+    const settle = S.movements.filter((m) => m.status === 'settlement');
+    const ignored = S.movements.filter((m) => m.status === 'ignored');
+    const costs = S.items.filter((i) => i.kind === 'expense' && !i.archived);
+    const docWarn = costs.filter((i) => docStatus(i).level === 'warn');
+    const notShared = S.items.filter((i) => !i.archived && i.kind !== 'plan' && !(i.legacy && i.needsReview) && !i.sharedAt);
+    const o = overview(S.items), owed = Object.entries(o.owedToPartners).filter(([, v]) => v > 0);
+    const autoN = lines.filter((m) => (m.sug || {}).autoAccept).length;
+    const sugPill = (m) => { const g = m.sug || {}; const t = KIND_TEXT[g.kind] || ''; return `<span class="pill ${g.kind === 'income' ? 'pill--income' : g.kind === 'settlement' ? 'pill--plan' : 'pill--cost'}">${esc(t)}</span><div class="mini">${esc(g.reason || '')}${g.categoryId ? ' · ' + esc(catLabel(g.categoryId)) : ''}</div>`; };
+    const row = (m) => {
+      const g = m.sug || {}, cands = matchCandidates(m, S.items);
+      const canAccept = g.kind === 'income' || g.kind === 'settlement' || (g.kind === 'expense' && g.categoryId);
+      return `<tr><td class="chk"><input type="checkbox" data-isel="${m.id}" ${inboxSel.has(m.id) ? 'checked' : ''} aria-label="Select"></td>
+        <td style="white-space:nowrap">${fmtDate(m.posted)}</td>
+        <td><strong>${esc(g.name || cleanDescription(m.description))}</strong><div class="mini" title="As in the bank file">${esc(m.description)}</div></td>
+        <td class="num ${m.amount > 0 ? 'amt-in' : ''}">${m.amount > 0 ? '+' : ''}${fmtMoney(m.amount)}</td>
+        <td>${sugPill(m)}</td>
+        <td style="white-space:nowrap" data-perm="budget.edit">
+          ${canAccept ? `<button class="btn btn--primary btn--sm" data-acc="${m.id}">Accept</button>` : ''}
+          <button class="btn btn--ghost btn--sm" data-cat="${m.id}">${canAccept ? 'Edit…' : 'Categorise…'}</button>
+          ${cands.length ? `<button class="btn btn--ghost btn--sm" data-link="${m.id}" title="${esc(cands.map((c) => c.name).join(', '))}">Link to “${esc(cands[0].name.slice(0, 18))}”</button>` : ''}
+          <button class="btn btn--ghost btn--sm" data-ign="${m.id}" title="For example a transfer between our own accounts">Ignore</button></td></tr>`;
+    };
+    const itemLine = (i) => `<tr><td>${fmtDate(i.date)}</td><td><strong>${esc(i.name)}</strong>${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}</td><td class="num">${fmtMoney(i.amount)}</td><td><span class="badge-doc ${docStatus(i).level}">${esc(docStatus(i).label)}</span></td><td style="text-align:right"><button class="btn btn--ghost btn--sm" data-ed="${i.id}" data-perm="budget.edit">Edit</button></td></tr>`;
+    body.innerHTML = `
+      <div class="section"><div class="section-header"><h2 class="section-title">Inbox</h2></div>
+        <p class="mini" style="margin:-6px 0 14px">What needs a decision. Nothing here is created by hand: it fills from the bank files and from your items.</p></div>
+      ${accountsOn ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Bank lines to categorise (${lines.length})</h2>
+          <div class="section-actions" data-perm="budget.edit">${autoN ? `<button class="btn btn--ghost btn--sm" id="i-auto">Accept all ${autoN} bank charge${autoN === 1 ? '' : 's'} and interest</button>` : ''}<span data-perm="budget.import"><button class="btn btn--ghost btn--sm" id="i-bank">Import a bank file</button></span></div></div>
+        <div class="card">
+          <div class="bulkbar ${inboxSel.size ? 'on' : ''}" data-perm="budget.edit"><strong>${inboxSel.size} selected</strong>
+            <select id="ib-cat" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font:inherit;font-size:.8rem">${opts(activeOnly(S.lists.categories), '', 'Category…')}</select>
+            <select id="ib-pur" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font:inherit;font-size:.8rem">${opts(activeOnly(S.lists.purposes), '', 'Purpose…')}</select>
+            <button class="btn btn--primary btn--sm" id="ib-go">Book as expenses</button>
+            <button class="btn btn--ghost btn--sm" id="ib-acc">Accept suggestions</button>
+            <button class="btn btn--ghost btn--sm" id="ib-ign">Ignore</button>
+            <button class="btn btn--ghost btn--sm" id="ib-clear">Clear</button></div>
+          <div class="table-wrap"><table><thead><tr><th class="chk"><input type="checkbox" id="i-all" aria-label="Select all"></th><th>Date</th><th>Line</th><th class="num">Amount</th><th>Looks like</th><th></th></tr></thead>
+            <tbody>${lines.length ? lines.map(row).join('') : `<tr class="empty-row"><td colspan="6">${S.movements.length ? 'All bank lines are dealt with.' : 'No bank lines yet. Import a Santander file in the Bank tab.'}</td></tr>`}</tbody></table></div></div></div>
+        ${settle.length ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Transfers to partners (${settle.length})</h2></div><div class="card"><div class="table-wrap"><table><tbody>${settle.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(personLabel(m.partnerKey || (m.sug || {}).partnerKey))}</td><td>${esc(cleanDescription(m.description))}</td><td class="num">${fmtMoney(m.amount)}</td><td style="text-align:right" data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-back="${m.id}">Back to categorise</button></td></tr>`).join('')}</tbody></table></div></div><p class="mini" style="margin-top:8px">Linking these to the expenses they repay comes in the reimbursements step.</p></div>` : ''}` : ''}
+      <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Documents to fix (${docWarn.length})</h2>${docWarn.length > 8 ? '<div class="section-actions"><button class="btn btn--ghost btn--sm" id="i-alldocs">Show all in Items</button></div>' : ''}</div>
+        <div class="card"><div class="table-wrap"><table><tbody>${docWarn.length ? docWarn.slice(0, 8).map(itemLine).join('') : '<tr class="empty-row"><td colspan="5">Every expense has its paperwork.</td></tr>'}</tbody></table></div></div></div>
+      <div class="two">
+        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Not shared with the accountant (${notShared.length})</h2></div><div class="card" style="padding:14px 16px"><span class="mini">${notShared.length ? 'Select them in Items and use "Mark shared with accountant".' : 'Everything has been shared.'}</span> ${notShared.length ? '<button class="btn btn--ghost btn--sm" id="i-notshared">Show them</button>' : ''}</div></div>
+        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">To reimburse</h2></div><div class="card" style="padding:14px 16px"><span class="mini">${owed.length ? owed.map(([k, v]) => `The company owes ${esc(personLabel(k))} ${fmtMoney(v)}`).join(' · ') : 'Nobody is owed money.'}</span></div></div></div>
+      ${ignored.length ? `<div class="section"><button class="btn btn--ghost btn--sm" id="i-showign">${showIgnored ? 'Hide' : 'Show'} ${ignored.length} ignored line${ignored.length === 1 ? '' : 's'}</button>${showIgnored ? `<div class="card" style="margin-top:10px"><div class="table-wrap"><table><tbody>${ignored.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(cleanDescription(m.description))}</td><td class="num">${fmtMoney(m.amount)}</td><td style="text-align:right" data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-back="${m.id}">Restore</button></td></tr>`).join('')}</tbody></table></div></div>` : ''}</div>` : ''}`;
+    const by = (id) => S.movements.find((m) => m.id === id);
+    const q = (sel, fn, ev = 'click') => body.querySelectorAll(sel).forEach((b) => b.addEventListener(ev, () => fn(b)));
+    q('[data-isel]', (c) => { c.checked ? inboxSel.add(c.dataset.isel) : inboxSel.delete(c.dataset.isel); renderInbox(body); }, 'change');
+    body.querySelector('#i-all')?.addEventListener('change', (e) => { lines.forEach((m) => (e.target.checked ? inboxSel.add(m.id) : inboxSel.delete(m.id))); renderInbox(body); });
+    q('[data-acc]', (b) => acceptMovements([by(b.dataset.acc)]));
+    q('[data-cat]', (b) => { const m = by(b.dataset.cat); openItem(null, draftFromMovement(m)); });
+    q('[data-link]', (b) => { const m = by(b.dataset.link), c = matchCandidates(m, S.items)[0]; if (c && confirm(`Link this bank line to the expense "${c.name}" (${fmtMoney(c.amount)}, ${c.date})?`)) linkMovement(m, c.id); });
+    q('[data-ign]', (b) => setMovementStatus([b.dataset.ign], 'ignored'));
+    q('[data-back]', (b) => setMovementStatus([b.dataset.back], 'new'));
+    q('[data-ed]', (b) => openItem(b.dataset.ed));
+    body.querySelector('#i-auto')?.addEventListener('click', () => { const l = lines.filter((m) => (m.sug || {}).autoAccept); if (confirm(`Book ${l.length} bank charge / interest line(s) as expenses and income? They need no document.`)) acceptMovements(l); });
+    body.querySelector('#i-bank')?.addEventListener('click', () => { S.tab = 'bank'; render(); });
+    body.querySelector('#ib-clear')?.addEventListener('click', () => { inboxSel.clear(); renderInbox(body); });
+    body.querySelector('#ib-ign')?.addEventListener('click', () => setMovementStatus([...inboxSel], 'ignored'));
+    body.querySelector('#ib-acc')?.addEventListener('click', () => acceptMovements([...inboxSel].map(by).filter(Boolean)));
+    body.querySelector('#ib-go')?.addEventListener('click', () => {
+      const cat = body.querySelector('#ib-cat').value, pur = body.querySelector('#ib-pur').value;
+      if (!cat) { alert('Choose a category first.'); return; }
+      const sel = [...inboxSel].map(by).filter(Boolean), exp = sel.filter((m) => m.amount < 0);
+      if (!exp.length) { alert('Only payments (money out) can be booked as expenses.'); return; }
+      if (confirm(`Book ${exp.length} payment(s) as expenses in "${catLabel(cat)}"${pur ? ' / ' + purLabel(pur) : ''}?`)) acceptMovements(exp, { kind: 'expense', categoryId: cat, purposeId: pur });
+    });
+    body.querySelector('#i-alldocs')?.addEventListener('click', () => { S.filter = { ...S.filter, doc: 'warn', review: false, vat: '' }; S.tab = 'items'; render(); });
+    body.querySelector('#i-notshared')?.addEventListener('click', () => { S.filter = { ...S.filter, shared: 'no', doc: '', review: false, vat: '' }; S.tab = 'items'; render(); });
+    body.querySelector('#i-showign')?.addEventListener('click', () => { showIgnored = !showIgnored; renderInbox(body); });
   }
 
   // ── Go ──
