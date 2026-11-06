@@ -9,7 +9,7 @@ import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDes
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
   DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
-  docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, itemLines, visitIdsOf, visitReport, companyReport, personReport, planVsActual, isValidIban, ibanStatus, formatIban, cleanIban,
+  docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, itemLines, visitIdsOf, visitReport, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban,
   last4, labelOf, mergeLists, activeOnly, newListId,
 } from './budget-lib.js';
 import {
@@ -52,6 +52,8 @@ const TIPS = {
   investor: 'The investor in the Investor CRM this money belongs to. The investor card there then shows what has been received. The sender name is remembered for next time.',
   visit: 'The field visit this expense belongs to (a company, a date, who went). The cost then shows on the visit, in the reports and on the company page.',
   split: 'Share one expense between several visits or categories, for example a car rental used for two company visits, or a hotel invoice with meals. Each line gets a weight (equal by default); the amounts always add up to the total.',
+  reimbursed: 'Tick when the company has already paid you back outside the bank (cash, or a transfer you do not want to link). A bank transfer is linked from the Inbox, which ticks this for you.',
+  partner: 'Which partner lent the money or paid it back. Loans show as owed to the partner until a transfer back is marked "Repays a loan" in the Inbox.',
   subtype: 'For Team pay: salary, searcher services invoiced by their own company, or social contributions.',
   iban: 'Two check digits inside an IBAN catch most typing mistakes. A valid IBAN does not prove the account exists.',
   fileAccountNo: 'The account number as it appears in the bank’s export files. Used later to match imported bank lines to this account.',
@@ -119,7 +121,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // ── State ──
   const S = {
     tab: 'overview', items: [], accounts: [], cards: [], suppliers: [], people: {}, company: {}, lists: { categories: [], purposes: [] },
-    movements: [], imports: [], investors: [], visits: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '' },
+    movements: [], imports: [], investors: [], visits: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '', reimb: '' },
     sort: { field: 'date', dir: 'desc' }, selected: new Set(), edit: null,
   };
   const reads = (n) => { try { addReads(n); refreshReads(); } catch (e) { /* counter only */ } };
@@ -235,7 +237,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const costs = S.items.filter((i) => i.kind === 'expense' && !i.archived);
     const warn = costs.filter((i) => docStatus(i).level === 'warn').length;
     const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
-    const owed = Object.entries(o.owedToPartners).filter(([, v]) => v > 0);
+    const owed = partnerBalances(S.items, S.movements);
     const byCat = {}, byPur = {};
     costs.forEach((i) => itemLines(i).forEach((l) => { byCat[l.categoryId || 'other'] = (byCat[l.categoryId || 'other'] || 0) + l.amount; byPur[l.purposeId || ''] = (byPur[l.purposeId || ''] || 0) + l.amount; }));
     const tbl = (m, lab) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(lab(k) || 'No purpose yet')}</td><td class="num">${eur.format(v)}</td></tr>`).join('') || '<tr class="empty-row"><td colspan="2">Nothing yet.</td></tr>';
@@ -251,7 +253,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
           ${warn ? `<button class="btn btn--ghost btn--sm" data-go="doc">⚠ ${warn} expense${warn === 1 ? '' : 's'} with missing or wrong paperwork</button>` : '<span class="mini">✓ Every expense has its paperwork.</span>'}
           ${unrev ? `<button class="btn btn--ghost btn--sm" data-go="review">⚠ ${unrev} old item${unrev === 1 ? '' : 's'} to review</button>` : ''}
-          ${owed.length ? `<span class="mini">Owed to partners (paid personally, not reimbursed): ${owed.map(([k, v]) => `${esc(personLabel(k))} ${eur.format(v)}`).join(' · ')}</span>` : ''}
+          ${owed.length ? `<button class="btn btn--ghost btn--sm" data-go="owed" title="Expenses paid with a partner's own money and loans not yet paid back">The company owes: ${owed.map((x) => `${esc(personLabel(x.key))} ${eur.format(x.total)}`).join(' · ')}</button>` : ''}
         </div>
       </div>
       <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">VAT paid ${tip('vatDeductible')}</h2></div>
@@ -269,7 +271,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       </div>
       <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per tag</h2></div>
         <div class="card" style="padding:14px 16px;">${tags.length ? tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t.tag)}">${esc(t.tag)} · ${eur.format(t.total)}<small>${t.count}</small></button>`).join('') : '<span class="mini">No tags yet. Add tags such as "Spain trip" on an item.</span>'}</div></div>`;
-    body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { S.filter = { ...S.filter, doc: b.dataset.go === 'doc' ? 'warn' : '', review: b.dataset.go === 'review', vat: b.dataset.go === 'vatrisk' ? 'atRisk' : '' }; S.tab = 'items'; render(); }));
+    body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { S.filter = { ...S.filter, doc: b.dataset.go === 'doc' ? 'warn' : '', review: b.dataset.go === 'review', vat: b.dataset.go === 'vatrisk' ? 'atRisk' : '', reimb: b.dataset.go === 'owed' ? 'owed' : '' }; S.tab = 'items'; render(); }));
     body.querySelectorAll('[data-tagfilter]').forEach((b) => b.addEventListener('click', () => { S.filter.tag = b.dataset.tagfilter; S.tab = 'items'; render(); }));
   }
 
@@ -290,6 +292,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       if (f.shared === 'no' && (i.sharedAt || i.kind === 'plan')) return false;
       if (f.usedBy && !i.usedBy.some((u) => u.key === f.usedBy)) return false;
       if (f.vat && vatBucket(i) !== f.vat) return false;
+      const paidOwn = i.kind === 'expense' && !!i.paidPersonallyBy, repaid = i.reimbursement?.status === 'reimbursed';
+      if (f.reimb === 'owed' && !(paidOwn && !repaid)) return false;
+      if (f.reimb === 'done' && !(paidOwn && repaid)) return false;
       if (f.from && (!i.date || i.date < f.from)) return false;
       if (f.to && (!i.date || i.date > f.to)) return false;
       return true;
@@ -326,7 +331,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <td>${i.kind === 'expense' ? (Array.isArray(i.lines) && i.lines.length > 1 ? `<span title="Shared between ${i.lines.length} lines">Split · ${i.lines.length} lines</span>` : esc(catLabel(i.categoryId))) : ''}${i.kind === 'expense' && i.subtype ? `<div class="mini">${esc(labelOf(TEAM_PAY_SUBTYPES, i.subtype))}</div>` : ''}</td>
       <td>${esc(purLabel(i.purposeId))}</td>
       <td class="num ${i.kind === 'income' ? 'amt-in' : ''}">${sign}${eur.format(i.amount)}</td>
-      <td>${i.kind === 'expense' ? paidWithLabel(i) : ''}</td>
+      <td>${i.kind === 'expense' ? paidWithLabel(i) : ''}${i.kind === 'expense' && i.paidPersonallyBy ? (i.reimbursement?.status === 'reimbursed' ? '<div class="mini" style="color:var(--secondary)" title="The company paid this back">✓ reimbursed</div>' : '<div class="mini" style="color:#8A5A00" title="The company still owes this to the partner">owed back</div>') : ''}</td>
       <td class="mini">${i.kind === 'expense' ? usedByLabel(i) : ''}</td>
       <td>${i.kind === 'expense' ? `<span class="badge-doc ${ds.level}" title="${esc(ds.missing.length ? 'Missing: ' + ds.missing.join(', ') : ds.label)}">${esc(ds.label)}</span>` : ''}</td>
       <td class="num">${vatBucket(i) !== 'none' ? `<span title="${esc(VAT_BUCKETS[vatBucket(i)].label)}">${eur.format(Number(i.vatAmount))}</span>` : ''}</td>
@@ -358,6 +363,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
             <select id="fTag">${opts(allTags().map((t) => ({ id: t, label: t })), f.tag, 'All tags')}</select>
             <select id="fDoc"><option value="">Any paperwork</option><option value="warn"${f.doc === 'warn' ? ' selected' : ''}>⚠ Needs attention</option>${Object.entries(DOC_STATUS).map(([k, v]) => `<option value="${k}"${f.doc === k ? ' selected' : ''}>${v.label}</option>`).join('')}</select>
             <select id="fVat"><option value="">Any VAT</option>${Object.entries(VAT_BUCKETS).map(([k, v]) => `<option value="${k}"${f.vat === k ? ' selected' : ''}>VAT: ${v.label}</option>`).join('')}</select>
+            <select id="fReimb"><option value="">Any reimbursement</option><option value="owed"${f.reimb === 'owed' ? ' selected' : ''}>Paid personally, owed back</option><option value="done"${f.reimb === 'done' ? ' selected' : ''}>Paid personally, reimbursed</option></select>
             <select id="fShared"><option value="">Shared or not</option><option value="no"${f.shared === 'no' ? ' selected' : ''}>Not shared with accountant</option><option value="yes"${f.shared === 'yes' ? ' selected' : ''}>Shared with accountant</option></select>
             <select id="fUsed">${opts(S.dir.map((m) => ({ id: m.key, label: m.label })), f.usedBy, 'Used by anyone')}</select>
             <span class="filter-bar__label">From</span><input type="date" id="fFrom" value="${esc(f.from)}">
@@ -387,7 +393,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       </div>`;
     const re = () => renderItems(body);
     const bind = (id, key, ev = 'change') => { const el = body.querySelector('#' + id); if (!el) return; el.addEventListener(ev, () => { S.filter[key] = el.type === 'checkbox' ? el.checked : el.value; re(); if (id === 'fSearch') { const n = body.querySelector('#fSearch'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }); };
-    bind('fSearch', 'search', 'input'); bind('fKind', 'kind'); bind('fCategory', 'category'); bind('fPurpose', 'purpose'); bind('fTag', 'tag'); bind('fDoc', 'doc'); bind('fShared', 'shared'); bind('fVat', 'vat'); bind('fUsed', 'usedBy'); bind('fFrom', 'from'); bind('fTo', 'to'); bind('fArch', 'archived'); bind('fReview', 'review');
+    bind('fSearch', 'search', 'input'); bind('fKind', 'kind'); bind('fCategory', 'category'); bind('fPurpose', 'purpose'); bind('fTag', 'tag'); bind('fDoc', 'doc'); bind('fShared', 'shared'); bind('fVat', 'vat'); bind('fReimb', 'reimb'); bind('fUsed', 'usedBy'); bind('fFrom', 'from'); bind('fTo', 'to'); bind('fArch', 'archived'); bind('fReview', 'review');
     body.querySelectorAll('[data-sort]').forEach((t) => t.addEventListener('click', () => { const fl = t.dataset.sort; if (S.sort.field === fl) S.sort.dir = S.sort.dir === 'asc' ? 'desc' : 'asc'; else S.sort = { field: fl, dir: fl === 'date' ? 'desc' : 'asc' }; re(); }));
     body.querySelectorAll('[data-sel]').forEach((c) => c.addEventListener('change', () => { c.checked ? S.selected.add(c.dataset.sel) : S.selected.delete(c.dataset.sel); re(); }));
     body.querySelector('#selAll').addEventListener('change', (e) => { list.forEach((i) => (e.target.checked ? S.selected.add(i.id) : S.selected.delete(i.id))); re(); });
@@ -475,6 +481,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="form-group"><label for="f-name">Name</label><input type="text" id="f-name" value="${esc(d.name || '')}" placeholder="e.g. Train Lisbon–Porto, Accounting (October)"></div>
         <div class="form-row">${fld('Amount in euros', '', `<input type="number" id="f-amount" step="0.01" min="0" value="${esc(d.amount ?? '')}" placeholder="0.00">`)}
           <div id="f-incomewrap">${fld('Type of money received', 'incomeType', `<select id="f-income">${INCOME_TYPES.map((t) => `<option value="${t.id}"${d.incomeType === t.id ? ' selected' : ''} title="${esc(t.hint)}">${t.label}</option>`).join('')}</select>`)}</div></div>
+        <div id="f-partnerwrap" style="display:none">${fld('Partner', 'partner', `<select id="f-partner"><option value="">Choose…</option>${S.dir.filter((m) => m.active || m.key === d.partnerKey).map((m) => `<option value="${esc(m.key)}"${d.partnerKey === m.key ? ' selected' : ''}>${esc(m.label)}</option>`).join('')}</select>`)}</div>
         <div id="f-counterwrap">${fld('From', 'counterparty', `<input type="text" id="f-counter" value="${esc(d.counterparty || '')}" placeholder="e.g. the name in the bank line">`)}
           <div id="f-investorwrap" style="${capitalOn() ? '' : 'display:none'}">${fld('Investor', 'investor', `<input type="text" id="f-investor" list="f-invlist" value="${esc(d.investorName || '')}" placeholder="Choose an investor from the Investor CRM"><datalist id="f-invlist">${S.investors.map((x) => `<option value="${esc(x.name)}">`).join('')}</datalist>`)}</div></div>
       </div>
@@ -489,7 +496,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       </div>
       <div class="sect" id="f-who"><div class="sect-title">Who and how it was paid</div>
         <div class="form-row">${fld('Paid with', 'paidWith', `<select id="f-paidwith">${paidWithOptions(d.paidWith)}</select>`)}
-          <div id="f-personalwrap">${fld('Paid personally by', 'paidPersonallyBy', `<select id="f-personal"><option value="">Choose…</option>${S.dir.filter((m) => m.active || m.key === d.paidPersonallyBy).map((m) => `<option value="${esc(m.key)}"${d.paidPersonallyBy === m.key ? ' selected' : ''}>${esc(m.label)}</option>`).join('')}</select>`)}</div></div>
+          <div id="f-personalwrap">${fld('Paid personally by', 'paidPersonallyBy', `<select id="f-personal"><option value="">Choose…</option>${S.dir.filter((m) => m.active || m.key === d.paidPersonallyBy).map((m) => `<option value="${esc(m.key)}"${d.paidPersonallyBy === m.key ? ' selected' : ''}>${esc(m.label)}</option>`).join('')}</select>`)}
+            <div class="checkline" style="margin-bottom:14px"><input type="checkbox" id="f-reimb" ${d.reimbursement?.status === 'reimbursed' ? 'checked' : ''} ${d.reimbursement?.movementId ? 'disabled' : ''}><label for="f-reimb">${d.reimbursement?.movementId ? 'Reimbursed by a bank transfer' : 'Already reimbursed (outside the bank)'}${tip('reimbursed')}</label></div></div></div>
         ${fld('Used by', 'usedBy', sharesHtml(d.usedBy))}
       </div>
       <div class="sect" id="f-docsect"><div class="sect-title">Paperwork</div>
@@ -531,6 +539,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const sync = () => {
       const k = $('f-kind').value, expense = k === 'expense', income = k === 'income';
       $('f-incomewrap').style.display = income ? '' : 'none'; $('f-counterwrap').style.display = income ? '' : 'none';
+      $('f-partnerwrap').style.display = income && ['partner_loan', 'partner_reimbursement'].includes($('f-income').value) ? '' : 'none';
+      $('f-reimb').closest('.checkline').style.display = $('f-paidwith').value === 'personal' ? '' : 'none';
       $('f-investorwrap').style.display = capitalOn() && income && $('f-income').value === 'capital_call' ? '' : 'none';
       $('f-classify').style.display = expense || k === 'plan' ? '' : 'none';
       $('f-who').style.display = expense ? '' : 'none'; $('f-docsect').style.display = expense ? '' : 'none';
@@ -634,8 +644,14 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         purposeId: expense || kind === 'plan' ? $('f-purpose').value : '',
         tags: parseTags($('f-tags').value),
         incomeType: kind === 'income' ? $('f-income').value : '', counterparty: kind === 'income' ? $('f-counter').value.trim() : '',
+        partnerKey: kind === 'income' && ['partner_loan', 'partner_reimbursement'].includes($('f-income').value) ? $('f-partner').value : '',
         ...(() => { const nm = capitalOn() && kind === 'income' && $('f-income').value === 'capital_call' ? $('f-investor').value.trim() : ''; const iv = nm ? S.investors.find((x) => x.name.toLowerCase() === nm.toLowerCase()) : null; return { investorId: iv ? iv.id : '', investorName: iv ? iv.name : '' }; })(),
         paidWith, paidPersonallyBy: expense && paidWith === 'personal' ? $('f-personal').value : '',
+        ...(() => {
+          if (!(expense && paidWith === 'personal')) return { reimbursement: {} };
+          if (existing?.reimbursement?.movementId) return { reimbursement: existing.reimbursement };   // set by a bank transfer: changed from the Inbox
+          return { reimbursement: $('f-reimb').checked ? { status: 'reimbursed', at: existing?.reimbursement?.at || today(), by: existing?.reimbursement?.by || access.email, manual: true } : {} };
+        })(),
         usedBy: expense ? usedBy : [],
         ...(() => {
           if (!expense) return { lines: [], visitId: '', visitIds: [] };
@@ -655,6 +671,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         docWaived: expense && $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
         comments: $('f-comments').value.trim(), attachments,
       };
+      if (kind === 'income' && $('f-income').value === 'partner_loan' && !data.partnerKey) { alert('Choose which partner lent the money.'); btn.disabled = false; btn.textContent = 'Save'; return; }
       if (expense && data.paidWith === 'personal' && !data.paidPersonallyBy) { alert('Choose who paid personally.'); btn.disabled = false; btn.textContent = 'Save'; return; }
       const wasShared = !!existing?.sharedAt, nowShared = $('f-shared').checked;
       if (nowShared && !wasShared) { data.sharedAt = new Date().toISOString(); data.sharedBy = access.email; data.changedSinceShared = false; }
@@ -694,9 +711,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           <div class="row-actions">${a.iban ? `<button class="btn btn--ghost btn--sm" data-copyiban="${a.id}">Copy IBAN</button>` : ''}<button class="btn btn--ghost btn--sm" data-newcard="${a.id}" data-perm="budget.edit">+ Card</button><button class="btn btn--ghost btn--sm" data-acc="${a.id}" data-perm="budget.edit">Edit</button></div></div>`).join('') : '<div class="card" style="padding:24px"><span class="mini">No accounts yet. Add Santander and BiG, then add the company card *0435 on Santander.</span></div>'}</div></div>
       <div class="section"><div class="section-header"><h2 class="section-title">Partner profiles</h2></div>
         <p class="mini" style="margin:-6px 0 14px">Each partner keeps their own IBAN here so the other can transfer money back. The app never moves money.</p>
-        <div class="cardgrid">${partners.map((p) => { const pr = S.people[p.key] || {}; const mine = isAdmin || myKey === p.key; const owed = o.owedToPartners[p.key] || 0; return `<div class="acard"><h3>${esc(p.name || p.label)}</h3><div class="mini">${esc(pr.bank || '')}</div>
+        <div class="cardgrid">${partners.map((p) => { const pr = S.people[p.key] || {}; const mine = isAdmin || myKey === p.key; const bal = partnerBalances(S.items, S.movements).find((x) => x.key === p.key) || { total: 0, expenses: 0, expenseCount: 0, loansOwed: 0 }; const owed = bal.total; return `<div class="acard"><h3>${esc(p.name || p.label)}</h3><div class="mini">${esc(pr.bank || '')}</div>
           <div class="iban">${pr.iban ? esc(formatIban(pr.iban)) : '<span class="mini">No IBAN yet</span>'}</div>
-          ${owed > 0 ? `<div class="mini">The company owes ${eur.format(owed)} (paid personally, not reimbursed)</div>` : ''}
+          ${owed > 0 ? `<div class="mini">The company owes ${eur.format(owed)}${bal.expenses ? ` · ${eur.format(bal.expenses)} paid personally (${bal.expenseCount} expense${bal.expenseCount === 1 ? '' : 's'})` : ''}${bal.loansOwed > 0 ? ` · ${eur.format(bal.loansOwed)} lent` : ''}</div>` : ''}
           <div class="row-actions">${pr.iban ? `<button class="btn btn--ghost btn--sm" data-copyp="${esc(p.key)}">Copy IBAN</button><button class="btn btn--ghost btn--sm" data-copyd="${esc(p.key)}">Copy transfer details</button>` : ''}${mine ? `<button class="btn btn--ghost btn--sm" data-prof="${esc(p.key)}">Edit</button>` : ''}</div></div>`; }).join('') || '<span class="mini">No partners found in the team directory.</span>'}</div></div>`;
     body.querySelector('#a-new').addEventListener('click', () => openAccount(null));
     body.querySelectorAll('[data-acc]').forEach((b) => b.addEventListener('click', () => openAccount(b.dataset.acc)));
@@ -704,7 +721,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     body.querySelectorAll('[data-card]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.card)));
     body.querySelectorAll('[data-copyiban]').forEach((b) => b.addEventListener('click', () => copyText(cleanIban(accountOf(b.dataset.copyiban).iban), b)));
     body.querySelectorAll('[data-copyp]').forEach((b) => b.addEventListener('click', () => copyText(cleanIban(S.people[b.dataset.copyp].iban), b)));
-    body.querySelectorAll('[data-copyd]').forEach((b) => b.addEventListener('click', () => { const k = b.dataset.copyd, p = partners.find((x) => x.key === k), pr = S.people[k]; const owed = o.owedToPartners[k] || 0; copyText(`${pr.holderName || p.name}\nIBAN ${formatIban(pr.iban)}${pr.bank ? '\n' + pr.bank : ''}${owed > 0 ? `\nAmount ${owed.toFixed(2)} EUR` : ''}\nReference: ${INSTANCE.orgName} reimbursement`, b); }));
+    body.querySelectorAll('[data-copyd]').forEach((b) => b.addEventListener('click', () => { const k = b.dataset.copyd, p = partners.find((x) => x.key === k), pr = S.people[k]; const owed = (partnerBalances(S.items, S.movements).find((x) => x.key === k) || {}).total || 0; copyText(`${pr.holderName || p.name}\nIBAN ${formatIban(pr.iban)}${pr.bank ? '\n' + pr.bank : ''}${owed > 0 ? `\nAmount ${owed.toFixed(2)} EUR` : ''}\nReference: ${INSTANCE.orgName} reimbursement`, b); }));
     body.querySelectorAll('[data-prof]').forEach((b) => b.addEventListener('click', () => openProfile(b.dataset.prof)));
   }
   function ibanHint(v) { const st = ibanStatus(v); return st === 'empty' ? '' : st === 'ok' ? '✓ Valid IBAN.' : 'This IBAN does not pass the check digits, so there is probably a typo. You can still save it.'; }
@@ -1046,6 +1063,62 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     } catch (e) { alert('Could not save: ' + e.message); }
   }
 
+  // ── Reimbursements (Stage 4): a transfer to a partner repays the expenses they paid personally ──
+  const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  function openSettle(id) {
+    const m = S.movements.find((x) => x.id === id); if (!m) return;
+    const key = m.partnerKey || (m.sug || {}).partnerKey || '';
+    const total = r2(Math.abs(m.amount)), done = r2((m.settles || []).reduce((x, y) => x + (Number(y.amount) || 0), 0)), room = r2(total - done);
+    const cands = S.items.filter((i) => i.kind === 'expense' && !i.archived && i.paidPersonallyBy === key && i.reimbursement?.status !== 'reimbursed').sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+    const sug = new Set(suggestSettlement(room, cands) || []);
+    openModal(`<h2>Link ${esc(personLabel(key))}'s transfer to expenses</h2>
+      <p style="margin-bottom:10px"><strong>${fmtMoney(total)}</strong> on ${fmtDate(m.posted)} · ${esc(cleanDescription(m.description))}${done ? `<br><span class="mini">${fmtMoney(done)} already linked, ${fmtMoney(room)} left to place.</span>` : ''}</p>
+      ${cands.length ? `<div class="mini" style="margin-bottom:8px">${sug.size ? 'These add up exactly to the transfer and are ticked for you. Change the ticks if that is not what it repaid.' : 'No combination adds up to the transfer exactly. Tick the expenses it repaid.'}</div>
+        <div class="table-wrap"><table><tbody>${cands.map((i) => `<tr><td class="chk"><input type="checkbox" data-st="${i.id}" data-amt="${i.amount}" ${sug.has(i.id) ? 'checked' : ''} aria-label="Repaid"></td><td style="white-space:nowrap">${fmtDate(i.date)}</td><td>${esc(i.name)}${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}</td><td class="num">${fmtMoney(i.amount)}</td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="warnbox na">${esc(personLabel(key))} has no unreimbursed expenses. If this transfer pays back a loan, close this window and use "Repays a loan".</div>`}
+      <div id="st-sum" style="margin:12px 0;font-weight:600"></div>
+      <div class="modal-actions"><button class="btn btn--ghost" id="st-cancel">Cancel</button><button class="btn btn--primary" id="st-save" ${cands.length ? '' : 'disabled'}>Link</button></div>`);
+    const box = root.querySelector('#v2modalBox');
+    const calc = () => {
+      const sel = [...box.querySelectorAll('[data-st]:checked')], sum = r2(sel.reduce((x, c) => x + Number(c.dataset.amt), 0)), left = r2(room - sum);
+      const el = box.querySelector('#st-sum'); if (!el) return;
+      el.innerHTML = `Ticked ${fmtMoney(sum)} of ${fmtMoney(room)} · ${left < -0.004 ? `<span style="color:var(--danger)">${fmtMoney(-left)} too much</span>` : left > 0.004 ? `${fmtMoney(left)} not placed (stays on the transfer)` : '<span style="color:var(--secondary)">matches exactly</span>'}`;
+      box.querySelector('#st-save').disabled = !sel.length || left < -0.004;
+    };
+    box.querySelectorAll('[data-st]').forEach((c) => c.addEventListener('change', calc)); calc();
+    box.querySelector('#st-cancel').addEventListener('click', closeModal);
+    box.querySelector('#st-save').addEventListener('click', async () => {
+      const sel = cands.filter((i) => box.querySelector(`[data-st="${i.id}"]`)?.checked);
+      if (!sel.length) return;
+      const sum = r2(sel.reduce((x, i) => x + i.amount, 0)); if (sum > room + 0.004) { alert('The ticked expenses add up to more than the transfer.'); return; }
+      const settles = [...(m.settles || []), ...sel.map((i) => ({ itemId: i.id, amount: i.amount }))], left = r2(total - settles.reduce((x, y) => x + y.amount, 0));
+      try {
+        const wb = writeBatch(db);
+        sel.forEach((i) => wb.update(doc(db, 'budgetItems', i.id), { reimbursement: { status: 'reimbursed', movementId: m.id, at: m.posted, by: access.email } }));
+        wb.update(doc(db, 'budgetMovements', m.id), { settles, unallocated: left, settlementKind: 'expenses', partnerKey: key, status: left < 0.005 ? 'settled' : 'settlement' });
+        await wb.commit(); logEvent('budget_reimbursed', { itemName: personLabel(key), amount: sum });
+        closeModal(); await refresh(); S.tab = 'inbox'; render();
+      } catch (e) { alert('Could not save: ' + e.message); }
+    });
+  }
+  async function repayLoan(id) {
+    const m = S.movements.find((x) => x.id === id); if (!m) return;
+    const key = m.partnerKey || (m.sug || {}).partnerKey || '';
+    if (!confirm(`Mark this ${fmtMoney(Math.abs(m.amount))} transfer as ${personLabel(key)}'s loan being paid back?`)) return;
+    try { await updateDoc(doc(db, 'budgetMovements', id), { status: 'settled', settlementKind: 'loan', partnerKey: key, settles: [], unallocated: 0 }); logEvent('budget_loan_repaid', { itemName: personLabel(key), amount: Math.abs(m.amount) }); await refresh(); S.tab = 'inbox'; render(); }
+    catch (e) { alert('Could not save: ' + e.message); }
+  }
+  async function unsettle(id) {
+    const m = S.movements.find((x) => x.id === id); if (!m) return;
+    if (!confirm('Unlink this transfer? The expenses it repaid count as owed again.')) return;
+    try {
+      const wb = writeBatch(db);
+      (m.settles || []).forEach((x) => { const it = S.items.find((i) => i.id === x.itemId); if (it && it.reimbursement?.movementId === id) wb.update(doc(db, 'budgetItems', it.id), { reimbursement: {} }); });
+      wb.update(doc(db, 'budgetMovements', id), { status: 'settlement', settles: [], unallocated: 0, settlementKind: '' });
+      await wb.commit(); logEvent('budget_unreimbursed', { itemName: personLabel(m.partnerKey) }); await refresh(); S.tab = 'inbox'; render();
+    } catch (e) { alert('Could not save: ' + e.message); }
+  }
+
   function renderInbox(body) {
     const accountsOn = can('budget.accounts');
     const lines = S.movements.filter((m) => m.status === 'new').sort((a, b) => (a.posted < b.posted ? 1 : a.posted > b.posted ? -1 : (b.lineNo || 0) - (a.lineNo || 0)));
@@ -1054,7 +1127,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const costs = S.items.filter((i) => i.kind === 'expense' && !i.archived);
     const docWarn = costs.filter((i) => docStatus(i).level === 'warn');
     const notShared = S.items.filter((i) => !i.archived && i.kind !== 'plan' && !(i.legacy && i.needsReview) && !i.sharedAt);
-    const o = overview(S.items), owed = Object.entries(o.owedToPartners).filter(([, v]) => v > 0);
+    const bal = partnerBalances(S.items, S.movements);
+    const settled = S.movements.filter((m) => m.status === 'settled').sort((a, b) => (a.posted < b.posted ? 1 : -1));
     const autoN = lines.filter((m) => (m.sug || {}).autoAccept).length;
     const sugPill = (m) => { const g = m.sug || {}; const t = KIND_TEXT[g.kind] || ''; return `<span class="pill ${g.kind === 'income' ? 'pill--income' : g.kind === 'settlement' ? 'pill--plan' : 'pill--cost'}">${esc(t)}</span><div class="mini">${esc(g.reason || '')}${g.categoryId ? ' · ' + esc(catLabel(g.categoryId)) : ''}</div>`; };
     const row = (m) => {
@@ -1087,12 +1161,13 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
             <button class="btn btn--ghost btn--sm" id="ib-clear">Clear</button></div>
           <div class="table-wrap"><table><thead><tr><th class="chk"><input type="checkbox" id="i-all" aria-label="Select all"></th><th>Date</th><th>Line</th><th class="num">Amount</th><th>Looks like</th><th></th></tr></thead>
             <tbody>${lines.length ? lines.map(row).join('') : `<tr class="empty-row"><td colspan="6">${S.movements.length ? 'All bank lines are dealt with.' : 'No bank lines yet. Import a Santander file in the Bank tab.'}</td></tr>`}</tbody></table></div></div></div>
-        ${settle.length ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Transfers to partners (${settle.length})</h2></div><div class="card"><div class="table-wrap"><table><tbody>${settle.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(personLabel(m.partnerKey || (m.sug || {}).partnerKey))}</td><td>${esc(cleanDescription(m.description))}</td><td class="num">${fmtMoney(m.amount)}</td><td style="text-align:right" data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-back="${m.id}">Back to categorise</button></td></tr>`).join('')}</tbody></table></div></div><p class="mini" style="margin-top:8px">Linking these to the expenses they repay comes in the reimbursements step.</p></div>` : ''}` : ''}
+        ${settle.length ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Transfers to partners (${settle.length})</h2></div><div class="card"><div class="table-wrap"><table><tbody>${settle.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(personLabel(m.partnerKey || (m.sug || {}).partnerKey))}</td><td>${esc(cleanDescription(m.description))}</td><td class="num">${fmtMoney(m.amount)}${(m.settles || []).length ? `<div class="mini">${m.settles.length} expense${m.settles.length === 1 ? '' : 's'} linked${m.unallocated > 0.004 ? ` · ${fmtMoney(m.unallocated)} left` : ''}</div>` : ''}</td><td style="text-align:right;white-space:nowrap"><span data-perm="budget.edit budget.import"><button class="btn btn--primary btn--sm" data-settle="${m.id}">Link to expenses…</button> <button class="btn btn--ghost btn--sm" data-loan="${m.id}" title="The transfer pays back money the partner lent the company">Repays a loan</button></span> <span data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-back="${m.id}">Back to categorise</button></span></td></tr>`).join('')}</tbody></table></div></div><p class="mini" style="margin-top:8px">Link each transfer to the expenses the partner paid personally. They stop counting as owed.</p></div>` : ''}
+        ${settled.length ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Repaid to partners (${settled.length})</h2></div><div class="card"><div class="table-wrap"><table><tbody>${settled.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(personLabel(m.partnerKey))}</td><td>${m.settlementKind === 'loan' ? 'Repays a loan' : `${(m.settles || []).length} expense${(m.settles || []).length === 1 ? '' : 's'}`}</td><td class="num">${fmtMoney(m.amount)}</td><td style="text-align:right" data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-unsettle="${m.id}">Unlink</button></td></tr>`).join('')}</tbody></table></div></div></div>` : ''}` : ''}
       <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Documents to fix (${docWarn.length})</h2>${docWarn.length > 8 ? '<div class="section-actions"><button class="btn btn--ghost btn--sm" id="i-alldocs">Show all in Items</button></div>' : ''}</div>
         <div class="card"><div class="table-wrap"><table><tbody>${docWarn.length ? docWarn.slice(0, 8).map(itemLine).join('') : '<tr class="empty-row"><td colspan="5">Every expense has its paperwork.</td></tr>'}</tbody></table></div></div></div>
       <div class="two">
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Not shared with the accountant (${notShared.length})</h2></div><div class="card" style="padding:14px 16px"><span class="mini">${notShared.length ? 'Select them in Items and use "Mark shared with accountant".' : 'Everything has been shared.'}</span> ${notShared.length ? '<button class="btn btn--ghost btn--sm" id="i-notshared">Show them</button>' : ''}</div></div>
-        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">To reimburse</h2></div><div class="card" style="padding:14px 16px"><span class="mini">${owed.length ? owed.map(([k, v]) => `The company owes ${esc(personLabel(k))} ${fmtMoney(v)}`).join(' · ') : 'Nobody is owed money.'}</span></div></div></div>
+        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">To reimburse</h2></div><div class="card" style="padding:14px 16px">${bal.length ? bal.map((x) => `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:3px 0"><span class="mini" style="color:var(--text)">The company owes <strong>${esc(personLabel(x.key))}</strong> ${fmtMoney(x.total)}${x.expenses ? ` · ${fmtMoney(x.expenses)} for ${x.expenseCount} expense${x.expenseCount === 1 ? '' : 's'}` : ''}${x.loansOwed > 0 ? ` · ${fmtMoney(x.loansOwed)} lent` : ''}</span>${x.expenses ? '<button class="btn btn--ghost btn--sm" data-owedshow="1">Show</button>' : ''}</div>`).join('') : '<span class="mini">Nobody is owed money.</span>'}</div></div></div>
       ${ignored.length ? `<div class="section"><button class="btn btn--ghost btn--sm" id="i-showign">${showIgnored ? 'Hide' : 'Show'} ${ignored.length} ignored line${ignored.length === 1 ? '' : 's'}</button>${showIgnored ? `<div class="card" style="margin-top:10px"><div class="table-wrap"><table><tbody>${ignored.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(cleanDescription(m.description))}</td><td class="num">${fmtMoney(m.amount)}</td><td style="text-align:right" data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-back="${m.id}">Restore</button></td></tr>`).join('')}</tbody></table></div></div>` : ''}</div>` : ''}`;
     const by = (id) => S.movements.find((m) => m.id === id);
     const q = (sel, fn, ev = 'click') => body.querySelectorAll(sel).forEach((b) => b.addEventListener(ev, () => fn(b)));
@@ -1103,6 +1178,10 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     q('[data-link]', (b) => { const m = by(b.dataset.link), c = matchCandidates(m, S.items)[0]; if (c && confirm(`Link this bank line to the expense "${c.name}" (${fmtMoney(c.amount)}, ${c.date})?`)) linkMovement(m, c.id); });
     q('[data-ign]', (b) => setMovementStatus([b.dataset.ign], 'ignored'));
     q('[data-back]', (b) => setMovementStatus([b.dataset.back], 'new'));
+    q('[data-settle]', (b) => openSettle(b.dataset.settle));
+    q('[data-loan]', (b) => repayLoan(b.dataset.loan));
+    q('[data-unsettle]', (b) => unsettle(b.dataset.unsettle));
+    q('[data-owedshow]', () => { S.filter = { ...S.filter, reimb: 'owed', doc: '', review: false, vat: '', shared: '' }; S.tab = 'items'; render(); });
     q('[data-ed]', (b) => openItem(b.dataset.ed));
     body.querySelector('#i-auto')?.addEventListener('click', () => { const l = lines.filter((m) => (m.sug || {}).autoAccept); if (confirm(`Book ${l.length} bank charge / interest line(s) as expenses and income? They need no document.`)) acceptMovements(l); });
     body.querySelector('#i-bank')?.addEventListener('click', () => { S.tab = 'bank'; render(); });

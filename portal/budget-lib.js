@@ -383,6 +383,43 @@ export function planVsActual(items, { from = '', to = '' } = {}) {
   return { categories: fin(cat), purposes: fin(pur) };
 }
 
+// ── Reimbursements and partner loans (Stage 4) ──
+// What the company owes each partner: expenses they paid with their own money and were not repaid yet, plus partner loans not yet
+// paid back. An expense is repaid when item.reimbursement.status is 'reimbursed' (by a bank transfer or by hand). A loan is a money-
+// received item of type partner_loan with a partnerKey; it is repaid by bank transfers marked settlementKind 'loan'.
+export function partnerBalances(items, movements) {
+  const rows = new Map();
+  const get = (k) => rows.get(k) || rows.set(k, { key: k, expenses: 0, expenseCount: 0, loans: 0, loanRepaid: 0 }).get(k);
+  for (const raw of items || []) {
+    const it = raw.legacy === undefined ? normalizeItem(raw) : raw;
+    if (it.archived) continue;
+    if (it.kind === 'expense' && it.paidPersonallyBy && it.reimbursement?.status !== 'reimbursed') { const r = get(it.paidPersonallyBy); r.expenses = round2(r.expenses + it.amount); r.expenseCount++; }
+    else if (it.kind === 'income' && it.incomeType === 'partner_loan' && it.partnerKey) { const r = get(it.partnerKey); r.loans = round2(r.loans + it.amount); }
+  }
+  for (const m of movements || []) {
+    if (m.status === 'settled' && m.settlementKind === 'loan' && m.partnerKey) { const r = get(m.partnerKey); r.loanRepaid = round2(r.loanRepaid + Math.abs(Number(m.amount) || 0)); }
+  }
+  return [...rows.values()].map((r) => ({ ...r, loansOwed: round2(r.loans - r.loanRepaid), total: round2(r.expenses + Math.max(0, r.loans - r.loanRepaid)) }))
+    .filter((r) => r.total > 0 || r.loans > 0).sort((a, b) => b.total - a.total);
+}
+// Which of these unreimbursed expenses a transfer of this size most likely repays: the oldest combination that adds up to the
+// cent. null when none does (the person then picks by hand). Looks at the 30 oldest expenses.
+export function suggestSettlement(amount, candidates) {
+  const target = Math.round(Math.abs(Number(amount) || 0) * 100);
+  if (!target) return null;
+  const list = [...(candidates || [])].sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))).slice(0, 30)
+    .map((c) => ({ id: c.id, cents: Math.round((Number(c.amount) || 0) * 100) })).filter((c) => c.cents > 0 && c.cents <= target);
+  const reach = new Map([[0, []]]);
+  for (const c of list) {
+    for (const [sum, ids] of [...reach.entries()]) {
+      const ns = sum + c.cents;
+      if (ns <= target && !reach.has(ns)) reach.set(ns, [...ids, c.id]);
+    }
+    if (reach.has(target)) return reach.get(target);
+  }
+  return reach.get(target) || null;
+}
+
 // ── Small helpers ──
 export const eur2 = (n) => round2(n);
 export function labelOf(list, id, fallback = '—') {
