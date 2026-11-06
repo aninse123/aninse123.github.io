@@ -165,10 +165,14 @@ async function handleReceived(data) {
   } else {
     // Rule 3 (same company, new thread) or unmatched (manual assignment).
     threadRef = db().collection("outreachThreads").doc();
+    // 6 Nov: a forward from a personal address was written by someone at the company: the contact is that person (the company's own conversation
+    // contact), not the partner whose Gmail it came through, so a reply goes to them.
+    const fwd = match?.rule === "forwarded" && match.data?.contactEmail;
+    const contactEmail = fwd ? match.data.contactEmail : from.email, contactName = fwd ? (match.data.contactName || "") : (from.name || "");
     thread = {
       companyId: match?.data?.companyId || null, companyName: match?.data?.companyName || null,
-      contactEmail: from.email, contactDomain: domainOf(from.email), contactName: from.name || "",
-      addresses: [from.email].filter(Boolean),
+      contactEmail, contactDomain: domainOf(contactEmail), contactName,
+      addresses: [...new Set([contactEmail, from.email].filter(Boolean))],
       senderId: sender?.id || match?.data?.senderId || null,
       owner: sender?.owner || match?.data?.owner || null,
       subject, status: "open", unread: true, unmatched: !match,

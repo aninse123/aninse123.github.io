@@ -236,6 +236,7 @@ async function webhook(evt, { badSig = false, svixId } = {}) {
   await webhook({ type: "email.received", data: { email_id: "fw5", from: "partner.me@gmail.com", to: ["an.rocha@teniokarau.resend.app"] } });
   const fw5 = docs("outreachMessages").find((m) => m.resendId === "fw5");
   ok("a forward from a personal address is filed under the one company whose address is in it (not unmatched)", fw5.matchRule === "forwarded" && store.get("outreachThreads/" + fw5.threadId).companyId === "co1" && store.get("outreachThreads/" + fw5.threadId).unmatched === false);
+  ok("…and the conversation's contact is the company's person, not the partner's Gmail it came through", /@metalurgica-silva\.pt$/.test(store.get("outreachThreads/" + fw5.threadId).contactEmail) && store.get("outreachThreads/" + fw5.threadId).addresses.includes("partner.me@gmail.com"));
   receivedEmails["fw6"] = { from: "partner.you@gmail.com", subject: "Reunião Metalúrgica Silva", message_id: "<fw-2@gmail.com>", text: "geral@metalurgica-silva.pt", headers: { from: "partner.you@gmail.com" } };
   await webhook({ type: "email.received", data: { email_id: "fw6", from: "partner.you@gmail.com", to: ["an.rocha@teniokarau.resend.app"] } });
   ok("…only a FW:/Fwd: message (the same text without it stays unmatched)", store.get("outreachThreads/" + docs("outreachMessages").find((m) => m.resendId === "fw6").threadId).unmatched === true);
