@@ -185,7 +185,8 @@ export function investorMatch(text, investor) {
     const k = norm(a).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
     if (k.length >= 4 && t.replace(/\s+/g, ' ').includes(k)) return 'alias';
   }
-  const sig = sigWords(investor.name || '');
+  // Words in brackets ("(Frotcom)", "(previously Iniginy)") are notes on the name, not part of it.
+  const sig = sigWords(String(investor.name || '').replace(/\([^)]*\)/g, ' '));
   const have = new Set(words(text));
   const squashed = t.replace(/ /g, '');   // "ONE TO ONE" is also "ONEtoONE"
   if (!sig.length || !sig.every((w) => have.has(w) || (w.length >= 6 && squashed.includes(w)))) return '';
