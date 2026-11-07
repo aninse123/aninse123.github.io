@@ -11,7 +11,7 @@ import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDes
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
   DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
-  docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, itemLines, visitIdsOf, visitReport, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban,
+  docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, itemLines, visitIdsOf, visitReport, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban, cleanBic, bicStatus,
   last4, labelOf, mergeLists, activeOnly, newListId,
 } from './budget-lib.js';
 import {
@@ -60,6 +60,7 @@ const TIPS = {
   packCode: 'The accountant needs a 6-digit code besides the link. "Email it separately" sends it in a second message to the same address. "Show it to me" keeps it out of email: you pass it on another way, for example by phone or WhatsApp, which is safer.',
   subtype: 'For Team pay: salary, searcher services invoiced by their own company, or social contributions.',
   iban: 'Two check digits inside an IBAN catch most typing mistakes. A valid IBAN does not prove the account exists.',
+  bic: 'Optional. Only needed when money comes from or goes to a bank outside the euro area (UK, US, Switzerland…). Inside the euro area the IBAN is enough. Copy it from your bank: the app cannot look it up.',
   fileAccountNo: 'The account number as it appears in the bank’s export files. Used later to match imported bank lines to this account.',
 };
 const tip = (k) => `<span class="v2-tip" tabindex="0" role="img" aria-label="${esc(TIPS[k] || '')}" data-tip="${esc(TIPS[k] || '')}">i</span>`;
@@ -93,6 +94,14 @@ const CSS = `
 #v2root .share-row label { text-transform:none; letter-spacing:0; font-weight:500; margin:0; display:flex; align-items:center; gap:6px; min-width:140px; }
 #v2root .share-row input[type=number] { width:80px; padding:6px 8px; }
 #v2root .share-row input[type=checkbox] { width:auto; }
+/* Any text box, date box, number box, dropdown or text area that has no style of its own gets the portal look (zero specificity: anything with its own rule wins). */
+:where(#v2root) :where(input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=hidden]), select, textarea) { padding:7px 12px; border:1.5px solid var(--border); border-radius:var(--radius); font-family:var(--font-sans); font-size:0.85rem; color:var(--text); background:var(--white); max-width:100%; }
+:where(#v2root) :where(input, select, textarea):focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(74,107,138,0.1); }
+/* One line of a split expense: weight, category, purpose on the first row, visit on the second, amount and remove on the third. */
+#v2root .split-line { display:grid; grid-template-columns:76px minmax(0,1fr) minmax(0,1fr); gap:8px; align-items:center; padding:10px; margin-bottom:8px; border:1px solid var(--border); border-radius:var(--radius); background:#FAFAF8; }
+#v2root .split-line select, #v2root .split-line input { width:100%; box-sizing:border-box; min-width:0; }
+#v2root .split-line .split-visit { grid-column:1 / -1; }
+#v2root .split-line .split-foot { grid-column:1 / -1; display:flex; justify-content:flex-end; align-items:center; gap:10px; }
 #v2root .checkline { display:flex; align-items:center; gap:8px; font-size:0.88rem; }
 #v2root .checkline input { width:auto; }
 #v2root .checkline label { margin:0; text-transform:none; letter-spacing:0; font-weight:500; }
@@ -100,6 +109,9 @@ const CSS = `
 #v2root .cardgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
 #v2root .acard { background:var(--white); border:1px solid var(--border); border-radius:var(--radius); padding:16px 18px; }
 #v2root .acard h3 { font-size:1rem; margin-bottom:4px; }
+#v2root .section-actions input[type="date"] { padding:7px 12px; border:1.5px solid var(--border); border-radius:var(--radius); font-family:var(--font-sans); font-size:0.85rem; color:var(--text); background:var(--white); outline:none; transition:0.2s; }
+#v2root .section-actions input[type="date"]:focus { border-color:var(--primary); }
+#v2root .section-actions { align-items:center; gap:10px; flex-wrap:wrap; }
 #v2root .acard .iban { font-variant-numeric:tabular-nums; letter-spacing:.03em; font-size:0.9rem; margin:8px 0; word-break:break-all; }
 #v2root .row-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
 #v2root .list-edit { display:flex; flex-direction:column; gap:6px; }
@@ -569,13 +581,13 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       box.innerHTML = `<strong>${esc(ds.label)}.</strong> ${msgs[ds.code]}${ds.level === 'warn' ? `<div style="margin-top:4px">${reminder}</div>` : ''}`;
     };
     // Split lines: weight, category, purpose, visit per line; the amounts shown are the shares of the total.
-    const lineRow = (l, i, amt) => `<div class="share-row" style="flex-wrap:wrap;margin-bottom:8px" data-line="${i}">
-        <input type="number" min="0" step="any" data-lw="${i}" value="${esc(l.weight ?? 1)}" title="Weight (share)" style="width:70px;padding:6px 8px">
-        <select data-lc="${i}" style="max-width:150px">${opts(activeOnly(S.lists.categories, l.categoryId), l.categoryId || '', 'Same category')}</select>
-        <select data-lp="${i}" style="max-width:150px">${opts(activeOnly(S.lists.purposes, l.purposeId), l.purposeId || '', 'Same purpose')}</select>
-        <select data-lv="${i}" style="max-width:190px">${visitOptions(l.visitId || '')}</select>
-        <strong style="min-width:70px;text-align:right" data-la="${i}">${amt == null ? '' : eur.format(amt)}</strong>
-        <button type="button" class="icon-btn" data-ldel="${i}" title="Remove line">×</button></div>`;
+    const lineRow = (l, i, amt) => `<div class="split-line" data-line="${i}">
+        <input type="number" min="0" step="any" data-lw="${i}" value="${esc(l.weight ?? 1)}" title="Weight (share)" aria-label="Weight (share)">
+        <select data-lc="${i}">${opts(activeOnly(S.lists.categories, l.categoryId), l.categoryId || '', 'Same category')}</select>
+        <select data-lp="${i}">${opts(activeOnly(S.lists.purposes, l.purposeId), l.purposeId || '', 'Same purpose')}</select>
+        <select data-lv="${i}" class="split-visit">${visitOptions(l.visitId || '')}</select>
+        <div class="split-foot"><strong data-la="${i}">${amt == null ? '' : eur.format(amt)}</strong>
+        <button type="button" class="icon-btn" data-ldel="${i}" title="Remove line">×</button></div></div>`;
     const readLines = () => [...m.querySelectorAll('[data-line]')].map((r) => ({ weight: Number(r.querySelector('[data-lw]').value) > 0 ? Number(r.querySelector('[data-lw]').value) : 1, categoryId: r.querySelector('[data-lc]').value, purposeId: r.querySelector('[data-lp]').value, visitId: r.querySelector('[data-lv]').value }));
     const paintLines = () => {
       const box = $('f-lines'), total = parseFloat($('f-amount').value) || 0;
@@ -715,6 +727,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="section"><div class="section-header"><h2 class="section-title">Company accounts</h2><div class="section-actions"><button class="btn btn--primary" id="a-new" data-perm="budget.edit">+ Account</button></div></div>
         <div class="cardgrid">${S.accounts.length ? S.accounts.map((a) => `<div class="acard"><h3>${esc(a.name)}</h3><div class="mini">${esc(a.bank || '')} · ${a.kind === 'cash' ? 'Cash' : 'Bank account'} · ${esc(a.currency || 'EUR')}${a.holderKey ? ' · ' + esc(personLabel(a.holderKey)) : ' · Company'}</div>
           <div class="iban">${a.iban ? esc(formatIban(a.iban)) : '<span class="mini">No IBAN yet</span>'}</div>
+          ${a.bic ? `<div class="mini">BIC / SWIFT: ${esc(a.bic)}</div>` : ''}
           ${a.fileAccountNo ? `<div class="mini">In bank files: ${esc(a.fileAccountNo)}</div>` : ''}
           ${a.openingBalance != null && a.openingBalance !== '' ? `<div class="mini">Opening balance ${eur.format(a.openingBalance)} on ${fmtDate(a.openingDate)}</div>` : ''}
           <div style="margin-top:10px">${cardsOf(a.id).map((c) => `<div class="mini" style="display:flex;gap:8px;align-items:center">💳 *${esc(c.last4)} ${esc(c.label || '')} · ${esc(c.holderKey ? personLabel(c.holderKey) : 'Company')} <button class="icon-btn" data-card="${c.id}" data-perm="budget.edit" title="Edit card">✎</button></div>`).join('') || '<div class="mini">No cards.</div>'}</div>
@@ -723,6 +736,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <p class="mini" style="margin:-6px 0 14px">Each partner keeps their own IBAN here so the other can transfer money back. The app never moves money.</p>
         <div class="cardgrid">${partners.map((p) => { const pr = S.people[p.key] || {}; const mine = isAdmin || myKey === p.key; const bal = partnerBalances(S.items, S.movements).find((x) => x.key === p.key) || { total: 0, expenses: 0, expenseCount: 0, loansOwed: 0 }; const owed = bal.total; return `<div class="acard"><h3>${esc(p.name || p.label)}</h3><div class="mini">${esc(pr.bank || '')}</div>
           <div class="iban">${pr.iban ? esc(formatIban(pr.iban)) : '<span class="mini">No IBAN yet</span>'}</div>
+          ${pr.bic ? `<div class="mini">BIC / SWIFT: ${esc(pr.bic)}</div>` : ''}
           ${owed > 0 ? `<div class="mini">The company owes ${eur.format(owed)}${bal.expenses ? ` · ${eur.format(bal.expenses)} paid personally (${bal.expenseCount} expense${bal.expenseCount === 1 ? '' : 's'})` : ''}${bal.loansOwed > 0 ? ` · ${eur.format(bal.loansOwed)} lent` : ''}</div>` : ''}
           <div class="row-actions">${pr.iban ? `<button class="btn btn--ghost btn--sm" data-copyp="${esc(p.key)}">Copy IBAN</button><button class="btn btn--ghost btn--sm" data-copyd="${esc(p.key)}">Copy transfer details</button>` : ''}${mine ? `<button class="btn btn--ghost btn--sm" data-prof="${esc(p.key)}">Edit</button>` : ''}</div></div>`; }).join('') || '<span class="mini">No partners found in the team directory.</span>'}</div></div>`;
     body.querySelector('#a-new').addEventListener('click', () => openAccount(null));
@@ -731,10 +745,11 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     body.querySelectorAll('[data-card]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.card)));
     body.querySelectorAll('[data-copyiban]').forEach((b) => b.addEventListener('click', () => copyText(cleanIban(accountOf(b.dataset.copyiban).iban), b)));
     body.querySelectorAll('[data-copyp]').forEach((b) => b.addEventListener('click', () => copyText(cleanIban(S.people[b.dataset.copyp].iban), b)));
-    body.querySelectorAll('[data-copyd]').forEach((b) => b.addEventListener('click', () => { const k = b.dataset.copyd, p = partners.find((x) => x.key === k), pr = S.people[k]; const owed = (partnerBalances(S.items, S.movements).find((x) => x.key === k) || {}).total || 0; copyText(`${pr.holderName || p.name}\nIBAN ${formatIban(pr.iban)}${pr.bank ? '\n' + pr.bank : ''}${owed > 0 ? `\nAmount ${owed.toFixed(2)} EUR` : ''}\nReference: ${INSTANCE.orgName} reimbursement`, b); }));
+    body.querySelectorAll('[data-copyd]').forEach((b) => b.addEventListener('click', () => { const k = b.dataset.copyd, p = partners.find((x) => x.key === k), pr = S.people[k]; const owed = (partnerBalances(S.items, S.movements).find((x) => x.key === k) || {}).total || 0; copyText(`${pr.holderName || p.name}\nIBAN ${formatIban(pr.iban)}${pr.bic ? '\nBIC ' + cleanBic(pr.bic) : ''}${pr.bank ? '\n' + pr.bank : ''}${owed > 0 ? `\nAmount ${owed.toFixed(2)} EUR` : ''}\nReference: ${INSTANCE.orgName} reimbursement`, b); }));
     body.querySelectorAll('[data-prof]').forEach((b) => b.addEventListener('click', () => openProfile(b.dataset.prof)));
   }
   function ibanHint(v) { const st = ibanStatus(v); return st === 'empty' ? '' : st === 'ok' ? '✓ Valid IBAN.' : 'This IBAN does not pass the check digits, so there is probably a typo. You can still save it.'; }
+  function bicHint(v) { return bicStatus(v) === 'bad' ? 'A BIC has 8 or 11 letters and digits, for example BANKPTPL. Check it with your bank. You can still save it.' : bicStatus(v) === 'ok' ? '✓ Format looks right (not checked with the bank).' : ''; }
   function openAccount(id) {
     const a = id ? accountOf(id) : { kind: 'bank', currency: 'EUR' };
     openModal(`<h2>${id ? 'Edit account' : 'New account'}</h2>
@@ -742,18 +757,20 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="form-row"><div class="form-group"><label for="a-bank">Bank</label><input type="text" id="a-bank" value="${esc(a.bank || '')}" placeholder="Santander, BiG…"></div>
         <div class="form-group"><label for="a-kind">Type</label><select id="a-kind"><option value="bank"${a.kind !== 'cash' ? ' selected' : ''}>Bank account</option><option value="cash"${a.kind === 'cash' ? ' selected' : ''}>Cash</option></select></div></div>
       ${fld('IBAN', 'iban', `<input type="text" id="a-iban" value="${esc(formatIban(a.iban || ''))}" placeholder="PT50 …"><div class="hint" id="a-ibanhint">${ibanHint(a.iban)}</div>`)}
+      ${fld('BIC / SWIFT (optional)', 'bic', `<input type="text" id="a-bic" value="${esc(cleanBic(a.bic || ''))}" placeholder="e.g. BANKPTPL"><div class="hint" id="a-bichint">${bicHint(a.bic)}</div>`)}
       ${fld('Account number in bank files', 'fileAccountNo', `<input type="text" id="a-fileno" value="${esc(a.fileAccountNo || '')}" placeholder="e.g. 000370071261020">`)}
       <div class="form-row"><div class="form-group"><label for="a-open">Opening balance (€)</label><input type="number" id="a-open" step="0.01" value="${esc(a.openingBalance ?? '')}"></div>
         <div class="form-group"><label for="a-opendate">On</label><input type="date" id="a-opendate" value="${esc(a.openingDate || '')}"></div></div>
       <div class="modal-actions">${id ? '<button class="btn btn--danger" id="a-del" style="margin-right:auto">Delete</button>' : ''}<button class="btn btn--ghost" id="a-cancel">Cancel</button><button class="btn btn--primary" id="a-save">Save</button></div>`);
     const m = root.querySelector('#v2modalBox');
     m.querySelector('#a-iban').addEventListener('input', (e) => { m.querySelector('#a-ibanhint').textContent = ibanHint(e.target.value); });
+    m.querySelector('#a-bic').addEventListener('input', (e) => { m.querySelector('#a-bichint').textContent = bicHint(e.target.value); });
     m.querySelector('#a-cancel').addEventListener('click', closeModal);
     m.querySelector('#a-save').addEventListener('click', async () => {
       const name = m.querySelector('#a-name').value.trim(); if (!name) { alert('Name is required.'); return; }
       const iban = cleanIban(m.querySelector('#a-iban').value);
       const ob = m.querySelector('#a-open').value;
-      const data = { name, bank: m.querySelector('#a-bank').value.trim(), kind: m.querySelector('#a-kind').value, currency: 'EUR', iban, fileAccountNo: m.querySelector('#a-fileno').value.trim(), openingBalance: ob === '' ? null : Number(ob), openingDate: m.querySelector('#a-opendate').value || '' };
+      const data = { name, bank: m.querySelector('#a-bank').value.trim(), kind: m.querySelector('#a-kind').value, currency: 'EUR', iban, bic: cleanBic(m.querySelector('#a-bic').value), fileAccountNo: m.querySelector('#a-fileno').value.trim(), openingBalance: ob === '' ? null : Number(ob), openingDate: m.querySelector('#a-opendate').value || '' };
       try { if (id) await updateDoc(doc(db, 'budgetAccounts', id), data); else await addDoc(collection(db, 'budgetAccounts'), { ...data, createdAt: serverTimestamp(), createdBy: access.email }); logEvent('budget_account_saved', { itemName: name }); closeModal(); await refresh(); } catch (e) { alert('Failed to save: ' + e.message); }
     });
     const del = m.querySelector('#a-del');
@@ -790,13 +807,15 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="form-group"><label for="p-holder">Name on the account</label><input type="text" id="p-holder" value="${esc(pr.holderName || p.name || '')}"></div>
       <div class="form-group"><label for="p-bank">Bank</label><input type="text" id="p-bank" value="${esc(pr.bank || '')}"></div>
       ${fld('IBAN', 'iban', `<input type="text" id="p-iban" value="${esc(formatIban(pr.iban || ''))}" placeholder="PT50 …"><div class="hint" id="p-ibanhint">${ibanHint(pr.iban)}</div>`)}
+      ${fld('BIC / SWIFT (optional)', 'bic', `<input type="text" id="p-bic" value="${esc(cleanBic(pr.bic || ''))}" placeholder="e.g. BANKPTPL"><div class="hint" id="p-bichint">${bicHint(pr.bic)}</div>`)}
       <p class="hint">Visible to the Partners and the Admin. You can edit only your own profile.</p>
       <div class="modal-actions"><button class="btn btn--ghost" id="p-cancel">Cancel</button><button class="btn btn--primary" id="p-save">Save</button></div>`);
     const m = root.querySelector('#v2modalBox');
     m.querySelector('#p-iban').addEventListener('input', (e) => { m.querySelector('#p-ibanhint').textContent = ibanHint(e.target.value); });
+    m.querySelector('#p-bic').addEventListener('input', (e) => { m.querySelector('#p-bichint').textContent = bicHint(e.target.value); });
     m.querySelector('#p-cancel').addEventListener('click', closeModal);
     m.querySelector('#p-save').addEventListener('click', async () => {
-      const data = { holderName: m.querySelector('#p-holder').value.trim(), bank: m.querySelector('#p-bank').value.trim(), iban: cleanIban(m.querySelector('#p-iban').value), updatedBy: access.email, updatedAt: serverTimestamp() };
+      const data = { holderName: m.querySelector('#p-holder').value.trim(), bank: m.querySelector('#p-bank').value.trim(), iban: cleanIban(m.querySelector('#p-iban').value), bic: cleanBic(m.querySelector('#p-bic').value), updatedBy: access.email, updatedAt: serverTimestamp() };
       try { await setDoc(doc(db, 'budgetPeople', key), data, { merge: true }); logEvent('budget_profile_saved', { itemName: key }); closeModal(); await refresh(); } catch (e) { alert('Failed to save: ' + e.message); }
     });
   }

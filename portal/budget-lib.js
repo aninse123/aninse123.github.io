@@ -289,6 +289,16 @@ export function ibanStatus(v) {
   return isValidIban(s) ? 'ok' : 'bad';
 }
 
+// ── BIC / SWIFT (optional, needed mainly for transfers outside the euro area) ──
+export const cleanBic = (v) => String(v == null ? '' : v).replace(/\s+/g, '').toUpperCase();
+// 4 letters (bank) + 2 letters (country) + 2 letters/digits (place) + optional 3 letters/digits (branch): 8 or 11 characters.
+export const isValidBic = (v) => /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(cleanBic(v));
+export function bicStatus(v) {
+  const s = cleanBic(v);
+  if (!s) return 'empty';
+  return isValidBic(s) ? 'ok' : 'bad';
+}
+
 // ── Cards and accounts ──
 export const last4 = (v) => String(v || '').replace(/\D/g, '').slice(-4);
 // "COMPRA *0435 CONTINENTE" → "0435" (used by the bank import later; the card record only stores the last four).
