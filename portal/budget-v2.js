@@ -101,6 +101,7 @@ const CSS = `
 #v2root .split-line { display:grid; grid-template-columns:76px minmax(0,1fr) minmax(0,1fr); gap:8px; align-items:center; padding:10px; margin-bottom:8px; border:1px solid var(--border); border-radius:var(--radius); background:#FAFAF8; }
 #v2root .split-line select, #v2root .split-line input { width:100%; box-sizing:border-box; min-width:0; }
 #v2root .split-line .split-visit { grid-column:1 / -1; }
+@media (max-width:560px) { #v2root .split-line { grid-template-columns:76px minmax(0,1fr); } #v2root .split-line [data-lc], #v2root .split-line [data-lp] { grid-column:1 / -1; } }
 #v2root .split-line .split-foot { grid-column:1 / -1; display:flex; justify-content:flex-end; align-items:center; gap:10px; }
 #v2root .checkline { display:flex; align-items:center; gap:8px; font-size:0.88rem; }
 #v2root .checkline input { width:auto; }
