@@ -1,7 +1,7 @@
 // Budget v2 — the page itself (plan "Budget v2 - Plan.md", Stage 1; switch budget.v2).
 // budget.html loads this only when the switch is available to the viewer and hides the v1 page; with the switch Off
 // nothing here runs. Pure logic lives in budget-lib.js / budget-fiscal.js (tested in Node).
-import { db, storage, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch } from './firebase-config.js';
+import { auth, db, storage, addReads, addDoc, setDoc, updateDoc, deleteDoc, writeBatch } from './firebase-config.js';
 import { loadDirectory } from './team-dir.js';
 import { INSTANCE } from './instance-config.js';
 import { isOn } from './features.js';
@@ -18,6 +18,7 @@ import {
   collection, getDocs, getDoc, doc, serverTimestamp, query, where, limit,
 } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-storage.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
 
 const eur = new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR' });
 const COUNTRIES = [['PT', 'Portugal'], ['ES', 'Spain'], ['FR', 'France'], ['DE', 'Germany'], ['GB', 'United Kingdom'], ['IE', 'Ireland'], ['NL', 'Netherlands'], ['BE', 'Belgium'], ['IT', 'Italy'], ['LU', 'Luxembourg'], ['CH', 'Switzerland'], ['AT', 'Austria'], ['SE', 'Sweden'], ['DK', 'Denmark'], ['FI', 'Finland'], ['PL', 'Poland'], ['GR', 'Greece'], ['US', 'United States'], ['XX', 'Other country']];
@@ -56,6 +57,7 @@ const TIPS = {
   split: 'Share one expense between several visits or categories, for example a car rental used for two company visits, or a hotel invoice with meals. Each line gets a weight (equal by default); the amounts always add up to the total.',
   reimbursed: 'Tick when the company has already paid you back outside the bank (cash, or a transfer you do not want to link). A bank transfer is linked from the Inbox, which ticks this for you.',
   partner: 'Which partner lent the money or paid it back. Loans show as owed to the partner until a transfer back is marked "Repays a loan" in the Inbox.',
+  packCode: 'The accountant needs a 6-digit code besides the link. "Email it separately" sends it in a second message to the same address. "Show it to me" keeps it out of email: you pass it on another way, for example by phone or WhatsApp, which is safer.',
   subtype: 'For Team pay: salary, searcher services invoiced by their own company, or social contributions.',
   iban: 'Two check digits inside an IBAN catch most typing mistakes. A valid IBAN does not prove the account exists.',
   fileAccountNo: 'The account number as it appears in the bank’s export files. Used later to match imported bank lines to this account.',
@@ -123,7 +125,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // ── State ──
   const S = {
     tab: 'overview', items: [], accounts: [], cards: [], suppliers: [], people: {}, company: {}, lists: { categories: [], purposes: [] },
-    movements: [], imports: [], investors: [], visits: [], packs: [], dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '', reimb: '' },
+    movements: [], imports: [], investors: [], visits: [], packs: [], packLinks: {}, dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '', reimb: '' },
     sort: { field: 'date', dir: 'desc' }, selected: new Set(), edit: null,
   };
   const reads = (n) => { try { addReads(n); refreshReads(); } catch (e) { /* counter only */ } };
@@ -131,7 +133,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   if (!document.getElementById('v2style')) { const st = document.createElement('style'); st.id = 'v2style'; st.textContent = CSS; document.head.appendChild(st); }
 
   async function loadAll() {
-    const [it, ac, cd, su, pe, main, lst, dir, mv, im, vi, pk] = await Promise.all([
+    const [it, ac, cd, su, pe, main, lst, dir, mv, im, vi, pk, pl] = await Promise.all([
       getDocs(collection(db, 'budgetItems')),
       can('budget.accounts') ? getDocs(collection(db, 'budgetAccounts')).catch(() => null) : null,
       can('budget.accounts') ? getDocs(collection(db, 'budgetCards')).catch(() => null) : null,
@@ -144,10 +146,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       can('budget.accounts') ? getDocs(collection(db, 'budgetImports')).catch(() => null) : null,
       getDocs(collection(db, 'budgetVisits')).catch(() => null),
       getDocs(collection(db, 'budgetPacks')).catch(() => null),
+      isOn('budget.packLink') ? getDocs(collection(db, 'budgetPackLinks')).catch(() => null) : null,
     ]);
     const n = (x) => (x ? x.docs.length : 0);
     reads(n(it) + n(ac) + n(cd) + n(su) + n(pe) + n(mv) + n(im) + n(vi) + 2);
     S.visits = vi ? vi.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
+    S.packLinks = {}; if (pl) pl.docs.forEach((d) => { S.packLinks[d.id] = d.data(); });
     S.packs = pk ? pk.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.createdAtIso || '').localeCompare(String(a.createdAtIso || ''))) : [];
     S.movements = mv ? mv.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
     S.imports = im ? im.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.createdAtIso || '').localeCompare(String(a.createdAtIso || ''))) : [];
@@ -852,6 +856,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           <div class="form-group"><label for="cs-nif">NIF</label><input type="text" id="cs-nif" inputmode="numeric" maxlength="14" value="${esc(c.companyNif || '')}"><div class="hint" id="cs-nifhint"></div></div>
           <div class="form-group"><label for="cs-addr">Address on invoices</label><textarea id="cs-addr" maxlength="500">${esc(c.companyAddress || '')}</textarea></div>
           <button class="btn btn--primary" id="cs-save" data-perm="budget.edit">Save company details</button> <span class="mini" id="cs-meta">${c.updatedBy ? 'Last saved by ' + esc(c.updatedBy) : ''}</span></div></div>
+      <div class="section"><div class="section-header"><h2 class="section-title">Accountant</h2></div>
+        <div class="card" style="padding:20px 22px"><p class="hint" style="margin:0 0 14px">Who the monthly pack is sent to. The link comes from the portal's no-reply address, and replies go to you. Up to three addresses, separated by commas.</p>
+          <div class="form-group"><label for="ac-name">Name</label><input type="text" id="ac-name" maxlength="120" value="${esc(c.accountantName || '')}" placeholder="e.g. the accounting firm"></div>
+          <div class="form-group"><label for="ac-emails">Email address(es)</label><input type="text" id="ac-emails" maxlength="300" value="${esc((c.accountantEmails || []).join(', '))}" placeholder="name@firm.pt"></div>
+          <div class="form-group"><label for="ac-lang">Language of the emails</label><select id="ac-lang"><option value="pt"${(c.accountantLang || 'pt') === 'pt' ? ' selected' : ''}>Português</option><option value="en"${c.accountantLang === 'en' ? ' selected' : ''}>English</option></select></div>
+          <button class="btn btn--primary" id="ac-save" data-perm="budget.edit">Save accountant</button> <span class="mini" id="ac-meta"></span></div></div>
       <div class="two">${listEditor('categories', 'Categories', work.categories)}${listEditor('purposes', 'Purposes', work.purposes)}</div>
       <div class="section"><div class="section-header"><h2 class="section-title">Backup and old items</h2></div>
         <div class="card" style="padding:20px 22px"><p class="hint" style="margin:0 0 14px">The backup is every item exactly as stored, in one JSON file. Take one before changing old items.</p>
@@ -863,6 +873,14 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       const data = cleanCompanyDetails({ companyName: body.querySelector('#cs-name').value, companyNif: body.querySelector('#cs-nif').value, companyAddress: body.querySelector('#cs-addr').value });
       if (data.companyNif && nifStatus(data.companyNif) === 'badFormat') { alert('A NIF has 9 digits.'); return; }
       try { await setDoc(doc(db, 'budgetSettings', 'main'), { ...data, updatedAt: serverTimestamp(), updatedBy: access.email }, { merge: true }); logEvent('budget_company_saved', { itemName: data.companyName }); S.company = { ...S.company, ...data, updatedBy: access.email }; body.querySelector('#cs-meta').textContent = 'Saved.'; } catch (e) { alert('Failed to save: ' + e.message); }
+    });
+    body.querySelector('#ac-save').addEventListener('click', async () => {
+      const emails = [...new Set(body.querySelector('#ac-emails').value.split(/[,;\s]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+      const bad = emails.find((x) => !/^[^\s@,;<>]+@[^\s@,;<>]+\.[A-Za-z]{2,}$/.test(x));
+      if (bad) { alert(`"${bad}" is not an email address.`); return; }
+      if (emails.length > 3) { alert('At most three addresses.'); return; }
+      const data = { accountantName: body.querySelector('#ac-name').value.trim().slice(0, 120), accountantEmails: emails, accountantLang: body.querySelector('#ac-lang').value === 'en' ? 'en' : 'pt' };
+      try { await setDoc(doc(db, 'budgetSettings', 'main'), { ...data, updatedAt: serverTimestamp(), updatedBy: access.email }, { merge: true }); S.company = { ...S.company, ...data }; logEvent('budget_accountant_saved', { itemName: data.accountantName }); body.querySelector('#ac-meta').textContent = 'Saved.'; } catch (e) { alert('Failed to save: ' + e.message); }
     });
     for (const key of ['categories', 'purposes']) {
       const box = body.querySelector('#le-' + key);
@@ -1343,8 +1361,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           <button class="btn btn--primary" id="pk-create" data-perm="budget.edit" ${sel.length ? '' : 'disabled'}>Create pack and mark ${sel.length} item${sel.length === 1 ? '' : 's'} as shared</button>
           <span class="mini">The preview changes nothing. Creating the pack saves a frozen copy below and ticks "shared" on the items.</span></div></div>
       <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Packs created</h2></div>
-        <div class="card"><div class="table-wrap"><table><thead><tr><th>Created</th><th>Period</th><th class="num">Expenses</th><th class="num">Total</th><th class="num">Items</th><th>By</th><th></th></tr></thead>
-          <tbody>${S.packs.length ? S.packs.map((k) => `<tr style="${k.status === 'undone' ? 'opacity:.5' : ''}"><td style="white-space:nowrap">${fmtDate(String(k.createdAtIso || '').slice(0, 10))}</td><td style="white-space:nowrap">${fmtDate(k.from)} – ${fmtDate(k.to)}</td><td class="num">${esc(k.counts?.expenses ?? '')}</td><td class="num">${eur.format(k.totals?.expenses || 0)}</td><td class="num">${(k.itemIds || []).length}</td><td class="mini">${esc(String(k.createdBy || '').split('@')[0])}</td><td style="text-align:right;white-space:nowrap">${k.status === 'undone' ? '<span class="mini">unmarked</span>' : `<button class="btn btn--ghost btn--sm" data-pdl="${k.id}">↓ Excel</button> <button class="btn btn--ghost btn--sm" data-pundo="${k.id}" data-perm="budget.edit" title="Take the shared mark off the items again">Undo</button>`}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="7">No packs yet.</td></tr>'}</tbody></table></div></div></div>`;
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Created</th><th>Period</th><th class="num">Expenses</th><th class="num">Total</th><th class="num">Items</th><th>By</th><th>Sent to the accountant</th><th></th></tr></thead>
+          <tbody>${S.packs.length ? S.packs.map((k) => `<tr style="${k.status === 'undone' ? 'opacity:.5' : ''}"><td style="white-space:nowrap">${fmtDate(String(k.createdAtIso || '').slice(0, 10))}</td><td style="white-space:nowrap">${fmtDate(k.from)} – ${fmtDate(k.to)}</td><td class="num">${esc(k.counts?.expenses ?? '')}</td><td class="num">${eur.format(k.totals?.expenses || 0)}</td><td class="num">${(k.itemIds || []).length}</td><td class="mini">${esc(String(k.createdBy || '').split('@')[0])}</td><td class="mini">${packLinkCell(k)}</td><td style="text-align:right;white-space:nowrap">${k.status === 'undone' ? '<span class="mini">unmarked</span>' : `<button class="btn btn--ghost btn--sm" data-pdl="${k.id}">↓ Excel</button> ${isOn('budget.packLink') ? `<button class="btn btn--primary btn--sm" data-psend="${k.id}" data-perm="budget.edit">${S.packLinks[k.id] && !S.packLinks[k.id].revoked ? 'Send again…' : 'Send to accountant…'}</button>${packLinkLive(S.packLinks[k.id]) ? ` <button class="btn btn--ghost btn--sm" data-prevoke="${k.id}" data-perm="budget.edit" title="The link stops working at once">Revoke link</button>` : ''}` : ''} <button class="btn btn--ghost btn--sm" data-pundo="${k.id}" data-perm="budget.edit" title="Take the shared mark off the items again">Undo</button>`}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="8">No packs yet.</td></tr>'}</tbody></table></div></div></div>`;
     body.querySelector('#pk-month').addEventListener('change', (e) => { packUi.ym = e.target.value || packUi.ym; packUi.off.clear(); renderPacks(body); });
     body.querySelector('#pk-sent').addEventListener('change', (e) => { packUi.includeSent = e.target.checked; packUi.off.clear(); renderPacks(body); });
     body.querySelector('#pk-all').addEventListener('change', (e) => { packUi.off.clear(); if (!e.target.checked) cand.forEach((c) => packUi.off.add(c.item.id)); renderPacks(body); });
@@ -1354,6 +1372,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     body.querySelector('#pk-create').addEventListener('click', () => createPack(sel, range, sum));
     body.querySelectorAll('[data-pdl]').forEach((b) => b.addEventListener('click', () => { const k = S.packs.find((x) => x.id === b.dataset.pdl); try { downloadBytes(packFileName(INSTANCE.orgName, { from: k.from, to: k.to }), buildXlsx(JSON.parse(k.sheetsJson))); } catch (e) { alert('Could not rebuild this pack: ' + e.message); } }));
     body.querySelectorAll('[data-pundo]').forEach((b) => b.addEventListener('click', () => undoPack(b.dataset.pundo)));
+    body.querySelectorAll('[data-psend]').forEach((b) => b.addEventListener('click', () => openSendPack(b.dataset.psend)));
+    body.querySelectorAll('[data-prevoke]').forEach((b) => b.addEventListener('click', () => revokePackLink(b.dataset.prevoke)));
   }
   async function createPack(sel, range, sum) {
     if (!sel.length) return;
@@ -1363,7 +1383,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     if (json.length > 900000) { alert('This pack is too large to save as one copy. Choose a shorter period.'); return; }
     const btn = document.querySelector('#pk-create'); if (btn) btn.disabled = true;
     try {
-      const k = await addDoc(collection(db, 'budgetPacks'), { from: range.from, to: range.to, status: 'created', createdAt: serverTimestamp(), createdAtIso: at, createdBy: access.email, itemIds: sel.map((c) => c.item.id), counts: P.counts, totals: P.totals, sheetsJson: json });
+      const k = await addDoc(collection(db, 'budgetPacks'), { from: range.from, to: range.to, status: 'created', createdAt: serverTimestamp(), createdAtIso: at, createdBy: access.email, itemIds: sel.map((c) => c.item.id), counts: P.counts, totals: P.totals, sheetsJson: json, files: P.files.filter((f) => f.storagePath).map((f) => ({ storagePath: f.storagePath, name: f.name })) });
       for (let i = 0; i < sel.length; i += 400) {
         const wb = writeBatch(db);
         sel.slice(i, i + 400).forEach((c) => wb.update(doc(db, 'budgetItems', c.item.id), { sharedAt: at, sharedBy: access.email, packId: k.id, sharedHash: packHash(c.item), changedSinceShared: false }));
@@ -1374,12 +1394,74 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       packUi.off.clear(); await refresh(); S.tab = 'packs'; render();
     } catch (e) { alert('Could not create the pack: ' + e.message); if (btn) btn.disabled = false; }
   }
+  // ── Sending the pack to the accountant (Stage 5b, switch budget.packLink) ──
+  const packFns = httpsCallable(getFunctions(auth.app, 'us-central1'), 'budgetPackLink', { timeout: 180000 });
+  const linkExpiry = (l) => (l && l.expiresAt && typeof l.expiresAt.toMillis === 'function' ? l.expiresAt.toMillis() : 0);
+  const packLinkLive = (l) => !!l && !l.revoked && !l.locked && linkExpiry(l) > Date.now();
+  const dayOf = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '');
+  function packLinkCell(k) {
+    const l = S.packLinks[k.id];
+    if (!isOn('budget.packLink')) return '';
+    if (!l) return '<span style="color:var(--text-light)">Not sent</span>';
+    const who = (l.recipients || []).join(', ');
+    if (l.revoked) return `<span style="color:var(--danger)">Link revoked</span><div>${esc(who)}</div>`;
+    if (l.locked) return `<span style="color:var(--danger)">Locked: too many wrong codes</span><div>${esc(who)}</div>`;
+    if (linkExpiry(l) <= Date.now()) return `<span style="color:var(--text-light)">Expired ${fmtDate(dayOf(linkExpiry(l)))}</span><div>${esc(who)}</div>`;
+    return `<span style="color:var(--secondary);font-weight:600">Live until ${fmtDate(dayOf(linkExpiry(l)))}</span><div>${esc(who)}</div><div>${l.downloads ? `${l.downloads} download${l.downloads === 1 ? '' : 's'}, last ${fmtDate(dayOf(l.lastDownloadAt && l.lastDownloadAt.toMillis ? l.lastDownloadAt.toMillis() : 0))}` : 'Not downloaded yet'}</div>`;
+  }
+  function openSendPack(id) {
+    const k = S.packs.find((x) => x.id === id); if (!k || k.status === 'undone') return;
+    const co = S.company || {}, prev = S.packLinks[id];
+    openModal(`<h2>Send the pack to the accountant</h2>
+      <p class="mini" style="margin:-8px 0 14px">${fmtDate(k.from)} – ${fmtDate(k.to)} · ${esc(k.counts?.expenses ?? '')} expenses · ${(k.files || []).length} receipt file${(k.files || []).length === 1 ? '' : 's'}. The accountant gets a link to one download with the Excel file and the receipts. The link works for 14 days.</p>
+      ${prev && !prev.revoked ? '<div class="warnbox warn">This pack was sent before. Sending again makes a new link and code, and the earlier link stops working.</div>' : ''}
+      <div class="form-group"><label for="sp-to">Send to</label><input type="text" id="sp-to" value="${esc((co.accountantEmails || []).join(', '))}" placeholder="name@firm.pt (up to three, separated by commas)">${(co.accountantEmails || []).length ? '' : '<div class="hint">Set the accountant in Settings to have this filled in.</div>'}</div>
+      <div class="form-group"><label for="sp-lang">Language</label><select id="sp-lang"><option value="pt"${(co.accountantLang || 'pt') === 'pt' ? ' selected' : ''}>Português</option><option value="en"${co.accountantLang === 'en' ? ' selected' : ''}>English</option></select></div>
+      <div class="form-group"><label>The 6-digit code${tip('packCode')}</label>
+        <div class="checkline" style="margin-bottom:6px"><input type="radio" name="sp-code" id="sp-code-mail" value="email" checked><label for="sp-code-mail">Email it to the accountant in a second message</label></div>
+        <div class="checkline"><input type="radio" name="sp-code" id="sp-code-screen" value="screen"><label for="sp-code-screen">Show it to me, and I'll pass it on another way (safer)</label></div></div>
+      <div class="hint" style="margin-bottom:6px">Sent from the portal's no-reply address; replies come to you (${esc(access.email)}). Nothing leaves until you press Send.</div>
+      <div class="modal-actions"><button class="btn btn--ghost" id="sp-cancel">Cancel</button><button class="btn btn--primary" id="sp-go">Send</button></div>`);
+    const m = root.querySelector('#v2modalBox');
+    m.querySelector('#sp-cancel').addEventListener('click', closeModal);
+    m.querySelector('#sp-go').addEventListener('click', async () => {
+      const to = m.querySelector('#sp-to').value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+      if (!to.length) { alert('Add the accountant\'s email address.'); return; }
+      const btn = m.querySelector('#sp-go'); btn.disabled = true; btn.textContent = 'Preparing…';
+      try {
+        // The Excel file is built here (the same code as the download) and stored for the server to zip with the receipts.
+        const bytes = buildXlsx(JSON.parse(k.sheetsJson));
+        await new Promise((res, rej) => { const t = uploadBytesResumable(ref(storage, `budget-packs/${id}/pack.xlsx`), bytes, { contentType: XLSX_MIME }); t.on('state_changed', null, rej, res); });
+        btn.textContent = 'Sending…';
+        const r = (await packFns({ action: 'send', packId: id, recipients: to, lang: m.querySelector('#sp-lang').value, codeMode: m.querySelector('input[name="sp-code"]:checked').value, origin: location.origin })).data;
+        logEvent('budget_pack_sent', { itemName: `${k.from} to ${k.to}`, amount: to.length });
+        await refresh(); S.tab = 'packs'; render();
+        openModal(`<h2>Pack sent</h2>
+          <p>The link was emailed to <strong>${esc(r.recipients.join(', '))}</strong>. It works until <strong>${fmtDate(dayOf(r.expiresAt))}</strong>.</p>
+          ${r.code ? `<div class="warnbox ok"><strong>The 6-digit code is ${esc(r.code)}.</strong> Pass it on another way (phone, WhatsApp). It is shown only now and is not stored in readable form: if you lose it, send the pack again.</div>` : '<p class="mini">The code went in a second email.</p>'}
+          <div class="form-group"><label>The link (in case you want to send it yourself)</label><input type="text" id="sp-url" readonly value="${esc(r.url)}"></div>
+          <div class="modal-actions"><button class="btn btn--ghost" id="sp-copy">Copy link</button>${r.code ? '<button class="btn btn--ghost" id="sp-copyc">Copy code</button>' : ''}<button class="btn btn--primary" id="sp-done">Done</button></div>`);
+        const m2 = root.querySelector('#v2modalBox');
+        m2.querySelector('#sp-copy').addEventListener('click', (e) => copyText(r.url, e.target));
+        m2.querySelector('#sp-copyc')?.addEventListener('click', (e) => copyText(r.code, e.target));
+        m2.querySelector('#sp-done').addEventListener('click', closeModal);
+      } catch (e) { alert('Could not send the pack: ' + (e && e.message ? e.message : e)); btn.disabled = false; btn.textContent = 'Send'; }
+    });
+  }
+  async function revokePackLink(id) {
+    const l = S.packLinks[id]; if (!l) return;
+    if (!confirm(`Revoke the link sent to ${(l.recipients || []).join(', ')}?\n\nIt stops working at once, and the downloadable zip is deleted. You can send the pack again later.`)) return;
+    try { await packFns({ action: 'revoke', packId: id }); logEvent('budget_pack_revoked', { itemName: id }); await refresh(); S.tab = 'packs'; render(); }
+    catch (e) { alert('Could not revoke: ' + (e && e.message ? e.message : e)); }
+  }
+
   async function undoPack(id) {
     const k = S.packs.find((x) => x.id === id); if (!k) return;
     const its = S.items.filter((i) => i.packId === id);
     if (!confirm(`Undo this pack?\n\n${its.length} item(s) lose their "shared" mark and go back into the next pack. The saved copy stays in the list as unmarked.`)) return;
     try {
       for (let i = 0; i < its.length; i += 400) { const wb = writeBatch(db); its.slice(i, i + 400).forEach((it) => wb.update(doc(db, 'budgetItems', it.id), { sharedAt: '', sharedBy: '', packId: '', sharedHash: '', changedSinceShared: false })); await wb.commit(); }
+      if (S.packLinks[id] && packLinkLive(S.packLinks[id])) { try { await packFns({ action: 'revoke', packId: id }); } catch (e) { /* the pack is undone either way; the link can be revoked from the list */ } }
       await updateDoc(doc(db, 'budgetPacks', id), { status: 'undone' });
       logEvent('budget_pack_undone', { amount: its.length }); await refresh(); S.tab = 'packs'; render();
     } catch (e) { alert('Could not undo: ' + e.message); }

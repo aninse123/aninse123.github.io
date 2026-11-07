@@ -107,6 +107,10 @@ exports.mobileSearch = require("./mobile/search").mobileSearch;
 // Feature switches (Team & access → Features) — see "Portal - Feature Switches Plan.md".
 exports.featureAdmin = require("./features/admin").featureAdmin;
 
+// Budget v2 (Stage 5b): the accountant pack as a link + a code (budgetPackLink callable, budgetPackDownload public page at /p/*).
+exports.budgetPackLink = require("./budget/pack").budgetPackLink;
+exports.budgetPackDownload = require("./budget/pack").budgetPackDownload;
+
 // Usage (Team & access → Usage): database / email / activity per day and per person.
 exports.usageAdmin = require("./usage").usageAdmin;
 exports.usageJob = require("./usage").usageJob;

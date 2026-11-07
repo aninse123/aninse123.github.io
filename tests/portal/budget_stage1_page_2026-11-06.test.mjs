@@ -33,7 +33,7 @@ ok('Used by lists the team directory plus External, with a weight per person', /
 ok('Paid with offers company accounts, company cards, cash and "paid personally"; personal asks who', /Company accounts/.test(v2) && /Company cards/.test(v2) && /value="personal"/.test(v2) && /Choose who paid personally/.test(v2));
 ok('IBANs are checked on entry (warn, not block) for company accounts and partner profiles', /ibanHint\(/.test(v2) && /does not pass the check digits/.test(v2));
 ok('a partner edits only their own IBAN profile (the Admin any); copy IBAN and transfer details are offered', /const mine = isAdmin \|\| myKey === p\.key/.test(v2) && /Copy transfer details/.test(v2) && /Reference: \${INSTANCE\.orgName} reimbursement/.test(v2));
-ok('the app never moves money: no network call of any kind besides Firestore and Storage', !/fetch\(|httpsCallable|XMLHttpRequest|sendBeacon/.test(v2));
+ok('the app never moves money: no network call of any kind besides Firestore and Storage', (!/fetch\(|XMLHttpRequest|sendBeacon/.test(v2) && (v2.match(/httpsCallable\(/g) || []).length === 1 && /'budgetPackLink'/.test(v2)));
 ok('lists are editable in Settings: rename, retire/restore, add; saved to budgetSettings/lists; ids never change', /budgetSettings', 'lists'/.test(v2) && /data-arch=/.test(v2) && /newListId\(label, work\[key\]\)/.test(v2) && /never deleted: retire it/.test(v2));
 ok('Settings keeps the company details form and the JSON backup from Stage 0', /id="cs-save"/.test(v2) && /douro-budget-backup-/.test(v2) && /logEvent\('budget_backup'/.test(v2));
 ok('the CSV export carries every new field and is formula-injection safe', /Supplier NIF \/ VAT ID/.test(v2) && /Invoice shows our NIF/.test(v2) && /Shared with accountant/.test(v2) && /\^\[=\+\\-@/.test(v2));

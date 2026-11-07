@@ -17,7 +17,7 @@ ok('the bank lines sheet is only built for people who may see bank data', /movem
 ok('the file name carries the organisation from the instance settings, not a typed name', /packFileName\(INSTANCE\.orgName/.test(v2));
 ok('"changed since shared" now depends on what the accountant sees (the fingerprint), on save, in bulk share and in the Items table', /packHash\(merged\) !== existing\.sharedHash/.test(v2) && /sharedHash: packHash\(it\)/.test(v2) && /\$\{changedSince\(i\) \?/.test(v2) && /data\.sharedHash = packHash\(merged\)/.test(v2));
 ok('unsharing (the box or bulk) clears the fingerprint and the pack link', /sharedHash: '', packId: ''/.test(v2) && /data\.sharedHash = ''; data\.packId = ''/.test(v2));
-ok('no network call anywhere: the pack is built in the browser and downloaded', !/fetch\(|httpsCallable|XMLHttpRequest|sendBeacon/.test(v2));
+ok('no network call anywhere: the pack is built in the browser and downloaded', (!/fetch\(|XMLHttpRequest|sendBeacon/.test(v2) && (v2.match(/httpsCallable\(/g) || []).length === 1 && /'budgetPackLink'/.test(v2)));
 ok('Firestore: packs are read with budget.view and written with budget.edit', /match \/budgetPacks\/\{id\} \{\s*allow read: if can\('budget\.view'\);\s*allow write: if can\('budget\.edit'\);/.test(rules));
 
 console.log(fail ? `\n${fail} FAILED` : '\nall budget stage 5a page tests passed'); process.exit(fail ? 1 : 0);

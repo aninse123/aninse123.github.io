@@ -15,6 +15,6 @@ ok('partner loans and partner reimbursements ask which partner; a loan without o
 ok('balances: Overview, Inbox ("To reimburse") and each partner profile show what the company owes — expenses paid personally plus loans — from partnerBalances', (v2.match(/partnerBalances\(S\.items, S\.movements\)/g) || []).length >= 4 && /The company owes: \$\{owed\.map/.test(v2) && /\$\{fmtMoney\(x\.loansOwed\)\} lent|\$\{eur\.format\(bal\.loansOwed\)\} lent/.test(v2));
 ok('"Copy transfer details" uses the total owed to that partner', /const owed = \(partnerBalances\(S\.items, S\.movements\)\.find\(\(x\) => x\.key === k\) \|\| \{\}\)\.total \|\| 0; copyText\(/.test(v2));
 ok('Items shows "owed back" / "✓ reimbursed" under Paid with, and a filter for paid-personally items owed or reimbursed; the Overview and Inbox open it', /✓ reimbursed/.test(v2) && /owed back/.test(v2) && /id="fReimb"/.test(v2) && /f\.reimb === 'owed'/.test(v2) && /reimb: b\.dataset\.go === 'owed' \? 'owed' : ''/.test(v2) && /data-owedshow=/.test(v2));
-ok('the app never moves money: no payment or network call, only Firestore writes the person confirms', !/fetch\(|httpsCallable|XMLHttpRequest|sendBeacon/.test(v2));
+ok('the app never moves money: no payment or network call, only Firestore writes the person confirms', (!/fetch\(|XMLHttpRequest|sendBeacon/.test(v2) && (v2.match(/httpsCallable\(/g) || []).length === 1 && /'budgetPackLink'/.test(v2)));
 
 console.log(fail ? `\n${fail} FAILED` : '\nall budget stage 4 page tests passed'); process.exit(fail ? 1 : 0);

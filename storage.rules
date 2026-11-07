@@ -24,6 +24,11 @@ service firebase.storage {
     }
 
     // Budget attachments (receipts/invoices) — admin-only, like documents.
+    // The accountant pack's Excel file, uploaded by the budget page before the server zips it with the receipts.
+    // Nobody reads it from a browser (the server does, with admin rights); the zip is written by the server only.
+    match /budget-packs/{packId}/pack.xlsx {
+      allow write: if (isAdmin() || can('budget.edit')) && request.resource.size < 5 * 1024 * 1024;
+    }
     match /budget/{fileName} {
       allow read: if isAdmin() || can('budget.view');
       allow write: if isAdmin() || can('budget.edit');

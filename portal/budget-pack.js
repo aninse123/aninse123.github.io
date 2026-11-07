@@ -87,7 +87,7 @@ export function packSheets(selected, ctx) {
   const exp = selected.filter((s) => s.item.kind === 'expense').map((s) => s.item);
   const inc = selected.filter((s) => s.item.kind === 'income').map((s) => s.item);
   const used = new Set(), files = [];
-  const fileNames = (it) => (it.attachments || []).map((a, i) => { const n = receiptName(it, a, i, used); files.push({ item: it, original: a.name || '', name: n }); return n; });
+  const fileNames = (it) => (it.attachments || []).map((a, i) => { const n = receiptName(it, a, i, used); files.push({ item: it, original: a.name || '', name: n, storagePath: a.filename ? `budget/${a.filename}` : '' }); return n; });
   const cat = (it) => (Array.isArray(it.lines) && it.lines.length > 1 ? `Split (${it.lines.length} lines)` : (c.catLabel ? c.catLabel(it.categoryId) : it.categoryId) || '');
   const purpose = (it) => (Array.isArray(it.lines) && it.lines.length > 1 ? itemLines(it).map((l) => (c.purLabel ? c.purLabel(l.purposeId) : l.purposeId)).filter(Boolean).join(' / ') : (c.purLabel ? c.purLabel(it.purposeId) : it.purposeId) || '');
   const expenses = {

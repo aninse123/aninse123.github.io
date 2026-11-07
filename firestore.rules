@@ -333,6 +333,11 @@ service cloud.firestore {
     match /budgetCards/{id} {
       allow read, write: if can('budget.accounts');
     }
+    // Budget v2 Stage 5b: the state of a pack's link (expiry, recipients, downloads). Written only by the server (no write rule).
+    // budgetPackSecrets (the hashes of the token and code) has no rule on purpose: no browser can read or write it.
+    match /budgetPackLinks/{id} {
+      allow read: if can('budget.view');
+    }
     // Budget v2 Stage 5: accountant packs (a frozen copy of what was sent, and which items it covered).
     match /budgetPacks/{id} {
       allow read: if can('budget.view');

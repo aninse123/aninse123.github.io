@@ -64,6 +64,14 @@
   status = 200
   force = true
 
+# Budget accountant pack links (Stage 5b): <site>/p/<packId>/<token> is served by the budgetPackDownload Cloud Function.
+# GET shows the code form, POST (the form) returns the zip.
+[[redirects]]
+  from = "/p/*"
+  to = "https://us-central1-douro-partners.cloudfunctions.net/budgetPackDownload/:splat"
+  status = 200
+  force = true
+
 # Privacy page: built (privacidade.html, draft for CCSL) but hidden until
 # activated — CCSL, 9 Oct 2026. To activate: delete these three rules, push,
 # then tick "Mention the privacy page" in Outreach → Settings → Email footer.
