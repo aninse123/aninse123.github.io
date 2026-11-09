@@ -6315,7 +6315,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       return {
         company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '', inCity: inCityOf(c || {}), toCity: toCityOf(c || {}), ...figuresOf(c || {}, undefined, emailNameOf(c)) },
         owner: ownerContext(c?._person ? {} : c),
-        campaign: { sector: camp?.sector || '' },
+        campaign: { sector: c?.sectorWording || camp?.sector || '' }, // 9 Nov (outreach.sectorWording): the company's own wording first
         contact: { firstName: c?._person ? String(c._person.name || '').split(' ')[0] : '' },
         recipient: recipientContext({ name: c?._person ? c._person.name : '' }),
         ...teamContext(window.teamDir || [], signer || null),
