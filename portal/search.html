@@ -5325,7 +5325,10 @@ async function renderOwnership(c){
     ? `<button class="btn btn--ghost btn--sm" data-mainct="" data-feature="search.people" title="The main contact: Send to “primary contact” uses them. Click to clear.">★ Main contact</button>`
     : `<button class="btn btn--ghost btn--sm" data-mainct="${esc(l.personId)}" data-feature="search.people" title="Make them the company's main contact">☆</button>`);
 
-  const cards = rows.map(l => {
+  const hideOn = isOn('search.hideNonDeciders');
+  const hiddenRows = hideOn ? rows.filter(linkNonDeciderOnly) : [];
+  const shownRows = hideOn ? rows.filter(l => !linkNonDeciderOnly(l)) : rows;
+  const cards = shownRows.map(l => {
     const isSh = linkIsShareholder(l), isMg = linkIsManager(l);
     const allPrev = l.isContact ? l.contactCurrent === false : (!isSh || l.shCurrent === false) && (!isMg || l.mgmtCurrent === false);
     const ctLine = l.isContact ? `<div class="contact-detail">Contact${l.contactRole ? ' · ' + esc(l.contactRole) : ''} ${statusBadge(l.contactCurrent)}</div>` : '';
@@ -5382,6 +5385,7 @@ async function renderOwnership(c){
         })()}`) : ''}${ownerSizeHtml(c.ownershipMeta)}
       </div>` : ''}
       ${cards || '<div style="font-size:0.85rem;color:var(--text-light);">No people yet — import ownership data or add manually.</div>'}
+      ${hiddenRows.length ? `<details data-hidden-people data-feature="search.hideNonDeciders" style="font-size:0.78rem;color:var(--text-light);margin-top:8px;"><summary>${hiddenRows.length} ${hiddenRows.length === 1 ? 'person' : 'people'} hidden (auditors, assembly and other roles that never decide)</summary>${hiddenRows.map(l => `<div>${esc(l.personName || '—')} · ${esc((l.mgmtRoles || []).join(' · '))}</div>`).join('')}</details>` : ''}
       ${links.length ? `<div class="own-legend" style="flex-wrap:wrap;gap:12px;">
         <span class="cur">currently</span><span class="prv">previously</span>
         <span>👑 controlling owner</span>
@@ -5539,6 +5543,13 @@ const OWN_GROUP_MAX = 80;        // group rows fetched; the count covers the res
 const OWN_ALSO_MAX_LINKS = 40;   // in more companies than this: link to their page instead
 // 28 Oct: the portal's list of roles that never make someone a decision-maker (functions/outreach/roles.js).
 const OWN_AUDITOR_RE = /fiscal|auditor|revisor|\bROC\b|statutory|\baudit\b|assembl|general meeting|secret[aá]ri|secretary|no specific function|sem fun[cç][aã]o|insolv|liquidat|administrador judicial|judicial administrator|supervis|conselho geral|general (and supervisory )?(board|council)|curador|trustee|conselho fundador|board of the foundation|provedor|\bprovider\b|consultiv|advisory|conselho t[eé]cnico|technical board|vencimentos|remunera|representative|representante|procurador|attorney|general contact|^none$/i;
+// 9 Nov: a link whose person only has roles that never decide (auditor, fiscal, assembly, advisory ...) and no share in this company:
+// hidden from the People list and the Network graph when the switch is on. A stake, a contact or a hand-added person always shows.
+function linkNonDeciderOnly(l){
+  if (!l || l.isContact || l.addedBy || linkIsShareholder(l)) return false;
+  const roles = (l.mgmtRoles || []).filter(Boolean);
+  return roles.length > 0 && roles.every(r => OWN_AUDITOR_RE.test(r));
+}
 const ownCompanyCache = new Map();   // companies outside the loaded list
 const ownSubsCache = new Map();      // companyId -> links where it is the shareholder
 const ownGroupCache = new Map();     // group key -> { members, total }
@@ -10700,7 +10711,7 @@ async function buildGraph(focusType, focusId, opts = {}){
   if (focusType === 'company'){
     const co = companies.find(c => c.id === focusId);
     add('company', focusId, co?.name || 'This company', { ring:0, focus:true });
-    const allLinks = [...await fetchCompanyLinks(focusId)].sort(graphLinkRank);
+    const allLinks = [...await fetchCompanyLinks(focusId)].filter(l => !(isOn('search.hideNonDeciders') && linkNonDeciderOnly(l))).sort(graphLinkRank);
     const ring1Links = expandRing1 ? allLinks : allLinks.slice(0, GRAPH_RING1_CAP);
     const ring1Overflow = expandRing1 ? 0 : Math.max(0, allLinks.length - GRAPH_RING1_CAP);
     // Same "who owns this" call the Ownership tab uses (Orbis CSH, or the
