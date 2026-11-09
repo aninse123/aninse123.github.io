@@ -117,7 +117,9 @@ function buildContext({ company = {}, contactName = "", recipientRole = "", reci
       shortName: emailNameOf(company),
       city: company.city || company.concelho || "",
       sector: company.sector || "",
-      sectorWording: String(company.sectorWording || "").trim(), // 9 Nov: the company's own wording of its sector ({{company.sectorWording}}); also replaces {{campaign.sector}} below
+      // 9 Nov (switch outreach.sectorWording: the company field is only saved while it is on): {{company.sectorWording}} = the company's own wording of its sector,
+      // else the campaign's sector text, else empty (the template's own fallback then applies: {{company.sectorWording|em que atua}}). {{campaign.sector}} stays the campaign's text only.
+      sectorWording: String(company.sectorWording || "").trim() || String(campaign?.sector || "").trim(),
       cae: company.caeDescription || company.caeCode || "",
       inCity: inCityOf(company), // "em Setúbal" / "no Porto" — 14 Oct: all 308 municipalities (concelho, any spelling; else city; Calheta / Lagoa by district)
       toCity: toCityOf(company), // 13 Oct: "a Setúbal" / "ao Porto" / "à Maia" — after "deslocar-nos"
@@ -126,7 +128,7 @@ function buildContext({ company = {}, contactName = "", recipientRole = "", reci
     owner: { ...ownerContext(company), otherCompanies: joinPt(others.map((n) => `da ${n}`)), otherCompanyNames: joinPt(others), knownCompanies: joinPt(known.map((n) => `da ${n}`)), knownCompanyNames: joinPt(known),
       // 2 Nov: "uma ligação com a X e a Y" (a = a empresa) and "ambas" for one related company, "todas" for more
       knownWith: known.length ? `com ${joinPt(known.map((n) => `a ${n}`))}` : "", knownAll: known.length > 1 ? "todas" : "ambas" }, // 2 Nov: known = we know of the link, we are not writing to it
-    campaign: { sector: String(company.sectorWording || "").trim() || String(campaign?.sector || "").trim() }, // 9 Nov (switch outreach.sectorWording: the field is only saved while it is on): a company with its own wording uses it, else the campaign's
+    campaign: { sector: String(campaign?.sector || "").trim() },
     contact: { firstName: firstName(contactName) },
     recipient: recipientContext({ name: contactName, role: recipientRole, owners: company.emailOwners, stored: recipientGender }), // 30 Oct: who it goes to — a named person or a general address
     // T4: sender.email = the sending address; sender.phone = its owner's (Team).

@@ -867,7 +867,7 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'recipient.firstName|Olá', 'recipient.role|responsável', 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'recipient.firstName|Olá', 'recipient.role|responsável', 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'company.sectorWording|em que atua', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
     // 9 Oct: what each team field means (button tooltips).
     const VAR_HELP = {
       'sender.fullName': 'Full name of whoever sends (the address owner)',
@@ -885,6 +885,7 @@
       'owner.greeting|Exmos. Senhores': 'A letter-style opening: "Exma. Senhora A e Exmo. Senhor B" (all owners named, with their gender). No names → "Exmos. Senhores"',
       'company.inCity|nas vossas instalações': '"em Setúbal", "no Porto", "na Maia" — the municipality with the right word before it (validated municipalities only). Otherwise the text after |',
       'company.toCity|às vossas instalações': 'After "deslocar-nos": "a Setúbal", "ao Porto", "à Maia", "às Caldas da Rainha" (validated municipalities only). Otherwise the text after |',
+      'company.sectorWording|em que atua': 'The sector as written after "o setor": the company\'s own wording (Search CRM → Edit company → Sector wording), else the campaign\'s "Sector in the emails", else the text after |. Use this one in templates (switch outreach.sectorWording)',
       'campaign.sector': 'The campaign\'s "Sector in the emails", e.g. "do trabalho temporário" (campaign → Settings). Empty in Compose — give a fallback with |',
       'sender.bookingLink': 'The sender\'s booking page (Team → Contact details). To add a sentence only when there is one: {{?sender.bookingLink| ou marcar uma reunião em {{sender.bookingLink}}}}',
     };
@@ -3372,7 +3373,7 @@
       const s = senders.find(x => x.id === $('cFrom').value) || {};
       const c = picked || ((!settings || settings.testMode !== false) ? TEST_SAMPLE_COMPANY : {});
       return {
-        company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '', inCity: inCityOf(c), toCity: toCityOf(c), ...figuresOf(c, undefined, emailNameOf(c)) },
+        company: { name: c.name || '', shortName: emailNameOf(c), city: c.city || c.concelho || '', sector: c.sector || '', cae: c.caeDescription || c.caeCode || '', inCity: inCityOf(c), toCity: toCityOf(c), sectorWording: c.sectorWording || '', ...figuresOf(c, undefined, emailNameOf(c)) },
         owner: ownerContext(c),
         campaign: { sector: '' }, // Compose isn't part of a campaign — the fallback shows
         contact: { firstName: (() => { const r = chosenRecipient(); return r && r.kind !== 'company' ? String(r.name || '').split(' ')[0] : ''; })() },
@@ -6313,9 +6314,9 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       const m = (window.teamDir || []).find(x => x.key === signer) || {};
       const full = m.name || OWNER_FULL[signer] || '';
       return {
-        company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '', inCity: inCityOf(c || {}), toCity: toCityOf(c || {}), ...figuresOf(c || {}, undefined, emailNameOf(c)) },
+        company: { name: c?.name || '', shortName: emailNameOf(c), city: c?.city || c?.concelho || '', sector: c?.sector || '', cae: c?.caeDescription || c?.caeCode || '', inCity: inCityOf(c || {}), toCity: toCityOf(c || {}), sectorWording: c?.sectorWording || camp?.sector || '', ...figuresOf(c || {}, undefined, emailNameOf(c)) },
         owner: ownerContext(c?._person ? {} : c),
-        campaign: { sector: c?.sectorWording || camp?.sector || '' }, // 9 Nov (outreach.sectorWording): the company's own wording first
+        campaign: { sector: camp?.sector || '' },
         contact: { firstName: c?._person ? String(c._person.name || '').split(' ')[0] : '' },
         recipient: recipientContext({ name: c?._person ? c._person.name : '' }),
         ...teamContext(window.teamDir || [], signer || null),
