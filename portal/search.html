@@ -5292,6 +5292,9 @@ async function renderOwnership(c){
   // separate tables, which used to show the same person twice with "Also
   // mgr"/"Also shareholder" columns existing purely to flag that split.
   const own = resolveOwnership(c, links);
+  // 9 Nov: a company with people but no shareholder on file says so (an SA's shareholders are not public); before, the tab was silent
+  const noHolders = links.length > 0 && !own.note && own.treasuryPct == null && !links.some(l => l.shCurrent === true && l.shDirectPct != null);
+  const noHoldersSA = /public limited|sociedade an[oó]nima/i.test(legalFormOf(c)) || /(^|[\s,])S\.?A\.?\s*$/i.test(c.name || '');
   // The header is drawn before the links arrive; correct its owner pill now.
   const ownPill = document.querySelector('#dMeta [data-own-pill]');
   if (ownPill && own.joint) ownPill.outerHTML = '<span class="badge badge-warn" data-own-pill title="Two holders with 50% each — neither controls alone">🤝 Joint control · 2 × 50%</span>';
@@ -5365,6 +5368,7 @@ async function renderOwnership(c){
         <div class="sec-title" style="margin-bottom:0;">People</div>
         <span style="display:inline-flex;gap:6px;">${peopleOn ? (canReach || canEditCompany(c) ? '<button class="btn btn--ghost btn--sm" id="addPersonBtn" title="An owner, a manager or someone else to talk to">＋ Add person</button>' : '') : '<button class="btn btn--ghost btn--sm" id="addPersonBtn" data-perm="search.edit" data-coedit>＋ Add Person</button>'}</span>
       </div>
+      ${noHolders ? `<div data-no-holders style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">ℹ️ No shareholders on file${noHoldersSA ? ' (the shareholders of a public limited company (SA) are not public)' : ''}</div>` : ''}
       ${(own.note || own.treasuryPct != null) ? `<div style="font-size:0.76rem;color:var(--text-light);margin-bottom:10px;">
         ${own.joint || own.shared ? '🤝' : own.independent ? '🏛' : (own.ownerIds.size ? '👑' : 'ℹ️')} ${esc(own.note)}${own.treasuryPct != null ? ` · <strong>${own.treasuryPct}%</strong> held by the company in itself (treasury)` : ''}${own.guoType ? ` · <span class="badge ${/individual|families/i.test(own.guoType) ? 'badge-green' : 'badge-grey'}" title="What kind of owner sits at the top">${esc(own.guoType)}</span>` : ''}${own.guoName && !own.joint && !own.shared ? (own.guoNif && own.guoNif === (onlyDigits(c.nif) || nifFromAny('', c.bvdId))
         ? ' · It is its own ultimate owner'
