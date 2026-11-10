@@ -497,7 +497,7 @@
       </div>
       <input type="text" class="search-input" id="searchInput" placeholder="Search by name or NIF…">
       <button class="btn btn--ghost btn--sm" id="nifSearchBtn" title="Check the full database for this name or NIF">🔍</button>
-      <span id="nifSearchStatus" style="font-size:0.74rem;color:var(--text-light);"></span>
+      <span id="nifSearchStatus" style="font-size:0.74rem;color:var(--text-light);"></span><span id="phoneSearchStatus" style="font-size:0.74rem;color:var(--text-light);"></span>
       <select class="filter-sel" id="stageFilter"><option value="">All Stages</option></select>
       <select class="filter-sel" id="ownerFilter" data-owner-select><option value="">All Owners</option><option value="andre">André</option><option value="antonio">António</option></select>
       <select class="filter-sel" id="tierFilter" title="Tier — set on the company, or from the tier rules in Settings"><option value="">All Tiers</option><option value="A">Tier A</option><option value="B">Tier B</option><option value="C">Tier C</option><option value="AB">Tier A or B</option><option value="none">No tier</option></select>
@@ -3531,7 +3531,7 @@ const phoneHits = new Map();
 function phoneChip(c){
   const k = currentPhoneKey(); if (!k) return '';
   const why = phoneHits.get(k)?.get(c.id) || ((c.phoneKeys || []).includes(k) ? 'Company phone' : '');
-  return why ? ` <span class="badge" style="margin-left:6px;" title="Found by the phone number you typed">☎ ${esc(why)}</span>` : '';
+  return why ? `<div style="font-size:0.72rem;font-weight:600;color:var(--primary);margin-top:2px;" title="Found by the phone number you typed">☎ ${esc(why)}</div>` : '';
 }
 function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
@@ -14015,6 +14015,10 @@ let companySearchSeq = 0;
 function triggerCompanySearch(){
   const raw = document.getElementById('searchInput').value.trim();
   document.getElementById('nifSearchStatus').textContent = '';
+  document.getElementById('phoneSearchStatus').textContent = '';
+  // 10 Nov (search.phoneSearch): like the other database look-ups, a phone number is searched only when you press Enter or the magnifier
+  // (what is already loaded matches as you type). Runs next to the NIF look-up: 9 digits can be either.
+  const pk = currentPhoneKey(); if (pk) searchPhoneSupplement(pk);
   if (!raw || fullyLoaded) return;
   // NIFs are clean 9-digit strings (verified against a live sample) — a run
   // of 3-9 digits is NIF-shaped. Longer digit runs (10-14) are foreign tax
@@ -14027,27 +14031,32 @@ function triggerCompanySearch(){
 document.getElementById('nifSearchBtn').addEventListener('click', triggerCompanySearch);
 document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') triggerCompanySearch(); });
 document.getElementById('searchInput').addEventListener('input', () => { document.getElementById('nifSearchStatus').textContent = ''; });
-// 10 Nov (search.phoneSearch): a full Portuguese number ("+351 91 799 57 84", "917995784") is looked up as soon as it is typed:
+// 10 Nov (search.phoneSearch): a full Portuguese number ("+351 91 799 57 84", "917995784") is looked up when you press Enter or the magnifier:
 // the companies' own phones (phoneKeys) and the people's (reachPhones, through their links), so it works for companies not loaded yet.
-let phoneSeq = 0, phoneTimer = null;
+let phoneSeq = 0;
+// Each step has 20 s; if one hangs, the line next to the search says which, instead of staying on "Checking…".
+const phoneStep = (label, p) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${label} timed out`)), 20000))]);
 async function searchPhoneSupplement(key){
-  const statusEl = document.getElementById('nifSearchStatus');
+  const statusEl = document.getElementById('phoneSearchStatus');
   const seq = ++phoneSeq;
-  if (phoneHits.has(key)) { renderList(); return; }
+  if (phoneHits.has(key)) { const n = phoneHits.get(key).size; statusEl.textContent = n ? `${n} match${n === 1 ? '' : 'es'} by phone` : 'No company or person has this phone'; renderList(); return; }
   statusEl.textContent = 'Checking the phone…';
+  const t0 = performance.now(), lap = {};
   try {
     const [cs, ps] = await Promise.all([
-      getDocs(query(collection(db,'searchCompanies'), where('phoneKeys','array-contains', key), limit(20))),
-      getDocs(query(collection(db,'searchPeople'), where('reachPhones','array-contains', key), limit(20))),
+      phoneStep('company phones', getDocs(query(collection(db,'searchCompanies'), where('phoneKeys','array-contains', key), limit(20)))),
+      phoneStep('people phones', getDocs(query(collection(db,'searchPeople'), where('reachPhones','array-contains', key), limit(20)))),
     ]);
+    lap.first = Math.round(performance.now() - t0);
+    console.info('phone search', key, 'companies', cs.size, 'people', ps.size, lap.first + ' ms');
     addReads((cs.size + ps.size) || 1);
-    if (seq !== phoneSeq) return;
+    if (seq !== phoneSeq) { statusEl.textContent = ''; return; }
     const hits = new Map(), want = new Map(), have = new Set(companies.map(c => c.id));
     cs.docs.forEach(d => { hits.set(d.id, 'Company phone'); if (!have.has(d.id)) { companies.push(computeFields({ id: d.id, ...d.data() })); have.add(d.id); } });
     const who = new Map(ps.docs.map(d => [d.id, personDisplayName(d.data().name || '')]));
     const ids = [...who.keys()], byPerson = new Map();
     for (let i = 0; i < ids.length; i += 30) {
-      const ls = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in', ids.slice(i, i + 30))));
+      const ls = await phoneStep('person links', getDocs(query(collection(db,'searchPersonLinks'), where('personId','in', ids.slice(i, i + 30)))));
       addReads(ls.size || 1);
       ls.docs.forEach(d => { const l = d.data(); (byPerson.get(l.personId) || byPerson.set(l.personId, []).get(l.personId)).push(l); });
     }
@@ -14057,21 +14066,20 @@ async function searchPhoneSupplement(key){
     }
     const missing = [...want.keys()].filter(id => !have.has(id));
     for (let i = 0; i < missing.length; i += 30) {
-      const snap = await getDocs(query(collection(db,'searchCompanies'), where(documentId(),'in', missing.slice(i, i + 30))));
+      const snap = await phoneStep('companies of the people', getDocs(query(collection(db,'searchCompanies'), where(documentId(),'in', missing.slice(i, i + 30)))));
       addReads(snap.size || 1);
       snap.docs.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields({ id: d.id, ...d.data() })); have.add(d.id); } });
     }
     phoneHits.set(key, hits);
-    if (currentPhoneKey() !== key) return; // typed on in the meantime
-    statusEl.textContent = hits.size ? `${hits.size} match${hits.size === 1 ? '' : 'es'} by phone` : 'No company or person has this phone';
+    lap.queries = Math.round(performance.now() - t0);
+    if (currentPhoneKey() !== key) { statusEl.textContent = ''; return; } // typed on in the meantime
     renderList();
-  } catch (e) { console.error(e); if (seq === phoneSeq) statusEl.textContent = 'Phone search failed — see console'; }
+    lap.total = Math.round(performance.now() - t0);
+    console.info('phone search timing (ms)', lap);
+    statusEl.textContent = (hits.size ? `${hits.size} match${hits.size === 1 ? '' : 'es'} by phone` : 'No company or person has this phone') + ` · ${(lap.total / 1000).toFixed(1)} s (database ${(lap.queries / 1000).toFixed(1)} s)`;
+  } catch (e) { console.error('phone search', e); if (seq === phoneSeq) statusEl.textContent = `Phone search failed: ${String(e?.message || e).replace(/^FirebaseError:\s*/, '').slice(0, 120)}`; }
 }
-document.getElementById('searchInput').addEventListener('input', () => {
-  clearTimeout(phoneTimer);
-  const k = currentPhoneKey();
-  if (k) phoneTimer = setTimeout(() => searchPhoneSupplement(k), 400);
-});
+document.getElementById('searchInput').addEventListener('input', () => { phoneSeq++; document.getElementById('phoneSearchStatus').textContent = ''; });
 onFeaturesChange(() => { document.getElementById('searchInput').placeholder = isOn('search.phoneSearch') ? 'Search by name, NIF or phone…' : 'Search by name or NIF…'; });
 async function searchIdFieldSupplement(field, digits){
   const statusEl = document.getElementById('nifSearchStatus');
