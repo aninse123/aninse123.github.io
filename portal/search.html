@@ -14064,7 +14064,7 @@ async function searchPhoneSupplement(key){
   statusEl.textContent = 'Checking the phone…';
   const t0 = performance.now(), lap = {};
   try {
-    // Over REST (restFetch…), not getDocs(): see restFetchAllDocs for why the SDK is slow here.
+    // Over REST (restFetch…), not the SDK: see restFetchAllDocs for why the SDK is slow here.
     const [cs, ps] = await Promise.all([
       phoneStep('company phones', restFetchArrayContains('searchCompanies', 'phoneKeys', key)),
       phoneStep('people phones', restFetchArrayContains('searchPeople', 'reachPhones', key)),
