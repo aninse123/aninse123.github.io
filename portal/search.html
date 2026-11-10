@@ -5545,13 +5545,31 @@ async function renderOutreachRelated(c){
   let r;
   try { r = (await callOutreachCampaign({ action: 'related', companyId: c.id })).data; } catch(e){ console.warn('related', e); return; }
   if (currentCoId !== c.id || r?.off || !r?.related?.length) { el.innerHTML = ''; return; }
-  const conv = r.related.filter(x => x.lastReplyAt);
+  // 10 Nov (outreach.relatedActivity): the server's own "in conversation" flags also count a call that connected, a meeting or a visit logged on the related company.
+  const convFlags = (r.flags || []).filter(f => f.kind === 'in_conversation');
+  const conv = r.related.filter(x => x.lastReplyAt || convFlags.some(f => f.companyId === x.companyId));
+  const actFlags = isOn('outreach.relatedActivity') ? convFlags.filter(f => f.activity) : [];
   el.innerHTML = `<div class="card"><div class="sec-title">Related companies in outreach</div>
     ${conv.length ? `<div class="contact-detail" style="margin-bottom:6px;">💬 <b>In conversation via ${conv.map(x => esc(x.name)).join(', ')}</b></div>` : ''}
+    ${actFlags.length ? `<div class="contact-detail" style="margin-bottom:6px;">${actFlags.map(f => esc(f.text)).join('; ')}<br><button class="btn btn--ghost btn--sm" id="relPauseBtn" data-perm="out.write" style="margin-top:4px;">Pause this company's email sequence</button> <span class="hint">You confirm; it can be resumed in Outreach.</span></div>` : ''}
     ${r.related.map(x => `<div class="contact-detail"><span class="person-link" data-gotoco="${esc(x.companyId)}">${esc(x.name)}</span> ${relatedLine({ ...x, name: '' }).replace(/^\s*/, '')}</div>`).join('')}
     ${r.lead ? `<div class="hint" style="margin-top:6px;">Suggested lead company for the group: <b>${leadText(r.lead)}</b>.</div>` : ''}
     <div class="hint" style="margin-top:4px;">Same owner at any %, parent / subsidiary, same group or a confirmed same email. The add-on links don't count.</div></div>`;
-  el.onclick = (ev) => { const t = ev.target.closest('[data-gotoco]'); if (t) openDetail(t.dataset.gotoco); };
+  el.onclick = async (ev) => {
+    const pb = ev.target.closest('#relPauseBtn');
+    if (pb) {
+      const why = actFlags.map(f => f.text).join('; ');
+      if (!confirm(`Pause the email sequence of ${c.name}?\n\n${why}\n\nNothing is deleted: Resume brings it back (Outreach → the campaign → Companies).`)) return;
+      pb.disabled = true;
+      try {
+        const out = (await callOutreachCampaign({ action: 'pauseSequence', companyId: c.id, reason: why })).data;
+        alert(out.paused ? `Paused: ${out.paused} sequence${out.paused === 1 ? '' : 's'}.` : 'This company has no running email sequence to pause.');
+      } catch (e) { alert('Could not pause: ' + (e.message || e)); }
+      pb.disabled = false;
+      return;
+    }
+    const t = ev.target.closest('[data-gotoco]'); if (t) openDetail(t.dataset.gotoco);
+  };
 }
 
 // ── Ownership ladder, subsidiaries, group, people's other companies ─────────
@@ -12493,7 +12511,27 @@ function renderActFields(){
       <div class="form-group"><label>Duration</label><select class="field" id="actDuration"><option value="30">30 min</option><option value="60" selected>60 min</option><option value="90">90 min</option></select></div>
     </div>
     <div class="form-group"><label>Guests <span class="opt">(optional)</span></label><input type="text" class="field" id="actGuests" placeholder="Names, comma-separated"></div>`:''}
-    <div class="form-group"><label>Notes <span class="opt">(optional)</span></label><textarea class="field" id="actContent"></textarea></div>`;
+    <div class="form-group"><label>Notes <span class="opt">(optional)</span></label><textarea class="field" id="actContent"></textarea></div>
+    <div class="form-group" id="actAlso"></div>`;
+  fillActAlso();
+}
+// 10 Nov (outreach.relatedActivity): the companies related to this one, to log the same activity on — none ticked for you, at most 3.
+const actRelatedCache = new Map();
+async function fillActAlso(){
+  const box = document.getElementById('actAlso'); if (!box) return;
+  const c = getCompany();
+  if (!c || !isOn('outreach.relatedActivity') || !isOn('outreach.ownerAware') || activityType === 'email') { box.innerHTML = ''; return; }
+  let r = actRelatedCache.get(c.id);
+  if (!r) {
+    box.innerHTML = '<span class="hint">Looking for related companies…</span>';
+    try { r = (await callOutreachCampaign({ action: 'related', companyId: c.id })).data; } catch(e){ box.innerHTML = ''; return; }
+    actRelatedCache.set(c.id, r);
+  }
+  const now = document.getElementById('actAlso'); if (!now || getCompany()?.id !== c.id) return;
+  const list = (r?.related || []).slice(0, 6);
+  if (!list.length) { now.innerHTML = ''; return; }
+  now.innerHTML = `<label>Also log on a related company <span class="opt">(optional · none is ticked for you · at most 3)</span></label>` + list.map(x => `<label style="display:block;font-weight:400;margin:3px 0;"><input type="checkbox" class="actAlsoCk" value="${esc(x.companyId)}"> ${esc(x.name)} <span class="hint">${esc((x.why || []).slice(0, 2).join(' · '))}</span></label>`).join('');
+  now.querySelectorAll('.actAlsoCk').forEach(ck => ck.addEventListener('change', () => { if (now.querySelectorAll('.actAlsoCk:checked').length > 3) ck.checked = false; }));
 }
 async function saveActivity(){
   const c = getCompany(); if (!c) return;
@@ -12508,6 +12546,7 @@ async function saveActivity(){
   const contactVal = document.getElementById('actContact')?.value || '';
   const [cName, cRole] = contactVal ? contactVal.split('|') : ['',''];
   const contactPersonId = document.getElementById('actContact')?.selectedOptions?.[0]?.dataset.pid || null; // 21 Oct: shown on their person page
+  const alsoIds = [...document.querySelectorAll('#actAlso .actAlsoCk:checked')].map(x => x.value); // 10 Nov (outreach.relatedActivity)
   const btn = document.getElementById('actSaveBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
   const actData = {
     companyId: c.id, type: activityType, date: Timestamp.fromDate(dateObj),
@@ -12525,6 +12564,10 @@ async function saveActivity(){
     const ref = await addDoc(collection(db,'searchActivities'), actData);
     activities.unshift({ id: ref.id, ...actData, createdAt: Timestamp.now() });
     await recomputeActivityFields(c);
+    if (alsoIds.length) {
+      try { const out = (await callOutreachCampaign({ action: 'logRelated', activityId: ref.id, companyIds: alsoIds })).data; actRelatedCache.delete(c.id); if (out.logged) console.info('also logged on', out.logged, 'related'); }
+      catch(e){ alert('Saved here, but it could not be logged on the related companies: ' + String(e?.message || e).replace(/^FirebaseError:\s*/, '')); }
+    }
     showEl('activityModal', false);
     renderActivityLog(); renderList();
   } catch(e){ const el=document.getElementById('actErr'); el.textContent=e.message; el.style.display='block'; }

@@ -85,6 +85,19 @@ function mayHaveRelated(c) {
   return (c.ownGroupSize || 0) > 1 || (c.ownSubs || 0) > 0 || (c.ownParents || 0) > 0 || (c.ownOwnerOther || 0) > 0;
 }
 
+// 10 Nov (switch outreach.relatedActivity): is the related company talking to us? Read from its own contact summary (touches, kept by the
+// Search CRM and Outreach): the latest answer on any channel (a call that connected, a meeting held, an email / LinkedIn / WhatsApp reply),
+// or a meeting set up or a visit made — a two-way contact. Our own sends, calls with no answer, letters and notes don't count; neither does
+// anything automatic. A company at stage Engaged counts too. The 3 levels are in portal/related-activity.js.
+function signalOf(o) {
+  const t = o?.touches || {};
+  let answeredAt = 0, answeredVia = "";
+  for (const [ch, s] of Object.entries(t)) { const a = ms(s?.inAt); if (a > answeredAt) { answeredAt = a; answeredVia = ch; } }
+  for (const ch of ["meeting", "visit"]) { const a = ms(t[ch]?.at); if (t[ch]?.n && a > answeredAt) { answeredAt = a; answeredVia = ch; } }
+  return { answeredAt: answeredAt || null, answeredVia, engaged: o?.stage === "engaged" };
+}
+const VIA_WORD = { email: "reply", call: "call", meeting: "meeting", visit: "visit", linkedin: "LinkedIn reply", whatsapp: "WhatsApp reply", letter: "letter answer", intro: "intro" };
+
 // companyIds → Map(id → { related: [...], lead }) for every id (empty lists
 // when nothing is related). opts.companies: already-read company docs (Map).
 async function relatedFor(companyIds, opts = {}) {
@@ -148,6 +161,7 @@ async function relatedFor(companyIds, opts = {}) {
         cae: o.caeCode || null, revenue: o.computedRevenue ?? null, stage: o.stage || null,
         campaignId: o.activeCampaignId || null, campaignName: o.activeCampaignName || null,
         lastOutreachAt: ms(o.lastOutreachAt) || null, lastReplyAt: ms(o.lastReplyAt) || null,
+        ...signalOf(o),
         saidNo: saidNo.has(oid) || o.outreachStatus === "unsubscribed", doNotContact: !!o.doNotContact?.on,
         contactable: o.contactable !== false, email: o.companyEmail || null,
         parent: [...why].some((w) => w.startsWith("parent")), // it holds shares in this company
@@ -177,13 +191,17 @@ function leadOf(self, list, selfTop = null) {
 // The flags for a company about to be contacted, from its related companies:
 // another campaign, contacted recently (group already contacted via X), in
 // conversation, said no / do not contact, and related companies in the same batch.
-function flagsFor(entry, { campaignId = null, windowDays = 30, batch = null, now = Date.now(), selfId = null } = {}) {
+function flagsFor(entry, opts = {}) {
+  const { campaignId = null, windowDays = 30, batch = null, now = Date.now(), selfId = null } = opts;
   const flags = [];
   const since = now - windowDays * DAY;
   const day = (t) => new Date(t).toISOString().slice(0, 10);
   for (const r of entry?.related || []) {
     if (r.doNotContact || r.saidNo) flags.push({ kind: "said_no", companyId: r.companyId, text: `${r.name}: ${r.doNotContact ? "do not contact" : "said no"}` });
-    if (r.lastReplyAt) flags.push({ kind: "in_conversation", companyId: r.companyId, text: `in conversation via ${r.name} (reply ${day(r.lastReplyAt)})` });
+    const act = opts.activity ? r.answeredAt || 0 : 0; // 10 Nov (outreach.relatedActivity): a call that connected, a meeting, a visit … logged on the related company
+    if (act && act > (r.lastReplyAt || 0)) flags.push({ kind: "in_conversation", activity: true, companyId: r.companyId, text: `in conversation via ${r.name} (${VIA_WORD[r.answeredVia] || "contact"} ${day(act)})` });
+    else if (r.lastReplyAt) flags.push({ kind: "in_conversation", companyId: r.companyId, text: `in conversation via ${r.name} (reply ${day(r.lastReplyAt)})` });
+    else if (opts.activity && r.engaged) flags.push({ kind: "in_conversation", activity: true, companyId: r.companyId, text: `in conversation via ${r.name} (engaged)` });
     // 2 Nov: no window — like the "contacted before" warning of a single company, it stays; the reason is in the related list
     else if (r.lastOutreachAt) flags.push({ kind: "group_contacted", companyId: r.companyId, text: `related company contacted via ${r.name} (${day(r.lastOutreachAt)})` });
     if (r.campaignId && r.campaignId !== campaignId) flags.push({ kind: "other_campaign", companyId: r.companyId, text: `${r.name} is in campaign "${r.campaignName || "another campaign"}"` });
@@ -211,4 +229,4 @@ function mentionFrom(entry, flags) {
   return list.slice(0, 2).map((r) => ({ companyId: r.companyId, name: r.emailName || r.name }));
 }
 
-module.exports = { relatedFor, flagsFor, defaultChoice, mentionFrom, mentionPicked, leadOf, isDecider, deciderRank, levelText, mayHaveRelated, MAX_PERSON_LINKS, MAX_MENTION, SAID_NO };
+module.exports = { signalOf, relatedFor, flagsFor, defaultChoice, mentionFrom, mentionPicked, leadOf, isDecider, deciderRank, levelText, mayHaveRelated, MAX_PERSON_LINKS, MAX_MENTION, SAID_NO };

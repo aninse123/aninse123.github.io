@@ -38,6 +38,7 @@ const { ANTHROPIC_API_KEY } = require("./ai");
 const { normEmail } = require("./util");
 const { companyRecipients, pickByPolicy, pickAddresses } = require("./recipients");
 const store = require("./store");
+const CS = require("./contact_summary"); // contact summary (27 Oct): the channel of an activity type
 const Inbox = require("./inbox"); // one inbox (19 Oct, switch outreach.oneInbox)
 const Related = require("./related"); // owner-aware outreach (22 Oct, switch outreach.ownerAware)
 const Tracks = require("./tracks"); // several recipients per company (30 Oct, switch outreach.multiRecipient)
@@ -307,6 +308,7 @@ async function preview({ campaignId, companyIds }, caller, opts = {}) {
   assertEnrollable(campaign); assertCompanies(campaign);
   const ids = cleanCompanyIds(companyIds);
   const ctx = await evalContext(campaign);
+  ctx.relatedActivity = !!opts.relatedActivity; // 10 Nov (outreach.relatedActivity)
   ctx.usePeople = !!opts.usePeople; // People merge (Stage 4)
   ctx.trust = !!opts.trust; // 30 Oct (contacts.trustLabels): extra general addresses count as reachable
   const data = await readCompanies(ids, campaignId);
@@ -372,7 +374,7 @@ async function ownerPanel(ids, data, campaign, ctx) {
   const flagged = [];
   for (const id of ids) {
     const entry = rel.get(id);
-    const flags = Related.flagsFor(entry, { campaignId: campaign.id, windowDays: ctx.exclusions.contactedWithinDays || 30, batch, selfId: id, now: ctx.now });
+    const flags = Related.flagsFor(entry, { campaignId: campaign.id, windowDays: ctx.exclusions.contactedWithinDays || 30, batch, selfId: id, now: ctx.now, activity: !!ctx.relatedActivity });
     if (!flags.length && !entry.related.length) continue; // 2 Nov: a company with related companies is listed even with no flag, so you can choose to mention them
     flagged.push({ companyId: id, companyName: companies.get(id).name || "", flags, related: entry.related.slice(0, 6).map(slimRelated), lead: entry.lead, choice: Related.defaultChoice(flags), mention: Related.mentionFrom(entry, flags) });
   }
@@ -547,6 +549,7 @@ async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices,
   const src = cleanSource(source);
   const mode = onConflict === "move" ? "move" : "skip";
   const ctx = await evalContext(campaign);
+  ctx.relatedActivity = !!opts.relatedActivity; // 10 Nov (outreach.relatedActivity)
   ctx.usePeople = !!opts.usePeople; // People merge (Stage 4)
   ctx.trust = !!opts.trust; // 30 Oct (contacts.trustLabels): extra general addresses count as reachable
   if (opts.oneInbox) await withInbox(ctx, await companyEmails(ids), true);
@@ -566,7 +569,7 @@ async function enrol({ campaignId, companyIds, source, onConflict, ownerChoices,
     const batch = new Set(ids);
     for (const id of chosen) {
       const entry = rel.get(id);
-      const flags = Related.flagsFor(entry, { campaignId, windowDays: ctx.exclusions.contactedWithinDays || 30, batch, selfId: id, now: ctx.now });
+      const flags = Related.flagsFor(entry, { campaignId, windowDays: ctx.exclusions.contactedWithinDays || 30, batch, selfId: id, now: ctx.now, activity: !!ctx.relatedActivity });
       const picked = ownerMentions && typeof ownerMentions === "object" ? Related.mentionPicked(entry, ownerMentions[id]) : Related.mentionFrom(entry, flags); // no ticks sent (older page) = the suggestion
       const known = choices[id] === "mention" && ownerKnown && typeof ownerKnown === "object" ? Related.mentionPicked(entry, ownerKnown[id]) : []; // 2 Nov: "aware only" — named, not written to
       plan.set(id, { choice: choices[id], flags, mention: choices[id] === "mention" ? picked : [], known });
@@ -611,7 +614,7 @@ async function relatedOf({ companyId }, opts = {}) {
   if (!opts.ownerAware) return { off: true, related: [] };
   if (!companyId || typeof companyId !== "string") fail("invalid-argument", "bad_company", "Choose a company.");
   const entry = (await Related.relatedFor([companyId])).get(companyId);
-  return { related: entry.related, lead: entry.lead, flags: Related.flagsFor(entry, { windowDays: 30 }) };
+  return { related: entry.related, lead: entry.lead, flags: Related.flagsFor(entry, { windowDays: 30, activity: !!opts.relatedActivity }) };
 }
 
 async function moveEnrolment(id, targetCampaignId, caller) {
@@ -1314,6 +1317,68 @@ async function logActivity({ companyId, threadId, channel, outcome, notes, date 
   return { ok: true, activityId: ref.id };
 }
 
+// 10 Nov (switch outreach.relatedActivity): the same activity on the related companies you tick — a call that covered two companies, a
+// meeting about the group. Only companies related to the one it was logged on, at most MAX_ALSO, once each; marked as a copy. A call that
+// connected, a meeting held or a visit then counts as a two-way contact there (touches), so the related company shows "in conversation".
+const RELATED_COPY_TYPES = ["note", "call_attempted", "call_connected", "whatsapp", "linkedin", "letter", "meeting_scheduled", "meeting_done", "in_person", "observation", "other"];
+const MAX_ALSO = 3;
+async function logRelated({ activityId, companyIds }, caller, opts = {}) {
+  if (!opts.relatedActivity) fail("failed-precondition", "switch_off", "Logging on related companies is not switched on.");
+  if (!activityId || typeof activityId !== "string") fail("invalid-argument", "activity_required", "Choose the activity.");
+  const wanted = [...new Set((Array.isArray(companyIds) ? companyIds : []).map(String))].filter(Boolean);
+  if (!wanted.length) fail("invalid-argument", "companies_required", "Tick the related companies.");
+  if (wanted.length > MAX_ALSO) fail("invalid-argument", "too_many", `Tick at most ${MAX_ALSO} companies.`);
+  const asnap = await db().doc(`searchActivities/${activityId}`).get();
+  if (!asnap.exists) fail("not-found", "activity_not_found", "Activity not found.");
+  const a = asnap.data();
+  if (a.isTest || a.recordDeleted || a.source === "related" || !RELATED_COPY_TYPES.includes(a.type)) fail("failed-precondition", "not_copyable", "This activity can't be logged on other companies.");
+  const entry = (await Related.relatedFor([a.companyId])).get(a.companyId);
+  const okIds = new Set((entry?.related || []).map((r) => r.companyId));
+  if (wanted.some((id) => !okIds.has(id))) fail("invalid-argument", "not_related", "Only related companies can be ticked.");
+  const fromSnap = await db().doc(`searchCompanies/${a.companyId}`).get();
+  const fromName = fromSnap.exists ? fromSnap.data().name || "another company" : "another company";
+  const done = [];
+  for (const id of wanted) {
+    const dup = await db().collection("searchActivities").where("companyId", "==", id).where("relatedFromActivityId", "==", activityId).limit(1).get();
+    if (!dup.empty) continue; // once only
+    await db().collection("searchActivities").add({
+      companyId: id, type: a.type, date: a.date, title: a.title || null, content: `[Also logged from ${fromName}] ${a.content || ""}`.trim(), via: a.via || null,
+      contactName: a.contactName || null, contactRole: a.contactRole || null, contactPersonId: a.contactPersonId || null,
+      responseCategory: a.responseCategory || null, outcome: a.outcome || null, time: a.time || null, timezone: a.timezone || null, duration: a.duration || null, guests: a.guests || null,
+      status: null, isTest: false, source: "related", relatedFromCompanyId: a.companyId, relatedFromActivityId: activityId,
+      createdAt: FieldValue.serverTimestamp(), createdBy: caller,
+    });
+    const ch = CS.TYPE_CHANNEL[a.type];
+    if (a.type === "meeting_done") await store.touchCompany(id, { direction: "in", channel: "meeting", by: caller });
+    else if (a.type === "meeting_scheduled") await db().doc(`searchCompanies/${id}`).update({ ...CS.patchFor({ channel: "meeting", direction: "out", by: caller }, { now: Timestamp.now(), inc: FieldValue.increment(1) }), lastTouchAt: Timestamp.now(), updatedAt: FieldValue.serverTimestamp() });
+    else if (ch) {
+      const outcome = a.outcome || (a.type === "call_attempted" ? "no_answer" : a.type === "call_connected" ? "connected" : null);
+      await store.touchCompany(id, { direction: "out", outreach: true, channel: ch, by: caller, outcome });
+      if (a.type === "call_connected") await store.touchCompany(id, { direction: "in", channel: ch });
+    }
+    done.push(id);
+  }
+  return { ok: true, logged: done.length, companyIds: done };
+}
+
+// 10 Nov (switch outreach.relatedActivity): pause the company's running email sequence (not end it: Resume brings it back), when a related
+// company is in conversation. Nothing happens to companies that are not in a campaign.
+async function pauseSequence({ companyId, reason }, caller, opts = {}) {
+  if (!opts.relatedActivity) fail("failed-precondition", "switch_off", "Pausing from a related company is not switched on.");
+  if (!companyId || typeof companyId !== "string") fail("invalid-argument", "company_required", "Choose a company.");
+  const snap = await db().collection("outreachEnrolments").where("companyId", "==", companyId).get();
+  const refs = snap.docs.filter((d) => LIVE_ENROLMENT.includes(d.data().status) && d.data().status !== "paused").map((d) => d.ref); // already paused: nothing to do
+  let paused = 0;
+  for (const ref of refs) {
+    const r = await enrolmentOp({ enrolmentId: ref.id, op: "pause", reason }, caller).catch(() => null);
+    if (r && r.status === "paused") paused++;
+  }
+  if (paused) {
+    try { await db().collection("searchActivities").add({ companyId, type: "outreach_group", date: Timestamp.now(), title: null, content: `Sequence paused by ${caller}: ${String(reason || "a related company is in conversation").slice(0, 200)}`, source: "related", isTest: false, createdAt: FieldValue.serverTimestamp(), createdBy: caller }); } catch (e) { /* the note is best effort */ }
+  }
+  return { ok: true, paused, live: refs.length };
+}
+
 // Do not contact (spec §10): stops every campaign for the company and blocks
 // enrolment and new outreach until switched off.
 async function setDoNotContact({ companyId, on, reason }, caller) {
@@ -1491,6 +1556,8 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
   const usePeople = ["preview", "enrol", "recipientsPreview"].includes(data.action) ? await Feat.isOnFor(request, "search.people") : false;
   // Owner-aware outreach (22 Oct): the owner panel when adding companies, and the company page's related companies.
   const ownerAware = ["preview", "enrol", "related"].includes(data.action) ? await Feat.isOnFor(request, "outreach.ownerAware") : false;
+  // 10 Nov: what is logged on a related company (a call that connected, a meeting, a visit) counts as "in conversation"; also-log and pause.
+  const relatedActivity = ["preview", "enrol", "related", "logRelated", "pauseSequence"].includes(data.action) ? await Feat.isOnFor(request, "outreach.relatedActivity") : false;
   // Email name check (26 Oct): flagged names in "Add companies".
   const nameCheck = data.action === "preview" ? await Feat.isOnFor(request, "search.emailNameCheck") : false;
   try {
@@ -1500,8 +1567,10 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
       case "returnStart": return await returnStart(data, caller);
       case "duplicate": return await duplicate(data, caller);
       case "delete": return await remove(data, caller);
-      case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware, nameCheck, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
-      case "related": return await relatedOf(data, { ownerAware });
+      case "preview": return await preview(data, caller, { oneInbox, usePeople, ownerAware, relatedActivity, nameCheck, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
+      case "related": return await relatedOf(data, { ownerAware, relatedActivity });
+      case "logRelated": return await logRelated(data, caller, { relatedActivity });
+      case "pauseSequence": return await pauseSequence(data, caller, { relatedActivity });
       case "recipientsPreview": return await recipientsPreview(data, caller, { usePeople, trust: await Feat.isOnFor(request, "contacts.trustLabels"), multi: await Feat.isOnFor(request, "outreach.multiRecipient") });
       case "recipientsFor": return await RL.recipientsFor(data);
       case "saveReceivedFiles": return await require("./files").saveReceived(data, caller);
@@ -1512,7 +1581,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
       case "restartCompany": return await Tracks.restartCompany(data, caller);
       case "runNow": return await runNow(data, caller);
       case "sendNow": return await sendNow(data, caller);
-      case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
+      case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware, relatedActivity, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
       case "enrolment": return await enrolmentOp(data, caller);
       case "setStatus": return await setStatus(data, caller);
       case "previewPeople": return await previewPeople(data, caller);

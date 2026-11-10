@@ -2210,7 +2210,13 @@
       if (selectedId !== t.id || !$('relLine')) return;
       if (!d.related?.length) { $('relLine').innerHTML = ''; return; }
       const FLAG = { said_no: 'pill--bad', in_conversation: 'pill--warn' };
-      $('relLine').innerHTML = `<details style="font-size:0.8rem;"${(d.flags || []).length ? ' open' : ''}><summary style="cursor:pointer;color:#475569;">Related companies (${d.related.length})${(d.flags || []).map(f => ` <span class="pill ${FLAG[f.kind] || ''}">${esc(f.text)}</span>`).join('')}</summary><ul style="margin:4px 0 0;padding-left:18px;">${d.related.map(r => `<li>${relatedLine(r)}${coFiguresHtml(coCache.get(r.companyId))} · <a href="/portal/search.html?company=${encodeURIComponent(r.companyId)}" target="_blank" rel="noopener">open ↗</a></li>`).join('')}</ul></details>`;
+      $('relLine').innerHTML = `<details style="font-size:0.8rem;"${(d.flags || []).length ? ' open' : ''}><summary style="cursor:pointer;color:#475569;">Related companies (${d.related.length})${(d.flags || []).map(f => ` <span class="pill ${FLAG[f.kind] || ''}">${esc(f.text)}</span>`).join('')}</summary><ul style="margin:4px 0 0;padding-left:18px;">${d.related.map(r => `<li>${relatedLine(r)}${coFiguresHtml(coCache.get(r.companyId))} · <a href="/portal/search.html?company=${encodeURIComponent(r.companyId)}" target="_blank" rel="noopener">open ↗</a></li>`).join('')}</ul>${isOn('outreach.relatedActivity') && (d.flags || []).some(f => f.activity) ? `<div style="margin:6px 0 2px;"><button type="button" class="btn btn--ghost btn--sm" id="relPause" data-perm="out.write">Pause this company's email sequence</button> <span class="hint">A related company is in conversation (${esc((d.flags || []).filter(f => f.activity).map(f => f.text).join('; '))}). You confirm; Resume brings it back.</span></div>` : ''}</details>`;
+      $('relPause')?.addEventListener('click', async () => {
+        const why = (d.flags || []).filter(f => f.activity).map(f => f.text).join('; ');
+        if (!confirm(`Pause the email sequence of ${t.companyName || 'this company'}?\n\n${why}\n\nNothing is deleted: Resume brings it back (the campaign → Companies).`)) return;
+        const r = await campCall({ action: 'pauseSequence', companyId: t.companyId, reason: why }, 'Paused.');
+        if (r && !r.paused) toast('This company has no running email sequence to pause.');
+      });
     }
     function openThreadTask(t) {
       if (!t.companyId) { toast('Assign this conversation to a company first.'); return; }
@@ -2275,23 +2281,52 @@
           <div class="field"><label for="ntDate">When</label><input type="date" id="ntDate" value="${today}" max="${today}"></div>
           <div class="field"><label for="ntNotes">Notes (optional)</label><textarea id="ntNotes" rows="3" placeholder="What was said">${esc(who ? `With ${who}. ` : '')}</textarea></div>
         </div>
+        <div class="field" id="ntRel" hidden></div>
         <p class="hint" id="ntHint"></p>`, async () => {
         if (!co) { modalError('Choose a company.'); return false; }
         const ch = $('ntCh').value;
         if (mode === 'task') {
           if (!$('ntDue').value) { modalError('Pick the due date.'); return false; }
+          // 10 Nov (outreach.relatedActivity): a call can mention related companies, ticked by hand — they go into the instructions.
+          const alsoTask = ch === 'call' ? ntRelPicked() : [];
+          const mention = alsoTask.length ? `Mention also: ${alsoTask.map(x => x.name).join(', ')}.` : '';
           await callCampaign({ action: 'createTask', companyId: co.id, threadId: pre.threadId || null, channel: ch, dueAt: new Date($('ntDue').value + 'T09:00:00').toISOString(),
-            assignee: $('ntWho').value || null, instructions: $('ntIns').value, templateId: ch === 'letter' ? ($('ntTpl').value || null) : null });
+            assignee: $('ntWho').value || null, instructions: [$('ntIns').value.trim(), mention].filter(Boolean).join('\n'), templateId: ch === 'letter' ? ($('ntTpl').value || null) : null });
           toast(`${CHANNEL_LABELS[ch]} task added for ${co.name}${ch === 'letter' ? ' — in Tasks → Letters to print' : ' — in Tasks → To do'}.`);
           return true;
         }
-        await callCampaign({ action: 'logActivity', companyId: co.id, threadId: pre.threadId || null, channel: ch, outcome: $('ntOut').value,
-          date: new Date($('ntDate').value + 'T12:00:00').toISOString(), notes: $('ntNotes').value });
-        toast(`Recorded on ${co.name}'s activities.`);
+        const alsoDone = ntRelPicked();
+        const made = (await callCampaign({ action: 'logActivity', companyId: co.id, threadId: pre.threadId || null, channel: ch, outcome: $('ntOut').value,
+          date: new Date($('ntDate').value + 'T12:00:00').toISOString(), notes: $('ntNotes').value })).data;
+        let extra = '';
+        if (alsoDone.length && made?.activityId) {
+          try { const out = (await callCampaign({ action: 'logRelated', activityId: made.activityId, companyIds: alsoDone.map(x => x.companyId) })).data; extra = ` Also on ${out.logged} related compan${out.logged === 1 ? 'y' : 'ies'}.`; }
+          catch (e) { extra = ' It could not be logged on the related companies: ' + errText(e); }
+        }
+        toast(`Recorded on ${co.name}'s activities.${extra}`);
         return true;
       }, 'Save');
+      // 10 Nov (outreach.relatedActivity): the related companies, unticked — to mention in a call task, or to log the same activity on.
+      const relCache = new Map();
+      const ntRelPicked = () => [...document.querySelectorAll('#ntRel .ntRelCk:checked')].map(x => ({ companyId: x.value, name: x.dataset.name }));
+      async function ntRelated() {
+        const box = $('ntRel'); if (!box) return;
+        const ch = $('ntCh').value;
+        const wanted = isOn('outreach.relatedActivity') && isOn('outreach.ownerAware') && co && ((mode === 'task' && ch === 'call') || (mode === 'done' && ch !== 'other'));
+        if (!wanted) { box.hidden = true; box.innerHTML = ''; return; }
+        let d = relCache.get(co.id);
+        if (!d) { try { d = (await callCampaign({ action: 'related', companyId: co.id })).data; } catch (e) { return; } relCache.set(co.id, d); }
+        if (!$('ntRel') || !co) return;
+        const list = (d.related || []).slice(0, 6);
+        if (!list.length) { box.hidden = true; box.innerHTML = ''; return; }
+        const was = new Set(ntRelPicked().map(x => x.companyId));
+        box.hidden = false;
+        box.innerHTML = `<label>${mode === 'task' ? 'Mention also in the call (optional)' : 'Also log on a related company (optional)'} <small>none is ticked for you · at most 3</small></label>` + list.map(r => `<label style="display:block;font-weight:400;margin:3px 0;"><input type="checkbox" class="ntRelCk" value="${esc(r.companyId)}" data-name="${esc(r.emailName || r.name)}"${was.has(r.companyId) ? ' checked' : ''}> ${esc(r.name)} <small>${esc((r.why || []).slice(0, 2).join(' · '))}</small></label>`).join('');
+        box.querySelectorAll('.ntRelCk').forEach(ck => ck.addEventListener('change', () => { if (box.querySelectorAll('.ntRelCk:checked').length > 3) ck.checked = false; }));
+      }
       const sync = () => {
         const ch = $('ntCh').value;
+        ntRelated();
         $('ntTask').hidden = mode !== 'task'; $('ntDone').hidden = mode !== 'done';
         $('ntTplF').hidden = ch !== 'letter';
         const outs = (TASK_OUTCOMES[ch] || []).filter(o => o[2] !== 'reopen');
@@ -2318,6 +2353,7 @@
               const c = hits.find(x => x.id === b.dataset.id); co = { id: c.id, name: c.name };
               $('ntCoQ').value = c.name; $('ntCoRes').hidden = true;
               $('ntCoPicked').textContent = `Chosen: ${c.name}`;
+              ntRelated();
               if (c.owner && $('ntWho').querySelector(`option[value="${c.owner}"]`) && !$('ntWho').dataset.touched) $('ntWho').value = c.owner;
             }));
           }, 300);
