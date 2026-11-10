@@ -817,7 +817,7 @@
   <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
 
   <script type="module">
-    import { auth, db, storage, addReads, updateDoc, setDoc, addDoc, deleteDoc } from './firebase-config.js';
+    import { auth, db, storage, addReads, updateDoc, setDoc, addDoc, deleteDoc, FIRESTORE_PROJECT_ID } from './firebase-config.js';
     import { guardPage } from './access.js';
     import { INSTANCE } from './instance-config.js';
     import { isOn, stateOf, currentFlags } from './features.js';
@@ -3381,19 +3381,19 @@
     }
     const pillOf = (k) => (k && isOn('contacts.trustLabels') ? ' ' + trustPillHtml(k, '', esc) : '');
     async function loadPeopleFor(companyIds) {
-      for (const id of [...new Set(companyIds)].filter(x => x && !peopleCache.has(x))) {
+      const todo = [...new Set(companyIds)].filter(x => x && !peopleCache.has(x));
+      let nextI = 0; // 10 Nov: 6 companies at a time, over REST (it was one company after another through the SDK: 40 task cards = 80+ slow calls)
+      const one = async () => { for (;;) {
+        const id = todo[nextI++]; if (id === undefined) return;
         try {
-          const ls = await getDocs(query(collection(db, 'searchPersonLinks'), where('companyId', '==', id), limit(60)));
-          addReads(ls.size || 1);
+          const ls = await restEqDocs('searchPersonLinks', 'companyId', id, 60);
           // B5: a holding is stored as "entity" — never a person to write to.
-          const links = ls.docs.map(d => d.data()).filter(l => l.personId && !['entity', 'company'].includes(l.personEntityType))
+          const links = ls.filter(l => l.personId && !['entity', 'company'].includes(l.personEntityType))
             .filter(l => (isOn('search.people') ? !(l.isContact && l.contactCurrent === false) : !l.isContact)) // People merge: contact people
             .map(l => ({ l, rank: rankLink(l) })).sort((a, b) => b.rank - a.rank).slice(0, 30);
           const people = new Map();
           for (let i = 0; i < links.length; i += 30) {
-            const ps = await getDocs(query(collection(db, 'searchPeople'), where(documentId(), 'in', links.slice(i, i + 30).map(x => x.l.personId))));
-            addReads(ps.size || 1);
-            ps.docs.forEach(d => people.set(d.id, d.data()));
+            (await restByIds('searchPeople', links.slice(i, i + 30).map(x => x.l.personId))).forEach(d => people.set(d.id, d));
           }
           peopleCache.set(id, links.map(({ l, rank }) => {
             const p = people.get(l.personId) || {};
@@ -3405,7 +3405,8 @@
               trusts: { emails: emails.map(v => detailTrustKey(p, 'email', v)), phone: personDetails(p, 'phone', co)[0] ? detailTrustKey(p, 'phone', personDetails(p, 'phone', co)[0]) : null, linkedin: personDetails(p, 'linkedin', co)[0] ? detailTrustKey(p, 'linkedin', personDetails(p, 'linkedin', co)[0]) : null } };
           }));
         } catch (e) { console.warn('people', id, e); peopleCache.set(id, []); }
-      }
+      } };
+      await Promise.all(Array.from({ length: Math.min(6, todo.length) }, one));
       refreshReads();
     }
     // Everyone who can receive an email for a company, best first per kind.
@@ -6343,16 +6344,40 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       $('todoChipN').textContent = dueMine ? `(${num(dueMine)} due)` : '';
     }
 
+    // 10 Nov: the reads that fill the task cards (companies, their people) go over REST, as in search.html: the SDK's local cache
+    // (persistentLocalCache) makes every one of them take seconds, and a page of tasks needs dozens. Plain objects back, with the id.
+    function restVal(v) {
+      if (v == null || 'nullValue' in v) return null;
+      if ('stringValue' in v) return v.stringValue;
+      if ('integerValue' in v) return Number(v.integerValue);
+      if ('doubleValue' in v) return v.doubleValue;
+      if ('booleanValue' in v) return v.booleanValue;
+      if ('timestampValue' in v) return v.timestampValue; // tsMs() reads the text
+      if ('referenceValue' in v) return v.referenceValue;
+      if ('arrayValue' in v) return (v.arrayValue.values || []).map(restVal);
+      if ('mapValue' in v) return restFields(v.mapValue.fields || {});
+      return null;
+    }
+    function restFields(f) { const o = {}; for (const k in f) o[k] = restVal(f[k]); return o; }
+    async function restRun(structuredQuery) {
+      const token = await auth.currentUser.getIdToken();
+      const parent = `projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents`;
+      const res = await fetch(`https://firestore.googleapis.com/v1/${parent}:runQuery`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery }) });
+      if (!res.ok) throw new Error(`Firestore REST query failed (${res.status})`);
+      const docs = ((await res.json()) || []).filter(r => r.document).map(r => r.document);
+      addReads(docs.length || 1);
+      return docs.map(d => ({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFields(d.fields || {}) }));
+    }
+    const restEqDocs = (coll, field, value, max = 300) => restRun({ from: [{ collectionId: coll }], where: { fieldFilter: { field: { fieldPath: field }, op: 'EQUAL', value: { stringValue: value } } }, limit: max });
+    const restByIds = (coll, ids) => restRun({ from: [{ collectionId: coll }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values: ids.map(id => ({ referenceValue: `projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents/${coll}/${id}` })) } } } } });
     async function loadCompaniesFor(ids) {
       const need = [...new Set(ids)].filter(id => id && !coCache.has(id));
       if (!need.length) return;
       if (companies) need.forEach(id => { const c = companies.find(x => x.id === id); if (c) coCache.set(id, c); });
       const rest = need.filter(id => !coCache.has(id));
-      for (let i = 0; i < rest.length; i += 30) {
-        const snap = await getDocs(query(collection(db, 'searchCompanies'), where(documentId(), 'in', rest.slice(i, i + 30))));
-        addReads(snap.size || 1);
-        snap.docs.forEach(d => coCache.set(d.id, { id: d.id, ...d.data() }));
-      }
+      const chunks = [];
+      for (let i = 0; i < rest.length; i += 30) chunks.push(rest.slice(i, i + 30));
+      await Promise.all(chunks.map(async (chunk) => { (await restByIds('searchCompanies', chunk)).forEach(d => coCache.set(d.id, d)); })); // in parallel, over REST
       refreshReads();
     }
     // T4: who signs a letter / call script — the task's choice, else the
