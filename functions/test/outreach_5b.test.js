@@ -132,21 +132,21 @@ function makeRes() { const r = {}; return { r, res: { status(c) { r.code = c; re
 
   // Approved ahead of its date → goes out on the date; then finishes by itself
   const rE = (await rec({ action: "save", recurring: { name: "Novembro", listId: "L1", templateId: "upd", senderId: "andre.rocha@douropartners.pt" } })).recurringId;
-  store.set(`outreachRecurring/${rE}`, { ...get(`outreachRecurring/${rE}`), nextIssueAt: Timestamp.fromDate(new Date("2026-11-10T10:00:00Z")) });
-  await run("2026-11-09T10:30:00Z");
+  store.set(`outreachRecurring/${rE}`, { ...get(`outreachRecurring/${rE}`), nextIssueAt: Timestamp.fromDate(new Date("2036-11-10T10:00:00Z")) });
+  await run("2036-11-09T10:30:00Z");
   const iE = docs("outreachIssues").find((i) => i.recurringId === rE);
   const apE = await rec({ action: "approveIssue", issueId: iE.id, subject: "Novembro editado" });
   ok("approve before the date: scheduled, nothing created yet", apE.scheduled === true && apE.listSize === 3 && get(`outreachIssues/${iE.id}`).status === "approved" && !get(`outreachIssues/${iE.id}`).campaignId);
-  await run("2026-11-10T09:00:00Z");
+  await run("2036-11-10T09:00:00Z");
   ok("before its time: still waiting", get(`outreachIssues/${iE.id}`).status === "approved");
   const sentBefore = sends.length;
-  const rL = await run("2026-11-10T10:05:00Z");
+  const rL = await run("2036-11-10T10:05:00Z");
   const cE = get(`outreachIssues/${iE.id}`).campaignId;
   ok("on its date: launched with the edited subject", rL.issuesLaunched === 1 && get(`outreachIssues/${iE.id}`).status === "sending" && get(`outreachCampaigns/${cE}`).kind === "issue");
-  await run("2026-11-10T10:15:00Z"); await run("2026-11-10T10:25:00Z");
+  await run("2036-11-10T10:15:00Z"); await run("2036-11-10T10:25:00Z");
   const sentE = sends.slice(sentBefore);
   ok("all 3 sent, each enrolment completed as soon as its email left", sentE.length === 3 && sentE.every((x) => x.body.subject === "Novembro editado") && docs("outreachEnrolments").filter((e) => e.campaignId === cE).every((e) => e.status === "completed" && e.stopReason === "Issue sent"));
-  const rF = await run("2026-11-10T10:35:00Z");
+  const rF = await run("2036-11-10T10:35:00Z");
   ok("then the issue campaign finishes and the issue is marked sent", rF.issuesFinished === 1 && get(`outreachCampaigns/${cE}`).status === "finished" && get(`outreachIssues/${iE.id}`).status === "sent");
   const n6 = await rec({ action: "issueNow", recurringId: rE });
   await rec({ action: "approveIssue", issueId: n6.issueId }); // due now → out now
