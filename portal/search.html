@@ -2760,6 +2760,27 @@ async function restFetchArrayContains(collectionName, field, value, max = 20){
   addReads(docs.length || 1);
   return docs.map(d => ({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) }));
 }
+// 10 Nov: every document matching a filter, over REST, a page of 300 at a time (the server's cap), up to `max`; `select` keeps only those
+// fields. For the reads that open a company, a person or the lists: see restFetchAllDocs for why the SDK is slow here.
+const restEq = (field, value) => ({ fieldFilter: { field: { fieldPath: field }, op: 'EQUAL', value: typeof value === 'number' ? { integerValue: String(value) } : { stringValue: String(value) } } });
+async function restQueryAll(collectionName, where, { max = 5000, select = null } = {}){
+  const token = await auth.currentUser.getIdToken();
+  const parent = `projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents`;
+  const out = []; let after = null;
+  for (;;) {
+    const structuredQuery = { from: [{ collectionId: collectionName }], ...(where ? { where } : {}), orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit: REST_PAGE_SIZE,
+      ...(select ? { select: { fields: select.map(f => ({ fieldPath: f })) } } : {}),
+      ...(after ? { startAt: { values: [{ referenceValue: `${parent}/${collectionName}/${after}` }], before: false } } : {}) };
+    const res = await fetch(`https://firestore.googleapis.com/v1/${parent}:runQuery`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery }) });
+    if (!res.ok) throw new Error(`Firestore REST query of ${collectionName} failed (${res.status})`);
+    const docs = ((await res.json()) || []).filter(r => r.document).map(r => r.document);
+    addReads(docs.length || 1);
+    for (const d of docs) out.push({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) });
+    if (docs.length < REST_PAGE_SIZE || out.length >= max) break;
+    after = docs[docs.length - 1].name.slice(docs[docs.length - 1].name.lastIndexOf('/') + 1);
+  }
+  return out;
+}
 // 10 Nov: any single-collection structuredQuery over REST (the NIF and name look-ups below: a range, an array-contains, an order). Plain objects back.
 async function restQueryDocs(collectionName, structuredQuery){
   const token = await auth.currentUser.getIdToken();
@@ -2964,13 +2985,15 @@ async function fetchTotalCount(){
 // current person (owner, manager or contact) with an email or phone of their own.
 let reachCompanyIds = null;
 async function fetchReachCompanyIds(){
-  const snap = await getDocs(query(collection(db,'searchPeople'), where('reach', '!=', [])));
-  const ids = snap.docs.filter(d => (d.data().reach || []).some(e => ['email', 'phone'].includes(e.type) && (e.status || 'ok') === 'ok')).map(d => d.id);
-  const out = new Set();
-  for (let i = 0; i < ids.length; i += 30) {
-    const ls = await getDocs(query(collection(db,'searchPersonLinks'), where('personId', 'in', ids.slice(i, i + 30))));
-    ls.docs.forEach(d => { const l = d.data(); if (linkCurrentAny(l)) out.add(l.companyId); });
-  }
+  // 10 Nov: over REST (only the reach field comes back) and the link look-ups in parallel, instead of ~12 000 people through the SDK, 30 at a time.
+  // (A != query cannot be paged by id; one REST answer holds at most 300 people. Today ~250 have contact details: if it ever fills the page, the SDK path below reads them all.)
+  const notEmpty = { fieldFilter: { field: { fieldPath: 'reach' }, op: 'NOT_EQUAL', value: { arrayValue: { values: [] } } } };
+  let people = await restQueryDocs('searchPeople', { where: notEmpty, select: { fields: [{ fieldPath: 'reach' }] } });
+  if (people.length >= 300) people = (await getDocs(query(collection(db,'searchPeople'), where('reach', '!=', [])))).docs.map(d => ({ id: d.id, ...d.data() }));
+  const ids = people.filter(pp => (pp.reach || []).some(e => ['email', 'phone'].includes(e.type) && (e.status || 'ok') === 'ok')).map(pp => pp.id);
+  const out = new Set(), chunks = [];
+  for (let i = 0; i < ids.length; i += 30) chunks.push(ids.slice(i, i + 30));
+  await mapPool(chunks, async (chunk) => { const ls = await restFetchWhereIn('searchPersonLinks', 'personId', chunk); ls.forEach(l => { if (linkCurrentAny(l)) out.add(l.companyId); }); }, 8);
   reachCompanyIds = out;
   return out;
 }
@@ -3545,8 +3568,8 @@ function ctShowTip(cell, ev){
   tip.style.left = Math.min(r.left, window.innerWidth - 400) + 'px'; tip.style.top = (r.bottom + 6) + 'px';
   if (!ctEnrolCache.has(c.id)) {
     ctEnrolCache.set(c.id, null);
-    getDocs(query(collection(db, 'outreachEnrolments'), where('companyId', '==', c.id), limit(20)))
-      .then(snap => { ctEnrolCache.set(c.id, snap.docs.map(d => d.data()).filter(e => !e.isTest)); if (!tip.hidden && tip.dataset.for === c.id) draw(); })
+    restQueryAll('outreachEnrolments', restEq('companyId', c.id), { max: 20 }) // 10 Nov: over REST
+      .then(list => { ctEnrolCache.set(c.id, list.slice(0, 20).filter(e => !e.isTest)); if (!tip.hidden && tip.dataset.for === c.id) draw(); })
       .catch(() => { ctEnrolCache.set(c.id, []); });
   }
   tip.dataset.for = c.id;
@@ -3874,8 +3897,7 @@ function backToList(){   // the list again (after a delete, …): the history st
 }
 
 async function loadActivities(companyId){
-  const snap = await getDocs(query(collection(db,'searchActivities'), where('companyId','==',companyId)));
-  activities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  activities = await restQueryAll('searchActivities', restEq('companyId', companyId)); // 10 Nov: over REST (the SDK cache made opening Activities slow)
   activities.sort((a,b) => (tsToDate(b.date)?.getTime()||0) - (tsToDate(a.date)?.getTime()||0));
 }
 
@@ -4884,10 +4906,9 @@ async function companyFilesShow(){
     if (el) el.innerHTML = '<div class="card"><div class="sec-title">Files</div><div style="font-size:0.85rem;color:var(--text-light);">Loading…</div></div>';
     const id = currentCoId;
     try {
-      const snap = await getDocs(query(collection(db, 'outreachFiles'), where('companyId', '==', id), limit(100)));
-      addReads(snap.size || 1);
+      const fl = (await restQueryAll('outreachFiles', restEq('companyId', id), { max: 100 })).slice(0, 100); // 10 Nov: over REST
       if (id !== currentCoId) return;
-      companyFiles.list = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (tsToDate(b.createdAt)?.getTime()||0) - (tsToDate(a.createdAt)?.getTime()||0));
+      companyFiles.list = fl.sort((a, b) => (tsToDate(b.createdAt)?.getTime()||0) - (tsToDate(a.createdAt)?.getTime()||0));
     } catch (e) {
       if (el) el.innerHTML = `<div class="card"><div class="sec-title">Files</div><div style="font-size:0.85rem;color:#B91C1C;">Could not load the files: ${esc(e.message)}</div></div>`;
       return;
@@ -5105,17 +5126,13 @@ function renderDeal(c){
 
 async function fetchCompanyLinks(companyId, force=false){
   if (!force && companyLinksCache.has(companyId)) return companyLinksCache.get(companyId);
-  const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('companyId','==',companyId)));
-  addReads(snap.docs.length || 1);
-  const links = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+  const links = await restQueryAll('searchPersonLinks', restEq('companyId', companyId)); // 10 Nov: over REST
   companyLinksCache.set(companyId, links);
   return links;
 }
 async function fetchPersonLinks(personId, force=false){
   if (!force && personLinksCache.has(personId)) return personLinksCache.get(personId);
-  const snap = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','==',personId)));
-  addReads(snap.docs.length || 1);
-  const links = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+  const links = await restQueryAll('searchPersonLinks', restEq('personId', personId)); // 10 Nov: over REST
   personLinksCache.set(personId, links);
   return links;
 }
@@ -5476,9 +5493,8 @@ const sameEmailCache = new Map(); // companyId → other companies (this page vi
 async function sameEmailCompanies(c){
   const e = String(c.companyEmail || '').trim().toLowerCase(); if (!e) return [];
   if (sameEmailCache.has(c.id)) return sameEmailCache.get(c.id);
-  const snap = await getDocs(query(collection(db,'searchCompanies'), where('companyEmail', '==', e), limit(11)));
-  addReads(snap.size || 1);
-  const out = snap.docs.filter(d => d.id !== c.id).map(d => ({ id: d.id, ...d.data() }));
+  const found = (await restQueryAll('searchCompanies', restEq('companyEmail', e), { max: 11 })).slice(0, 11); // 10 Nov: over REST
+  const out = found.filter(d => d.id !== c.id);
   sameEmailCache.set(c.id, out);
   return out;
 }
@@ -5916,11 +5932,10 @@ async function showGroupInList(c){
   const k = ownGroupKey(c); if (!k) return;
   // The list holds a window of companies: fetch the whole group (the card
   // stops at OWN_GROUP_MAX) and add the missing ones, so all of them show.
-  let snap;
-  try { snap = await getDocs(query(collection(db, 'searchCompanies'), where(k.field, '==', k.value))); }
+  let grp;
+  try { grp = await restQueryAll('searchCompanies', restEq(k.field, k.value)); } // 10 Nov: over REST
   catch(e){ console.error(e); alert('Could not load the group: ' + e.message); return; }
-  addReads(snap.docs.length || 1);
-  for (const d of snap.docs) if (!companies.some(x => x.id === d.id)) companies.push(computeFields({ id: d.id, ...d.data() }));
+  for (const d of grp) if (!companies.some(x => x.id === d.id)) companies.push(computeFields(d));
   setGroupKeyFilter(k.value, c.ownershipMeta?.guoName || c.name);
   backToList();
 }
@@ -6480,7 +6495,7 @@ function renderReachCard(p, links){
 async function renderPersonActivities(p){
   const el = document.getElementById('personActs'); if (!el) return;
   let acts = [];
-  try { acts = (await getDocs(query(collection(db,'searchActivities'), where('contactPersonId', '==', p.id), limit(50)))).docs.map(d => ({ id: d.id, ...d.data() })); }
+  try { acts = (await restQueryAll('searchActivities', restEq('contactPersonId', p.id), { max: 50 })).slice(0, 50); }
   catch(e){ console.warn('person activities', e); return; }
   if (currentPersonId !== p.id || !acts.length) return;
   acts.sort((a, b) => (tsToDate(b.date)?.getTime() || 0) - (tsToDate(a.date)?.getTime() || 0));
@@ -6740,24 +6755,23 @@ async function renderPeople(){
       const tokens = personNameTokens(key);
       // Whole-word token match first (handles "silva", "luis silva" in any order);
       // fall back to a prefix range scan for partial words ("silv").
+      // 10 Nov: over REST (restQueryDocs): the SDK's local cache made every search here take many seconds.
+      const arr = (field, v) => ({ fieldFilter: { field: { fieldPath: field }, op: 'ARRAY_CONTAINS', value: { stringValue: v } } });
       if (tokens.length){
-        let snap = await getDocs(query(col, where('namePrefixes','array-contains',tokens[0]), limit(200)));
+        docs = await restQueryDocs('searchPeople', { where: arr('namePrefixes', tokens[0]), limit: 200 });
         // People imported before namePrefixes existed have only whole tokens.
-        if (snap.empty) snap = await getDocs(query(col, where('nameTokens','array-contains',tokens[0]), limit(200)));
-        addReads(snap.docs.length || 1);
-        docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+        if (!docs.length) docs = await restQueryDocs('searchPeople', { where: arr('nameTokens', tokens[0]), limit: 200 });
       }
       if (!docs.length){
-        const snap = await getDocs(query(col, orderBy('nameKey'), where('nameKey','>=',key), where('nameKey','<=',key+''), limit(200)));
-        addReads(snap.docs.length || 1);
-        docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+        docs = await restQueryDocs('searchPeople', { where: { compositeFilter: { op: 'AND', filters: [
+          { fieldFilter: { field: { fieldPath: 'nameKey' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: key } } },
+          { fieldFilter: { field: { fieldPath: 'nameKey' }, op: 'LESS_THAN_OR_EQUAL', value: { stringValue: key + '\uf8ff' } } },
+        ] } }, orderBy: [{ field: { fieldPath: 'nameKey' }, direction: 'ASCENDING' }], limit: 200 });
       }
       // Refine client-side so multi-word searches require every token to match.
       if (tokens.length > 1) docs = docs.filter(p => tokens.every(t => (p.nameTokens||[]).includes(t) || String(p.nameKey||'').includes(t)));
     } else {
-      const snap = await getDocs(query(col, orderBy('updatedAt','desc'), limit(100)));
-      addReads(snap.docs.length || 1);
-      docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+      docs = await restQueryDocs('searchPeople', { orderBy: [{ field: { fieldPath: 'updatedAt' }, direction: 'DESCENDING' }], limit: 100 });
     }
   } catch(e){
     console.error(e);
@@ -7005,13 +7019,12 @@ function reachAdd(list, { type, value, note = '', source = 'manual', by = '', at
 async function emailUsedElsewhere(email, selfPersonId, selfCompanyId){
   const e = reachNorm('email', email), out = [];
   try {
-    const [pp, cc] = await Promise.all([
-      getDocs(query(collection(db, 'searchPeople'), where('reachEmails', 'array-contains', e), limit(6))),
-      getDocs(query(collection(db, 'searchCompanies'), where('emailKeys', 'array-contains', e), limit(6))),
+    const [pp, cc] = await Promise.all([ // 10 Nov: over REST
+      restFetchArrayContains('searchPeople', 'reachEmails', e, 6),
+      restFetchArrayContains('searchCompanies', 'emailKeys', e, 6),
     ]);
-    addReads(pp.size + cc.size);
-    pp.docs.filter(d => d.id !== selfPersonId).forEach(d => out.push(`${d.data().name || d.id} (a person)`));
-    cc.docs.filter(d => d.id !== selfCompanyId).forEach(d => { const x = d.data(); if (String(x.companyEmail || '').toLowerCase() === e || (x.contacts || []).some(k => String(k?.email || '').toLowerCase() === e) || (x.reach || []).some(k => k?.type === 'email' && String(k.value || '').toLowerCase() === e)) out.push(`${x.name || d.id} (a company)`); });
+    pp.filter(d => d.id !== selfPersonId).forEach(d => out.push(`${d.name || d.id} (a person)`));
+    cc.filter(d => d.id !== selfCompanyId).forEach(x => { if (String(x.companyEmail || '').toLowerCase() === e || (x.contacts || []).some(k => String(k?.email || '').toLowerCase() === e) || (x.reach || []).some(k => k?.type === 'email' && String(k.value || '').toLowerCase() === e)) out.push(`${x.name || x.id} (a company)`); });
   } catch (err) { console.warn('same email check', err); }
   return out;
 }

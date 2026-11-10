@@ -54,11 +54,11 @@ ok('company import: a person (own id), a manager link for a "director" column or
 ok('company import: the person\'s email still finds the company', page.includes('...companyIndexFields(r.person?.email ? { ...co, contacts: [{ email: r.person.email }] } : co),'));
 
 // Statistics
-ok('Statistics: companies with a current person who has an OK email or phone', page.includes("where('reach', '!=', [])") && page.includes("(e.status || 'ok') === 'ok')).map(d => d.id);") && page.includes("if (isOn('search.people')) { try { await fetchReachCompanyIds(); }"));
+ok('Statistics: companies with a current person who has an OK email or phone', page.includes("fieldPath: 'reach' }, op: 'NOT_EQUAL'") && page.includes("(e.status || 'ok') === 'ok')).map(pp => pp.id);") && page.includes("if (isOn('search.people')) { try { await fetchReachCompanyIds(); }"));
 ok('Statistics: the "Contacts" line reads "People with an email or phone"; People statistics count each type', page.includes("get label(){ return reachCompanyIds ? 'People with an email or phone' : 'Contacts'; }") && page.includes("{ title: 'Contact \\u2014 People list', get fields(){"));
 
 // Activity
-ok('activity: the person you spoke to is saved and listed on their person page', page.includes('data-pid="${esc(l.personId)}"') && page.includes('contactName: cName||null, contactRole: cRole||null, contactPersonId,') && page.includes("where('contactPersonId', '==', p.id), limit(50)") && page.includes('Activities with them'));
+ok('activity: the person you spoke to is saved and listed on their person page', page.includes('data-pid="${esc(l.personId)}"') && page.includes('contactName: cName||null, contactRole: cRole||null, contactPersonId,') && page.includes("restQueryAll('searchActivities', restEq('contactPersonId', p.id), { max: 50 })") && page.includes('Activities with them'));
 
 // Phone app
 ok('phone: Contacts lists the main contact, then each contact person with their own phone and email', mob.includes("const ctLinks = isOn('search.people') ? links.filter((l) => l.isContact && l.contactCurrent !== false && l.personId !== pc?.personId) : [];") && mob.includes('section(`Contacts <span class="n">${contactCount}</span>`, contacts)'));

@@ -16,7 +16,7 @@ ok('switch is also in portal/features.js (parity)', webFeatures.includes("'searc
 
 ok('Files tab and panel are hidden while the switch is Off (data-feature)', /<button class="tab" data-tab="files" data-feature="search.companyFiles">Files<\/button>/.test(search) && /id="panel-files" data-feature="search.companyFiles"/.test(search));
 ok('the tab loads only when opened (no read with the company)', /if \(name === 'files'\) companyFilesShow\(\);/.test(search) && !/companyFilesShow\(\)[^;]*renderDeal/.test(search));
-ok('the list is the outreachFiles of this company, capped', /collection\(db, 'outreachFiles'\), where\('companyId', '==', id\), limit\(100\)/.test(search));
+ok('the list is the outreachFiles of this company, capped', /restQueryAll\('outreachFiles', restEq\('companyId', id\), \{ max: 100 \}\)\)\.slice\(0, 100\)/.test(search));
 ok('the list is reset when another company opens', /companyFilesReset\(c\);\s*\}/.test(search));
 ok('uploads go through the attachment rules (type, 10 MB) and the same Storage path as Outreach', /fileProblem\(file, \[\]\)/.test(search) && /`outreach\/files\/\$\{id\}\/\$\{filename\}`/.test(search));
 ok('the record is a company file, kept out of the Outreach library, in the uploader\'s name', /library: false, source: 'company', companyId: c\.id, createdAt: serverTimestamp\(\), createdBy: currentUser/.test(search));
