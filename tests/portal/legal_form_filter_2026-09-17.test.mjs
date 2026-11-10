@@ -22,7 +22,7 @@ const filterLine = "if (legalFormF && legalFormOf(c) !== legalFormF) return fals
 if (!page.includes(filterLine)) throw new Error('filter predicate not found in search.html -- getFiltered() may have been refactored');
 const getFilteredIdx = page.indexOf('function getFiltered(');
 const filterLineIdx = page.indexOf(filterLine);
-if (!(getFilteredIdx > 0 && filterLineIdx > getFilteredIdx && filterLineIdx < getFilteredIdx + 4000)){
+if (!(getFilteredIdx > 0 && filterLineIdx > getFilteredIdx && filterLineIdx < getFilteredIdx + 5000)){
   throw new Error('filter predicate is not actually inside getFiltered() -- check placement');
 }
 

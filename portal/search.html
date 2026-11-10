@@ -1064,6 +1064,12 @@
     <p class="hint" style="margin-top:14px;">One-time: builds the search index every company needs so name search can find companies that aren't currently loaded, by any word, not just an exact substring. Safe to re-run; only needed once, or after a bulk rename.</p>
     <button class="btn btn--ghost btn--sm" id="rebuildNameIndexBtn" style="margin-top:8px;">↻ Rebuild company name search index</button>
 
+    <div data-feature="search.phoneSearch">
+    <p class="hint" style="margin-top:14px;">Phone search: fills the search index of phone numbers (the 9 national digits, without +351 or spaces) on every company and every person, so a number typed in the search box finds them. Foreign numbers are not indexed yet. Only writes the records whose index is missing or out of date; safe to re-run, e.g. after an import.</p>
+    <button class="btn btn--ghost btn--sm" id="rebuildPhoneIndexBtn" style="margin-top:8px;">↻ Rebuild phone search index</button>
+    <span class="hint" id="rebuildPhoneIndexMsg" style="margin-left:8px;"></span>
+    </div>
+
     <p class="hint" style="margin-top:14px;">Finds companies whose NIF field holds something other than a genuine 9-digit Portuguese NIF — most often a 14-digit Brazilian CNPJ picked up by an older, now-fixed import bug — and moves it to Foreign tax ID instead, clearing NIF so it's no longer mistaken for a validated Portuguese identity. Nothing is discarded. Safe to re-run — scans fresh each time rather than a fixed list.</p>
     <button class="btn btn--ghost btn--sm" id="scanBadNifBtn" style="margin-top:8px;">🔍 Scan for corrupted NIF values</button>
     <div id="badNifResult" style="margin-top:10px;font-size:0.82rem;"></div>
@@ -3330,6 +3336,8 @@ function getFiltered(){
   // names carry accents in the source data but people rarely type them.
   const search = deburr(document.getElementById('searchInput').value||'');
   const searchDigits = search.replace(/[^a-z0-9]/gi,'');
+  const phoneK = currentPhoneKey(); // 10 Nov (search.phoneSearch): a full Portuguese number typed in the box
+  const phoneIds = phoneK ? phoneHits.get(phoneK) : null;
   const stageF = document.getElementById('stageFilter').value;
   const ownerF = document.getElementById('ownerFilter').value;
   const fitMin = parseFloat(document.getElementById('fitMin').value);
@@ -3368,7 +3376,8 @@ function getFiltered(){
       const nameHit = deburr(c.name).includes(search);
       const nifHit  = searchDigits && String(c.nif||'').replace(/[^a-z0-9]/gi,'').toLowerCase().includes(searchDigits);
       const ftidHit = searchDigits && String(c.foreignTaxId||'').replace(/[^a-z0-9]/gi,'').toLowerCase().includes(searchDigits);
-      if (!nameHit && !nifHit && !ftidHit) return false;
+      const phoneHit = !!phoneK && ((c.phoneKeys || []).includes(phoneK) || !!phoneIds?.has(c.id));
+      if (!nameHit && !nifHit && !ftidHit && !phoneHit) return false;
     }
     if (stageF && c.stage !== stageF) return false;
     if (ownerF && c.owner !== ownerF) return false;
@@ -3512,12 +3521,24 @@ document.addEventListener('mouseover', (ev) => {
   if (cell && cell.querySelector('.ct')) ctShowTip(cell, ev);
   else if (tip && !tip.hidden) tip.hidden = true;
 });
+// 10 Nov (search.phoneSearch): the box holds a full Portuguese number — the key it stands for, or null.
+function currentPhoneKey(){
+  if (!isOn('search.phoneSearch')) return null;
+  return phoneKey(document.getElementById('searchInput')?.value);
+}
+// companyId -> why it matched, per number looked up: "Company phone" or "Phone of Paula Ribeiro".
+const phoneHits = new Map();
+function phoneChip(c){
+  const k = currentPhoneKey(); if (!k) return '';
+  const why = phoneHits.get(k)?.get(c.id) || ((c.phoneKeys || []).includes(k) ? 'Company phone' : '');
+  return why ? ` <span class="badge" style="margin-left:6px;" title="Found by the phone number you typed">☎ ${esc(why)}</span>` : '';
+}
 function rowHtml(c){
   const excluded = c.stage === 'pass' && c.reasonExcluded === 'outside_sector';
   const ctOn = isOn('search.contactColumns'); // 27 Oct: Flags + Contacted columns instead of tags after the name
   return `<tr class="row-clickable" data-id="${c.id}">
     <td class="sel-col" onclick="event.stopPropagation()"><input type="checkbox" class="rowSel" data-id="${esc(c.id)}" aria-label="Select ${esc(c.name)}"${selectedCo.has(c.id) ? ' checked' : ''}></td>
-    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${ctOn ? '' : `${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}${c.doNotContact?.on ? ' <span class="badge badge-red" style="margin-left:4px;" title="Do not contact">🚫</span>' : ''}${c.contactable === false ? ' ' + contactableBadge(c, 'margin-left:4px;') : ''}`}</td>
+    <td class="company-name-cell" title="${esc(c.name)}">${esc(c.name)}${phoneChip(c)}${ctOn ? '' : `${excluded?' <span class="badge badge-red" style="margin-left:4px;">Excl. sector</span>':''}${OUTREACH_BADGE[c.outreachStatus] ? ` <span class="badge ${OUTREACH_BADGE[c.outreachStatus][1]}" style="margin-left:4px;" title="Outreach status">${OUTREACH_BADGE[c.outreachStatus][0]}</span>` : ''}${c.activeCampaignName ? ` <span class="badge badge-blue" style="margin-left:4px;" title="In an Outreach campaign">📣 ${esc(c.activeCampaignName)}</span>` : ''}${c.doNotContact?.on ? ' <span class="badge badge-red" style="margin-left:4px;" title="Do not contact">🚫</span>' : ''}${c.contactable === false ? ' ' + contactableBadge(c, 'margin-left:4px;') : ''}`}</td>
     <td class="ct-cell" data-feature="search.contactColumns">${ctOn ? flagsHtml(c) : ''}</td><td class="ct-cell" data-feature="search.contactColumns" data-ctid="${esc(c.id)}">${ctOn ? contactedHtml(c) : ''}</td>
     <td style="text-align:center;">${c.website ? `<a href="${esc(extUrl(c.website))}" target="_blank" rel="noopener noreferrer" title="${esc(c.website)}" onclick="event.stopPropagation()" style="color:var(--primary);">🔗</a>` : '<span style="color:var(--text-light);">—</span>'}</td>
     <td class="sector-cell" title="${esc(c.sector||'')}${c.subSector?' › '+esc(c.subSector):''}">${esc(c.sector||'—')}${c.subSector?'<br><span style="font-size:0.72rem;">'+esc(c.subSector)+'</span>':''}</td>
@@ -4553,8 +4574,9 @@ function companyReachCardHtml(c){
 async function saveCompanyReach(c, list, change){
   const extra = list.filter(e => e.type === 'email' && (e.status || 'ok') === 'ok').map(e => ({ email: e.value }));
   const emailKeys = companyEmailKeys({ ...c, contacts: [...(c.contacts || []), ...extra] }); // the same-email index includes the new addresses
-  await updateDoc(doc(db, 'searchCompanies', c.id), { reach: list, emailKeys, updatedAt: serverTimestamp(), updatedBy: currentUser });
-  c.reach = list; c.emailKeys = emailKeys; companyReachEditId = null;
+  const phoneKeys = companyPhoneKeys({ ...c, reach: list });
+  await updateDoc(doc(db, 'searchCompanies', c.id), { reach: list, emailKeys, phoneKeys, updatedAt: serverTimestamp(), updatedBy: currentUser });
+  c.reach = list; c.emailKeys = emailKeys; c.phoneKeys = phoneKeys; companyReachEditId = null;
   try { await logAuto(c.id, 'company_edited', `Company contact details: ${change}`); } catch (e) {}
 }
 function wireCompanyReach(c){
@@ -4581,8 +4603,9 @@ function wireCompanyReach(c){
       try {
         const extra = r.list.filter(x => x.type === 'email' && (x.status || 'ok') === 'ok').map(x => ({ email: x.value }));
         const emailKeys = companyEmailKeys({ ...c, ...r.patch, contacts: [...(c.contacts || []), ...extra] });
-        await updateDoc(doc(db, 'searchCompanies', c.id), { ...r.patch, emailKeys, updatedAt: serverTimestamp(), updatedBy: currentUser });
-        Object.assign(c, r.patch, { emailKeys });
+        const phoneKeys = companyPhoneKeys({ ...c, ...r.patch, reach: r.list });
+        await updateDoc(doc(db, 'searchCompanies', c.id), { ...r.patch, emailKeys, phoneKeys, updatedAt: serverTimestamp(), updatedBy: currentUser });
+        Object.assign(c, r.patch, { emailKeys, phoneKeys });
         try { await logAuto(c.id, 'company_edited', `Company contact details: ${e.value} is now the company's own ${e.type}`); } catch (err) {}
         redo();
       } catch (err) { alert('Error: ' + err.message); t.disabled = false; }
@@ -6101,7 +6124,7 @@ async function pmAdd(c, f, similar){
     pid = 'm_' + doc(collection(db,'searchPeople')).id;
     await setDoc(doc(db,'searchPeople', pid), {
       name: f.name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey),
-      entityType: 'person', source: 'manual', reach, reachEmails: reachEmailsOf(reach), hiddenOrbis: [], ...(f.country ? { country: f.country } : {}), ...genderFieldsFor(f.name),
+      entityType: 'person', source: 'manual', reach, reachEmails: reachEmailsOf(reach), reachPhones: reachPhonesOf(reach), hiddenOrbis: [], ...(f.country ? { country: f.country } : {}), ...genderFieldsFor(f.name),
       notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: 0,
       createdAt: serverTimestamp(), createdBy: currentUser, updatedAt: serverTimestamp(), updatedBy: currentUser,
     });
@@ -6111,7 +6134,7 @@ async function pmAdd(c, f, similar){
     let list = existing?.reach || [];
     for (const e of reach) { const r = reachAdd(list, { type: e.type, value: e.value, by: currentUser, at: e.addedAt }); if (!r.error) list = r.list; }
     const personData = { name: f.name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), entityType: 'person', updatedAt: serverTimestamp(),
-      ...(f.country ? { country: f.country } : {}), ...(reach.length ? { reach: list, reachEmails: reachEmailsOf(list) } : {}) };
+      ...(f.country ? { country: f.country } : {}), ...(reach.length ? { reach: list, reachEmails: reachEmailsOf(list), reachPhones: reachPhonesOf(list, existing) } : {}) };
     if (!existing) Object.assign(personData, { createdAt: serverTimestamp(), linkCount: 0, currentLinkCount: 0, notes: null, uci: null, matchedCompanyId: null, ...genderFieldsFor(f.name) });
     await setDoc(doc(db,'searchPeople', pid), personData, { merge: true });
   }
@@ -6171,7 +6194,7 @@ async function bulkAddPeople(rows, onProgress){
     const pid = 'm_' + doc(collection(db,'searchPeople')).id;
     const role = pp.role || (pp.manager ? 'Director' : '');
     batch.set(doc(db,'searchPeople', pid), { name, nameKey, nameTokens: personNameTokens(nameKey), namePrefixes: namePrefixes(nameKey), entityType: 'person', source: 'manual', ...genderFieldsFor(name),
-      reach, reachEmails: reachEmailsOf(reach), hiddenOrbis: [], notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: pp.manager ? 1 : 0,
+      reach, reachEmails: reachEmailsOf(reach), reachPhones: reachPhonesOf(reach), hiddenOrbis: [], notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: pp.manager ? 1 : 0,
       createdAt: serverTimestamp(), createdBy: currentUser, updatedAt: serverTimestamp(), updatedBy: currentUser });
     const f = pp.manager ? { manager: true, roles: [role], mgmtCurrent: true } : { other: true, role: role || null };
     batch.set(doc(db,'searchPersonLinks', `${pid}__${r.newId}`), { personId: pid, companyId: r.newId, personName: name, companyName: r.co.name || '', personEntityType: 'person',
@@ -6231,7 +6254,7 @@ async function copyLinkToContacts(linkId, role){
   if (contacts.some(ct => personNameKey(ct.name) === personNameKey(link.personName))){ alert(`${link.personName} is already in Contacts.`); return; }
   contacts.push({ name: link.personName, role: role || (link.mgmtRoles || [])[0] || 'Management Team', email:'', phone:'', linkedin:'', source:'online_research', notes:'From Orbis ownership data', isPrimary: contacts.length === 0 });
   try {
-    await updateDoc(doc(db,'searchCompanies',c.id), { contacts, emailKeys: companyEmailKeys({ ...c, contacts }), updatedAt: serverTimestamp() });
+    await updateDoc(doc(db,'searchCompanies',c.id), { contacts, emailKeys: companyEmailKeys({ ...c, contacts }), phoneKeys: companyPhoneKeys({ ...c, contacts }), updatedAt: serverTimestamp() });
     c.contacts = contacts; cacheCompanies();
     await logAuto(c.id, 'contact_added', `Added contact from Ownership: ${link.personName}`);
     renderContacts(c);
@@ -6279,7 +6302,7 @@ function backFromPerson(){
 // 20 Oct (people merge): save a person's emails / phones / LinkedIn and log it
 // on their current companies — used by the person page and the People tab.
 async function savePersonReach(p, reach, hiddenOrbis, change, links){
-  await updateDoc(doc(db,'searchPeople', p.id), { reach, hiddenOrbis, reachEmails: reachEmailsOf(reach), updatedAt: serverTimestamp(), updatedBy: currentUser });
+  await updateDoc(doc(db,'searchPeople', p.id), { reach, hiddenOrbis, reachEmails: reachEmailsOf(reach), reachPhones: reachPhonesOf(reach, p), updatedAt: serverTimestamp(), updatedBy: currentUser });
   p.reach = reach; p.hiddenOrbis = hiddenOrbis; personDocCache.delete(p.id);
   logPortal('person_contact_edit', { personId: p.id, name: p.name });
   const ls = links || await fetchPersonLinks(p.id).catch(() => []);
@@ -6955,6 +6978,33 @@ function reachRemove(list, id){
   return out;
 }
 const reachEmailsOf = (list) => [...new Set((list || []).filter(e => e.type === 'email').map(e => reachNorm('email', e.value)))];
+// 10 Nov (search.phoneSearch): the phone search key — a Portuguese number reduced to its 9 national digits, so
+// "+351 91 799 57 84", "00351917995784" and "917995784" are one key. The stored value is never changed; this
+// is only an index. Foreign numbers (any other country code) and odd lengths give no key, for now.
+function phoneKey(v){
+  const raw = String(v == null ? '' : v).trim();
+  let d = raw.replace(/\D/g, '');
+  if (/^(\+|00)/.test(raw) || (d.length === 12 && d.startsWith('351'))) {
+    if (/^00/.test(raw) && !raw.startsWith('+')) d = d.slice(2);
+    if (d.startsWith('351') && d.length === 12) return d.slice(3);
+    return null;
+  }
+  return d.length === 9 ? d : null;
+}
+// A text field may hold several numbers ("253 123 456 / 253 123 457"): one key each.
+function phoneKeysOfText(v){
+  return String(v == null ? '' : v).split(/[;,|\/\n]+/).map(phoneKey).filter(Boolean);
+}
+// A person's keys: their own phones (reach) and what Orbis gave (orbisPhones, old phone field).
+function reachPhonesOf(list, p){
+  const vals = [...(list || []).filter(e => e && e.type === 'phone').map(e => e.value), ...(p?.orbisPhones || []), p?.phone];
+  return [...new Set(vals.flatMap(phoneKeysOfText))];
+}
+// A company's keys: its own phone, the phones in its contact details, and its contacts' phones.
+function companyPhoneKeys(c){
+  const vals = [c?.companyPhone, ...(c?.reach || []).filter(e => e && e.type === 'phone').map(e => e.value), ...(c?.contacts || []).map(x => x?.phone)];
+  return [...new Set(vals.flatMap(phoneKeysOfText))];
+}
 function reachOrbis(p, type){
   const f = REACH_ORBIS[type]; if (!f) return [];
   const hidden = new Set((p?.hiddenOrbis || []).map(String));
@@ -8649,6 +8699,7 @@ async function confirmPeopleImport(){
         // switchboard number that changes between imports keeps both: the old
         // one may still reach someone, and the change is itself a signal.
         ...(r.phone    ? { orbisPhones: arrayUnion(r.phone) }        : {}),
+        ...(phoneKeysOfText(r.phone).length ? { reachPhones: arrayUnion(...phoneKeysOfText(r.phone)) } : {}), // 10 Nov (search.phoneSearch): the search index follows
         ...(r.fax      ? { orbisFaxes: arrayUnion(r.fax) }           : {}),
         ...(r.email    ? { orbisEmails: arrayUnion(r.email) }        : {}),
         ...(r.website  ? { orbisWebsites: arrayUnion(r.website) }    : {}),
@@ -10532,6 +10583,7 @@ async function confirmCompaniesImport(){
         ...(derivedSector ? { sector: derivedSector.sector, ...(derivedSector.subSector ? { subSector: derivedSector.subSector } : {}) } : {}),
         nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes,
         ...((merged.emailKeys || []).length || match.emailKeys ? { emailKeys: merged.emailKeys || [] } : {}),
+        ...((merged.phoneKeys || []).length || match.phoneKeys ? { phoneKeys: merged.phoneKeys || [] } : {}),
         computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
         computedEBITDAMargin: merged.computedEBITDAMargin,
         computedEBITDAWeighted: merged.computedEBITDAWeighted, computedEBITDAMarginWeighted: merged.computedEBITDAMarginWeighted,
@@ -11458,7 +11510,7 @@ async function saveCompany(){
       const merged = computeFields({ ...companies[idx], ...changed, ...companyIndexFields({ ...companies[idx], ...changed }) });
       await updateDoc(doc(db,'searchCompanies',editCoId), {
         ...changed,
-        nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes, emailKeys: merged.emailKeys || [],
+        nameKey: merged.nameKey, nameTokens: merged.nameTokens, namePrefixes: merged.namePrefixes, emailKeys: merged.emailKeys || [], phoneKeys: merged.phoneKeys || [],
         computedRevenue: merged.computedRevenue, computedEBITDA: merged.computedEBITDA,
         computedEBITDAMargin: merged.computedEBITDAMargin,
         computedEBITDAWeighted: merged.computedEBITDAWeighted, computedEBITDAMarginWeighted: merged.computedEBITDAMarginWeighted,
@@ -11598,7 +11650,7 @@ async function saveContact(){
   if (editCtIdx!=null) contacts[editCtIdx] = ct; else contacts.push(ct);
   const btn = document.getElementById('contactSaveBtn'); btn.disabled=true; btn.innerHTML='<span class="spin-sm"></span>Saving…';
   try {
-    await updateDoc(doc(db,'searchCompanies',c.id), { contacts, emailKeys: companyEmailKeys({ ...c, contacts }), updatedAt: serverTimestamp() });
+    await updateDoc(doc(db,'searchCompanies',c.id), { contacts, emailKeys: companyEmailKeys({ ...c, contacts }), phoneKeys: companyPhoneKeys({ ...c, contacts }), updatedAt: serverTimestamp() });
     c.contacts = contacts; cacheCompanies();
     await logAuto(c.id, editCtIdx!=null ? 'contact_edited' : 'contact_added', `${editCtIdx!=null?'Updated':'Added'} contact: ${name}`);
     showEl('contactModal', false); renderContacts(c); renderDetail();
@@ -11610,7 +11662,7 @@ async function removeContact(idx){
   const removed = (c.contacts||[])[idx];
   if (!confirm(`Remove contact "${removed?.name||'this contact'}"?`)) return;
   const contacts = (c.contacts||[]).filter((_,i)=>i!==idx);
-  await updateDoc(doc(db,'searchCompanies',c.id), { contacts, emailKeys: companyEmailKeys({ ...c, contacts }), updatedAt: serverTimestamp() });
+  await updateDoc(doc(db,'searchCompanies',c.id), { contacts, emailKeys: companyEmailKeys({ ...c, contacts }), phoneKeys: companyPhoneKeys({ ...c, contacts }), updatedAt: serverTimestamp() });
   c.contacts = contacts; cacheCompanies();
   await logAuto(c.id, 'contact_removed', `Removed contact: ${removed?.name||''}`);
   renderContacts(c); renderDetail();
@@ -13238,7 +13290,7 @@ function companyEmailKeys(c){
   return [...keys];
 }
 // The search fields for a company record (name + its other names + emails).
-function companyIndexFields(c){ return { ...companySearchFields(c?.name, companyAltNames(c)), emailKeys: companyEmailKeys(c) }; }
+function companyIndexFields(c){ return { ...companySearchFields(c?.name, companyAltNames(c)), emailKeys: companyEmailKeys(c), phoneKeys: companyPhoneKeys(c) }; }
 
 // ── People helpers ───────────────────────────────────────────────────────────
 // Orbis person rows carry no stable ID in list exports and salutations are
@@ -13676,6 +13728,37 @@ document.getElementById('settingsSaveBtn').addEventListener('click', saveSetting
 document.getElementById('recalcBtn').addEventListener('click', recalcAll);
 document.querySelectorAll('.fitWeightInput').forEach(el => el.addEventListener('input', updateFitFormulaPreview));
 document.getElementById('rebuildNameIndexBtn').addEventListener('click', rebuildNameIndex);
+// 10 Nov (search.phoneSearch): fills phoneKeys on every company and reachPhones on every person; writes only what differs.
+const sameKeys = (a, b) => JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
+async function rebuildPhoneIndex(){
+  const btn = document.getElementById('rebuildPhoneIndexBtn'), msg = document.getElementById('rebuildPhoneIndexMsg');
+  btn.disabled = true; msg.textContent = 'Loading the companies…';
+  try {
+    await loadCompaniesWithProgress(p => { msg.textContent = `Loading the companies… ${fmtLoadProgress(p)}`; });
+    const stale = companies.filter(c => !sameKeys(c.phoneKeys, companyPhoneKeys(c)));
+    let nCo = await commitInChunks(stale, 450, (batch, c) => {
+      const phoneKeys = companyPhoneKeys(c);
+      batch.update(doc(db,'searchCompanies', c.id), { phoneKeys });
+      c.phoneKeys = phoneKeys; return true;
+    }, { onProgress: (d, t) => { msg.textContent = `Companies: ${d} of ${t}…`; } });
+    cacheCompanies();
+    let nPe = 0, seen = 0, last = null;
+    for (;;) {
+      const snap = await getDocs(query(collection(db,'searchPeople'), orderBy(documentId()), ...(last ? [where(documentId(), '>', last)] : []), limit(500)));
+      addReads(snap.size || 1);
+      if (!snap.size) break;
+      const todo = snap.docs.filter(d => !sameKeys(d.data().reachPhones, reachPhonesOf(d.data().reach, d.data())));
+      if (todo.length) nPe += await commitInChunks(todo, 450, (batch, d) => { batch.update(d.ref, { reachPhones: reachPhonesOf(d.data().reach, d.data()) }); return true; });
+      seen += snap.size; last = snap.docs[snap.docs.length - 1].id;
+      msg.textContent = `People: ${seen} checked, ${nPe} updated…`;
+      if (snap.size < 500) break;
+    }
+    phoneHits.clear();
+    msg.textContent = `✓ Done: ${nCo} companies and ${nPe} people updated.`;
+  } catch (e) { console.error(e); msg.textContent = 'Error: ' + e.message; }
+  finally { btn.disabled = false; }
+}
+document.getElementById('rebuildPhoneIndexBtn').addEventListener('click', rebuildPhoneIndex);
 document.getElementById('scanBadNifBtn').addEventListener('click', scanBadNif);
 document.getElementById('addBrokerBtn').addEventListener('click', addBroker);
 document.getElementById('exportBtn').addEventListener('click', openExportFields);
@@ -13898,6 +13981,52 @@ function triggerCompanySearch(){
 document.getElementById('nifSearchBtn').addEventListener('click', triggerCompanySearch);
 document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') triggerCompanySearch(); });
 document.getElementById('searchInput').addEventListener('input', () => { document.getElementById('nifSearchStatus').textContent = ''; });
+// 10 Nov (search.phoneSearch): a full Portuguese number ("+351 91 799 57 84", "917995784") is looked up as soon as it is typed:
+// the companies' own phones (phoneKeys) and the people's (reachPhones, through their links), so it works for companies not loaded yet.
+let phoneSeq = 0, phoneTimer = null;
+async function searchPhoneSupplement(key){
+  const statusEl = document.getElementById('nifSearchStatus');
+  const seq = ++phoneSeq;
+  if (phoneHits.has(key)) { renderList(); return; }
+  statusEl.textContent = 'Checking the phone…';
+  try {
+    const [cs, ps] = await Promise.all([
+      getDocs(query(collection(db,'searchCompanies'), where('phoneKeys','array-contains', key), limit(20))),
+      getDocs(query(collection(db,'searchPeople'), where('reachPhones','array-contains', key), limit(20))),
+    ]);
+    addReads((cs.size + ps.size) || 1);
+    if (seq !== phoneSeq) return;
+    const hits = new Map(), want = new Map(), have = new Set(companies.map(c => c.id));
+    cs.docs.forEach(d => { hits.set(d.id, 'Company phone'); if (!have.has(d.id)) { companies.push(computeFields({ id: d.id, ...d.data() })); have.add(d.id); } });
+    const who = new Map(ps.docs.map(d => [d.id, personDisplayName(d.data().name || '')]));
+    const ids = [...who.keys()], byPerson = new Map();
+    for (let i = 0; i < ids.length; i += 30) {
+      const ls = await getDocs(query(collection(db,'searchPersonLinks'), where('personId','in', ids.slice(i, i + 30))));
+      addReads(ls.size || 1);
+      ls.docs.forEach(d => { const l = d.data(); (byPerson.get(l.personId) || byPerson.set(l.personId, []).get(l.personId)).push(l); });
+    }
+    for (const [pid, ls] of byPerson) {
+      const cur = ls.filter(linkCurrentAny), use = cur.length ? cur : ls; // a person with no current company still leads to their old ones
+      for (const l of use) { const label = `Phone of ${who.get(pid) || 'a person'}`; if (!hits.has(l.companyId)) hits.set(l.companyId, label); else if (hits.get(l.companyId) !== 'Company phone' && !hits.get(l.companyId).includes(who.get(pid))) hits.set(l.companyId, hits.get(l.companyId) + ' and ' + (who.get(pid) || 'another person')); want.set(l.companyId, true); }
+    }
+    const missing = [...want.keys()].filter(id => !have.has(id));
+    for (let i = 0; i < missing.length; i += 30) {
+      const snap = await getDocs(query(collection(db,'searchCompanies'), where(documentId(),'in', missing.slice(i, i + 30))));
+      addReads(snap.size || 1);
+      snap.docs.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields({ id: d.id, ...d.data() })); have.add(d.id); } });
+    }
+    phoneHits.set(key, hits);
+    if (currentPhoneKey() !== key) return; // typed on in the meantime
+    statusEl.textContent = hits.size ? `${hits.size} match${hits.size === 1 ? '' : 'es'} by phone` : 'No company or person has this phone';
+    renderList();
+  } catch (e) { console.error(e); if (seq === phoneSeq) statusEl.textContent = 'Phone search failed — see console'; }
+}
+document.getElementById('searchInput').addEventListener('input', () => {
+  clearTimeout(phoneTimer);
+  const k = currentPhoneKey();
+  if (k) phoneTimer = setTimeout(() => searchPhoneSupplement(k), 400);
+});
+onFeaturesChange(() => { document.getElementById('searchInput').placeholder = isOn('search.phoneSearch') ? 'Search by name, NIF or phone…' : 'Search by name or NIF…'; });
 async function searchIdFieldSupplement(field, digits){
   const statusEl = document.getElementById('nifSearchStatus');
   statusEl.textContent = 'Checking…';

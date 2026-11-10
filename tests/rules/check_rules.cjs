@@ -61,6 +61,7 @@ const cases = [
   C('Partner: link a person to a company', PARTNER, 'create', 'searchPersonLinks/l1', 'ALLOW', { companyId: 'c1', personId: 'p1' }),
   // ── People merge, Stage 2: "search.reach" (details and contact people only) ──
   C('Reach: add an email to any person', REACH, 'update', 'searchPeople/p1', 'ALLOW', { name: 'X', reach: [{ type: 'email', value: 'x@y.pt' }], reachEmails: ['x@y.pt'], updatedBy: REACH.email }, { name: 'X' }),
+  C('Reach: add a person’s phone to the phone search (10 Nov)', REACH, 'update', 'searchPeople/p1', 'ALLOW', { name: 'X', reach: [{ type: 'phone', value: '914519294' }], reachPhones: ['914519294'], updatedBy: REACH.email }, { name: 'X' }),
   C('Reach: set the gender of any person (30 Oct)', REACH, 'update', 'searchPeople/p1', 'ALLOW', { name: 'X', gender: 'F', genderSource: 'typed', genderBy: REACH.email, genderAt: 'x', updatedBy: REACH.email }, { name: 'X' }),
   C('View only: cannot set a gender', { email: 'x@douropartners.pt', perms: ['search.view'], key: 'x' }, 'update', 'searchPeople/p1', 'DENY', { name: 'X', gender: 'F' }, { name: 'X' }),
   C('Reach: cannot rename a person', REACH, 'update', 'searchPeople/p1', 'DENY', { name: 'Y' }, { name: 'X' }),
@@ -79,6 +80,7 @@ const cases = [
   C('Reach: cannot remove an Orbis owner', REACH, 'delete', 'searchPersonLinks/u_1__c1', 'DENY', null, { companyId: 'c1', shCurrent: true }),
   C('Reach: set the company main contact', REACH, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', primaryContact: { personId: 'm_1' }, updatedBy: REACH.email }, { name: 'A' }),
   C('Reach: add a person\'s email to the company email search', REACH, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', emailKeys: ['rit', 'rita@empresa.pt'], updatedBy: REACH.email }, { name: 'A' }),
+  C('Reach: add a person’s phone to the company phone search (10 Nov)', REACH, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', phoneKeys: ['914519294'], updatedBy: REACH.email }, { name: 'A' }),
   C('Intern: confirm a same-email link on a company they don’t own (22 Oct)', INTERN, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', owner: 'andre', sameEmailLinks: [{ companyId: 'c2' }], updatedBy: INTERN.email }, { name: 'A', owner: 'andre' }),
   C('Intern: cannot edit a company they don’t own beyond the same-email link', INTERN, 'update', 'searchCompanies/c1', 'DENY', { name: 'B', owner: 'andre', sameEmailLinks: [{ companyId: 'c2' }], updatedBy: INTERN.email }, { name: 'A', owner: 'andre' }),
   C('Intern: logging an activity on a company they don’t own updates its contact summary (27 Oct, Contacted column)', INTERN, 'update', 'searchCompanies/c1', 'ALLOW', { name: 'A', owner: 'andre', lastTouchAt: 1, touches: { call: { n: 1 } } }, { name: 'A', owner: 'andre' }),

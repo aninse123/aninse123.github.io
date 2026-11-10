@@ -25,7 +25,7 @@ const ok = (l, cond) => { if (!cond) fail++; console.log(`${cond ? 'PASS' : 'FAI
 
 const s = { console };
 vm.createContext(s);
-vm.runInContext([liftFn(search, 'deburr'), liftLine(search, 'LEGAL_FORM_RE'), liftFn(search, 'companySearchFields'), liftFn(search, 'companyAltNames'), liftFn(search, 'companyEmailKeys'), liftFn(search, 'companyIndexFields'),
+vm.runInContext([liftFn(search, 'deburr'), liftLine(search, 'LEGAL_FORM_RE'), liftFn(search, 'companySearchFields'), liftFn(search, 'companyAltNames'), liftFn(search, 'companyEmailKeys'), liftFn(search, 'phoneKey'), liftFn(search, 'phoneKeysOfText'), liftFn(search, 'companyPhoneKeys'), liftFn(search, 'companyIndexFields'),
   'this.__x = { companySearchFields, companyAltNames, companyIndexFields };'].join('\n'), s);
 const { companySearchFields, companyAltNames, companyIndexFields } = s.__x;
 
@@ -36,7 +36,7 @@ ok('nameKey stays the legal name', f.nameKey === companySearchFields(c.name).nam
 ok('email name is searchable (token + prefixes)', f.nameTokens.includes('ASF') && f.namePrefixes.includes('AS'));
 ok('every "also known as" name is searchable, accents removed', f.nameTokens.includes('CLINICA') && f.nameTokens.includes('ALFASAUDE') && f.namePrefixes.includes('CLIN'));
 ok('placeholders ("n.a.", "-") are ignored', JSON.stringify(companyAltNames({ akaName: 'n.a.; -' })) === '[]');
-{ const { emailKeys, ...rest } = companyIndexFields({ name: c.name }); ok('without other names, exactly the old name fields (mobile search parity)', JSON.stringify(rest) === JSON.stringify(companySearchFields(c.name)) && emailKeys.length === 0); }
+{ const { emailKeys, phoneKeys, ...rest } = companyIndexFields({ name: c.name }); ok('without other names, exactly the old name fields (mobile search parity)', JSON.stringify(rest) === JSON.stringify(companySearchFields(c.name)) && emailKeys.length === 0 && phoneKeys.length === 0); }
 console.log('=== V3: email and domain search keys ===');
 { const k = companyIndexFields({ name: 'X', companyEmail: 'Geral@Empresa.pt', contacts: [{ email: 'ana@a.pt' }, { email: 'bad' }] }).emailKeys;
   ok('the company address from 3 characters, lower-case', k.includes('ger') && k.includes('geral@empresa.pt') && !k.includes('ge'));
