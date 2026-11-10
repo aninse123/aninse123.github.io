@@ -2739,6 +2739,27 @@ async function restFetchByIdsIn(collectionName, ids){
   addReads(docs.length || 1);
   return docs.map(d => ({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) }));
 }
+// 10 Nov (search.phoneSearch): a `field array-contains value` look-up over REST, for the same reason as the two above (the SDK's
+// local cache makes even a one-document answer take many seconds here). At most `max` documents.
+async function restFetchArrayContains(collectionName, field, value, max = 20){
+  const token = await auth.currentUser.getIdToken();
+  const parent = `projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents`;
+  const structuredQuery = {
+    from: [{ collectionId: collectionName }],
+    where: { fieldFilter: { field: { fieldPath: field }, op: 'ARRAY_CONTAINS', value: { stringValue: value } } },
+    limit: max,
+  };
+  const res = await fetch(`https://firestore.googleapis.com/v1/${parent}:runQuery`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery }),
+  });
+  if (!res.ok) throw new Error(`Firestore REST array-contains query of ${collectionName}.${field} failed (${res.status})`);
+  const rows = await res.json();
+  const docs = (rows || []).filter(r => r.document).map(r => r.document);
+  addReads(docs.length || 1);
+  return docs.map(d => ({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) }));
+}
 // Full company list via a paginated REST walk (restFetchAllDocs, above)
 // instead of one opaque onSnapshot, so progress is real ("7,000 of 31,514")
 // rather than a spinner with nothing to report until the whole thing lands.
@@ -14043,32 +14064,35 @@ async function searchPhoneSupplement(key){
   statusEl.textContent = 'Checking the phone…';
   const t0 = performance.now(), lap = {};
   try {
+    // Over REST (restFetch…), not getDocs(): see restFetchAllDocs for why the SDK is slow here.
     const [cs, ps] = await Promise.all([
-      phoneStep('company phones', getDocs(query(collection(db,'searchCompanies'), where('phoneKeys','array-contains', key), limit(20)))),
-      phoneStep('people phones', getDocs(query(collection(db,'searchPeople'), where('reachPhones','array-contains', key), limit(20)))),
+      phoneStep('company phones', restFetchArrayContains('searchCompanies', 'phoneKeys', key)),
+      phoneStep('people phones', restFetchArrayContains('searchPeople', 'reachPhones', key)),
     ]);
     lap.first = Math.round(performance.now() - t0);
-    console.info('phone search', key, 'companies', cs.size, 'people', ps.size, lap.first + ' ms');
-    addReads((cs.size + ps.size) || 1);
+    console.info('phone search', key, 'companies', cs.length, 'people', ps.length, lap.first + ' ms');
     if (seq !== phoneSeq) { statusEl.textContent = ''; return; }
     const hits = new Map(), want = new Map(), have = new Set(companies.map(c => c.id));
-    cs.docs.forEach(d => { hits.set(d.id, 'Company phone'); if (!have.has(d.id)) { companies.push(computeFields({ id: d.id, ...d.data() })); have.add(d.id); } });
-    const who = new Map(ps.docs.map(d => [d.id, personDisplayName(d.data().name || '')]));
+    cs.forEach(d => { hits.set(d.id, 'Company phone'); if (!have.has(d.id)) { companies.push(computeFields(d)); have.add(d.id); } });
+    const who = new Map(ps.map(d => [d.id, personDisplayName(d.name || '')]));
     const ids = [...who.keys()], byPerson = new Map();
     for (let i = 0; i < ids.length; i += 30) {
-      const ls = await phoneStep('person links', getDocs(query(collection(db,'searchPersonLinks'), where('personId','in', ids.slice(i, i + 30)))));
-      addReads(ls.size || 1);
-      ls.docs.forEach(d => { const l = d.data(); (byPerson.get(l.personId) || byPerson.set(l.personId, []).get(l.personId)).push(l); });
+      const ls = await phoneStep('person links', restFetchWhereIn('searchPersonLinks', 'personId', ids.slice(i, i + 30)));
+      ls.forEach(l => { (byPerson.get(l.personId) || byPerson.set(l.personId, []).get(l.personId)).push(l); });
     }
     for (const [pid, ls] of byPerson) {
       const cur = ls.filter(linkCurrentAny), use = cur.length ? cur : ls; // a person with no current company still leads to their old ones
-      for (const l of use) { const label = `Phone of ${who.get(pid) || 'a person'}`; if (!hits.has(l.companyId)) hits.set(l.companyId, label); else if (hits.get(l.companyId) !== 'Company phone' && !hits.get(l.companyId).includes(who.get(pid))) hits.set(l.companyId, hits.get(l.companyId) + ' and ' + (who.get(pid) || 'another person')); want.set(l.companyId, true); }
+      for (const l of use) {
+        const label = `Phone of ${who.get(pid) || 'a person'}`;
+        if (!hits.has(l.companyId)) hits.set(l.companyId, label);
+        else if (hits.get(l.companyId) !== 'Company phone' && !hits.get(l.companyId).includes(who.get(pid) || '')) hits.set(l.companyId, hits.get(l.companyId) + ' and ' + (who.get(pid) || 'another person'));
+        want.set(l.companyId, true);
+      }
     }
     const missing = [...want.keys()].filter(id => !have.has(id));
     for (let i = 0; i < missing.length; i += 30) {
-      const snap = await phoneStep('companies of the people', getDocs(query(collection(db,'searchCompanies'), where(documentId(),'in', missing.slice(i, i + 30)))));
-      addReads(snap.size || 1);
-      snap.docs.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields({ id: d.id, ...d.data() })); have.add(d.id); } });
+      const got = await phoneStep('companies of the people', restFetchByIdsIn('searchCompanies', missing.slice(i, i + 30)));
+      got.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields(d)); have.add(d.id); } });
     }
     phoneHits.set(key, hits);
     lap.queries = Math.round(performance.now() - t0);
