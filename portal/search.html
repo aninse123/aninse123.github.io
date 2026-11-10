@@ -6589,6 +6589,7 @@ function renderPersonView(p, links){
       const patch = { updatedAt: serverTimestamp() };
       for (const f of PERSON_CONTACT_FIELDS) patch[f.key] = document.getElementById('pc_' + f.key).value.trim() || null;
       const changes = personContactChanges(p, patch);
+      patch.reachPhones = reachPhonesOf(p.reach, { ...p, phone: patch.phone }); // 10 Nov (search.phoneSearch): the phone index follows the Contact card
       await updateDoc(doc(db,'searchPeople',p.id), patch);
       personDocCache.delete(p.id);
       logPortal('person_contact_edit', { personId: p.id, name: p.name });
@@ -6712,7 +6713,7 @@ async function decidePeopleReview(id, merge){
       const patch = { updatedAt: serverTimestamp() };
       for (const f of PERSON_CONTACT_FIELDS) if (hp?.[f.key] && !op?.[f.key]) patch[f.key] = hp[f.key];
       if (hp?.notes) patch.notes = [op?.notes, `From "${r.handName}" (added by hand): ${hp.notes}`].filter(Boolean).join('\n');
-      if (op) await updateDoc(doc(db,'searchPeople', r.orbisPersonId), patch);
+      if (op) { patch.reachPhones = reachPhonesOf(op.reach, { ...op, ...patch }); await updateDoc(doc(db,'searchPeople', r.orbisPersonId), patch); }
       await deleteDoc(doc(db,'searchPersonLinks', r.handLinkId));
       invalidatePeopleCaches({ companyId: r.companyId, personId: r.handPersonId });
       await recountCompanyPeople(r.companyId);

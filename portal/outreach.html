@@ -1938,6 +1938,24 @@
         async () => { const ok = await saveAddToCompany(t, addr, detail, !!$('aacMail')?.checked); if (ok && onDone) onDone(); return ok; }, 'Add');
       $('aacWho').addEventListener('change', () => { $('aacNew').hidden = !!$('aacWho').value; const m = $('aacMail'); if (m) m.closest('label').hidden = $('aacWho').value === '@co'; });
     }
+    // 10 Nov (search.phoneSearch): the phone search index, as in search.html (phoneKey / reachPhonesOf): a Portuguese number reduced to its
+    // 9 national digits, kept on the person (reachPhones) and on the company (phoneKeys) whenever a phone is added from here.
+    function phoneKey(v) {
+      const raw = String(v == null ? '' : v).trim();
+      let d = raw.replace(/\D/g, '');
+      if (/^(\+|00)/.test(raw) || (d.length === 12 && d.startsWith('351'))) {
+        if (/^00/.test(raw) && !raw.startsWith('+')) d = d.slice(2);
+        if (d.startsWith('351') && d.length === 12) return d.slice(3);
+        return null;
+      }
+      return d.length === 9 ? d : null;
+    }
+    function phoneKeysOfText(v) { return String(v == null ? '' : v).split(/[;,|\/\n]+/).map(phoneKey).filter(Boolean); }
+    function reachPhonesOf(list, p) {
+      const vals = [...(list || []).filter(e => e && e.type === 'phone').map(e => e.value), ...(p?.orbisPhones || []), p?.phone];
+      return [...new Set(vals.flatMap(phoneKeysOfText))];
+    }
+    const withPhoneKey = (keys, value) => [...new Set([...(keys || []), ...phoneKeysOfText(value)])];
     function emailKeysFor(emails) { // same as search.html companyEmailKeys
       const keys = new Set();
       for (const e of emails) {
@@ -1963,6 +1981,7 @@
         if (reach.some(e => e.type === dType && sameV(e.value) === sameV(dValue))) throw new Error('It is already on the company.');
         const patch = { reach: [...reach, { ...entry(reach), primary: false }], updatedAt: serverTimestamp(), updatedBy: me };
         if (dType === 'email') { const keys = new Set(data.emailKeys || []), add = emailKeysFor([dValue]).filter(k => !keys.has(k)); if (add.length) patch.emailKeys = [...keys, ...add]; }
+        if (dType === 'phone' && phoneKeysOfText(dValue).length) patch.phoneKeys = withPhoneKey(data.phoneKeys, dValue);
         await updateDoc(ref, patch);
         if (coCache.get(t.companyId)) Object.assign(coCache.get(t.companyId), { reach: patch.reach });
         await addDoc(collection(db, 'searchActivities'), { companyId: t.companyId, type: 'company_edited', date: serverTimestamp(), title: null, content: `Company contact details: added ${dValue} (from the ${detail ? 'reply' : 'inbox'})`, status: null, createdAt: serverTimestamp(), createdBy: me });
@@ -1976,7 +1995,7 @@
         const reach = snap.data().reach || [];
         if (reach.some(e => e.type === dType && sameV(e.value) === sameV(dValue))) throw new Error(`It is already one of their ${detail ? (detail.type === 'linkedin' ? 'LinkedIn pages' : 'phones') : 'emails'}.`);
         const next = plus(reach);
-        await updateDoc(doc(db, 'searchPeople', pid), { reach: next, reachEmails: emailsOf(next), updatedAt: serverTimestamp(), updatedBy: me });
+        await updateDoc(doc(db, 'searchPeople', pid), { reach: next, reachEmails: emailsOf(next), reachPhones: reachPhonesOf(next, snap.data()), updatedAt: serverTimestamp(), updatedBy: me });
         who = snap.data().name || '';
       } else {
         const name = $('aacName').value.trim().replace(/\s+/g, ' ');
@@ -1990,7 +2009,7 @@
         if ((peopleCache.get(t.companyId) || []).some(p => p.name && p.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim() === nameKey)) throw new Error(`${name} is already on this company — choose them in the list.`);
         const reach = plus([]);
         const newPid = 'm_' + doc(collection(db, 'searchPeople')).id;
-        await setDoc(doc(db, 'searchPeople', newPid), { name, nameKey, nameTokens: tokens, namePrefixes: prefixes, entityType: 'person', source: 'manual', reach, reachEmails: emailsOf(reach), hiddenOrbis: [], notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: kind === 'other' ? 0 : 1, createdAt: serverTimestamp(), createdBy: me, updatedAt: serverTimestamp(), updatedBy: me });
+        await setDoc(doc(db, 'searchPeople', newPid), { name, nameKey, nameTokens: tokens, namePrefixes: prefixes, entityType: 'person', source: 'manual', reach, reachEmails: emailsOf(reach), reachPhones: reachPhonesOf(reach), hiddenOrbis: [], notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: kind === 'other' ? 0 : 1, createdAt: serverTimestamp(), createdBy: me, updatedAt: serverTimestamp(), updatedBy: me });
         const facets = kind === 'other' ? { isContact: true, contactRole: role, contactCurrent: true }
           : { mgmtRoles: manager ? [role || 'Manager'] : [], mgmtCurrent: manager ? true : null, shDirectPct: null, shTotalPct: null, shCurrent: owner ? true : null, shDate: null, shType: owner ? 'I' : null, alsoManager: manager };
         await setDoc(doc(db, 'searchPersonLinks', `${newPid}__${t.companyId}`), { personId: newPid, companyId: t.companyId, personName: name, companyName: t.companyName || '', personEntityType: 'person', ...facets, source: 'manual', addedBy: me, addedAt: serverTimestamp(), updatedAt: serverTimestamp() });
@@ -2160,7 +2179,7 @@
         const sendMail = target.withMail && rc.from.email && type !== 'email' && !next.some(e => e.type === 'email' && String(e.value).trim().toLowerCase() === rc.from.email.toLowerCase());
         if (sendMail) next.push(mk(next, 'email', rc.from.email));
         const mails = [...new Set(next.filter(e => e.type === 'email').map(e => String(e.value).trim().toLowerCase()))];
-        await updateDoc(ref, { reach: next, ...(type === 'email' || sendMail ? { reachEmails: mails } : {}), updatedAt: serverTimestamp(), updatedBy: me });
+        await updateDoc(ref, { reach: next, ...(type === 'email' || sendMail ? { reachEmails: mails } : {}), ...(type === 'phone' ? { reachPhones: reachPhonesOf(next, snap.data()) } : {}), updatedAt: serverTimestamp(), updatedBy: me });
         if (type === 'email' || sendMail) await keysFor(type === 'email' ? [value] : [rc.from.email]);
         await log('person_contact_edited', `Contact details — ${target.name}: added ${value} (from the reply)`);
         peopleCache.delete(rc.t.companyId); threadPeopleLoaded.delete(rc.t.companyId);
@@ -2175,7 +2194,7 @@
         if (target.withMail && rc.from.email && type !== 'email') reach.push(mk(reach, 'email', rc.from.email));
         const emails = [...new Set(reach.filter(e => e.type === 'email').map(e => String(e.value).trim().toLowerCase()))];
         const newPid = 'm_' + doc(collection(db, 'searchPeople')).id;
-        await setDoc(doc(db, 'searchPeople', newPid), { name, nameKey, nameTokens: tokens, namePrefixes: prefixes, entityType: 'person', source: 'manual', reach, reachEmails: emails, hiddenOrbis: [], notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: 0, createdAt: serverTimestamp(), createdBy: me, updatedAt: serverTimestamp(), updatedBy: me });
+        await setDoc(doc(db, 'searchPeople', newPid), { name, nameKey, nameTokens: tokens, namePrefixes: prefixes, entityType: 'person', source: 'manual', reach, reachEmails: emails, reachPhones: reachPhonesOf(reach), hiddenOrbis: [], notes: null, matchedCompanyId: null, linkCount: 1, currentLinkCount: 0, createdAt: serverTimestamp(), createdBy: me, updatedAt: serverTimestamp(), updatedBy: me });
         await setDoc(doc(db, 'searchPersonLinks', `${newPid}__${rc.t.companyId}`), { personId: newPid, companyId: rc.t.companyId, personName: name, companyName: rc.t.companyName || '', personEntityType: 'person', isContact: true, contactRole: target.role, contactCurrent: true, source: 'manual', addedBy: me, addedAt: serverTimestamp(), updatedAt: serverTimestamp() });
         if (emails.length) await keysFor(emails);
         await log('person_linked', `Added contact: ${name} — ${value}${emails.length && type !== 'email' ? ` · ${emails.join(', ')}` : ''} (from the reply)`);
@@ -2188,6 +2207,7 @@
         const entry = { ...mk(reach), primary: false }; // the company's own field stays first; this is used after it
         const patch = { reach: [...reach, entry], updatedAt: serverTimestamp(), updatedBy: me };
         if (type === 'email') { const keys = new Set(data.emailKeys || []); const add = emailKeysFor([value]).filter(k => !keys.has(k)); if (add.length) patch.emailKeys = [...keys, ...add]; }
+        if (type === 'phone' && phoneKeysOfText(value).length) patch.phoneKeys = withPhoneKey(data.phoneKeys, value);
         await updateDoc(ref, patch);
         Object.assign(rc.co, { reach: patch.reach });
         await log('company_edited', `Company contact details: added ${value} (from the reply)`);
