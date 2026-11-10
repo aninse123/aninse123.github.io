@@ -2760,6 +2760,21 @@ async function restFetchArrayContains(collectionName, field, value, max = 20){
   addReads(docs.length || 1);
   return docs.map(d => ({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) }));
 }
+// 10 Nov: any single-collection structuredQuery over REST (the NIF and name look-ups below: a range, an array-contains, an order). Plain objects back.
+async function restQueryDocs(collectionName, structuredQuery){
+  const token = await auth.currentUser.getIdToken();
+  const parent = `projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents`;
+  const res = await fetch(`https://firestore.googleapis.com/v1/${parent}:runQuery`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery: { from: [{ collectionId: collectionName }], ...structuredQuery } }),
+  });
+  if (!res.ok) throw new Error(`Firestore REST query of ${collectionName} failed (${res.status})`);
+  const rows = await res.json();
+  const docs = (rows || []).filter(r => r.document).map(r => r.document);
+  addReads(docs.length || 1);
+  return docs.map(d => ({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) }));
+}
 // Full company list via a paginated REST walk (restFetchAllDocs, above)
 // instead of one opaque onSnapshot, so progress is real ("7,000 of 31,514")
 // rather than a spinner with nothing to report until the whole thing lands.
@@ -14109,24 +14124,22 @@ async function searchIdFieldSupplement(field, digits){
   const statusEl = document.getElementById('nifSearchStatus');
   statusEl.textContent = 'Checking…';
   const seq = ++companySearchSeq;
-  let snap;
+  let docs;
   try {
-    // '\uf8ff' sorts above every normal character, so [digits, digits+'\uf8ff')
-    // is the standard Firestore "starts with" prefix-range trick, already
-    // used here -- just parameterized on `field` so it works for both
-    // nif and foreignTaxId instead of being hardcoded to nif alone.
-    snap = await getDocs(query(collection(db,'searchCompanies'), where(field,'>=',digits), where(field,'<',digits+''), limit(50)));
+    // "Starts with" as a range [digits, digits + \uf8ff) -- '\uf8ff' sorts above every normal character. Over REST (see
+    // restFetchAllDocs: the SDK's local cache makes even this small look-up take many seconds).
+    docs = await restQueryDocs('searchCompanies', { where: { compositeFilter: { op: 'AND', filters: [
+      { fieldFilter: { field: { fieldPath: field }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: digits } } },
+      { fieldFilter: { field: { fieldPath: field }, op: 'LESS_THAN', value: { stringValue: digits + '\uf8ff' } } },
+    ] } }, limit: 50 });
   } catch(e){ console.error(e); if (seq === companySearchSeq) statusEl.textContent = 'Search failed — see console'; return; }
-  addReads(snap.docs.length || 1);
   if (seq !== companySearchSeq) return; // a newer search already superseded this one
   if (document.getElementById('searchInput').value.trim() !== digits) return; // stale by the time it landed
   const have = new Set(companies.map(c => c.id));
   let added = 0;
-  snap.docs.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields({ id: d.id, ...d.data() })); added++; } });
-  // Deliberately not "of 20,682" here -- a range query only pulls back the
-  // matches (capped at 50), never the whole collection, so framing this next
-  // to the full total would wrongly imply a bulk load happened.
-  statusEl.textContent = added ? `${added} match${added===1?'':'es'} found` : (snap.docs.length ? 'Already loaded' : 'No match found');
+  docs.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields(d)); added++; } });
+  // Deliberately not "of 20,682" here -- a range query only pulls back the matches (capped at 50), never the whole collection.
+  statusEl.textContent = added ? `${added} match${added===1?'':'es'} found` : (docs.length ? 'Already loaded' : 'No match found');
   if (added) renderList();
 }
 function searchNifSupplement(digits){ return searchIdFieldSupplement('nif', digits); }
@@ -14148,17 +14161,18 @@ async function searchNameSupplement(text){
   const seq = ++companySearchSeq;
   let docs;
   try {
-    const snap = await getDocs(query(collection(db,'searchCompanies'), where('namePrefixes','array-contains', nameTokens[0]), limit(50)));
-    docs = snap.docs;
-    if (!docs.length){
-      const snap2 = await getDocs(query(collection(db,'searchCompanies'), orderBy('nameKey'), where('nameKey','>=',nameKey), where('nameKey','<=',nameKey+''), limit(50)));
-      docs = snap2.docs;
+    // Over REST, like the NIF look-up above.
+    docs = await restQueryDocs('searchCompanies', { where: { fieldFilter: { field: { fieldPath: 'namePrefixes' }, op: 'ARRAY_CONTAINS', value: { stringValue: nameTokens[0] } } }, limit: 50 });
+    if (!docs.length) {
+      docs = await restQueryDocs('searchCompanies', { where: { compositeFilter: { op: 'AND', filters: [
+        { fieldFilter: { field: { fieldPath: 'nameKey' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: nameKey } } },
+        { fieldFilter: { field: { fieldPath: 'nameKey' }, op: 'LESS_THAN_OR_EQUAL', value: { stringValue: nameKey + '\uf8ff' } } },
+      ] } }, orderBy: [{ field: { fieldPath: 'nameKey' }, direction: 'ASCENDING' }], limit: 50 });
     }
   } catch(e){ console.error(e); if (seq === companySearchSeq) statusEl.textContent = 'Search failed — see console'; return; }
-  addReads(docs.length || 1);
   if (seq !== companySearchSeq) return; // a newer search already superseded this one
   if (document.getElementById('searchInput').value.trim() !== text) return; // stale by the time it landed
-  let matched = docs.map(d => ({ id:d.id, ...d.data() }));
+  let matched = docs;
   if (nameTokens.length > 1) matched = matched.filter(c => nameTokens.every(t => (c.nameTokens||[]).includes(t) || String(c.nameKey||'').includes(t)));
   const have = new Set(companies.map(c => c.id));
   let added = 0;
