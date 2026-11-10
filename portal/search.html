@@ -13785,17 +13785,20 @@ async function rebuildPhoneIndex(){
       c.phoneKeys = phoneKeys; return true;
     }, { onProgress: (d, t) => { msg.textContent = `Companies: ${d} of ${t}…`; } });
     cacheCompanies();
-    let nPe = 0, seen = 0, last = null;
-    for (;;) {
-      const snap = await getDocs(query(collection(db,'searchPeople'), orderBy(documentId()), ...(last ? [where(documentId(), '>', last)] : []), limit(500)));
+    // People: only those who have contact details or Orbis phones (a few thousand of the 200 000), found with two small queries,
+    // not every person one by one. A person with a phone number always has one of the two.
+    let nPe = 0;
+    msg.textContent = 'People with phone numbers…';
+    const found = new Map();
+    for (const field of ['reach', 'orbisPhones']) {
+      const snap = await getDocs(query(collection(db,'searchPeople'), where(field, '!=', [])));
       addReads(snap.size || 1);
-      if (!snap.size) break;
-      const todo = snap.docs.filter(d => !sameKeys(d.data().reachPhones, reachPhonesOf(d.data().reach, d.data())));
-      if (todo.length) nPe += await commitInChunks(todo, 450, (batch, d) => { batch.update(d.ref, { reachPhones: reachPhonesOf(d.data().reach, d.data()) }); return true; });
-      seen += snap.size; last = snap.docs[snap.docs.length - 1].id;
-      msg.textContent = `People: ${seen} checked, ${nPe} updated…`;
-      if (snap.size < 500) break;
+      snap.docs.forEach(d => found.set(d.id, d));
+      msg.textContent = `People with phone numbers… ${found.size} found`;
     }
+    const todo = [...found.values()].filter(d => !sameKeys(d.data().reachPhones, reachPhonesOf(d.data().reach, d.data())));
+    if (todo.length) nPe = await commitInChunks(todo, 450, (batch, d) => { batch.update(d.ref, { reachPhones: reachPhonesOf(d.data().reach, d.data()) }); return true; },
+      { onProgress: (d, t) => { msg.textContent = `People: ${d} of ${t} to update…`; } });
     phoneHits.clear();
     msg.textContent = `✓ Done: ${nCo} companies and ${nPe} people updated.`;
   } catch (e) { console.error(e); msg.textContent = 'Error: ' + e.message; }
