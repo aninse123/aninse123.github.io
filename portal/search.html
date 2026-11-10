@@ -5473,11 +5473,13 @@ async function renderOwnership(c){
     </div>
     ${isOn('outreach.ownerAware') ? '<div id="ownOutreachRel" data-feature="outreach.ownerAware"></div>' : ''}
     ${isOn('search.sameEmail') ? '<div id="ownSameEmail" data-feature="search.sameEmail"></div>' : ''}
+    ${isOn('search.manualLinks') ? '<div id="ownManualLinks" data-feature="search.manualLinks"></div>' : ''}
     ${ownOn ? '<div id="ownLadderWrap" data-feature="search.ownership"></div>' : ''}
     <div class="card" id="ownGraphCard"><div class="sec-title">Network</div><div id="ownGraph"></div></div>`;
   renderNetworkGraph(document.getElementById('ownGraph'), 'company', c.id);
   if (ownOn) renderOwnershipLadder(c, links);
   if (isOn('search.sameEmail')) renderSameEmail(c, links).catch(e => console.warn('same email', e));
+  if (isOn('search.manualLinks')) renderManualLinks(c).catch(e => console.warn('manual link', e));
   if (isOn('outreach.ownerAware')) renderOutreachRelated(c).catch(e => console.warn('related in outreach', e));
 }
 
@@ -5584,6 +5586,84 @@ async function renderSameEmail(c, links){
       cacheCompanies();
       renderSameEmail(c, links);
     } catch(e){ alert('Error: ' + e.message); t.disabled = false; }
+  };
+}
+
+// ── Manual link between two companies (10 Nov 2026, switch search.manualLinks) ──────────────────────────────
+// Two companies that belong together with no data to show it (a family behind a holding that is not in the CRM, say): link them by
+// hand, with the reason. The link sits on BOTH companies (manualLinks: [{ companyId, note, by, at }], like sameEmailLinks) and counts as
+// related in the owner panel, the mentions and the Monday report (functions/outreach/related.js, report.js); never in groups or filters.
+const MANUAL_LINK_MAX = 10, MANUAL_NOTE_MIN = 3, MANUAL_NOTE_MAX = 200;
+function manualLinkProblem(c, o, list, note){
+  if (!o || !o.id) return 'Choose a company.';
+  if (o.id === c.id) return 'A company cannot be linked to itself.';
+  if ((list || []).some(x => x.companyId === o.id)) return 'Already linked.';
+  if ((list || []).length >= MANUAL_LINK_MAX) return `At most ${MANUAL_LINK_MAX} links on a company.`;
+  const n = String(note || '').trim();
+  if (n.length < MANUAL_NOTE_MIN) return 'Write why they are linked (a few words).';
+  if (n.length > MANUAL_NOTE_MAX) return `The note is at most ${MANUAL_NOTE_MAX} characters.`;
+  return '';
+}
+async function renderManualLinks(c){
+  const el = document.getElementById('ownManualLinks'); if (!el) return;
+  const links = c.manualLinks || [];
+  const names = links.length ? await ownCompaniesByIds(links.map(x => x.companyId)) : new Map();
+  if (currentCoId !== c.id) return;
+  const canEdit = window.pageAccess ? (window.pageAccess.can('search.edit') || window.pageAccess.can('search.editall')) : true;
+  const when = (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
+  let picked = null;
+  el.innerHTML = `<div class="card"><div class="sec-title">Manual link</div>
+    ${links.map(x => `<div class="contact-detail" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">🔗 <span class="person-link" data-gotoco="${esc(x.companyId)}">${esc(names.get(x.companyId)?.name || x.companyId)}</span> <span>“${esc(x.note || '')}”</span> <span class="hint">· ${esc(String(x.by || '').split('@')[0])}${x.at ? ', ' + esc(when(x.at)) : ''}</span>${canEdit ? ` <button class="btn btn--ghost btn--sm" data-mlundo="${esc(x.companyId)}">Unlink</button>` : ''}</div>`).join('') || '<div class="hint">No company linked by hand.</div>'}
+    ${canEdit && links.length < MANUAL_LINK_MAX ? `<div style="display:grid;gap:6px;max-width:560px;margin-top:8px;">
+      <input class="field" id="mlSearch" placeholder="＋ Link a company: type its name" autocomplete="off">
+      <div id="mlResults" class="hint"></div>
+      <input class="field" id="mlNote" maxlength="${MANUAL_NOTE_MAX}" placeholder="Why (required), for example: same family, through Somobilis">
+      <div><button class="btn btn--primary btn--sm" id="mlAdd" disabled>Link</button> <span class="hint" id="mlMsg"></span></div></div>` : ''}
+    <div class="hint" style="margin-top:6px;">Both companies show the link, and it counts as related in the owner panel, the mentions and the Monday report (never in groups or filters). Unlink removes it from both.</div></div>`;
+  const $ = (id) => el.querySelector('#' + id);
+  const refresh = () => { const b = $('mlAdd'); if (b) b.disabled = !picked || !String($('mlNote').value || '').trim(); };
+  if ($('mlSearch')) {
+    $('mlSearch').oninput = () => {
+      picked = null; refresh();
+      const q = deburr($('mlSearch').value);
+      const res = q.length < 2 ? [] : companies.filter(x => x.id !== c.id && deburr(x.name || '').includes(q) && !links.some(l => l.companyId === x.id)).slice(0, 6);
+      $('mlResults').innerHTML = q.length < 2 ? '' : (res.length ? res.map(x => `<div><span class="person-link" data-mlpick="${esc(x.id)}">${esc(x.name)}</span> <span class="hint">${esc([x.concelho, x.stage].filter(Boolean).join(' · '))}</span></div>`).join('') : 'No company with that name.');
+    };
+    $('mlNote').oninput = refresh;
+  }
+  el.onclick = async (ev) => {
+    const t = ev.target.closest('[data-gotoco],[data-mlpick],[data-mlundo],#mlAdd'); if (!t) return;
+    if (t.dataset.gotoco) { openDetail(t.dataset.gotoco); return; }
+    if (t.dataset.mlpick) { picked = companies.find(x => x.id === t.dataset.mlpick) || null; $('mlSearch').value = picked ? picked.name : ''; $('mlResults').innerHTML = picked ? `Selected: <b>${esc(picked.name)}</b>` : ''; refresh(); return; }
+    const stamp = { updatedAt: serverTimestamp(), updatedBy: currentUser };
+    t.disabled = true;
+    try {
+      if (t.id === 'mlAdd') {
+        const note = String($('mlNote').value || '').trim().slice(0, MANUAL_NOTE_MAX);
+        const bad = manualLinkProblem(c, picked, links, note);
+        if (bad) { $('mlMsg').textContent = bad; t.disabled = false; return; }
+        const at = new Date().toISOString(), oid = picked.id;
+        const other = await getDoc(doc(db, 'searchCompanies', oid));
+        if (!other.exists()) { $('mlMsg').textContent = 'That company no longer exists.'; t.disabled = false; return; }
+        if ((other.data().manualLinks || []).length >= MANUAL_LINK_MAX) { $('mlMsg').textContent = `${picked.name} already has ${MANUAL_LINK_MAX} links.`; t.disabled = false; return; }
+        await updateDoc(doc(db, 'searchCompanies', c.id), { manualLinks: arrayUnion({ companyId: oid, note, by: currentUser, at }), ...stamp });
+        await updateDoc(doc(db, 'searchCompanies', oid), { manualLinks: arrayUnion({ companyId: c.id, note, by: currentUser, at }), ...stamp });
+        c.manualLinks = [...(c.manualLinks || []), { companyId: oid, note, by: currentUser, at }];
+        await logAuto(c.id, 'company_edited', `Manual link: ${picked.name || oid} — ${note}`);
+        await logAuto(oid, 'company_edited', `Manual link: ${c.name || c.id} — ${note}`);
+      } else if (t.dataset.mlundo) {
+        const oid = t.dataset.mlundo;
+        const [a, b] = await Promise.all([getDoc(doc(db, 'searchCompanies', c.id)), getDoc(doc(db, 'searchCompanies', oid))]);
+        const keepA = (a.data()?.manualLinks || []).filter(x => x.companyId !== oid), keepB = (b.data()?.manualLinks || []).filter(x => x.companyId !== c.id);
+        await updateDoc(doc(db, 'searchCompanies', c.id), { manualLinks: keepA, ...stamp });
+        if (b.exists()) await updateDoc(doc(db, 'searchCompanies', oid), { manualLinks: keepB, ...stamp });
+        c.manualLinks = keepA;
+        await logAuto(c.id, 'company_edited', `Manual link with ${names.get(oid)?.name || oid} removed`);
+        if (b.exists()) await logAuto(oid, 'company_edited', `Manual link with ${c.name || c.id} removed`);
+      }
+      cacheCompanies();
+      renderManualLinks(c);
+    } catch (e) { alert('Error: ' + e.message); t.disabled = false; }
   };
 }
 

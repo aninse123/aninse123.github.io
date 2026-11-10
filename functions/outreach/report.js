@@ -113,10 +113,13 @@ function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions
   const liveIds = new Set(live.map((e) => e.companyId));
   const emailLinks = [];
   for (const id of liveIds) for (const x of companies.get(id)?.sameEmailLinks || []) if (liveIds.has(x.companyId) && id < x.companyId) emailLinks.push([companies.get(id)?.name || id, companies.get(x.companyId)?.name || x.companyId]);
+  // Manual links (10 Nov, switch search.manualLinks) between running companies, with the note.
+  const manualLinks = [];
+  for (const id of liveIds) for (const x of companies.get(id)?.manualLinks || []) if (liveIds.has(x.companyId) && id < x.companyId) manualLinks.push([companies.get(id)?.name || id, companies.get(x.companyId)?.name || x.companyId, String(x.note || "")]);
   const openFlags = drafts.filter((d) => keep(d) && d.status === "draft" && (d.ownerPanel?.flags || []).length)
     .map((d) => ({ company: d.companyName || "", flags: d.ownerPanel.flags.map((f) => f.text).slice(0, 3) }));
   const heldNow = live.filter((e) => e.holdKind === "same_inbox").map((e) => ({ company: e.companyName || "", until: e.holdReason?.until ? new Date(ms(e.holdReason.until)).toISOString().slice(0, 10) : null, email: e.holdReason?.email || null }));
-  return { week, owners: { multiCampaign, sameOwner, emailLinks, openFlags, heldNow }, ...(sameEmail ? { sameEmail } : {}) };
+  return { week, owners: { multiCampaign, sameOwner, emailLinks, manualLinks, openFlags, heldNow }, ...(sameEmail ? { sameEmail } : {}) };
 }
 
 // Part 3: { pairs: [{ a, b, aId, bId, email }], total, truncated } — see the header.
@@ -165,6 +168,7 @@ function reportText(r, { weekKey, toKey }) {
     `Donos / grupos em duas ou mais campanhas: ${o.multiCampaign.length}`, ...o.multiCampaign.map((x) => `  · ${x.owner}: ${x.companies.join(", ")} — ${x.campaigns.join(", ")}`), "",
     `Empresas do mesmo dono em campanhas a decorrer: ${o.sameOwner.length}`, ...o.sameOwner.map((x) => `  · ${x.owner}: ${x.companies.join(", ")}`), "",
     ...(o.emailLinks.length ? [`Ligadas pelo mesmo email (confirmado): ${o.emailLinks.length}`, ...o.emailLinks.map(([a, b]) => `  · ${a} ↔ ${b}`), ""] : []),
+    ...((o.manualLinks || []).length ? [`Ligadas à mão (ligação manual): ${o.manualLinks.length}`, ...o.manualLinks.map(([a, b, n]) => `  · ${a} ↔ ${b}${n ? ` — ${n}` : ""}`), ""] : []),
     `Rascunhos por aprovar com empresas relacionadas: ${o.openFlags.length}`, ...o.openFlags.map((x) => `  · ${x.company}: ${x.flags.join("; ")}`), "",
     `Empresas em espera agora (mesmo endereço): ${o.heldNow.length}`, ...o.heldNow.map((x) => `  · ${x.company}${x.until ? ` até ${x.until}` : ""}${x.email ? ` (${x.email})` : ""}`), "",
     ...(r.sameEmail ? ["3. Possíveis ligações pelo mesmo email (novas esta semana)", "",

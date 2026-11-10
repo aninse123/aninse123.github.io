@@ -5,7 +5,8 @@
 //
 // Related = a shared decision-maker, a parent or a subsidiary (a CRM
 // company holding shares in the other), the same ultimate owner (ownGroupKey), or
-// a same-email link confirmed by hand (sameEmailLinks, Stage 2). The add-on links
+// a same-email link confirmed by hand (sameEmailLinks, Stage 2), or a manual link typed on both companies with a note
+// (manualLinks, 10 Nov, switch search.manualLinks). The add-on links
 // never count. People in more than MAX_PERSON_LINKS companies (a bank, a big
 // group's manager) are not followed: they relate everything to everything.
 //
@@ -81,6 +82,7 @@ async function linksWhereIn(field, values) {
 function mayHaveRelated(c) {
   if (!c) return false;
   if ((c.sameEmailLinks || []).length) return true;
+  if ((c.manualLinks || []).length) return true;
   if (c.ownGraphAt == null) return true;
   return (c.ownGroupSize || 0) > 1 || (c.ownSubs || 0) > 0 || (c.ownParents || 0) > 0 || (c.ownOwnerOther || 0) > 0;
 }
@@ -141,6 +143,8 @@ async function relatedFor(companyIds, opts = {}) {
     }
     // Confirmed same email (Stage 2).
     for (const id of cand) for (const x of base.get(id)?.sameEmailLinks || []) add(id, x.companyId, "same email (confirmed)");
+    // Manual link (10 Nov): linked by hand, with the reason typed on the link.
+    for (const id of cand) for (const x of base.get(id)?.manualLinks || []) add(id, x.companyId, `manual link${x.note ? ": " + String(x.note).slice(0, 200) : ""}`);
   }
   const otherIds = [...new Set([...rel.values()].flatMap((m) => [...m.keys()]))];
   const others = await getCompanies(otherIds.filter((id) => !base.has(id)));
