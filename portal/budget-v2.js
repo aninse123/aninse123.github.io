@@ -358,7 +358,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <td class="num ${i.kind === 'income' ? 'amt-in' : ''}">${sign}${eur.format(i.amount)}</td>
       <td>${i.kind === 'expense' ? paidWithLabel(i) : ''}${i.kind === 'expense' && i.paidPersonallyBy ? (i.reimbursement?.status === 'reimbursed' ? '<div class="mini" style="color:var(--secondary)" title="The company paid this back">✓ reimbursed</div>' : '<div class="mini" style="color:#8A5A00" title="The company still owes this to the partner">owed back</div>') : ''}</td>
       <td class="mini">${i.kind === 'expense' ? usedByLabel(i) : ''}</td>
-      <td>${i.kind === 'expense' ? `<span class="badge-doc ${ds.level}" title="${esc(ds.missing.length ? 'Missing: ' + ds.missing.join(', ') : ds.label)}">${esc(ds.label)}</span>` : ''}</td>
+      <td>${i.kind === 'expense' || (i.kind === 'income' && incomeDocNeeded(i.incomeType)) ? `<span class="badge-doc ${ds.level}" title="${esc(ds.missing.length ? 'Missing: ' + ds.missing.join(', ') : ds.label)}">${esc(ds.label)}</span>` : ''}</td>
       <td class="num">${vatBucket(i) !== 'none' ? `<span title="${esc(VAT_BUCKETS[vatBucket(i)].label)}">${eur.format(Number(i.vatAmount))}</span>` : ''}</td>
       <td>${i.tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t)}">${esc(t)}</button>`).join('')}</td>
       <td>${i.sharedAt ? `<span title="Shared ${esc(String(i.sharedAt).slice(0, 10))} by ${esc(i.sharedBy || '')}" style="color:var(--secondary);font-weight:700">✓</span>${changedSince(i) ? '<span title="Changed since it was shared: it can go in the next pack" style="color:#8A5A00"> ⚠</span>' : ''}` : ''}</td>

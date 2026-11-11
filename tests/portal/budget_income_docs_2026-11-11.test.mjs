@@ -28,4 +28,6 @@ ok('the reminder to ask for an invoice in the company name is only for expenses'
 ok('the waived tick is saved for money received too', /docWaived: \(expense \|\| kind === 'income'\) && \$\('f-waived'\)\.checked/.test(v2));
 ok('Overview and Inbox count money received without its document next to the expenses', /money-received item/.test(v2) && /\(i\.kind === 'expense' \|\| i\.kind === 'income'\) && !i\.archived && docStatus\(i\)\.level === 'warn'/.test(v2) && /Every item has its paperwork/.test(v2));
 
+ok('the Items table shows the paperwork badge for expenses and for the money-in types that need a document (not for interest, other or plans)', /<td>\$\{i\.kind === 'expense' \|\| \(i\.kind === 'income' && incomeDocNeeded\(i\.incomeType\)\) \? `<span class="badge-doc/.test(v2));
+
 console.log(fail ? `\n${fail} FAILED` : '\nall money-in document tests passed'); process.exit(fail ? 1 : 0);
