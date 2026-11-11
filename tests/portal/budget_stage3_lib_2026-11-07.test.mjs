@@ -1,33 +1,34 @@
-// Budget v2, Stage 3 (7 Nov 2026): split lines, cost per visit / company / person, plan against actual — portal/budget-lib.js.
-import { itemLines, visitIdsOf, visitReport, companyReport, personReport, planVsActual, normalizeItem } from '../../portal/budget-lib.js';
+// Budget v2, Stage 3 (7 Nov 2026; visits became companies 11 Nov 2026): split lines, cost per company / person, plan against actual — portal/budget-lib.js.
+import { itemLines, companyIdsOf, companyReport, personReport, planVsActual, normalizeItem } from '../../portal/budget-lib.js';
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 const ex = (o) => normalizeItem({ kind: 'expense', amount: 0, date: '2026-11-03', categoryId: 'transport', purposeId: 'field-visit', ...o });
-const V = [{ id: 'v1', companyId: 'c1', companyName: 'Frutas Mangas', date: '2026-11-03' }, { id: 'v2', companyId: 'c2', companyName: 'Setcereal', date: '2026-11-03' }, { id: 'v3', companyId: 'c1', companyName: 'Frutas Mangas', date: '2026-12-10' }, { id: 'v4', companyId: 'c3', companyName: 'Old', date: '2026-01-05', archived: true }];
+const FM = { companyId: 'c1', companyName: 'Frutas Mangas' }, SC = { companyId: 'c2', companyName: 'Setcereal' };
 
 // ── Lines ──
-ok('an expense with no lines is one line made of its own fields (and its visit)', (() => { const l = itemLines(ex({ amount: 50, visitId: 'v1' })); return l.length === 1 && l[0].amount === 50 && l[0].categoryId === 'transport' && l[0].purposeId === 'field-visit' && l[0].visitId === 'v1'; })());
-ok('a car rental split between two visits: equal by default, always adding up to the total', (() => { const l = itemLines(ex({ amount: 100.01, lines: [{ visitId: 'v1' }, { visitId: 'v2' }] })); return l.length === 2 && l[0].amount === 50.01 && l[1].amount === 50 && Math.round((l[0].amount + l[1].amount) * 100) === 10001; })());
-ok('weights set the shares (2:1 by kilometres)', (() => { const l = itemLines(ex({ amount: 120, lines: [{ weight: 2, visitId: 'v1' }, { weight: 1, visitId: 'v2' }] })); return l[0].amount === 80 && l[1].amount === 40; })());
-ok('a line can have its own category and purpose (hotel invoice with meals); missing ones fall back to the item\'s', (() => { const l = itemLines(ex({ amount: 100, categoryId: 'accommodation', lines: [{ weight: 3 }, { weight: 1, categoryId: 'meals', purposeId: 'overhead' }] })); return l[0].categoryId === 'accommodation' && l[0].purposeId === 'field-visit' && l[1].categoryId === 'meals' && l[1].purposeId === 'overhead'; })());
+ok('an expense with no lines is one line made of its own fields (and its company)', (() => { const l = itemLines(ex({ amount: 50, ...FM })); return l.length === 1 && l[0].amount === 50 && l[0].categoryId === 'transport' && l[0].purposeId === 'field-visit' && l[0].companyId === 'c1' && l[0].companyName === 'Frutas Mangas'; })());
+ok('a car rental split between two companies: equal by default, always adding up to the total', (() => { const l = itemLines(ex({ amount: 100.01, lines: [FM, SC] })); return l.length === 2 && l[0].amount === 50.01 && l[1].amount === 50 && Math.round((l[0].amount + l[1].amount) * 100) === 10001; })());
+ok('weights set the shares (2:1 by kilometres)', (() => { const l = itemLines(ex({ amount: 120, lines: [{ weight: 2, ...FM }, { weight: 1, ...SC }] })); return l[0].amount === 80 && l[1].amount === 40; })());
+ok('a line can have its own category and purpose (hotel invoice with meals); missing ones fall back to those of the item', (() => { const l = itemLines(ex({ amount: 100, categoryId: 'accommodation', lines: [{ weight: 3 }, { weight: 1, categoryId: 'meals', purposeId: 'overhead' }] })); return l[0].categoryId === 'accommodation' && l[0].purposeId === 'field-visit' && l[1].categoryId === 'meals' && l[1].purposeId === 'overhead'; })());
 ok('zero or missing weights count as 1; money received and plan lines have no lines', itemLines(ex({ amount: 10, lines: [{ weight: 0 }, {}] })).map((x) => x.amount).join() === '5,5' && itemLines({ kind: 'income', amount: 5 }).length === 0 && itemLines({ kind: 'plan', amount: 5 }).length === 0);
-ok('visitIdsOf lists each visit once, from the lines or the item', visitIdsOf(ex({ amount: 9, lines: [{ visitId: 'v1' }, { visitId: 'v1' }, { visitId: 'v2' }, {}] })).join() === 'v1,v2' && visitIdsOf(ex({ amount: 9, visitId: 'v3' })).join() === 'v3' && visitIdsOf(ex({ amount: 9 })).length === 0);
+ok('companyIdsOf lists each linked CRM company once, from the lines or the item; a typed name with no CRM link is not listed', companyIdsOf(ex({ amount: 9, lines: [{ companyId: 'c1' }, { companyId: 'c1' }, { companyId: 'c2' }, { companyName: 'Typed only' }, {}] })).join() === 'c1,c2' && companyIdsOf(ex({ amount: 9, companyId: 'c3' })).join() === 'c3' && companyIdsOf(ex({ amount: 9, companyName: 'Typed only' })).length === 0 && companyIdsOf(ex({ amount: 9 })).length === 0);
 
-// ── Cost per visit ──
+// ── Cost per company ──
 const items = [
-  ex({ amount: 100, lines: [{ visitId: 'v1' }, { visitId: 'v2' }] }),                      // car rental: 50 + 50
-  ex({ amount: 30, categoryId: 'meals', visitId: 'v1' }),
-  ex({ amount: 20, categoryId: 'accommodation', visitId: 'v2', archived: true }),            // archived: ignored
-  ex({ amount: 15, visitId: 'v4' }),                                                         // an archived visit: ignored
-  ex({ amount: 8 }),                                                                         // no visit
-  normalizeItem({ kind: 'income', incomeType: 'supplier_refund', amount: 9, visitId: 'v1' }), // refunds are not visit costs here
+  ex({ amount: 100, lines: [FM, SC] }),                                                    // car rental: 50 + 50
+  ex({ amount: 30, categoryId: 'meals', ...FM }),
+  ex({ amount: 20, categoryId: 'accommodation', ...SC, archived: true }),                  // archived: ignored
+  ex({ amount: 15, companyName: 'Not in the CRM' }),                                       // typed name only: counted under that name
+  ex({ amount: 8 }),                                                                       // no company
+  normalizeItem({ kind: 'income', incomeType: 'supplier_refund', amount: 9, ...FM }),       // refunds are not company costs here
+  ex({ amount: 12, date: '2026-12-10', ...FM }),
 ];
-const r = visitReport(items, V);
-ok('cost per visit: the shared car rental and the meal are charged to the right visits; archived items and visits are left out', r.rows.length === 3 && r.rows.find((x) => x.visit.id === 'v1').total === 80 && r.rows.find((x) => x.visit.id === 'v2').total === 50 && r.rows.find((x) => x.visit.id === 'v3').total === 0 && r.total === 130);
-ok('cost per visit by category, and the number of expenses touching each visit', (() => { const a = r.rows.find((x) => x.visit.id === 'v1'); return a.byCategory.transport === 50 && a.byCategory.meals === 30 && a.count === 2 && r.byCategory.transport === 100 && r.byCategory.meals === 30; })());
-ok('average cost per visit: over every visit, and over the visits that have costs', r.visits === 3 && r.costed === 2 && r.average === 43.33 && r.averageCosted === 65);
-ok('visits are listed newest first; a date range keeps the visits inside it (by the visit\'s date)', r.rows.map((x) => x.visit.id).join() === 'v3,v1,v2' || r.rows.map((x) => x.visit.id).join() === 'v3,v2,v1');
-ok('date range on visits', visitReport(items, V, { from: '2026-12-01' }).rows.length === 1 && visitReport(items, V, { to: '2026-11-30' }).total === 130 && visitReport(items, V, { from: '2027-01-01' }).average === 0);
-ok('cost per company adds up its visits', (() => { const c = companyReport(r); return c.length === 2 && c[0].name === 'Frutas Mangas' && c[0].total === 80 && c[0].visits === 2 && c[1].name === 'Setcereal' && c[1].total === 50; })());
+const r = companyReport(items);
+const row = (id) => r.rows.find((x) => x.companyId === id);
+ok('cost per company: the shared car rental, the meal and a later expense are charged to the right company; archived items, items with no company and refunds are left out', r.rows.length === 3 && row('c1').total === 92 && row('c2').total === 50 && r.total === 157);
+ok('a name typed by hand (not in the CRM) is its own row, marked by having no companyId', (() => { const t = r.rows.find((x) => x.name === 'Not in the CRM'); return !!t && t.companyId === '' && t.total === 15; })());
+ok('cost per company by category, and the number of expenses touching each company', (() => { const a = row('c1'); return a.byCategory.transport === 62 && a.byCategory.meals === 30 && a.count === 3 && row('c2').count === 1 && r.byCategory.transport === 127 && r.byCategory.meals === 30 && r.companies === 3; })());
+ok('companies are listed by cost, highest first', r.rows.map((x) => x.name).join() === 'Frutas Mangas,Setcereal,Not in the CRM');
+ok('a date range picks expenses by their own date', companyReport(items, { from: '2026-12-01' }).rows.length === 1 && companyReport(items, { from: '2026-12-01' }).total === 12 && companyReport(items, { to: '2026-11-30' }).total === 145 && companyReport(items, { from: '2027-01-01' }).companies === 0);
 
 // ── Cost per person ──
 const pi = [
