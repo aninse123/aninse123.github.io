@@ -111,7 +111,8 @@ export function cleanDescription(desc) {
 }
 
 const CHARGE = /JUROS ULTRAP|JUROS DEV|COMISS|IMP\.? ?(DE )?SELO|IS-VERBA|CR\. N.O PRE-CONT|\(DESP\.BEN\)|MANUTEN|ANUIDADE/i;
-const INTEREST_IN = /JUROS CRED|JUROS ORDEN|JUROS DE DEP/i;
+const PAYEE_PREFIX = /^(COMPRA|TRF|TRANSF|PAG\b|PAGAMENTO|DD\b|DEB\.? ?DIR)/i;
+const INTEREST_IN =/JUROS CRED|JUROS ORDEN|JUROS DE DEP/i;
 
 // A partner named in a line: "Devolucao Antonio" (first name) or all words of the partner's name ("ANDRE FILIPE NOGUEIRA DA ROCHA").
 export function matchPartner(desc, partners) {
@@ -122,10 +123,22 @@ export function matchPartner(desc, partners) {
     const hit = (partners || []).find((p) => tokensOf(p)[0] === dev[1]);
     if (hit) return hit.key;
   }
+  // A name the partner's bank writes (remembered on their profile), for example "ANTONIO MARIA OLIVEIRA B N".
+  const flat = text.replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const p of partners || []) {
+    for (const a of p.bankNames || []) {
+      const k = norm(a).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (k.length >= 4 && flat.includes(k)) return p.key;
+    }
+  }
   const w = new Set(words(desc));
+  // The bank cuts the name at 26 characters ("ANDRE FILIPE NOGUEIRA DA R"): then the last word of the partner's name may be only the start of it.
+  const cut = cleanDescription(desc).replace(/\s+/g, ' ').trim();
+  const cutWords = words(cut), lastWord = cutWords[cutWords.length - 1] || '';
+  const truncated = cut.length >= 24;
   for (const p of partners || []) {
     const t = tokensOf(p);
-    if (t.length >= 2 && t.every((x) => w.has(x))) return p.key;
+    if (t.length >= 2 && t.every((x, i) => w.has(x) || (truncated && i === t.length - 1 && lastWord && x.startsWith(lastWord)))) return p.key;
   }
   return '';
 }
@@ -141,15 +154,21 @@ export function recognise(line, ctx = {}) {
     if (card) out.paidWith = `card:${card.id}`;
   } else if (ctx.accountId) out.paidWith = `account:${ctx.accountId}`;
 
-  if (line.amount < 0 && CHARGE.test(d)) {
+  // A bank charge is a line the bank writes about itself. A line that starts like a payment to someone (a transfer, a card purchase, a debit order) names a payee, so a word such as COMISS in it is not enough (a commission paid to a broker). The one transfer-shaped charge is the transfer fee marked (DESP.BEN).
+  if (line.amount < 0 && CHARGE.test(d) && (/DESP\.BEN/i.test(d) || !PAYEE_PREFIX.test(String(d || '').trim()))) {
     const nm = /DESP\.BEN/i.test(d) ? 'Transfer fee (DESP.BEN)' : clean;
     return { ...out, kind: 'expense', name: nm, categoryId: 'bank-taxes', purposeId: 'admin-compliance', docWaived: 'Bank charge', reason: 'Bank charge, tax or interest', sure: true, autoAccept: true };
   }
   if (line.amount > 0 && INTEREST_IN.test(d)) {
     return { ...out, kind: 'income', incomeType: 'interest', name: 'Interest received', counterparty: 'Bank', reason: 'Interest received', sure: true, autoAccept: true };
   }
-  const partnerKey = line.amount < 0 ? matchPartner(d, ctx.partners) : '';
-  if (partnerKey) return { ...out, kind: 'settlement', partnerKey, name: clean, reason: 'Transfer to a partner (reimbursement)', sure: true };
+  const partnerKey = matchPartner(d, ctx.partners);
+  if (partnerKey && line.amount < 0) return { ...out, kind: 'settlement', partnerKey, name: clean, reason: 'Transfer to a partner (reimbursement)', sure: true };
+  // Money from a partner is a loan to the company until you say otherwise; never an investor, never accepted without a click.
+  if (partnerKey && line.amount > 0) {
+    const p = (ctx.partners || []).find((x) => x.key === partnerKey) || {};
+    return { ...out, kind: 'income', incomeType: 'partner_loan', partnerKey, name: `Loan from ${p.name || partnerKey}`, counterparty: clean, reason: 'Money from a partner: partner loan (confirm)', sure: false };
+  }
   if (line.amount > 0) {
     const who = /^[\d\s]+$/.test(clean) ? '' : clean;   // some lines carry only a reference number, no name
     const hit = who ? findInvestor(who, ctx.investors) : null;
@@ -186,7 +205,10 @@ export function investorMatch(text, investor) {
     if (k.length >= 4 && t.replace(/\s+/g, ' ').includes(k)) return 'alias';
   }
   // Words in brackets ("(Frotcom)", "(previously Iniginy)") are notes on the name, not part of it.
-  const sig = sigWords(String(investor.name || '').replace(/\([^)]*\)/g, ' '));
+  const nameNoNote = String(investor.name || '').normalize('NFC').replace(/\([^)]*\)/g, ' ');
+  const sig = sigWords(nameNoNote);
+  // "Sá" with its accent is a surname, not the company ending SA / S.A.: keep it, or "António Sá" would be just "António".
+  if (/(^|[\s,.-])s[áÁ](?=$|[\s,.-])/i.test(nameNoNote) && !sig.includes('sa')) sig.push('sa');
   const have = new Set(words(text));
   const squashed = t.replace(/ /g, '');   // "ONE TO ONE" is also "ONEtoONE"
   if (!sig.length || !sig.every((w) => have.has(w) || (w.length >= 6 && squashed.includes(w)))) return '';

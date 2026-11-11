@@ -35,6 +35,7 @@ const TIPS = {
   tags: 'Free labels such as "Spain trip". Several per item; type and press comma. Each tag gets its own total.',
   paidWith: 'Which company account or card the money left from. Choose "Paid personally" when one of you paid with your own money and the company pays you back later.',
   paidPersonallyBy: 'The partner whose own money was used. The Overview lists what the company still owes each of you.',
+  bankNames: 'The name the bank writes on transfers from you, copied from a bank line. It lets the Inbox recognise money from you as a partner loan.',
   usedBy: 'Who the expense was for, not whose card paid. Tick one or more people; with several, the weight sets their share (equal by default).',
   docType: 'What paperwork you have. For tax the company needs an invoice with its NIF; a receipt or simplified invoice alone is not enough.',
   issuedToCompany: 'Does the invoice show the company’s name and NIF? Choose Unknown until you have checked; Unknown counts as a warning.',
@@ -505,7 +506,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           <div id="f-incomewrap">${fld('Type of money received', 'incomeType', `<select id="f-income">${INCOME_TYPES.map((t) => `<option value="${t.id}"${d.incomeType === t.id ? ' selected' : ''} title="${esc(t.hint)}">${t.label}</option>`).join('')}</select>`)}</div></div>
         <div id="f-partnerwrap" style="display:none">${fld('Partner', 'partner', `<select id="f-partner"><option value="">Choose…</option>${S.dir.filter((m) => m.active || m.key === d.partnerKey).map((m) => `<option value="${esc(m.key)}"${d.partnerKey === m.key ? ' selected' : ''}>${esc(m.label)}</option>`).join('')}</select>`)}</div>
         <div id="f-counterwrap">${fld('From', 'counterparty', `<input type="text" id="f-counter" value="${esc(d.counterparty || '')}" placeholder="e.g. the name in the bank line">`)}
-          <div id="f-investorwrap" style="${capitalOn() ? '' : 'display:none'}">${fld('Investor', 'investor', `<input type="text" id="f-investor" list="f-invlist" value="${esc(d.investorName || '')}" placeholder="Choose an investor from the Investor CRM"><datalist id="f-invlist">${S.investors.map((x) => `<option value="${esc(x.name)}">`).join('')}</datalist>`)}</div></div>
+          <div id="f-investorwrap" style="${capitalOn() ? '' : 'display:none'}">${fld('Investor', 'investor', `<select id="f-investor"><option value="">None (choose an investor from the Investor CRM)</option>${[...S.investors.map((x) => x.name), ...(d.investorName && !S.investors.some((x) => x.name === d.investorName) ? [d.investorName] : [])].map((n) => `<option value="${esc(n)}"${n === d.investorName ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`)}</div></div>
       </div>
       <div class="sect" id="f-classify"><div class="sect-title">Classification</div>
         <div class="form-row">${fld('Category', 'category', `<select id="f-category">${opts(activeOnly(S.lists.categories, d.categoryId), d.categoryId || (it ? 'other' : ''), it ? null : 'Choose…')}</select>`)}
@@ -520,13 +521,13 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="form-row">${fld('Paid with', 'paidWith', `<select id="f-paidwith">${paidWithOptions(d.paidWith)}</select>`)}
           <div id="f-personalwrap">${fld('Paid personally by', 'paidPersonallyBy', `<select id="f-personal"><option value="">Choose…</option>${S.dir.filter((m) => m.active || m.key === d.paidPersonallyBy).map((m) => `<option value="${esc(m.key)}"${d.paidPersonallyBy === m.key ? ' selected' : ''}>${esc(m.label)}</option>`).join('')}</select>`)}
             <div class="checkline" style="margin-bottom:14px"><input type="checkbox" id="f-reimb" ${d.reimbursement?.status === 'reimbursed' ? 'checked' : ''} ${d.reimbursement?.movementId ? 'disabled' : ''}><label for="f-reimb">${d.reimbursement?.movementId ? 'Reimbursed by a bank transfer' : 'Already reimbursed (outside the bank)'}${tip('reimbursed')}</label></div></div></div>
-        ${fld('Used by', 'usedBy', sharesHtml(d.usedBy))}
+        ${fld('Used by', 'usedBy', sharesHtml(d.usedBy) + '<p class="hint" id="f-usedhint">Nobody ticked = a company cost (shown as "Company" in Reports).</p>')}
       </div>
       <div class="sect" id="f-docsect"><div class="sect-title">Paperwork</div>
         <div class="warnbox" id="f-warn"></div>
         <div class="form-row">${fld('Document', 'docType', `<select id="f-doctype">${DOC_TYPES.map((t) => `<option value="${t.id}"${d.docType === t.id ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
           ${fld('Invoice shows our NIF', 'issuedToCompany', `<select id="f-issued"><option value="unknown"${d.issuedToCompany === 'unknown' || !d.issuedToCompany ? ' selected' : ''}>Unknown</option><option value="yes"${d.issuedToCompany === 'yes' ? ' selected' : ''}>Yes</option><option value="no"${d.issuedToCompany === 'no' ? ' selected' : ''}>No</option></select>`)}</div>
-        <div class="form-row">${fld('Supplier', 'supplier', `<input type="text" id="f-supplier" list="f-suplist" value="${esc(d.supplierName || '')}" placeholder="Name"><datalist id="f-suplist">${S.suppliers.filter((s) => !s.archived).map((s) => `<option value="${esc(s.name)}">`).join('')}</datalist>`)}
+        <div class="form-row">${fld('Supplier', 'supplier', `<input type="text" id="f-supplier" list="f-suplist" value="${esc(d.supplierName || '')}" placeholder="Name"><datalist id="f-suplist">${S.suppliers.filter((s) => !s.archived).map((s) => `<option value="${esc(s.name)}">`).join('')}</datalist><div class="hint">Type to search the suppliers, or clear the box to see them all. A new name is saved for next time.</div>`)}
           ${fld('Supplier NIF / VAT ID', 'supplierTaxId', `<input type="text" id="f-taxid" value="${esc(d.supplierTaxId || '')}" placeholder="NIF or VAT ID">`)}</div>
         <div class="form-row">${fld('Invoice number', 'docNumber', `<input type="text" id="f-docnum" value="${esc(d.docNumber || '')}">`)}${fld('ATCUD', 'atcud', `<input type="text" id="f-atcud" value="${esc(d.atcud || '')}" placeholder="Optional">`)}</div>
         <div class="form-row">${fld('Invoice date', 'invoiceDate', `<input type="date" id="f-invdate" value="${esc(d.invoiceDate || '')}">`)}
@@ -809,6 +810,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="form-group"><label for="p-bank">Bank</label><input type="text" id="p-bank" value="${esc(pr.bank || '')}"></div>
       ${fld('IBAN', 'iban', `<input type="text" id="p-iban" value="${esc(formatIban(pr.iban || ''))}" placeholder="PT50 …"><div class="hint" id="p-ibanhint">${ibanHint(pr.iban)}</div>`)}
       ${fld('BIC / SWIFT (optional)', 'bic', `<input type="text" id="p-bic" value="${esc(cleanBic(pr.bic || ''))}" placeholder="e.g. BANKPTPL"><div class="hint" id="p-bichint">${bicHint(pr.bic)}</div>`)}
+      ${fld('Names in bank lines', 'bankNames', `<textarea id="p-banknames" rows="2" placeholder="One per line, exactly as the bank writes it, e.g. ANTONIO MARIA OLIVEIRA B N">${esc((pr.bankNames || []).join('\n'))}</textarea><div class="hint">The bank cuts names at 26 letters. Money from this name is then offered as a partner loan, not as investor capital.</div>`)}
       <p class="hint">Visible to the Partners and the Admin. You can edit only your own profile.</p>
       <div class="modal-actions"><button class="btn btn--ghost" id="p-cancel">Cancel</button><button class="btn btn--primary" id="p-save">Save</button></div>`);
     const m = root.querySelector('#v2modalBox');
@@ -816,7 +818,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     m.querySelector('#p-bic').addEventListener('input', (e) => { m.querySelector('#p-bichint').textContent = bicHint(e.target.value); });
     m.querySelector('#p-cancel').addEventListener('click', closeModal);
     m.querySelector('#p-save').addEventListener('click', async () => {
-      const data = { holderName: m.querySelector('#p-holder').value.trim(), bank: m.querySelector('#p-bank').value.trim(), iban: cleanIban(m.querySelector('#p-iban').value), bic: cleanBic(m.querySelector('#p-bic').value), updatedBy: access.email, updatedAt: serverTimestamp() };
+      const data = { holderName: m.querySelector('#p-holder').value.trim(), bank: m.querySelector('#p-bank').value.trim(), iban: cleanIban(m.querySelector('#p-iban').value), bic: cleanBic(m.querySelector('#p-bic').value), bankNames: m.querySelector('#p-banknames').value.split(/[\n;]+/).map((x) => x.replace(/\s+/g, ' ').trim()).filter((x) => x.length >= 4).slice(0, 10), updatedBy: access.email, updatedAt: serverTimestamp() };
       try { await setDoc(doc(db, 'budgetPeople', key), data, { merge: true }); logEvent('budget_profile_saved', { itemName: key }); closeModal(); await refresh(); } catch (e) { alert('Failed to save: ' + e.message); }
     });
   }
@@ -940,7 +942,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     return mine.length ? { balance: mine[0].balance, posted: mine[0].posted } : null;
   };
   const recCtx = (accountId) => ({
-    partners: S.dir.filter((m) => m.partner).map((m) => ({ key: m.key, name: m.name || m.label })),
+    partners: S.dir.filter((m) => m.partner).map((m) => ({ key: m.key, name: m.name || m.label, bankNames: (S.people[m.key] || {}).bankNames || [] })),
     suppliers: S.suppliers, cards: S.cards, accountId, investors: capitalOn() ? S.investors : [],
   });
   const KIND_TEXT = { expense: 'Expense', income: 'Money in', settlement: 'To a partner' };
@@ -1052,7 +1054,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   function draftFromMovement(m, over = {}) {
     const g = { ...(m.sug || {}), ...over }, amt = Math.abs(m.amount);
     if (g.kind === 'income') {
-      return { movementId: m.id, kind: 'income', name: g.name || cleanDescription(m.description), amount: amt, date: m.posted, incomeType: g.incomeType || 'other', counterparty: g.counterparty || '', investorId: g.investorId || '', investorName: g.investorName || '', paidWith: g.paidWith || '', comments: '', tags: [], usedBy: [] };
+      return { movementId: m.id, kind: 'income', name: g.name || cleanDescription(m.description), amount: amt, date: m.posted, incomeType: g.incomeType || 'other', counterparty: g.counterparty || '', investorId: g.investorId || '', investorName: g.investorName || '', partnerKey: g.partnerKey || '', paidWith: g.paidWith || '', comments: '', tags: [], usedBy: [] };
     }
     return { movementId: m.id, kind: 'expense', name: g.name || cleanDescription(m.description), amount: amt, date: m.posted, categoryId: g.categoryId || '', purposeId: g.purposeId || '', paidWith: g.paidWith || '', supplierName: g.supplierName || '', supplierId: g.supplierId || '', docType: g.docWaived ? 'none' : 'none', docWaived: g.docWaived || false, country: 'PT', currency: 'EUR', issuedToCompany: 'unknown', tags: [], usedBy: [] };
   }
@@ -1060,7 +1062,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const exp = d.kind === 'expense';
     return {
       kind: d.kind, name: d.name, amount: d.amount, date: d.date, type: exp ? 'cost' : 'revenue', category: 'Other', periodicity: 'one_time',
-      categoryId: exp ? d.categoryId : '', subtype: '', purposeId: exp ? d.purposeId || '' : '', tags: [], incomeType: exp ? '' : d.incomeType, counterparty: exp ? '' : d.counterparty, investorId: exp ? '' : d.investorId || '', investorName: exp ? '' : d.investorName || '',
+      categoryId: exp ? d.categoryId : '', subtype: '', purposeId: exp ? d.purposeId || '' : '', tags: [], incomeType: exp ? '' : d.incomeType, counterparty: exp ? '' : d.counterparty, investorId: exp ? '' : d.investorId || '', investorName: exp ? '' : d.investorName || '', partnerKey: exp ? '' : d.partnerKey || '',
       paidWith: d.paidWith || '', paidPersonallyBy: '', usedBy: [], docType: exp ? 'none' : '', issuedToCompany: exp ? 'unknown' : '', supplierName: d.supplierName || '', supplierId: d.supplierId || '', supplierTaxId: '', docNumber: '', atcud: '', invoiceDate: '', country: exp ? 'PT' : '', vatRate: null, vatAmount: null, vatDeductible: exp ? 'ask' : '', currency: 'EUR', originalAmount: null, docWaived: exp ? d.docWaived || false : false,
       comments: 'From the bank file', attachments: [], sharedAt: '', sharedBy: '', changedSinceShared: false, movementId: d.movementId,
     };

@@ -47,6 +47,22 @@ ok('a card purchase takes the card from the line and asks for a category', rec[1
 ok('a known supplier name in the line fills its defaults', rec[4].supplierId === 's1' && rec[4].categoryId === 'transport' && rec[4].purposeId === 'field-visit' && rec[4].paidWith === 'card:c1' && rec[4].sure);
 ok('money in is a probable capital call from the named sender, never accepted without a click', rec[3].kind === 'income' && rec[3].incomeType === 'capital_call' && rec[3].counterparty === 'FUNDO ALFA F.C.' && !rec[3].autoAccept && rec[3].paidWith === 'account:a1');
 ok('money in with only a reference number has no sender name', rec[7].counterparty === '' && /ref 0018311069600202582/.test(rec[7].name));
+ok('a commission paid to someone (a transfer or card payment that names a payee) is not a bank charge: no auto-accept, no "no document needed", the person picks the category', ['TRF.IMED. P/ AGENCIA ALFA LDA COMISSAO DEAL', 'TRF CRED SEPA+ P/ BROKER SA COMISSAO', 'COMPRA *0435 COMISSOES LDA', 'DD COMISSAO CONSULTORA LDA', 'PAGAMENTO COMISSAO AGENTE'].every((s) => { const r = recognise({ description: s, amount: -2500 }, ctx); return !r.autoAccept && !r.docWaived && r.categoryId !== 'bank-taxes' && r.sure === false; }));
+ok('bank charges written by the bank itself are still recognised, also when small or large, and so is the transfer fee that begins like a transfer', ['COMISSÃO DE GESTÃO', 'COMISSAO MANUTENCAO CONTA', 'JUROS ULTRAP. CREDITO', 'IMP.DE SELO 0018', 'ANUIDADE CARTAO'].every((s) => recognise({ description: s, amount: -11.9 }, ctx).autoAccept) && recognise({ description: 'TRF.CRÉD.N.SEPA+(DESP.BEN) 0018311069600202582', amount: -17.5 }, ctx).autoAccept);
+{
+  const partners = [{ key: 'andre', name: 'André Filipe Nogueira da Rocha' }, { key: 'antonio', name: 'António Carvalho', bankNames: ['ANTONIO MARIA OLIVEIRA B N'] }];
+  const invs = [{ id: 'i1', name: 'António Sá', bankNames: [] }, { id: 'i2', name: 'Alfa Fund SA', bankNames: [] }];
+  const pctx = { ...ctx, partners, investors: invs };
+  const a = recognise({ description: 'TRF.IMED.   DE ANDRE FILIPE NOGUEIRA DA R-11605266', amount: 1000 }, pctx);
+  const b = recognise({ description: 'TRF.IMED.  DE ANTONIO MARIA OLIVEIRA B N-11606345', amount: 1000 }, pctx);
+  const c = recognise({ description: 'TRF.IMED.   DE ANDRE FILIPE NOGUEIRA DA SILVA-123', amount: 50 }, pctx);
+  const d = recognise({ description: 'TRF.IMED.  DE ANTONIO MARIA OLIVEIRA B N-11606345', amount: 1000 }, { ...ctx, partners: [{ key: 'antonio', name: 'António Carvalho' }], investors: invs });
+  ok('money from a partner is offered as a partner loan to that partner, never as an investor, and never accepted without a click (the bank cuts names at 26 letters)', a.kind === 'income' && a.incomeType === 'partner_loan' && a.partnerKey === 'andre' && !a.autoAccept && !a.sure && !a.investorId && /Loan from/.test(a.name));
+  ok('a partner\'s remembered bank name is matched, also when the name in the line is cut', b.incomeType === 'partner_loan' && b.partnerKey === 'antonio' && !b.investorId);
+  ok('a different surname after the same first names is not that partner', c.partnerKey === undefined && c.incomeType === 'capital_call');
+  ok('"António Sá" is not just "António": a line for António Maria Oliveira does not match the investor, but "ANTONIO SA" does, and a company ending SA is still ignored', d.investorId === undefined && investorMatch('ANTONIO MARIA OLIVEIRA B N', invs[0]) === '' && investorMatch('ANTONIO SA', invs[0]) === 'name' && investorMatch('ALFA', invs[1]) === 'name');
+  ok('a transfer out to a partner whose name is cut is still a reimbursement', recognise({ description: 'TRF.IMED. P/ ANDRE FILIPE NOGUEIRA DA R-11605266', amount: -1000 }, pctx).kind === 'settlement');
+}
 ok('a transfer to a partner is a reimbursement (settlement), by first name or by full name', rec[5].kind === 'settlement' && rec[5].partnerKey === 'maria' && recognise({ description: 'TRF.IMED.   P/ ANDRE FILIPE NOGUEIRA DA ROCHA-E190', amount: -1000 }, ctx).partnerKey === 'andre' && !rec[5].autoAccept);
 ok('a partner is not guessed from one shared word', matchPartner('TRF P/ ANDRE SILVA', ctx.partners) === '' && matchPartner('Devolucao Zeca', ctx.partners) === '');
 ok('a transfer to a supplier alias is that supplier\'s expense', rec[6].kind === 'expense' && rec[6].supplierId === 's2' && rec[6].categoryId === 'professional-services');
