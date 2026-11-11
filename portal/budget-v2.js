@@ -10,7 +10,7 @@ import { buildXlsx, XLSX_MIME } from './xlsx-write.js';
 import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDescription, matchCandidates, findInvestor } from './budget-bank.js';
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
-  DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
+  DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, INCOME_DOC, incomeDocNeeded, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
   docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, itemLines, visitIdsOf, visitReport, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban, cleanBic, bicStatus,
   last4, labelOf, mergeLists, activeOnly, newListId,
 } from './budget-lib.js';
@@ -259,6 +259,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const o = overview(S.items), vat = vatSummary(S.items);
     const costs = S.items.filter((i) => i.kind === 'expense' && !i.archived);
     const warn = costs.filter((i) => docStatus(i).level === 'warn').length;
+    const incWarn = S.items.filter((i) => i.kind === 'income' && !i.archived && docStatus(i).level === 'warn').length;
     const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
     const owed = partnerBalances(S.items, S.movements);
     const byCat = {}, byPur = {};
@@ -275,6 +276,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
           ${warn ? `<button class="btn btn--ghost btn--sm" data-go="doc">⚠ ${warn} expense${warn === 1 ? '' : 's'} with missing or wrong paperwork</button>` : '<span class="mini">✓ Every expense has its paperwork.</span>'}
+          ${incWarn ? `<button class="btn btn--ghost btn--sm" data-go="doc">⚠ ${incWarn} money-received item${incWarn === 1 ? '' : 's'} without the document</button>` : ''}
           ${unrev ? `<button class="btn btn--ghost btn--sm" data-go="review">⚠ ${unrev} old item${unrev === 1 ? '' : 's'} to review</button>` : ''}
           ${owed.length ? `<button class="btn btn--ghost btn--sm" data-go="owed" title="Expenses paid with a partner's own money and loans not yet paid back">The company owes: ${owed.map((x) => `${esc(personLabel(x.key))} ${eur.format(x.total)}`).join(' · ')}</button>` : ''}
         </div>
@@ -523,8 +525,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
             <div class="checkline" style="margin-bottom:14px"><input type="checkbox" id="f-reimb" ${d.reimbursement?.status === 'reimbursed' ? 'checked' : ''} ${d.reimbursement?.movementId ? 'disabled' : ''}><label for="f-reimb">${d.reimbursement?.movementId ? 'Reimbursed by a bank transfer' : 'Already reimbursed (outside the bank)'}${tip('reimbursed')}</label></div></div></div>
         ${fld('Used by', 'usedBy', sharesHtml(d.usedBy) + '<p class="hint" id="f-usedhint">Nobody ticked = a company cost (shown as "Company" in Reports).</p>')}
       </div>
-      <div class="sect" id="f-docsect"><div class="sect-title">Paperwork</div>
+      <div class="sect" id="f-docsect"><div class="sect-title" id="f-doctitle">Paperwork</div>
         <div class="warnbox" id="f-warn"></div>
+        <div id="f-invfields">
         <div class="form-row">${fld('Document', 'docType', `<select id="f-doctype">${DOC_TYPES.map((t) => `<option value="${t.id}"${d.docType === t.id ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
           ${fld('Invoice shows our NIF', 'issuedToCompany', `<select id="f-issued"><option value="unknown"${d.issuedToCompany === 'unknown' || !d.issuedToCompany ? ' selected' : ''}>Unknown</option><option value="yes"${d.issuedToCompany === 'yes' ? ' selected' : ''}>Yes</option><option value="no"${d.issuedToCompany === 'no' ? ' selected' : ''}>No</option></select>`)}</div>
         <div class="form-row">${fld('Supplier', 'supplier', `<input type="text" id="f-supplier" list="f-suplist" value="${esc(d.supplierName || '')}" placeholder="Name"><datalist id="f-suplist">${S.suppliers.filter((s) => !s.archived).map((s) => `<option value="${esc(s.name)}">`).join('')}</datalist><div class="hint">Type to search the suppliers, or clear the box to see them all. A new name is saved for next time.</div>`)}
@@ -537,6 +540,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         ${fld('VAT deductible?', 'vatDeductible', `<select id="f-vatded">${DEDUCTIBLE.map((x) => `<option value="${x.id}"${(d.vatDeductible || 'ask') === x.id ? ' selected' : ''}>${x.label}</option>`).join('')}</select>`)}
         <div class="form-row">${fld('Currency', 'currency', `<select id="f-currency">${['EUR', 'GBP', 'USD', 'CHF', 'SEK', 'DKK', 'PLN'].map((c) => `<option${(d.currency || 'EUR') === c ? ' selected' : ''}>${c}</option>`).join('')}</select>`)}
           <div id="f-origwrap">${fld('Amount in that currency', '', `<input type="number" id="f-orig" step="0.01" min="0" value="${esc(d.originalAmount ?? '')}">`)}</div></div>
+        </div>
         <div class="checkline" style="margin-bottom:14px"><input type="checkbox" id="f-waived" ${d.docWaived ? 'checked' : ''}><label for="f-waived">No document needed for this item${tip('waived')}</label></div>
         <div id="f-waivedwrap">${fld('Why', '', `<input type="text" id="f-waivedwhy" value="${esc(typeof d.docWaived === 'string' ? d.docWaived : '')}" placeholder="e.g. toll paid in cash, no receipt available">`)}</div>
       </div>
@@ -553,7 +557,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const m = root.querySelector('#v2modalBox'), $ = (id) => m.querySelector('#' + id);
     const company = S.company || {};
     const readDraft = () => ({
-      kind: $('f-kind').value, categoryId: $('f-category').value, amount: parseFloat($('f-amount').value) || 0, docType: $('f-doctype').value,
+      kind: $('f-kind').value, incomeType: $('f-income').value, categoryId: $('f-category').value, amount: parseFloat($('f-amount').value) || 0, docType: $('f-doctype').value,
       issuedToCompany: $('f-issued').value, supplierName: $('f-supplier').value, supplierTaxId: $('f-taxid').value, docNumber: $('f-docnum').value,
       // Files picked but not saved yet count too, so the warning clears as soon as a file is chosen.
       attachments: [...S.edit.attachments, ...Array.from($('f-files').files || []).map((f) => ({ name: f.name }))],
@@ -566,7 +570,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       $('f-reimb').closest('.checkline').style.display = $('f-paidwith').value === 'personal' ? '' : 'none';
       $('f-investorwrap').style.display = capitalOn() && income && $('f-income').value === 'capital_call' ? '' : 'none';
       $('f-classify').style.display = expense || k === 'plan' ? '' : 'none';
-      $('f-who').style.display = expense ? '' : 'none'; $('f-docsect').style.display = expense ? '' : 'none';
+      $('f-who').style.display = expense ? '' : 'none'; $('f-docsect').style.display = expense || (income && incomeDocNeeded($('f-income').value)) ? '' : 'none'; $('f-invfields').style.display = expense ? '' : 'none'; $('f-doctitle').textContent = expense ? 'Paperwork' : 'Supporting document';
       $('f-subwrap').style.display = expense && $('f-category').value === 'team-pay' ? '' : 'none';
       $('f-personalwrap').style.display = $('f-paidwith').value === 'personal' ? '' : 'none';
       $('f-origwrap').style.display = $('f-currency').value !== 'EUR' ? '' : 'none';
@@ -578,9 +582,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       m.querySelectorAll('[data-used]').forEach((c) => { const w = m.querySelector(`[data-weight="${c.dataset.used}"]`); w.style.visibility = c.checked ? '' : 'hidden'; });
       const ds = docStatus(readDraft()), box = $('f-warn');
       const reminder = company.companyName || company.companyNif ? `Ask for the invoice in the name of <strong>${esc(company.companyName || '')}</strong>${company.companyNif ? `, NIF <strong>${esc(company.companyNif)}</strong>` : ''}${company.companyAddress ? `, ${esc(String(company.companyAddress).replace(/\n/g, ', '))}` : ''}.` : 'Fill in Company details in Settings to see the name and NIF to ask for.';
-      const msgs = { ok: 'Invoice complete: file, our NIF, supplier, tax ID and number are all there.', incomplete: `Invoice details missing: ${ds.missing.map((x) => ({ supplierName: 'supplier name', supplierTaxId: 'supplier NIF / VAT ID', docNumber: 'invoice number' }[x] || x)).join(', ')}.`, noNif: 'The invoice must show our company NIF. Set “Invoice shows our NIF” to Yes once you have checked, or ask the supplier to reissue it.', receiptOnly: 'A receipt or simplified invoice is not enough for tax: ask the supplier for an invoice with our NIF.', noDocument: 'No document yet: attach the invoice (PDF or photo) and pick its type.', notRequired: 'No document needed for this item.' };
+      const msgs = { ok: 'Invoice complete: file, our NIF, supplier, tax ID and number are all there.', incomplete: `Invoice details missing: ${ds.missing.map((x) => ({ supplierName: 'supplier name', supplierTaxId: 'supplier NIF / VAT ID', docNumber: 'invoice number' }[x] || x)).join(', ')}.`, noNif: 'The invoice must show our company NIF. Set “Invoice shows our NIF” to Yes once you have checked, or ask the supplier to reissue it.', receiptOnly: 'A receipt or simplified invoice is not enough for tax: ask the supplier for an invoice with our NIF.', noDocument: 'No document yet: attach the invoice (PDF or photo) and pick its type.', notRequired: 'No document needed for this item.', attached: 'A file is attached.', incomeMissing: `Attach the ${ds.need || 'supporting document'} (PDF or photo) under Notes and files, or tick “No document needed” and say why.` };
       box.className = 'warnbox ' + ds.level;
-      box.innerHTML = `<strong>${esc(ds.label)}.</strong> ${msgs[ds.code]}${ds.level === 'warn' ? `<div style="margin-top:4px">${reminder}</div>` : ''}`;
+      box.innerHTML = `<strong>${esc(ds.label)}.</strong> ${msgs[ds.code]}${ds.level === 'warn' && $('f-kind').value === 'expense' ? `<div style="margin-top:4px">${reminder}</div>` : ''}`;
     };
     // Split lines: weight, category, purpose, visit per line; the amounts shown are the shares of the total.
     const lineRow = (l, i, amt) => `<div class="split-line" data-line="${i}">
@@ -691,7 +695,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         vatAmount: expense && $('f-vatamt').value !== '' ? Number($('f-vatamt').value) : null,
         vatDeductible: expense ? $('f-vatded').value : '',
         currency: expense ? $('f-currency').value : 'EUR', originalAmount: expense && $('f-currency').value !== 'EUR' && $('f-orig').value !== '' ? Number($('f-orig').value) : null,
-        docWaived: expense && $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
+        docWaived: (expense || kind === 'income') && $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
         comments: $('f-comments').value.trim(), attachments,
       };
       if (kind === 'income' && $('f-income').value === 'partner_loan' && !data.partnerKey) { alert('Choose which partner lent the money.'); btn.disabled = false; btn.textContent = 'Save'; return; }
@@ -1178,7 +1182,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const settle = S.movements.filter((m) => m.status === 'settlement');
     const ignored = S.movements.filter((m) => m.status === 'ignored');
     const costs = S.items.filter((i) => i.kind === 'expense' && !i.archived);
-    const docWarn = costs.filter((i) => docStatus(i).level === 'warn');
+    const docWarn = S.items.filter((i) => (i.kind === 'expense' || i.kind === 'income') && !i.archived && docStatus(i).level === 'warn');
     const notShared = S.items.filter((i) => !i.archived && i.kind !== 'plan' && !(i.legacy && i.needsReview) && !i.sharedAt);
     const bal = partnerBalances(S.items, S.movements);
     const settled = S.movements.filter((m) => m.status === 'settled').sort((a, b) => (a.posted < b.posted ? 1 : -1));
@@ -1217,7 +1221,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         ${settle.length ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Transfers to partners (${settle.length})</h2></div><div class="card"><div class="table-wrap"><table><tbody>${settle.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(personLabel(m.partnerKey || (m.sug || {}).partnerKey))}</td><td>${esc(cleanDescription(m.description))}</td><td class="num">${fmtMoney(m.amount)}${(m.settles || []).length ? `<div class="mini">${m.settles.length} expense${m.settles.length === 1 ? '' : 's'} linked${m.unallocated > 0.004 ? ` · ${fmtMoney(m.unallocated)} left` : ''}</div>` : ''}</td><td style="text-align:right;white-space:nowrap"><span data-perm="budget.edit budget.import"><button class="btn btn--primary btn--sm" data-settle="${m.id}">Link to expenses…</button> <button class="btn btn--ghost btn--sm" data-loan="${m.id}" title="The transfer pays back money the partner lent the company">Repays a loan</button></span> <span data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-back="${m.id}">Back to categorise</button></span></td></tr>`).join('')}</tbody></table></div></div><p class="mini" style="margin-top:8px">Link each transfer to the expenses the partner paid personally. They stop counting as owed.</p></div>` : ''}
         ${settled.length ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Repaid to partners (${settled.length})</h2></div><div class="card"><div class="table-wrap"><table><tbody>${settled.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(personLabel(m.partnerKey))}</td><td>${m.settlementKind === 'loan' ? 'Repays a loan' : `${(m.settles || []).length} expense${(m.settles || []).length === 1 ? '' : 's'}`}</td><td class="num">${fmtMoney(m.amount)}</td><td style="text-align:right" data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-unsettle="${m.id}">Unlink</button></td></tr>`).join('')}</tbody></table></div></div></div>` : ''}` : ''}
       <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Documents to fix (${docWarn.length})</h2>${docWarn.length > 8 ? '<div class="section-actions"><button class="btn btn--ghost btn--sm" id="i-alldocs">Show all in Items</button></div>' : ''}</div>
-        <div class="card"><div class="table-wrap"><table><tbody>${docWarn.length ? docWarn.slice(0, 8).map(itemLine).join('') : '<tr class="empty-row"><td colspan="5">Every expense has its paperwork.</td></tr>'}</tbody></table></div></div></div>
+        <div class="card"><div class="table-wrap"><table><tbody>${docWarn.length ? docWarn.slice(0, 8).map(itemLine).join('') : '<tr class="empty-row"><td colspan="5">Every item has its paperwork.</td></tr>'}</tbody></table></div></div></div>
       <div class="two">
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Not shared with the accountant (${notShared.length})</h2></div><div class="card" style="padding:14px 16px"><span class="mini">${notShared.length ? 'Select them in Items and use "Mark shared with accountant".' : 'Everything has been shared.'}</span> ${notShared.length ? '<button class="btn btn--ghost btn--sm" id="i-notshared">Show them</button>' : ''}</div></div>
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">To reimburse</h2></div><div class="card" style="padding:14px 16px">${bal.length ? bal.map((x) => `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:3px 0"><span class="mini" style="color:var(--text)">The company owes <strong>${esc(personLabel(x.key))}</strong> ${fmtMoney(x.total)}${x.expenses ? ` · ${fmtMoney(x.expenses)} for ${x.expenseCount} expense${x.expenseCount === 1 ? '' : 's'}` : ''}${x.loansOwed > 0 ? ` · ${fmtMoney(x.loansOwed)} lent` : ''}</span>${x.expenses ? '<button class="btn btn--ghost btn--sm" data-owedshow="1">Show</button>' : ''}</div>`).join('') : '<span class="mini">Nobody is owed money.</span>'}</div></div></div>

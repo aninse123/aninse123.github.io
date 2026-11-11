@@ -74,12 +74,27 @@ export const DOC_STATUS = {
   receiptOnly: { label: 'Receipt only', level: 'warn' },
   noDocument: { label: 'No document', level: 'warn' },
   notRequired: { label: 'Not required', level: 'na' },
+  attached: { label: 'Document attached', level: 'ok' },
+  incomeMissing: { label: 'Document missing', level: 'warn' },
 };
+
+// Money received that the accountant expects a document for, and what that document is. Interest, a partner paying back a reimbursement and "other" need none.
+export const INCOME_DOC = {
+  capital_call: 'capital call notice or subscription agreement',
+  partner_loan: 'loan agreement (contrato de suprimentos or mútuo)',
+  vat_refund: "tax authority's notice of the refund",
+  supplier_refund: "supplier's credit note",
+};
+export const incomeDocNeeded = (type) => Object.prototype.hasOwnProperty.call(INCOME_DOC, type);
 
 // The status of one item's paperwork, worked out from its own fields (D10). Never blocks anything.
 export function docStatus(item) {
   const it = item || {};
   const kind = it.kind || 'expense';
+  if (kind === 'income' && incomeDocNeeded(it.incomeType) && !it.docWaived) {
+    const hasFile = Array.isArray(it.attachments) && it.attachments.length > 0;
+    return hasFile ? { code: 'attached', ...DOC_STATUS.attached, missing: [] } : { code: 'incomeMissing', ...DOC_STATUS.incomeMissing, missing: ['file'], need: INCOME_DOC[it.incomeType] };
+  }
   if (kind !== 'expense') return { code: 'notRequired', ...DOC_STATUS.notRequired, missing: [] };
   if (it.docWaived || NO_DOC_CATEGORIES.has(it.categoryId)) return { code: 'notRequired', ...DOC_STATUS.notRequired, missing: [] };
   const t = DOC_BY_ID[it.docType];

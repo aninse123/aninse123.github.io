@@ -37,7 +37,7 @@ ok('no period given keeps every date', packCandidates(set, {}).length >= 5);
 
 // ── Summary ──
 const sum = packSummary(cand);
-ok('summary: counts, totals, files, VAT, how many have paperwork problems and how many changed', sum.expenses === 3 && sum.income === 1 && sum.expenseTotal === 30 && sum.incomeTotal === 500 && sum.files === 3 && sum.warnCount === 1 && sum.changed === 1 && sum.vatTotal === 0);
+ok('summary: counts, totals, files, VAT, how many have paperwork problems and how many changed', sum.expenses === 3 && sum.income === 1 && sum.expenseTotal === 30 && sum.incomeTotal === 500 && sum.files === 3 && sum.warnCount === 2 && sum.changed === 1 && sum.vatTotal === 0);
 
 // ── File names ──
 ok('receipt names: date_supplier_amount.ext, accents and odd characters cleaned, extension kept in lower case', receiptName({ date: '2026-10-05', supplierName: 'Café São João, Lda.', amount: 12.5 }, { name: 'scan.PDF' }, 0) === '2026-10-05_Cafe-Sao-Joao-Lda_12.50.pdf');
@@ -52,11 +52,11 @@ ok('the pack has the sheets Pack, Expenses, Money received, Bank lines, Missing 
 ok('Bank lines is left out when the person may not see bank data (no movements given)', !packSheets(cand, { ...ctx, movements: undefined }).sheets.some((s) => s.name === 'Bank lines'));
 ok('Expenses: one row per expense with supplier, NIF, number, document, our NIF answer, category, total, VAT and paperwork status', (() => { const r = sheet('Expenses').rows.find((x) => x[8] === 'A'); return r[0] === '2026-10-05' && r[2] === 'Flix' && r[3] === 'DE1' && r[4] === '9' && r[6] === 'Invoice (fatura)' && r[7] === 'Yes' && r[9] === 'Transport' && r[11] === 10 && r[19] === 'Invoice OK'; })());
 ok('every row has as many cells as there are columns, on every sheet', P.sheets.every((s) => s.rows.every((r) => r.length === s.columns.length)));
-ok('Missing documents lists only the expenses with a paperwork problem, with what to ask for', (() => { const m = sheet('Missing documents'); return m.rows.length === 1 && m.rows[0][1] === 'B' && m.rows[0][4] === 'Receipt only' && /invoice/i.test(m.rows[0][5]); })());
+ok('Missing documents lists the expenses with a paperwork problem, and the money received that needs a document and has none, with what to ask for', (() => { const m = sheet('Missing documents'); const b = m.rows.find((r) => r[1] === 'B'), c = m.rows.find((r) => r[4] === 'Document missing'); return m.rows.length === 2 && b[4] === 'Receipt only' && /invoice/i.test(b[5]) && !!c && /capital call notice/.test(c[5]); })());
 ok('Money received lists the capital call; Bank lines keep only the period, with how each line was booked', sheet('Money received').rows.length === 1 && sheet('Money received').rows[0][1] === 'Capital call' && sheet('Bank lines').rows.length === 1 && sheet('Bank lines').rows[0][5] === 'Booked in the budget');
 ok('the Pack sheet carries the period, company, totals and counts; Files maps each receipt to its name in the pack', (() => { const p = Object.fromEntries(sheet('Pack').rows.map((r) => [r[0], r[1]])); return p['Period'] === '2026-10-01 to 2026-10-31' && p['Company NIF'] === '600084779' && p['Expenses'] === 3 && p['Total expenses (EUR)'] === 30 && p['Money received lines'] === 1 && p['Receipt files'] === 3 && sheet('Files').rows.length === 3 && sheet('Files').rows[0][0].endsWith('.pdf'); })());
 ok('each receipt in the pack knows its stored place (budget/<file>), so the server can check it against the pack\'s own items', P.files.length === 3 && P.files.every((x) => x.storagePath === 'budget/1_Invoice_12.PDF' && x.name.endsWith('.pdf')) && packSheets([{ item: ex({ attachments: [{ name: 'a.pdf' }] }), state: 'new' }], ctx).files[0].storagePath === '');
-ok('counts and totals for the saved snapshot', P.counts.expenses === 3 && P.counts.files === 3 && P.counts.missing === 1 && P.totals.expenses === 30 && P.totals.income === 500);
+ok('counts and totals for the saved snapshot', P.counts.expenses === 3 && P.counts.files === 3 && P.counts.missing === 2 && P.totals.expenses === 30 && P.totals.income === 500);
 ok('file name: organisation and month; a longer period shows both ends', packFileName('Douro Partners', monthRange('2026-10')) === 'Douro-Partners-accountant-pack-2026-10.xlsx' && packFileName('A', { from: '2026-06-01', to: '2026-10-31' }) === 'A-accountant-pack-2026-06-01_2026-10-31.xlsx');
 
 // ── Excel writer ──

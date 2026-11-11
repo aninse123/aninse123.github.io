@@ -48,7 +48,7 @@ export function packCandidates(items, { from = '', to = '', includeSent = false 
 // What the person sees before creating the pack.
 export function packSummary(selected) {
   const exp = selected.filter((s) => s.item.kind === 'expense'), inc = selected.filter((s) => s.item.kind === 'income');
-  const warn = exp.filter((s) => docStatus(s.item).level === 'warn');
+  const warn = selected.filter((s) => (s.item.kind === 'expense' || s.item.kind === 'income') && docStatus(s.item).level === 'warn');
   return {
     expenses: exp.length, income: inc.length, files: selected.reduce((n, s) => n + (s.item.attachments || []).length, 0),
     expenseTotal: round2(exp.reduce((x, s) => x + s.item.amount, 0)), incomeTotal: round2(inc.reduce((x, s) => x + s.item.amount, 0)),
@@ -112,8 +112,8 @@ export function packSheets(selected, ctx) {
   };
   const received = {
     name: 'Money received',
-    columns: [{ header: 'Date', width: 12 }, { header: 'Type', width: 22 }, { header: 'From', width: 32 }, { header: 'Description', width: 30 }, { header: 'Amount (EUR)', width: 14, fmt: 'money' }, { header: 'Files in the pack', width: 40 }],
-    rows: inc.map((it) => [it.date, labelOf(INCOME_TYPES, it.incomeType, ''), it.counterparty || it.investorName || (it.partnerKey && c.personLabel ? c.personLabel(it.partnerKey) : ''), it.name, round2(it.amount), fileNames(it).join('\n')]),
+    columns: [{ header: 'Date', width: 12 }, { header: 'Type', width: 22 }, { header: 'From', width: 32 }, { header: 'Description', width: 30 }, { header: 'Amount (EUR)', width: 14, fmt: 'money' }, { header: 'Files in the pack', width: 40 }, { header: 'Document', width: 22 }],
+    rows: inc.map((it) => [it.date, labelOf(INCOME_TYPES, it.incomeType, ''), it.counterparty || it.investorName || (it.partnerKey && c.personLabel ? c.personLabel(it.partnerKey) : ''), it.name, round2(it.amount), fileNames(it).join('\n'), docStatus(it).label]),
   };
   const mv = (c.movements || []).filter((m) => (!c.period?.from || m.posted >= c.period.from) && (!c.period?.to || m.posted <= c.period.to)).sort((a, b) => String(a.posted).localeCompare(String(b.posted)) || (a.lineNo || 0) - (b.lineNo || 0));
   const bank = {
@@ -125,7 +125,7 @@ export function packSheets(selected, ctx) {
   const missing = {
     name: 'Missing documents',
     columns: [{ header: 'Date', width: 12 }, { header: 'Item', width: 30 }, { header: 'Supplier', width: 26 }, { header: 'Amount (EUR)', width: 14, fmt: 'money' }, { header: 'Problem', width: 26 }, { header: 'What to do', width: 60, fmt: 'wrap' }],
-    rows: exp.filter((it) => docStatus(it).level === 'warn').map((it) => { const d = docStatus(it); return [it.date, it.name, it.supplierName, round2(it.amount), d.label, FIX_HINT[d.code] || '']; }),
+    rows: [...exp, ...inc].filter((it) => docStatus(it).level === 'warn').map((it) => { const d = docStatus(it); return [it.date, it.name, it.kind === 'income' ? (it.counterparty || it.investorName || '') : it.supplierName, round2(it.amount), d.label, d.code === 'incomeMissing' ? `Send the ${d.need}.` : FIX_HINT[d.code] || '']; }),
   };
   const totalExp = round2(exp.reduce((x, i) => x + i.amount, 0)), totalInc = round2(inc.reduce((x, i) => x + i.amount, 0));
   const vat = round2(exp.reduce((x, i) => x + (Number(i.vatAmount) > 0 ? Number(i.vatAmount) : 0), 0));
