@@ -1165,7 +1165,14 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     } catch (e) { alert('Could not save: ' + e.message); }
   }
 
+  // The suggestion saved with a line is the one made on the day of the import. Lines still waiting are read again with today's rules, partners and investors, so a fix or a remembered bank name applies to them too (nothing is saved from here).
+  function refreshSuggestions() {
+    S.movements.filter((m) => m.status === 'new').forEach((m) => {
+      try { m.sug = recognise({ description: m.description, amount: m.amount, posted: m.posted, cardLast4: m.cardLast4 }, recCtx(m.accountId)); } catch (e) { /* keep the saved suggestion */ }
+    });
+  }
   function renderInbox(body) {
+    refreshSuggestions();
     const accountsOn = can('budget.accounts');
     const lines = S.movements.filter((m) => m.status === 'new').sort((a, b) => (a.posted < b.posted ? 1 : a.posted > b.posted ? -1 : (b.lineNo || 0) - (a.lineNo || 0)));
     const settle = S.movements.filter((m) => m.status === 'settlement');

@@ -16,4 +16,6 @@ ok('a partner remembers the names the bank writes for them (own profile, max 10)
 
 ok('Investor is a dropdown that always lists every investor (a text box with a list only shows the names that match what is typed); the supplier box says how to see all suppliers', /<select id="f-investor"><option value="">None/.test(v2) && !/id="f-invlist"/.test(v2) && /clear the box to see them all/.test(v2));
 
+ok('lines still waiting in the Inbox are re-read with today\'s rules, partners and investors (the suggestion saved at import time is not final); only lines with status new, nothing is saved', /function refreshSuggestions\(\)/.test(v2) && /S\.movements\.filter\(\(m\) => m\.status === 'new'\)\.forEach\(\(m\) => \{\s*try \{ m\.sug = recognise\(\{ description: m\.description, amount: m\.amount, posted: m\.posted, cardLast4: m\.cardLast4 \}, recCtx\(m\.accountId\)\)/.test(v2) && /function renderInbox\(body\) \{\s*refreshSuggestions\(\);/.test(v2));
+
 console.log(fail ? `\n${fail} FAILED` : '\nall UI control tests passed'); process.exit(fail ? 1 : 0);
