@@ -88,7 +88,7 @@ function cleanSource(src) {
   if (type === "filters" && Array.isArray(src?.filterSpec)) {
     out.filterSpec = src.filterSpec.slice(0, 30).map((f) => ({
       field: String(f?.field || "").slice(0, 60),
-      op: ["eq", "in", "gte", "lte", "between", "contains", "prefix", "exists", "within_days", "bool"].includes(f?.op) ? f.op : "eq",
+      op: ["eq", "in", "gte", "lte", "between", "contains", "prefix", "exists", "within_days", "bool", "due", "due_within"].includes(f?.op) ? f.op : "eq", // 13 Nov: due / due_within (Next follow-up)
       value: JSON.stringify(f?.value ?? null).length <= 2000 ? JSON.parse(JSON.stringify(f?.value ?? null)) : null,
     })).filter((f) => f.field);
   }
@@ -1059,7 +1059,16 @@ async function runDynamicAudience(campaign, now) {
     await ref.update({ "audience.lastEvaluatedAt": Timestamp.fromDate(now) });
     return { checked: 0, enrolled: 0, initialised: true };
   }
-  const snap = await db().collection("searchCompanies").where("updatedAt", ">", since).orderBy("updatedAt", "asc").limit(2000).get();
+  const snap0 = await db().collection("searchCompanies").where("updatedAt", ">", since).orderBy("updatedAt", "asc").limit(2000).get();
+  // 13 Nov (outreach.callResults): "Next follow-up due" — a company whose follow-up date came since the last check joins too, although
+  // nothing on it changed (one query on that date, only for a campaign that filters on it).
+  let snap = snap0;
+  if (spec.some((f) => f.field === "nextFollowUpAt" && ["due", "due_within"].includes(f.op))) {
+    const days = Math.max(0, ...spec.filter((f) => f.field === "nextFollowUpAt" && f.op === "due_within").map((f) => Number(f.value) || 0));
+    const due = await db().collection("searchCompanies").where("nextFollowUp.at", ">", since).where("nextFollowUp.at", "<=", Timestamp.fromMillis(now.getTime() + days * 86400000)).limit(500).get();
+    const seenIds = new Set(snap0.docs.map((d) => d.id));
+    snap = { docs: [...snap0.docs, ...due.docs.filter((d) => !seenIds.has(d.id))] };
+  }
   // T6: the Tier is computed (set on the company, else the rules), as on the
   // page; the rules only count while the "search.tier" switch isn't off.
   const byTier = spec.some((f) => f.field === "targetTier");
@@ -1080,12 +1089,12 @@ async function runDynamicAudience(campaign, now) {
       enrolled += res.filter((r) => r.result === "enrolled").length;
     }
   }
-  const last = snap.docs.length ? snap.docs[snap.docs.length - 1].data().updatedAt : Timestamp.fromDate(now);
+  const last = snap0.docs.length ? snap0.docs[snap0.docs.length - 1].data().updatedAt : Timestamp.fromDate(now);
   await ref.update({
-    "audience.lastEvaluatedAt": snap.size >= 2000 ? last : Timestamp.fromDate(now),
+    "audience.lastEvaluatedAt": snap0.size >= 2000 ? last : Timestamp.fromDate(now),
     ...(enrolled ? { "stats.enrolled": FieldValue.increment(enrolled), "stats.dynamicAdded": FieldValue.increment(enrolled) } : {}),
   });
-  return { checked: snap.size, enrolled };
+  return { checked: snap.docs.length, enrolled };
 }
 
 // ── Tasks (manual steps, Phase 2b) ──────────────────────────────────────────

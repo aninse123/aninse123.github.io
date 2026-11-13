@@ -190,6 +190,29 @@ function addTrack(cid, companyId, isTest = false) {
   const fl = Rel.flagsFor({ related: [{ companyId: "x", name: "IRMÃ, LDA", nextFollowUpAt: Date.parse("2027-05-12T09:00:00Z") }] }, { now: Date.parse("2026-11-13T09:00:00Z") });
   ok("a related company's Next follow-up is a flag (\"next follow-up … via …\")", fl.some((f) => f.kind === "follow_up" && /next follow-up 2027-05-12 via IRMÃ/.test(f.text)));
 
+  // ── Metrics: a company that answered with a result and never had an email conversation counts in the Monday report ──
+  const Report = require("../outreach/report.js");
+  const wFrom = Date.parse("2026-11-02T00:00:00Z"), wTo = Date.parse("2026-11-09T00:00:00Z");
+  const at = (iso) => Timestamp.fromDate(new RealDate(iso));
+  const rep = Report.buildWeeklyReport({ from: wFrom, to: wTo, companyCounts: true,
+    threads: [{ id: "th", companyId: "mail", repliedAt: at("2026-11-03T10:00:00Z"), responseCategory: "interested" }],
+    answers: [
+      { companyId: "phone", answer: { category: "wait_for_response", channel: "call", at: at("2026-11-04T10:00:00Z") } },
+      { companyId: "phone", answer: { category: "interested", channel: "call", at: at("2026-11-05T10:00:00Z") } }, // a second address: once per company
+      { companyId: "mail", answer: { category: "interested", channel: "call", at: at("2026-11-04T10:00:00Z") } }, // already counted by its email
+      { companyId: "old", answer: { category: "not_now", channel: "visit", at: at("2026-10-20T10:00:00Z") } }, // another week
+      { companyId: "t", isTest: true, answer: { category: "interested", channel: "call", at: at("2026-11-04T10:00:00Z") } },
+    ] });
+  ok("Monday report: a phone answer with no email counts once per company, by its first result, as a call", rep.week.replies === 2 && rep.week.repliesNoEmail === 1 && rep.week.byCategory["Awaiting reply"] === 1 && rep.week.repliesByChannel["chamada"] === 1);
+  ok("…and the report text says how many had no email", /1 sem conversa por email/.test(Report.reportText(rep, { weekKey: "2026-11-02", toKey: "2026-11-08" })));
+
+  // ── Campaign filter: Next follow-up due (kept for new matches) ──
+  const { matchesFilterSpec } = require("../outreach/campaign_util.js");
+  const nowMs = Date.parse("2026-11-13T09:00:00Z");
+  const coDue = { nextFollowUp: { at: at("2026-11-10T10:00:00Z") } }, coLater = { nextFollowUp: { at: at("2026-12-01T10:00:00Z") } };
+  ok("filter: next follow-up due", matchesFilterSpec(coDue, [{ field: "nextFollowUpAt", op: "due", value: true }], nowMs) && !matchesFilterSpec(coLater, [{ field: "nextFollowUpAt", op: "due", value: true }], nowMs) && !matchesFilterSpec({}, [{ field: "nextFollowUpAt", op: "due", value: true }], nowMs));
+  ok("filter: next follow-up in the next 30 days / any", matchesFilterSpec(coLater, [{ field: "nextFollowUpAt", op: "due_within", value: 30 }], nowMs) && !matchesFilterSpec(coLater, [{ field: "nextFollowUpAt", op: "due_within", value: 7 }], nowMs) && matchesFilterSpec(coLater, [{ field: "nextFollowUpAt", op: "exists", value: true }], nowMs));
+
   setNow(null);
   console.log(fail ? `\n${fail} call-results test(s) FAILED` : "\nall call-results tests passed");
   process.exit(fail ? 1 : 0);

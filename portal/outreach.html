@@ -2300,7 +2300,7 @@
           <div class="field"><label for="ntOut">What happened</label><select id="ntOut"></select></div>
           <div class="field"><label for="ntDate">When</label><input type="date" id="ntDate" value="${today}" max="${today}"></div>
           <div class="field"><label for="ntNotes">Notes (optional)</label><textarea id="ntNotes" rows="3" placeholder="What was said">${esc(who ? `With ${who}. ` : '')}</textarea></div>
-          ${isOn('outreach.callResults') ? `<div id="ntAns">${answerBlockHtml(true)}</div>` : ''}
+          ${isOn('outreach.callResults') ? `<div id="ntNW"></div><div id="ntAns">${answerBlockHtml(true)}</div>` : ''}
         </div>
         <div class="field" id="ntRel" hidden></div>
         <p class="hint" id="ntHint"></p>`, async () => {
@@ -2319,9 +2319,17 @@
         const alsoDone = ntRelPicked();
         const ar = ntAns ? ntAns.read() : null; // 13 Nov (outreach.callResults)
         if (ar?.error) { modalError(ar.error); return false; }
+        // 13 Nov: Number used and Who answered, as on a task card
+        const nwv = ntNWw && !$('ntNW').hidden ? ntNWw.read() : null;
+        const contact = nwv && (nwv.number || nwv.person) ? { contact: { name: nwv.person?.name || '', detail: nwv.number || '', number: nwv.number || '', personId: nwv.person?.personId || null } } : {};
         const made = (await callCampaign({ action: 'logActivity', companyId: co.id, threadId: pre.threadId || null, channel: ch, outcome: $('ntOut').value,
-          date: new Date($('ntDate').value + 'T12:00:00').toISOString(), notes: $('ntNotes').value, ...(ar || {}), ...(ar?.reminder ? { reminder: { ...ar.reminder, note: $('ntNotes').value.trim().slice(0, 500) } } : {}) })).data;
+          date: new Date($('ntDate').value + 'T12:00:00').toISOString(), notes: $('ntNotes').value, ...contact, ...(ar || {}), ...(ar?.reminder ? { reminder: { ...ar.reminder, note: $('ntNotes').value.trim().slice(0, 500) } } : {}) })).data;
         if (ar) toast(answerToast(made));
+        if (nwv) { // the number on the person (only new and ticked), or Someone else… → the Inbox's Add to company window
+          const tt = { companyId: co.id, companyName: co.name, channel: ch };
+          if (nwv.save && nwv.person?.personId && nwv.number) { try { if (await savePhoneOnPerson(tt, nwv.person.personId, nwv.number)) toast(`${nwv.number} saved on ${nwv.person.name}.`); } catch (e) { toast('The number could not be saved on the person: ' + errText(e)); } }
+          if (nwv.person?.isNew && (nwv.number || nwv.person.name)) setTimeout(() => openAddToCompany(tt, '', { type: 'phone', value: nwv.number || '', display: nwv.number || nwv.person.name }, null, nwv.person.name), 300);
+        }
         let extra = '';
         if (alsoDone.length && made?.activityId) {
           try { const out = (await callCampaign({ action: 'logRelated', activityId: made.activityId, companyIds: alsoDone.map(x => x.companyId) })).data; extra = ` Also on ${out.logged} related compan${out.logged === 1 ? 'y' : 'ies'}.`; }
@@ -2333,6 +2341,21 @@
       // 10 Nov (outreach.relatedActivity): the related companies, unticked — to mention in a call task, or to log the same activity on.
       const relCache = new Map();
       const ntAns = isOn('outreach.callResults') && $('ntAns') ? wireAnswerBlock($('ntAns')) : null; // 13 Nov: the answer's result and sequence
+      // 13 Nov (outreach.callResults): Number used and Who answered for a call, WhatsApp or visit already done, once the company is known.
+      let ntNWw = null;
+      async function ntNumberWho() {
+        const box = $('ntNW'); if (!box) return;
+        const ch = $('ntCh').value, k = co && mode === 'done' && ['call', 'whatsapp', 'visit'].includes(ch) ? co.id + '|' + ch : '';
+        if (box.dataset.k === k) return;
+        box.dataset.k = k; ntNWw = null;
+        if (!k) { box.innerHTML = ''; return; }
+        box.innerHTML = '<p class="hint">Loading the company\'s people and phones…</p>';
+        try { await loadCompaniesFor([co.id]); await loadPeopleFor([co.id]); } catch (e) { /* the lists stay short */ }
+        if (!$('ntNW') || box.dataset.k !== k) return;
+        const tt = { companyId: co.id, channel: ch };
+        box.innerHTML = numberWhoHtml(tt, taskCo(tt));
+        ntNWw = wireNumberWho(box, tt);
+      }
       const ntRelPicked = () => [...document.querySelectorAll('#ntRel .ntRelCk:checked')].map(x => ({ companyId: x.value, name: x.dataset.name }));
       async function ntRelated() {
         const box = $('ntRel'); if (!box) return;
@@ -2358,6 +2381,7 @@
         const cur = $('ntOut').value;
         $('ntOut').innerHTML = outs.map(([k, l]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(l)}</option>`).join('');
         if (ntAns) ntAns.show(mode === 'done' && (outs.find(o => o[0] === $('ntOut').value) || [])[2] === 'reply');
+        ntNumberWho();
         $('ntHint').textContent = mode === 'task'
           ? `Shows in Tasks → ${ch === 'letter' ? 'Letters to print' : 'To do'} for the person chosen; its outcome is saved on the company's activities. It doesn't change any campaign.`
           : 'Saved now on the company\'s activities (Search CRM → Activities). It doesn\'t change any campaign.';
@@ -2380,7 +2404,7 @@
               const c = hits.find(x => x.id === b.dataset.id); co = { id: c.id, name: c.name };
               $('ntCoQ').value = c.name; $('ntCoRes').hidden = true;
               $('ntCoPicked').textContent = `Chosen: ${c.name}`;
-              ntRelated();
+              ntRelated(); ntNumberWho();
               if (c.owner && $('ntWho').querySelector(`option[value="${c.owner}"]`) && !$('ntWho').dataset.touched) $('ntWho').value = c.owner;
             }));
           }, 300);
@@ -3566,7 +3590,7 @@
       if (metricsData) { renderMetrics(); return; }
       $('mKpis').innerHTML = '<div class="empty">Loading…</div>';
       try {
-        const [th, ms, dl, us, um] = await Promise.all([
+        const [th, ms, dl, us, um, an] = await Promise.all([
           getDocs(query(collection(db, 'outreachThreads'), orderBy('firstTouchAt', 'desc'), limit(3000))),
           getDocs(query(collection(db, 'outreachMessages'), where('direction', '==', 'out'), orderBy('createdAt', 'desc'), limit(3000))),
           // Doc ids are UTC dates (YYYY-MM-DD), so a range on the id needs no
@@ -3575,14 +3599,17 @@
           getDocs(query(collection(db, 'outreachUsage'), where(documentId(), '>=', sinceDay(31)))),
           // Unmatched mail (spec §7.3): the spam early warning.
           getDocs(query(collection(db, 'outreachThreads'), where('unmatched', '==', true), orderBy('lastMessageAt', 'desc'), limit(500))),
+          // 13 Nov (outreach.callResults): answers by phone / in person / by message with a result (on the enrolments), last 12 months.
+          isOn('outreach.callResults') ? getDocs(query(collection(db, 'outreachEnrolments'), where('answer.at', '>=', new Date(Date.now() - 366 * 86400000)), limit(2000))) : Promise.resolve({ size: 0, docs: [] }),
         ]);
-        addReads((th.size || 1) + (ms.size || 1) + (dl.size || 1) + (us.size || 1) + (um.size || 1)); refreshReads();
+        addReads((th.size || 1) + (ms.size || 1) + (dl.size || 1) + (us.size || 1) + (um.size || 1) + (an.size || 0)); refreshReads();
         const byId = (snap) => Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
         metricsData = {
           threads: th.docs.map(d => ({ id: d.id, ...d.data() })),
           messages: ms.docs.map(d => ({ id: d.id, ...d.data() })),
           daily: byId(dl), usage: byId(us),
           unmatched: um.docs.map(d => ({ id: d.id, ...d.data() })),
+          answers: an.docs.map(d => ({ id: d.id, ...d.data() })),
         };
         renderMetrics();
       } catch (e) { $('mKpis').innerHTML = `<div class="empty">Couldn't load metrics: ${esc(e.message)}</div>`; }
@@ -3596,7 +3623,12 @@
       // 27 Oct: a conversation whose email failed at Resend (never went out) isn't a first email.
       const threads = metricsData.threads.filter(t => t.firstTouchAt && t.status !== 'failed' && tsMs(t.firstTouchAt) >= since && (withTest || !t.isTest));
       const messages = metricsData.messages.filter(m => tsMs(m.createdAt) >= since && (withTest || !m.isTest) && m.via !== 'gmail');
-      return { threads, messages, withTest };
+      // 13 Nov (outreach.callResults): companies that answered with a result in the period and never had an email conversation —
+      // not part of the email rates (they had no first email), shown on their own tile; once per company.
+      const emailed = new Set(metricsData.threads.map(t => t.companyId).filter(Boolean)), noEmail = new Map();
+      (metricsData.answers || []).filter(e => e.companyId && e.answer && tsMs(e.answer.at) >= since && (withTest || !e.isTest) && !emailed.has(e.companyId))
+        .forEach(e => { if (!noEmail.has(e.companyId)) noEmail.set(e.companyId, e.answer); });
+      return { threads, messages, withTest, noEmail: [...noEmail.values()] };
     }
 
     function threadStats(list) {
@@ -3655,7 +3687,7 @@
 
     function renderMetrics() {
       if (!metricsData) return;
-      const { threads, messages, withTest } = metricsScope();
+      const { threads, messages, withTest, noEmail } = metricsScope();
       const testOnly = !withTest && !metricsData.threads.some(t => !t.isTest && t.firstTouchAt);
       $('mNote').textContent = testOnly ? 'Only test emails so far — tick "Include test emails" to see them.' : '';
 
@@ -3696,6 +3728,7 @@
         tile('Spam complaints', pctTxt(complaintPct), `${num(complained)} · keep under 0.1%`, sent.length >= 20 && complaintPct > 0.1),
         tile('Unsubscribed', pctTxt(pct(st.unsub, st.started)), `${num(st.unsub)} conversation${st.unsub === 1 ? '' : 's'}`),
         tile('Time to first reply', dur(median), 'median'),
+        ...(isOn('outreach.callResults') && noEmail.length ? [tile('Answers with no email', num(noEmail.length), `${num(noEmail.filter(a => POSITIVE.includes(a.category)).length)} positive · by phone, in person or by message, companies that never got an email`)] : []),
         tile('Unmatched mail', num(unmatchedPeriod), `≈ ${(unmatchedPeriod / periodDays).toLocaleString('en-GB', { maximumFractionDigits: 1 })} a day · mostly spam, each uses quota`, unmatched7 / 7 > 10),
         ...(opened || clicked ? [tile('Opens ≈ / clicks', `${pctTxt(pct(opened, delivered))} / ${pctTxt(pct(clicked, delivered))}`, 'approximate — Apple Mail inflates, Outlook hides')] : []),
       ].join('');

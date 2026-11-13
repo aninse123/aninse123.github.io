@@ -49,4 +49,8 @@ ok('followUpMs: a Timestamp, a cached { seconds }, a date string, nothing', foll
 const workingDaysOn = new Function(`${liftFn(outreach, 'workingDaysOn')}; return workingDaysOn;`)();
 const d = workingDaysOn(3, new Date(2026, 9, 2, 11)); // Fri 2 Oct → Wed 7 Oct (Mon–Fri on the page; the server adds holidays)
 ok('workingDaysOn: Friday + 3 working days = Wednesday', d.getDay() === 3 && d.getDate() === 7);
+// 13 Nov (André): the three follow-ups done now
+ok('Metrics: answers with no email loaded from the enrolments (answer.at) and shown on their own tile', outreach.includes("where('answer.at', '>=', new Date(Date.now() - 366 * 86400000))") && outreach.includes("tile('Answers with no email'"));
+ok('Search CRM: the Next follow-up filter is kept in the campaign filter (due / due_within / exists)', search.includes("add('nextFollowUpAt', 'due', true, 'next follow-up due')") && search.includes("add('nextFollowUpAt', 'due_within', Number(f)"));
+ok('Task or activity: Number used and Who answered for a call, WhatsApp or visit already done', outreach.includes('<div id="ntNW"></div>') && outreach.includes('async function ntNumberWho()') && outreach.includes("box.innerHTML = numberWhoHtml(tt, taskCo(tt));") && outreach.includes('...contact, ...(ar || {}),'));
 if (fail) { console.log(`\n${fail} FAILED`); process.exit(1); } else console.log('\nAll passed');

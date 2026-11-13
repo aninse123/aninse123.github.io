@@ -544,7 +544,8 @@ function tierOf(c, rules = []) {
 
 function matchesFilterSpec(c, spec, now = Date.now()) {
   for (const f of spec || []) {
-    let v = f.field === "legalForm" ? (c.nationalLegalForm || c.legalForm) : c[f.field];
+    // 13 Nov (outreach.callResults): nextFollowUpAt = the date on the company after "Not now" (nextFollowUp.at).
+    let v = f.field === "legalForm" ? (c.nationalLegalForm || c.legalForm) : f.field === "nextFollowUpAt" ? (c.nextFollowUp?.at ?? null) : c[f.field];
     if (PERCENT_FIELDS.has(f.field) && v != null) v = v * 100;
     switch (f.op) {
       case "contains": {
@@ -573,6 +574,9 @@ function matchesFilterSpec(c, spec, now = Date.now()) {
         if (!ms || now - ms > Number(f.value) * 86400000) return false;
         break;
       }
+      // 13 Nov: a date that has come (a Next follow-up that is due), or comes within the next N days.
+      case "due": { const ms = tsMillis(v); if (!ms || ms > now) return false; break; }
+      case "due_within": { const ms = tsMillis(v); if (!ms || ms > now + Number(f.value) * 86400000) return false; break; }
       default: return false; // unknown op: don't guess
     }
   }

@@ -54,11 +54,13 @@ function replyChannelOf(list) {
   return REPLY_CHANNEL[c[0]?.[1]] || "classificada";
 }
 
-function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions = [], activities = [], tasks = [], enrolments = [], liveEnrolments = [], companies = new Map(), drafts = [], campaigns = new Map(), onlyTest = false, sameEmail = null, companyCounts = false }) {
+// answers (13 Nov, outreach.callResults): enrolments whose company answered by phone / in person / by message with a result (enrolment.answer)
+// in the week — they count as replies even when the company never had an email conversation (a call as the first step of a path).
+function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions = [], activities = [], tasks = [], enrolments = [], liveEnrolments = [], companies = new Map(), drafts = [], campaigns = new Map(), onlyTest = false, sameEmail = null, companyCounts = false, answers = [] }) {
   const inWeek = (t) => { const x = ms(t); return x >= from && x < to; };
   const keep = (x) => (onlyTest ? !!x.isTest : !x.isTest);
   const sent = messages.filter((m) => m.direction === "out" && keep(m) && inWeek(m.createdAt) && !NOT_SENT.includes(m.status) && m.via !== "gmail");
-  const week = { sent: sent.length, byCampaign: {}, byCampaignPath: {}, bySender: {}, delivered: 0, bounced: 0, replies: 0, repliesByChannel: {}, byCategory: {}, unsubscribes: 0, meetings: 0, meetingsHeld: 0, tasksDone: 0, tasksByChannel: {}, started: 0, held: 0 };
+  const week = { sent: sent.length, byCampaign: {}, byCampaignPath: {}, bySender: {}, delivered: 0, bounced: 0, replies: 0, repliesNoEmail: 0, repliesByChannel: {}, byCategory: {}, unsubscribes: 0, meetings: 0, meetingsHeld: 0, tasksDone: 0, tasksByChannel: {}, started: 0, held: 0 };
   for (const m of sent) {
     inc(week.byCampaign, m.campaignId ? (campaigns.get(m.campaignId)?.name || "Campaign") : "Written by hand");
     if (m.campaignId && m.pathName) inc(((week.byCampaignPath[campaigns.get(m.campaignId)?.name || "Campaign"] ||= { sent: {}, replies: {} }).sent), m.pathName);
@@ -80,6 +82,18 @@ function buildWeeklyReport({ from, to, messages = [], threads = [], suppressions
       week.replies++; inc(week.byCategory, CATS[t.responseCategory] || (t.responseCategory ? t.responseCategory : "Not classified"));
       inc(week.repliesByChannel, replyChannelOf(list));
       if (t.campaignId && t.pathName) inc(((week.byCampaignPath[campaigns.get(t.campaignId)?.name || "Campaign"] ||= { sent: {}, replies: {} }).replies), t.pathName);
+    }
+    // 13 Nov (outreach.callResults): a company that answered by phone / in person with a result and has no conversation counted above.
+    const answered = new Map();
+    for (const e of answers.filter((x) => keep(x) && x.companyId && x.answer && inWeek(x.answer.at))) {
+      if (groups.has(e.companyId)) continue;
+      const a = answered.get(e.companyId);
+      if (!a || ms(e.answer.at) < ms(a.answer.at)) answered.set(e.companyId, e);
+    }
+    for (const e of answered.values()) {
+      week.replies++; week.repliesNoEmail++;
+      inc(week.byCategory, CATS[e.answer.category] || e.answer.category || "Not classified");
+      inc(week.repliesByChannel, REPLY_CHANNEL[e.answer.channel] || "outro");
     }
   } else for (const t of threads.filter((x) => keep(x) && inWeek(x.repliedAt))) {
     week.replies++; inc(week.byCategory, CATS[t.responseCategory] || (t.responseCategory ? t.responseCategory : "Not classified"));
@@ -161,7 +175,7 @@ function reportText(r, { weekKey, toKey }) {
     `Relatório semanal de outreach — semana de ${weekKey} a ${toKey}`, "",
     "1. A semana", "",
     `Emails enviados: ${w.sent} (entregues ${w.delivered}, devolvidos ${w.bounced})`, "Por campanha:", campaignList, "Por endereço:", list(w.bySender), "",
-    `Respostas: ${w.replies}`, ...(Object.keys(w.repliesByChannel || {}).length ? [`Por canal (a primeira resposta de cada empresa):`, list(w.repliesByChannel)] : []), list(w.byCategory), "",
+    `Respostas: ${w.replies}`, ...(w.repliesNoEmail ? [`  (das quais ${w.repliesNoEmail} sem conversa por email: chamada, visita ou mensagem registada com resultado)`] : []), ...(Object.keys(w.repliesByChannel || {}).length ? [`Por canal (a primeira resposta de cada empresa):`, list(w.repliesByChannel)] : []), list(w.byCategory), "",
     `Pedidos de remoção: ${w.unsubscribes}`, `Reuniões marcadas: ${w.meetings}`, `Reuniões realizadas: ${w.meetingsHeld || 0}`,
     `Tarefas feitas: ${w.tasksDone}`, list(w.tasksByChannel), "",
     `Empresas que começaram uma campanha: ${w.started}`, `Empresas em espera (mesmo endereço): ${w.held}`, "",
@@ -201,7 +215,8 @@ async function maybeRunWeekly(now, settings, { onlyTest = false, force = false }
   if (!force && ex.exists && (ex.data().status === "done" || ms(ex.data().createdAt) > now.getTime() - 30 * 60000)) return null;
   await ref.set({ status: "building", weekFrom: fromKey, weekTo: thisMonday, createdAt: FieldValue.serverTimestamp() }, { merge: true });
   const companyCounts = (await Feat.jobState("outreach.companyCounts")) !== "off"; // 3 Nov
-  const [messages, threads, suppressions, activities, tasks, enrolments, liveSnap, draftSnap, campSnap] = await Promise.all([
+  const callResults = (await Feat.jobState("outreach.callResults")) !== "off"; // 13 Nov
+  const [messages, threads, suppressions, activities, tasks, enrolments, liveSnap, draftSnap, campSnap, answers] = await Promise.all([
     docsInRange("outreachMessages", "createdAt", from, to),
     docsInRange("outreachThreads", "repliedAt", from, to).then(async (a) => [...a, ...(await docsInRange("outreachThreads", "unsubscribedAt", from, to)), ...(companyCounts ? await docsInRange("outreachThreads", "otherReplyAt", from, to) : [])]),
     docsInRange("outreachSuppression", "at", from, to),
@@ -211,6 +226,7 @@ async function maybeRunWeekly(now, settings, { onlyTest = false, force = false }
     db().collection("outreachEnrolments").where("status", "in", LIVE).get(),
     db().collection("outreachMessages").where("status", "==", "draft").limit(500).get(),
     db().collection("outreachCampaigns").get(),
+    companyCounts && callResults ? docsInRange("outreachEnrolments", "answer.at", from, to) : [],
   ]);
   const liveEnrolments = liveSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const ids = [...new Set(liveEnrolments.map((e) => e.companyId).filter(Boolean))];
@@ -223,7 +239,7 @@ async function maybeRunWeekly(now, settings, { onlyTest = false, force = false }
   let sameEmail = null;
   if ((await Feat.jobState("search.sameEmail")) !== "off") { try { sameEmail = await newSameEmailPairs(from, to); } catch (e) { logger.warn("weekly report: same email", { message: e.message }); } }
   const seen = new Set();
-  const r = buildWeeklyReport({ from, to, messages, threads: threads.filter((t) => (seen.has(t.id) ? false : seen.add(t.id))), suppressions, activities, tasks, enrolments, liveEnrolments, companies, drafts: draftSnap.docs.map((d) => d.data()), campaigns, companyCounts, onlyTest, sameEmail });
+  const r = buildWeeklyReport({ from, to, messages, threads: threads.filter((t) => (seen.has(t.id) ? false : seen.add(t.id))), suppressions, activities, tasks, enrolments, liveEnrolments, companies, drafts: draftSnap.docs.map((d) => d.data()), campaigns, companyCounts, onlyTest, sameEmail, answers });
   const text = reportText(r, { weekKey: fromKey, toKey: new Date(to - 12 * 3600000).toISOString().slice(0, 10) });
   let emailed = [];
   if (settings?.weeklyReportEmail !== false) {

@@ -11875,6 +11875,9 @@ function buildFilterSpec(){
     if (v('groupKeyFilter')) add('ownGroupKey', 'eq', v('groupKeyFilter'), `same group as ${ownGroupKeyLabel || v('groupKeyFilter')}`);
   }
   // Same email isn't a stored field, so it is named but not kept for new matches.
+  // 13 Nov (outreach.callResults): Next follow-up — kept for new matches, so a dynamic campaign takes each company when its date comes.
+  // its select is hidden while the switch is Off, so it stays empty
+  if (v('followUpFilter')) { const f = v('followUpFilter'); if (f === 'any') add('nextFollowUpAt', 'exists', true, 'with a next follow-up'); else if (f === 'due') add('nextFollowUpAt', 'due', true, 'next follow-up due'); else add('nextFollowUpAt', 'due_within', Number(f), `next follow-up in the next ${f} days`); }
   if (v('emailNameFilter')) label.push(v('emailNameFilter') === 'warn' ? 'email name to check (not kept for new matches)' : 'long email name (not kept for new matches)');
   if (v('sameEmailFilter')) label.push(v('sameEmailFilter') === 'confirmed' ? 'same email, confirmed (not kept for new matches)' : 'possible same-email link (not kept for new matches)');
   return { spec, label: label.join(' · ') };
