@@ -2,82 +2,57 @@ const translations = {
   en: {
     nav: {
       about: "About",
-      criteria: "Criteria",
-      team: "Team",
+      lookFor: "What we look for",
+      howWeWork: "How we work",
+      team: "Who we are",
       contact: "Contact",
-      investorLogin: "Investor Login"
+      investorLogin: "Investor login"
     },
     hero: {
-      title: "Honoring the Heritage. Building the Future.",
-      subtitle: "We acquire and operate enduring businesses in Portugal, partnering with founders who care about what they leave behind.",
-      cta: "Get in Touch"
+      title: "Carrying on what you built.",
+      subtitle: "We buy one high-quality Portuguese company and stay on to run it, patiently and with respect for its legacy.",
+      cta: "Talk to us"
     },
     about: {
       title: "About Douro Partners",
-      text: "Douro Partners is a search fund focused on acquiring and operating a single high-quality business in the Portuguese market. We are two hands-on operators who partner with motivated founders to ensure their business continues to thrive and grow under new ownership."
+      p1: "Douro Partners wants to find one high-quality Portuguese company, buy it and run it for the long term.",
+      p2: "<strong>We are not a fund.</strong> We are not building a portfolio, and we have no exit or sale horizon.",
+      p3: "We want to carry on the current owners' work and build on what they did. The focus is a careful transition that preserves the company's culture, its people and its relationships with customers and partners."
     },
-    criteria: {
-      title: "Investment Criteria",
-      financial: {
-        title: "Financial",
-        i1: "Recurring and contractual revenue streams",
-        i2: "Annual revenues &gt; €6 million",
-        i3: "Annual EBITDA &gt; €1.5 million",
-        i4: "Profitable and cash flow positive",
-        i5: "EBITDA margins &gt; 15%",
-        i6: "Low debt",
-        i7: "Low cyclicality",
-        i8: "Low ongoing CAPEX needs"
-      },
-      industry: {
-        title: "Industry",
-        i1: "High organic growth potential",
-        i2: "Large, fragmented market",
-        i3: "Low risk of adverse regulatory changes",
-        i4: "Low risk of technological obsolescence",
-        i5: "Non-commoditized product or service",
-        i6: "High barriers to entry",
-        i7: "Low external and exogenous risks"
-      },
-      business: {
-        title: "Business",
-        i1: "Private and concentrated ownership",
-        i2: "Motivated sellers with &gt;70% equity",
-        i3: "Opportunity for Douro Partners to add value",
-        i4: "High operating leverage",
-        i5: "Low customer concentration and churn",
-        i6: "B2B Services"
-      }
+    lookFor: {
+      title: "What we look for",
+      i1: "A profitable Portuguese company, with revenue above €6M and EBITDA above €1.5M.",
+      i2: "Recurring and diversified business (B2B) customers.",
+      i3: "One or a few owners thinking about the company's continuity.",
+      i4: "Little debt and little recurring investment in equipment.",
+      i5: "A stable sector with room to grow."
     },
-    approach: {
-      title: "Our Approach",
-      confidential: {
-        title: "Confidential, No Obligation",
-        text: "It starts with a confidential, no-obligation call — on your schedule. We move at a pace that respects your business, your employees, and your customers."
-      },
-      backed: {
-        title: "Backed by Experienced Investors",
-        text: "We are backed by a group of Portuguese and international investors with deep operating and industry expertise across multiple sectors."
-      },
-      handson: {
-        title: "Hands-On Operators",
-        text: "We don't just provide capital — we run the business day to day, working alongside your team to protect what you've built and help it grow."
-      }
+    howWeWork: {
+      title: "How we work",
+      s1: { title: "First call", text: "A first conversation, confidential and with no commitment, at your pace." },
+      s2: { title: "Getting to know the company", text: "We get to know the company with you, taking our time and with discretion." },
+      s3: { title: "Agreement", text: "We design the handover with you, including your role after it." },
+      s4: { title: "Running the company", text: "We run the company day to day, alongside your team." },
+      note: "From the first contact to running the company, you always speak with the same two people: André and António."
     },
     team: {
-      title: "The Searchers",
+      title: "Who we are",
+      intro: "We are engineers from Porto, and we met on the other side of the world, in Singapore. We lived together in France, where the partnership became a life project.",
       andre: {
-        bio: "6 years at Jerónimo Martins, one of Portugal's largest food retailers, leading a €1B store revamp programme. Founded a D2C startup. Background in consumer goods, retail, e-commerce, digital products, food, and supply chain."
+        bio: "At Jerónimo Martins, he led a one-billion-euro transformation programme to scale new retail concepts in Portugal, Poland and Colombia."
       },
       antonio: {
-        bio: "8 years at Idaho Forest Group managing a $40M portfolio to develop new revenue streams, with one patent granted and 2 pending. Also worked at Yazaki on the first fully electric Mercedes. Background in manufacturing, machinery, industrial, and operations."
+        bio: "At Idaho Forest Group, in the United States, he managed a 40-million-dollar portfolio focused on new products. He led field teams, factory floor teams, partners and scientists, developing technology that earned him US patents."
       },
-      linkedin: "LinkedIn &rarr;",
-      footnote: "We met at INSEAD, worked together across several projects, and believe our combined background gives us a differentiated perspective across a wide range of industries."
+      linkedin: "LinkedIn &rarr;"
+    },
+    investors: {
+      title: "Our investors",
+      text: "The acquisition is backed by Portuguese and international investors with experience running and growing companies."
     },
     contact: {
-      title: "Get in Touch",
-      subtitle: "Whether you're a founder considering a sale, an investor, or simply curious — we'd love to hear from you.",
+      title: "Talk to us",
+      subtitle: "If you built a company and are thinking about its next chapter, we would like to hear its story. The conversation is confidential and carries no commitment.",
       info_label: "Reach us directly",
       form: {
         name: "Name",
@@ -85,13 +60,13 @@ const translations = {
         phone: "Phone",
         optional: "(optional)",
         message: "Message",
-        submit: "Send Message",
-        success: "Thank you — your message has been sent. We'll be in touch shortly.",
+        submit: "Send message",
+        success: "Thank you. Your message has been sent and we will be in touch shortly.",
         error: "Something went wrong. Please email us directly."
       }
     },
     footer: {
-      tagline: "Honoring the Heritage. Building the Future.",
+      tagline: "Carrying on what you built.",
       copy: "© {year} Douro Partners. All rights reserved."
     },
     cookie: {
@@ -103,83 +78,58 @@ const translations = {
 
   pt: {
     nav: {
-      about: "Sobre Nós",
-      criteria: "Critérios",
-      team: "Equipa",
+      about: "A Douro",
+      lookFor: "O que procuramos",
+      howWeWork: "Como trabalhamos",
+      team: "Quem somos",
       contact: "Contacto",
       investorLogin: "Área de Investidores"
     },
     hero: {
-      title: "Honrar o Património. Construir o Futuro.",
-      subtitle: "Adquirimos e gerimos empresas duradouras em Portugal, em parceria com fundadores que se preocupam com o legado que deixam.",
-      cta: "Contacte-nos"
+      title: "Continuar o que construiu.",
+      subtitle: "Compramos uma empresa portuguesa de qualidade e ficamos a geri-la, com tempo e com respeito pelo seu legado.",
+      cta: "Fale connosco"
     },
     about: {
       title: "Sobre a Douro Partners",
-      text: "A Douro Partners é um search fund focado na aquisição e operação de uma única empresa de alta qualidade no mercado português. Somos dois operadores com experiência prática que se associam a fundadores motivados para garantir que o seu negócio continue a prosperar e a crescer sob nova gestão."
+      p1: "A Douro Partners quer encontrar uma empresa portuguesa de qualidade, comprá-la e geri-la a longo prazo.",
+      p2: "<strong>Não somos um fundo.</strong> Não estamos a construir um portfólio e não temos um horizonte de saída ou de venda.",
+      p3: "Queremos continuar o trabalho dos atuais donos e construir a partir do que fizeram. O foco é uma transição cuidada, que preserva a cultura do negócio, os trabalhadores e as relações com clientes e parceiros."
     },
-    criteria: {
-      title: "Critérios de Investimento",
-      financial: {
-        title: "Financeiro",
-        i1: "Receitas recorrentes e contratuais",
-        i2: "Receitas anuais &gt; €6 milhões",
-        i3: "EBITDA anual &gt; €1,5 milhões",
-        i4: "Rentável e com fluxo de caixa positivo",
-        i5: "Margens EBITDA &gt; 15%",
-        i6: "Baixo endividamento",
-        i7: "Baixa ciclicidade",
-        i8: "Baixas necessidades de CAPEX"
-      },
-      industry: {
-        title: "Indústria",
-        i1: "Alto potencial de crescimento orgânico",
-        i2: "Mercado grande e fragmentado",
-        i3: "Baixo risco de mudanças regulatórias adversas",
-        i4: "Baixo risco de obsolescência tecnológica",
-        i5: "Produto ou serviço não comoditizado",
-        i6: "Elevadas barreiras à entrada",
-        i7: "Baixos riscos externos e exógenos"
-      },
-      business: {
-        title: "Negócio",
-        i1: "Propriedade privada e concentrada",
-        i2: "Vendedores motivados com &gt;70% do capital",
-        i3: "Oportunidade de a Douro Partners acrescentar valor",
-        i4: "Elevada alavancagem operacional",
-        i5: "Baixa concentração de clientes e churn",
-        i6: "Serviços B2B"
-      }
+    lookFor: {
+      title: "O que procuramos",
+      i1: "Uma empresa portuguesa e rentável, com faturação acima de 6 M€ e EBITDA acima de 1,5 M€.",
+      i2: "Clientes empresariais (B2B) recorrentes e diversificados.",
+      i3: "Um ou poucos donos, a pensar na continuidade da empresa.",
+      i4: "Pouca dívida e pouco investimento recorrente em equipamento.",
+      i5: "Um setor estável, com espaço para crescer."
     },
-    approach: {
-      title: "A Nossa Abordagem",
-      confidential: {
-        title: "Confidencial, Sem Compromisso",
-        text: "Começa com uma chamada confidencial e sem qualquer compromisso, à sua conveniência. Avançamos a um ritmo que respeita o seu negócio, os seus colaboradores e os seus clientes."
-      },
-      backed: {
-        title: "Apoiados por Investidores Experientes",
-        text: "Somos apoiados por um grupo de investidores portugueses e internacionais, com profunda experiência operacional e sectorial em múltiplas áreas."
-      },
-      handson: {
-        title: "Operadores Práticos",
-        text: "Não nos limitamos a fornecer capital — gerimos o negócio no dia a dia, trabalhando lado a lado com a sua equipa para proteger o que construiu e ajudar a crescer."
-      }
+    howWeWork: {
+      title: "Como trabalhamos",
+      s1: { title: "Conversa", text: "Uma primeira conversa, confidencial e sem compromisso, ao seu ritmo." },
+      s2: { title: "Avaliação", text: "Conhecemos a empresa consigo, com tempo e discrição." },
+      s3: { title: "Transação", text: "Desenhamos consigo a passagem, incluindo o seu papel depois dela." },
+      s4: { title: "Gestão", text: "Ficamos nós a gerir a empresa no dia a dia, ao lado da sua equipa." },
+      note: "Do primeiro contacto à gestão, fala sempre com as mesmas duas pessoas: o André e o António."
     },
     team: {
-      title: "Os Searchers",
+      title: "Quem somos",
+      intro: "Somos engenheiros do Porto e conhecemo-nos do outro lado do planeta, em Singapura. Vivemos juntos em França, onde a parceria se tornou um projeto de vida.",
       andre: {
-        bio: "6 anos na Jerónimo Martins, um dos maiores retalhistas alimentares de Portugal, liderando um programa de remodelação de lojas de €1B. Fundou uma startup D2C. Experiência em bens de consumo, retalho, e-commerce, produtos digitais, alimentação e cadeia de abastecimento."
+        bio: "Liderou na Jerónimo Martins um programa de transformação de mil milhões de euros para escalar novos conceitos de retalho em Portugal, na Polónia e na Colômbia."
       },
       antonio: {
-        bio: "8 anos na Idaho Forest Group gerindo um portfólio de $40M para desenvolver novas fontes de receita, com uma patente concedida e 2 pendentes. Trabalhou também na Yazaki no primeiro Mercedes totalmente elétrico. Experiência em manufatura, maquinaria, industrial e operações."
+        bio: "Geriu na Idaho Forest Group, nos Estados Unidos, um portfólio de 40 milhões de dólares focado em novos produtos. Liderou equipas de campo, chão de fábrica, parceiros e cientistas, desenvolvendo tecnologia que lhe valeu patentes norte-americanas."
       },
-      linkedin: "LinkedIn &rarr;",
-      footnote: "Conhecemo-nos no INSEAD, trabalhámos juntos em vários projetos e acreditamos que a nossa experiência combinada nos dá uma perspetiva diferenciada num vasto leque de setores."
+      linkedin: "LinkedIn &rarr;"
+    },
+    investors: {
+      title: "Os nossos investidores",
+      text: "A aquisição conta com o apoio de investidores portugueses e internacionais, com experiência a gerir e a fazer crescer empresas."
     },
     contact: {
-      title: "Contacte-nos",
-      subtitle: "Seja fundador a considerar uma venda, investidor ou simplesmente curioso — gostaríamos muito de ouvir a sua opinião.",
+      title: "Fale connosco",
+      subtitle: "Se construiu uma empresa e está a pensar no próximo capítulo, gostávamos de conhecer a sua história. A conversa é confidencial e sem compromisso.",
       info_label: "Contacte-nos diretamente",
       form: {
         name: "Nome",
@@ -187,13 +137,13 @@ const translations = {
         phone: "Telefone",
         optional: "(opcional)",
         message: "Mensagem",
-        submit: "Enviar Mensagem",
-        success: "Obrigado — a sua mensagem foi enviada. Entraremos em contacto brevemente.",
+        submit: "Enviar mensagem",
+        success: "Obrigado. A sua mensagem foi enviada e entraremos em contacto em breve.",
         error: "Ocorreu um erro. Por favor contacte-nos diretamente por email."
       }
     },
     footer: {
-      tagline: "Honrar o Património. Construir o Futuro.",
+      tagline: "Continuar o que construiu.",
       copy: "© {year} Douro Partners. Todos os direitos reservados."
     },
     cookie: {
