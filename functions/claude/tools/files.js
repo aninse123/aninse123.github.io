@@ -12,7 +12,7 @@ const R = require("../redact");
 const F = require("../files");
 
 const has = (who, p) => who.perms.includes(p);
-const okId = (s) => /^[A-Za-z0-9_-]{1,200}$/.test(String(s || ""));
+const okId = (s) => /^(?!__)[A-Za-z0-9_-]{1,200}$/.test(String(s || "")); // __x__ ids are reserved by Firestore
 
 const listFiles = {
   name: "list_files", perm: (who) => has(who, "search.view") || has(who, "out.view") || has(who, "portal.admin"),
@@ -74,7 +74,7 @@ async function resolve(ctx, fileId) {
 
 const readFile = {
   name: "read_file", perm: (who) => has(who, "search.view") || has(who, "out.view") || has(who, "portal.admin"),
-  description: "Read a file listed by list_files, get_company or get_message: text from PDF, Word, Excel, PowerPoint, CSV and text files (labelled as outside content), in parts of about 40,000 characters (ask for part 2, 3… as needed), or a small image.",
+  description: "Read a file listed by list_files, get_company or get_message: text from PDF, Word, Excel, PowerPoint, CSV and text files (labelled as outside content), in parts of about 25,000 characters (ask for part 2, 3… as needed), or a small image.",
   schema: { fileId: z.string(), part: z.number().int().optional() },
   async run(ctx, a) {
     const r = await resolve(ctx, a.fileId);

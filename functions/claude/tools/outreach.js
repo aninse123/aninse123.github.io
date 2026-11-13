@@ -8,7 +8,7 @@ const U = require("../util");
 const NOT_SENT = ["draft", "approved", "approving", "cancelled", "returned", "draftSent", "queued", "failed"];
 const POSITIVE = ["interested", "callback_later", "referred"];
 const MEETING_TYPES = ["meeting_scheduled", "meeting_done", "in_person"];
-const okId = (s) => /^[A-Za-z0-9_-]{1,200}$/.test(String(s || ""));
+const okId = (s) => /^(?!__)[A-Za-z0-9_-]{1,200}$/.test(String(s || "")); // __x__ ids are reserved by Firestore
 
 const listCampaigns = {
   name: "list_campaigns", perm: "out.view",
@@ -72,9 +72,19 @@ const campaignResults = {
       g(k).replied++;
       if (POSITIVE.includes(t.responseCategory)) g(k).positive++;
     }
-    for (const x of acts) if (!x.isTest && MEETING_TYPES.includes(x.type)) g(by === "step" ? (x.stepId || "unknown") : keyOf(x)).meetings++;
+    // Meetings: tagged with the campaign, or held by an enrolled company after it was enrolled.
+    const seen = new Set(acts.map((x) => x.id));
+    const ids = ens.map((e) => e.companyId).filter(okId);
+    for (let i = 0; i < ids.length; i += 30) {
+      const more = await ctx.query(C.db().collection("searchActivities").where("companyId", "in", ids.slice(i, i + 30)).limit(2000));
+      for (const x of more) {
+        const en = enById.get(`${a.campaignId}_${x.companyId}`);
+        if (!seen.has(x.id) && MEETING_TYPES.includes(x.type) && (U.ms(x.date) || 0) >= (U.ms(en?.enrolledAt) || 0)) { seen.add(x.id); acts.push({ ...x, stepId: "after the campaign started" }); }
+      }
+    }
+    for (const x of acts) if (!x.isTest && MEETING_TYPES.includes(x.type) && (x.campaignId === a.campaignId || x.stepId === "after the campaign started")) g(by === "step" ? (x.stepId || "unknown") : keyOf(x)).meetings++;
     for (const t of tasks) { const r = g(keyOf(t)); if (t.status === "done" || t.completedAt) r.tasksDone++; else r.tasksOpen++; }
-    const rows = Object.entries(groups).map(([k, v]) => ({ [by]: k, ...(by === "step" && steps.get(k) ? { stepName: steps.get(k).name, channel: steps.get(k).channel, order: steps.get(k).order } : {}), ...v }));
+    const rows = Object.entries(groups).map(([k, v]) => ({ [by]: k, ...(by === "step" && steps.get(k) ? { stepName: steps.get(k).name, channel: steps.get(k).channel, order: steps.get(k).order, pathId: steps.get(k).pathId || null } : {}), ...v }));
     rows.sort((x, y) => (x.order ?? 99) - (y.order ?? 99));
     const status = {};
     ens.forEach((e) => { status[e.status || "unknown"] = (status[e.status || "unknown"] || 0) + 1; });
@@ -111,7 +121,7 @@ const getConversations = {
       if (a.withMessages) {
         const ms = await ctx.query(C.db().collection("outreachMessages").where("threadId", "==", t.id).limit(100));
         ms.sort((x, y) => (U.ms(x.createdAt) || 0) - (U.ms(y.createdAt) || 0));
-        o.messages = ms.filter((m) => m.status !== "draft").map((m) => ({ messageId: m.id, direction: m.direction, from: m.from, to: m.to, subject: m.subject, status: m.status, at: C.iso(m.createdAt), attachments: (m.attachments || []).length, snippet: m.snippet ? R.untrusted(String(m.snippet).slice(0, 300), `email from ${m.from || "unknown"}`) : null }));
+        o.messages = ms.filter((m) => m.status !== "draft").map((m) => ({ messageId: m.id, direction: m.direction, from: m.from, to: m.to, subject: m.subject, status: m.status, at: C.iso(m.createdAt), attachments: (m.attachments || []).length, snippet: m.snippet ? R.untrusted(String(m.snippet).slice(0, 300), m.direction === "in" ? `email from ${m.from || "unknown"}` : "email sent by Douro (may quote outside text)") : null }));
       }
       rows.push(o);
     }

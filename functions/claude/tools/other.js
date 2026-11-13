@@ -6,7 +6,7 @@ const R = require("../redact");
 const U = require("../util");
 
 const fold = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-const okId = (s) => /^[A-Za-z0-9_-]{1,200}$/.test(String(s || ""));
+const okId = (s) => /^(?!__)[A-Za-z0-9_-]{1,200}$/.test(String(s || "")); // __x__ ids are reserved by Firestore
 const textHit = (t, ...vals) => !t || vals.some((v) => fold(typeof v === "string" ? v : JSON.stringify(v || "")).includes(fold(t)));
 
 const findNetwork = {
@@ -46,7 +46,7 @@ const findInvestors = {
     const list = all.filter((i) => textHit(a.text, i.name, i.contacts, i.notes, i.source) && (!a.stage?.length || a.stage.includes(i.stage)) && (!a.type?.length || a.type.includes(i.type)));
     list.sort((x, y) => String(x.name || "").localeCompare(String(y.name || "")));
     const off = Math.max(0, C.dec(a.cursor)?.o || 0);
-    const sum = (k) => list.reduce((s, i) => s + (Number(i[k]?.value) || 0), 0);
+    const sum = (k) => Math.round(list.reduce((s, i) => s + (Number(i[k]?.value) || 0), 0) * 100) / 100;
     return C.fit({ total: list.length, totals: { soft: sum("softCommitment"), hard: sum("hardCommitment"), wired: sum("wiredCommitment") }, rows: list.slice(off, off + size).map((i) => R.pick("crmInvestors", i.id, i)), nextCursor: off + size < list.length ? C.enc({ o: off + size }) : null });
   },
 };

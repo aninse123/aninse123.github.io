@@ -28,11 +28,11 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   storageFiles.set("outreach/files/f9/long.txt", { buf: Buffer.from(long) });
   store.set("outreachFiles/f9", { name: "Long", filename: "long.txt", storagePath: "outreach/files/f9/long.txt", contentType: "text/plain", size: long.length, companyId: "c1" });
   const l1 = await X.tool(X.ANDRE, "read_file", { fileId: "file:f9" });
-  ok("a long file comes in parts of about 40,000 characters", l1.result.parts === Math.ceil(long.length / 40000) || l1.result.parts === Math.ceil(long.length / 40000) + 1);
+  ok("a long file comes in parts of about 25,000 characters", l1.result.parts === Math.ceil(long.length / 25000) || l1.result.parts === Math.ceil(long.length / 25000) + 1);
   ok("…the first says to ask for the next", l1.result.part === 1 && l1.result.next === "Ask for part 2.");
   const l3 = await X.tool(X.ANDRE, "read_file", { fileId: "file:f9", part: l1.result.parts });
   ok("…the last part ends the file", l3.result.text.includes("line 2999") && l3.result.next === null);
-  ok("each part fits in one answer", JSON.stringify(l1.result).length < 60000);
+  ok("each part fits in one answer, escaped, with room for Claude Code", JSON.stringify(l1.result, null, 1).length < 40000);
 
   // Images and unreadable files.
   ok("an image above 100 KB is refused politely", /too large to show here/.test((await X.tool(X.ANDRE, "read_file", { fileId: "file:f5" })).result.error));

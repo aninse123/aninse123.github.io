@@ -19,6 +19,8 @@ const SELECT = ["name", "nif", "domain", "emailKeys", "legalForm", "caeCode", "c
   "activeCampaignId", "activeCampaignName", "ownGroupKey", "ownGroupSize", "yearFounded", "createdAt"];
 const CHANGE_FIELDS = ["updatedAt", "updatedByAt", "lastTouchAt", "createdAt"];
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const euros = (v) => (num(v) == null ? null : Math.round(v)); // money: whole euros
+const ratio = (v) => (num(v) == null ? null : Math.round(v * 10000) / 10000);
 // Order by document id (FieldPath.documentId(); the test stand-in has no FieldPath).
 const DOC_ID = () => { const FP = require("firebase-admin/firestore").FieldPath; return FP && FP.documentId ? FP.documentId() : "__name__"; };
 
@@ -32,8 +34,8 @@ function rowOf(id, c, tierRules = []) {
     emails: Array.isArray(c.emailKeys) ? c.emailKeys.slice(0, 10).map((e) => String(e).toLowerCase()) : [],
     legalForm: c.legalForm || "", cae: String(c.caeCode || ""), caeDescription: c.caeDescription || "", nace: String(c.naceCode || ""),
     sector: c.sector || "", subSector: c.subSector || "", district: c.distrito || "", concelho: c.concelho || "", city: c.city || "", nuts2: c.nuts2 || "", country: c.country || "",
-    revenue: num(c.computedRevenue), ebitda: num(c.computedEBITDA), margin: num(c.computedEBITDAMargin), employees: num(c.computedEmployees),
-    growth: num(c.computedGrowthRecent), growthSustained: num(c.computedGrowthSustained), finYear: c.computedFinYear || null, fit: num(c.fitScore),
+    revenue: euros(c.computedRevenue), ebitda: euros(c.computedEBITDA), margin: ratio(c.computedEBITDAMargin), employees: num(c.computedEmployees),
+    growth: ratio(c.computedGrowthRecent), growthSustained: ratio(c.computedGrowthSustained), finYear: c.computedFinYear || null, fit: num(c.fitScore) == null ? null : Math.round(c.fitScore * 10) / 10,
     tier: tierOf(c, tierRules) || null, contactable: c.contactable === false ? false : c.contactable === true ? true : null,
     doNotContact: !!(c.doNotContact && (c.doNotContact.on || c.doNotContact === true)), stage: c.stage || "universe", owner: c.owner || "",
     outreachStatus: c.outreachStatus || "none", contacted: channels.length > 0 || (c.outreachStatus && c.outreachStatus !== "none") || false, answered, channels,

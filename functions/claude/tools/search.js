@@ -101,7 +101,7 @@ const getCompany = {
     activitiesLimit: z.number().int().optional(),
   },
   async run(ctx, a) {
-    let id = a.id && /^[A-Za-z0-9_-]{1,100}$/.test(a.id) ? a.id : null;
+    let id = a.id && /^(?!__)[A-Za-z0-9_-]{1,100}$/.test(a.id) ? a.id : null;
     if (!id && a.nif) {
       const hit = await ctx.query(C.db().collection("searchCompanies").where("nif", "==", String(a.nif).replace(/\D/g, "")).select("name").limit(1));
       id = hit[0]?.id || null;
@@ -116,7 +116,9 @@ const getCompany = {
     if (inc.has("financials")) out.financials = financials(c);
     if (inc.has("ownership") || inc.has("people")) {
       const links = await ctx.query(C.db().collection("searchPersonLinks").where("companyId", "==", id).limit(200));
-      const rank = (l) => (l.shCurrent && l.shTotalPct ? 1000 + l.shTotalPct : 0) + (l.mgmtCurrent ? 100 : 0) + (l.isContact ? 50 : 0);
+      const pct = (l) => Math.max(Number(l.shTotalPct) || 0, Number(l.shDirectPct) || 0);
+      // Shareholders first, largest share first; then current managers; then contacts.
+      const rank = (l) => (l.shCurrent !== false && pct(l) ? 10000 + pct(l) * 100 : 0) + (l.mgmtCurrent ? 50 : 0) + (l.isContact ? 10 : 0);
       links.sort((x, y) => rank(y) - rank(x));
       out.ownershipAndPeople = links.map((l) => R.pick("searchPersonLinks", l.id, l));
       if (inc.has("people")) {

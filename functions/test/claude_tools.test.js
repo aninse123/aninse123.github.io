@@ -41,6 +41,10 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   ok("get_company by NIF: details, deal stage and notes", gc.result.company.name === "METALURGICA DO NORTE, LDA" && gc.result.company.stage === "engaged" && gc.result.company.tier === "A");
   ok("financials by year (Orbis, thousands of euros)", gc.result.financials.years[0].year === 2024 && gc.result.financials.years[0].operatingRevenue === 6200);
   ok("owners and managers with shares", gc.result.ownershipAndPeople[0].personName === "João Silva" && gc.result.ownershipAndPeople[0].shTotalPct === 60);
+  store.set("searchPersonLinks/e_X__c1", { personId: "e_X", companyId: "c1", personName: "HOLDING X", shDirectPct: 75, shTotalPct: null, shCurrent: true, shTypeOrbis: "Corporate" });
+  const gc2 = await X.tool(X.ANDRE, "get_company", { id: "c1", include: ["ownership"] });
+  ok("owners sorted by share, also when only the direct share is known (Orbis)", gc2.result.ownershipAndPeople[0].personName === "HOLDING X" && gc2.result.ownershipAndPeople[0].shTypeOrbis === "Corporate");
+  store.delete("searchPersonLinks/e_X__c1");
   ok("people with contact details", gc.result.people[0].reach.some((x) => x.value === "joao@metalnorte.pt"));
   ok("activities newest first", gc.result.activities.latest[0].id === "a2" && gc.result.activities.total === 2);
   ok("campaigns it is in", gc.result.campaigns[0].campaignId === "k1");
@@ -65,6 +69,8 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   const cr = await X.tool(X.ANDRE, "campaign_results", { campaignId: "k1" });
   const s1 = cr.result.rows.find((r) => r.step === "s1");
   ok("campaign results per step: sent, opened, replied, positive", s1 && s1.sent === 1 && s1.opened === 1 && s1.replied === 1 && s1.positive === 1);
+  ok("campaign results: a meeting with an enrolled company counts even when not tagged with the campaign", cr.result.rows.reduce((n, r) => n + r.meetings, 0) === 1);
+  ok("campaign results: steps say which path", cr.result.rows.find((r) => r.step === "s1").pathId === null);
   ok("campaign results: enrolments by status and tasks", cr.result.enrolled === 2 && cr.result.enrolmentsByStatus.paused === 1 && cr.result.rows.some((r) => r.tasksOpen === 1));
   const cro = await X.tool(X.ANDRE, "campaign_results", { campaignId: "k1", by: "owner" });
   ok("campaign results by owner", cro.result.rows.some((r) => r.owner === "andre" && r.sent === 1));
@@ -76,6 +82,7 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   // ── Network, investors, portal, budget ──
   ok("find_network by category with the firm", (await X.tool(X.ANDRE, "find_network", { category: "banker" })).result.rows[0].firmName === "Big Bank");
   const fi = await X.tool(X.ANDRE, "find_investors", {});
+  ok("money is rounded (no float noise)", (await X.tool(X.ANDRE, "find_companies", { text: "metalurgica", fields: ["revenue", "margin"] })).result.rows[0].margin === 0.145);
   ok("find_investors with commitment totals", fi.result.totals.soft === 100000 && fi.result.totals.hard === 50000);
   ok("get_investor with activities", (await X.tool(X.ANDRE, "get_investor", { id: "i1" })).result.activities.length === 1);
   const lp = await X.tool(X.ANDRE, "list_portal_documents", {});

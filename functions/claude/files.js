@@ -7,7 +7,7 @@ const { getStorage } = require("firebase-admin/storage");
 const U = require("./util");
 const R = require("./redact");
 
-const PART_CHARS = 40000;
+const PART_CHARS = 25000; // escaped in JSON, a part stays well inside Claude Code's answer limit
 const MAX_IMAGE_BYTES = 100 * 1024;
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // the portal holds up to 20 MB (investor documents)
 
@@ -140,7 +140,7 @@ async function readStored(storagePath, { name, contentType, size }, ctx) {
     return { image: { data: buf.toString("base64"), mimeType: IMAGE_TYPES[ext] || contentType || "image/png" } };
   }
   if (kind === "other") return { problem: "This kind of file can't be read here (PDF, Word, Excel, PowerPoint, CSV, text and small images can). Open it in the portal." };
-  const cachePath = `claude/text/${U.sha256(storagePath).slice(0, 40)}.json`;
+  const cachePath = `claude/text/p${PART_CHARS}_${U.sha256(storagePath).slice(0, 40)}.json`;
   try {
     const [c] = await bucket.file(cachePath).download();
     const cached = JSON.parse(c.toString("utf8"));
