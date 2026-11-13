@@ -181,6 +181,12 @@ async function signIn(email, { redirect = CB, client = null } = {}) {
   ok("HTTP: resource metadata served under the function", wk.resource === U.BASE);
   const oidc = await (await fetch(url + "/claudeMcp/.well-known/openid-configuration")).json();
   ok("HTTP: sign-in metadata served at …/claudeMcp/.well-known/openid-configuration", oidc.issuer === U.BASE);
+  // Claude Code checks discovery documents with the MCP SDK's own schemas (13 Nov: the OpenID one failed without these fields).
+  const SA = require("@modelcontextprotocol/sdk/shared/auth.js");
+  ok("HTTP: the openid-configuration passes the MCP SDK's OpenID check (Claude Code)", SA.OpenIdProviderDiscoveryMetadataSchema.safeParse(oidc).success);
+  ok("HTTP: the oauth-authorization-server document passes the SDK's OAuth check", SA.OAuthMetadataSchema.safeParse(await (await fetch(url + "/.well-known/oauth-authorization-server")).json()).success);
+  ok("HTTP: the resource metadata passes the SDK's check", SA.OAuthProtectedResourceMetadataSchema.safeParse(wk).success);
+  ok("HTTP: the key list exists and is empty (no ID tokens are issued)", JSON.stringify(await (await fetch(url + "/jwks")).json()) === '{"keys":[]}');
   const regH = await fetch(url + "/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ redirect_uris: ["http://localhost/callback"], client_name: "Claude Code" }) });
   const regB = await regH.json();
   ok("HTTP: registration (JSON) for Claude Code's loopback", regH.status === 201 && regB.client_id);

@@ -82,6 +82,13 @@ function authServerMetadata() {
     scopes_supported: [U.SCOPE],
   };
 }
+// The same document under openid-configuration, which is the only discovery path
+// a client can reach on the cloudfunctions.net address (the root isn't ours). OpenID
+// discovery requires a key list, subject types and ID-token algorithms (Claude Code
+// rejects the document without them); no ID tokens are ever issued, the key list is empty.
+function openIdConfiguration() {
+  return { ...authServerMetadata(), jwks_uri: `${U.BASE}/jwks`, subject_types_supported: ["public"], id_token_signing_alg_values_supported: ["RS256"] };
+}
 const resourceMetadataUrl = () => `${U.BASE}/.well-known/oauth-protected-resource`;
 function wwwAuthenticate(error) {
   return `Bearer resource_metadata="${resourceMetadataUrl()}", scope="${U.SCOPE}"${error ? `, error="${error}"` : ""}`;
@@ -295,6 +302,6 @@ async function checkAccessToken(bearer, { now = Date.now() } = {}) {
 
 module.exports = {
   HOSTED_REDIRECTS, ACCESS_TTL, CODE_TTL, REQUEST_TTL, isLoopback, isAllowedRedirect, redirectMatches, surfaceOf, pkceOk, resourceOk, isCimdId,
-  protectedResourceMetadata, authServerMetadata, wwwAuthenticate, resourceMetadataUrl, registerClient, loadClient, connectPageUrl,
+  protectedResourceMetadata, authServerMetadata, openIdConfiguration, wwwAuthenticate, resourceMetadataUrl, registerClient, loadClient, connectPageUrl,
   authorize, token, revoke, issueCode, denyRedirect, revokeConnection, connectionLive, checkAccessToken,
 };
