@@ -7,7 +7,9 @@
   <title>Douro Partners</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <!-- Headings use the system Palatino (Windows, Mac, iPhone); Gentium Book Plus is the closest
+       Google Font and is only downloaded where Palatino is missing (Android, Linux). -->
+  <link href="https://fonts.googleapis.com/css2?family=Gentium+Book+Plus:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <!-- Open Graph / LinkedIn -->
   <meta property="og:type"        content="website">
   <meta property="og:url"         content="https://douropartners.pt/">
@@ -51,7 +53,8 @@
   <nav class="nav" id="nav" role="navigation">
     <div class="nav__container">
       <a href="#home" class="nav__logo">
-        <img src="assets/logo.png" alt="Douro Partners">
+        <img src="assets/logo-cream.png" alt="Douro Partners" class="nav__logo-light">
+        <img src="assets/logo.png" alt="" class="nav__logo-dark">
       </a>
       <ul class="nav__links" id="navLinks">
         <li><a href="#about"    data-i18n="nav.about">A Douro</a></li>
@@ -84,15 +87,12 @@
       <source src="assets/douro-hero.mp4" type="video/mp4">
     </video>
     <div class="hero__container">
-      <img src="assets/logo.png" alt="Douro Partners" class="hero__logo">
       <h1 class="hero__title" data-i18n="hero.title">Continuar o que construiu.</h1>
       <p class="hero__subtitle" data-i18n="hero.subtitle">Compramos uma empresa portuguesa de qualidade e ficamos a geri-la, com tempo e com respeito pelo seu legado.</p>
+      <a href="#contact" class="btn btn--primary hero__cta" data-i18n="hero.cta">Fale connosco</a>
     </div>
+    <div class="goldline goldline--hero" aria-hidden="true"><svg viewBox="0 0 1000 100" preserveAspectRatio="none" focusable="false"><path d="M120 87.5 L140 86.7 L160 85.8 L180 84.7 L200 83.4 L220 81.9 L240 80.2 L260 78.2 L280 76.1 L300 73.7 L320 71.2 L340 68.6 L360 65.8 L380 63.0 L400 60.1 L420 57.2 L440 54.4 L460 51.6 L480 49.0 L500 46.5 L520 44.1 L540 41.9 L560 39.8 L580 37.9 L600 36.1 L620 34.5 L640 33.0 L660 31.6 L680 30.3 L700 29.2 L720 28.1 L740 27.1 L760 26.1 L780 25.3 L800 24.4 L820 23.7 L840 22.9 L860 22.3 L880 21.6 L900 21.0 L920 20.4 L940 19.9 L960 19.4 L980 18.9 L1000 18.5" vector-effect="non-scaling-stroke"/></svg><i style="left:52%;top:44.1%"></i><i style="left:66%;top:31.6%"></i><i style="left:80%;top:24.4%"></i><i style="left:93%;top:20.2%"></i></div>
   </section>
-
-  <div class="hero-cta">
-    <a href="#contact" class="btn btn--primary" data-i18n="hero.cta">Fale connosco</a>
-  </div>
 
   <!-- ABOUT -->
   <section class="about section" id="about">
@@ -239,8 +239,9 @@
 
   <!-- FOOTER -->
   <footer class="footer">
+    <div class="goldline goldline--footer" aria-hidden="true"><svg viewBox="0 0 1000 100" preserveAspectRatio="none" focusable="false"><path d="M120 87.5 L140 86.7 L160 85.8 L180 84.7 L200 83.4 L220 81.9 L240 80.2 L260 78.2 L280 76.1 L300 73.7 L320 71.2 L340 68.6 L360 65.8 L380 63.0 L400 60.1 L420 57.2 L440 54.4 L460 51.6 L480 49.0 L500 46.5 L520 44.1 L540 41.9 L560 39.8 L580 37.9 L600 36.1 L620 34.5 L640 33.0 L660 31.6 L680 30.3 L700 29.2 L720 28.1 L740 27.1 L760 26.1 L780 25.3 L800 24.4 L820 23.7 L840 22.9 L860 22.3 L880 21.6 L900 21.0 L920 20.4 L940 19.9 L960 19.4 L980 18.9 L1000 18.5" vector-effect="non-scaling-stroke"/></svg><i style="left:52%;top:44.1%"></i><i style="left:66%;top:31.6%"></i><i style="left:80%;top:24.4%"></i><i style="left:93%;top:20.2%"></i></div>
     <div class="container">
-      <img src="assets/logo.png" alt="Douro Partners" class="footer__logo">
+      <img src="assets/logo-cream.png" alt="Douro Partners" class="footer__logo">
       <p class="footer__tagline" data-i18n="footer.tagline">Continuar o que construiu.</p>
       <p class="footer__copy" data-i18n="footer.copy">&copy; 2026 Douro Partners. All rights reserved.</p>
       <a href="/portal/login.html" class="footer__investor-login" data-i18n="nav.investorLogin">Investor Login</a>
