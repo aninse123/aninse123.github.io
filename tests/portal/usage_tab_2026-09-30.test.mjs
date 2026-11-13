@@ -26,7 +26,7 @@ ok('Usage: sections for database, per person, emails, addresses, emails per pers
 ok('Alerts: the Admin only (by email, or the usage permission)', /if \(!isAdmin && !perms\.includes\('usage\.view'\)\) return;/.test(nav));
 ok('Alerts: 80% of each free limit, and senders near their cap', /r >= 0\.8 \* FREE_TIER_DAILY_READS/.test(nav) && /w >= 0\.8 \* FREE_TIER_DAILY_WRITES/.test(nav) && /d >= 0\.8 \* FREE_TIER_DAILY_DELETES/.test(nav) && /usageSenders\.forEach/.test(nav));
 
-ok('rules: usage records are Admin-only (only the Admin\'s catch-all reaches them; no other rule grants them)', ['usageDaily', 'usageFirestore', 'usageMonthly', 'usageAlerts'].every((c) => !new RegExp(`match /${c}/`).test(rules)) && /match \/\{document=\*\*\} \{\s*allow read, write: if isOwner\(\);/.test(rules));
+ok('rules: usage records are Admin-only (only the Admin\'s catch-all reaches them; no other rule grants them)', ['usageDaily', 'usageFirestore', 'usageMonthly', 'usageAlerts'].every((c) => !new RegExp(`match /${c}/`).test(rules)) && /match \/\{coll\}\/\{document=\*\*\} \{\s*allow read, write: if isOwner\(\) && !coll\.matches\('claude\.\*'\);/.test(rules));
 
 ok('Account menu: only the email and Sign out; no quota ring on the avatar (usage lives in Team → Usage)', !/navReads|navWrites|navDeletes|navCost|conic-gradient/.test(nav) && /<span class="nav__email" id="navEmail"><\/span>\s*<button class="nav__signout"/.test(nav) && /export function refreshReads\(\) \{ renderUsageAlert\(\); \}/.test(nav));
 console.log(fail ? `\n${fail} FAILED` : '\nall usage tab tests passed'); process.exit(fail ? 1 : 0);

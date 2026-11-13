@@ -128,12 +128,14 @@
         <button class="chip" data-view="features" data-perm="features.manage">Features</button>
         <button class="chip" data-view="audit" data-perm="access.manage">Activity</button>
         <button class="chip" data-view="usage" data-perm="usage.view">Usage</button>
+        <button class="chip" data-view="claude" data-perm="access.manage" data-feature="claude.connector">Claude</button>
       </div>
       <section id="v-people"></section>
       <section id="v-roles" hidden></section>
       <section id="v-features" hidden></section>
       <section id="v-audit" hidden></section>
       <section id="v-usage" hidden></section>
+      <section id="v-claude" hidden></section>
     </main>
   </div>
   <div id="modalRoot"></div>
@@ -148,6 +150,7 @@
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
     import { collection, onSnapshot, query, orderBy, limit, getDocs, getDoc, doc, where, documentId } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
     import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
+    import { createClaudeTab } from './claude-tab.js';
 
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -173,6 +176,8 @@
     const TAB_OF = Object.fromEntries(Object.entries(TAB_PERM).map(([k, v]) => [v, k]));
     const TAB_LABEL = { investor: 'Investor view', admin: 'Investor portal', crm: 'Investor CRM', search: 'Search CRM', outreach: 'Outreach', network: 'Network', budget: 'Budget', log: 'Activity Log', team: 'Team' };
     let people = [], roles = [], me = '';
+    // Claude connector tab (switch claude.connector): everything through the claudeConnect function.
+    const claudeTab = createClaudeTab({ root: $('v-claude'), call: httpsCallable(getFunctions(auth.app, 'us-central1'), 'claudeConnect', { timeout: 300000 }), toast: (m) => toast(m), roles: () => roles });
 
     initNav('team');
     onAuthStateChanged(auth, async (user) => {
@@ -198,7 +203,8 @@
     document.querySelector('.chips').addEventListener('click', (e) => {
       const b = e.target.closest('[data-view]'); if (!b) return;
       document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b));
-      ['people', 'roles', 'features', 'audit', 'usage'].forEach(v => { $('v-' + v).hidden = v !== b.dataset.view; });
+      ['people', 'roles', 'features', 'audit', 'usage', 'claude'].forEach(v => { $('v-' + v).hidden = v !== b.dataset.view; });
+      if (b.dataset.view === 'claude') claudeTab.load();
       if (b.dataset.view === 'audit') renderAudit();
       if (b.dataset.view === 'usage') renderUsage();
       if (b.dataset.view === 'features') renderFeatures();
@@ -668,7 +674,7 @@
         const e = ex(d), s = est(d), r = D.reads[d] || {}, w = D.writes[d] || {};
         const bg = e ? Math.max(0, e.reads - s.reads) : null;
         return `<tr><td>${d}${d === today ? ' <span class="muted">(so far)</span>' : ''}</td>
-          <td class="num">${e ? nf(e.reads) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.reads)}</td><td class="num muted">${nf(r.bySite?.production || 0)} / ${nf(r.bySite?.staging || 0)}</td><td class="num muted">${bg == null ? '—' : nf(bg)}</td>
+          <td class="num">${e ? nf(e.reads) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.reads)}</td><td class="num muted">${nf(r.bySite?.production || 0)} / ${nf(r.bySite?.staging || 0)}${r.bySite?.claude ? ` / ${nf(r.bySite.claude)} Claude` : ''}</td><td class="num muted">${bg == null ? '—' : nf(bg)}</td>
           <td class="num">${e ? nf(e.writes) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.writes)}</td><td class="num muted">${nf(w.bySiteW?.production || 0)} / ${nf(w.bySiteW?.staging || 0)}</td>
           <td class="num">${e ? nf(e.deletes) : '<span class="muted">—</span>'}</td><td class="num">${nf(s.deletes)}</td></tr>`;
       }).join('');
@@ -685,7 +691,7 @@
           <p class="u-note">Solid bars = exact (Google, both sites and the server together); faded = browser estimate. Days are Google's quota days (from 08:00 Lisbon). Past the free limit costs a few cents per extra 100,000 reads — not a stop.</p>
           <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th><th class="num">Reads exact</th><th class="num">est.</th><th class="num">prod / staging</th><th class="num">server</th><th class="num">Writes exact</th><th class="num">est.</th><th class="num">prod / staging</th><th class="num">Deletes exact</th><th class="num">est.</th></tr></thead><tbody>${rows}</tbody></table></div>
           <p class="u-note">"server" = exact minus what browsers counted: the scheduler, sending and imports run by the server (they serve both sites).</p></div>
-        <div class="card u-sec"><div class="toolbar"><h2>Per person per day</h2><div style="display:flex;gap:6px;">${uChip('pmetric', 'reads', 'Reads', usagePersonMetric)}${uChip('pmetric', 'writes', 'Writes', usagePersonMetric)}${uChip('pmetric', 'deletes', 'Deletes', usagePersonMetric)}</div><span class="hint">browser estimates, both sites</span></div>
+        <div class="card u-sec"><div class="toolbar"><h2>Per person per day</h2><div style="display:flex;gap:6px;">${uChip('pmetric', 'reads', 'Reads', usagePersonMetric)}${uChip('pmetric', 'writes', 'Writes', usagePersonMetric)}${uChip('pmetric', 'deletes', 'Deletes', usagePersonMetric)}</div><span class="hint">browser estimates, both sites, plus Claude connector reads</span></div>
           <div class="table-wrap"><table class="u-table"><thead><tr><th>Day</th>${pKeys.map((k) => `<th class="num">${esc(who(k))}</th>`).join('')}</tr></thead><tbody>${personRows || uEmpty(1 + pKeys.length, 'Nothing counted per person yet — counting started on 30 Sep.')}</tbody></table></div></div>`;
     }
 

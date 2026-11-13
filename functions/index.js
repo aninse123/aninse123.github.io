@@ -114,3 +114,7 @@ exports.budgetPackDownload = require("./budget/pack").budgetPackDownload;
 // Usage (Team & access → Usage): database / email / activity per day and per person.
 exports.usageAdmin = require("./usage").usageAdmin;
 exports.usageJob = require("./usage").usageJob;
+
+// Claude connector (read only): the address Claude talks to, the sign-in page's
+// Allow step and the Claude tab, and the daily company index (switch claude.connector).
+Object.assign(exports, require("./claude"));

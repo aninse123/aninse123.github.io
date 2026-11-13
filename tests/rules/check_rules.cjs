@@ -39,6 +39,17 @@ const cases = [
   C('Not the Admin: a role named admin-like is not enough', { email: ANT, role: 'administrator', perms: [] }, 'update', 'outreachSettings/global', 'DENY', { testMode: false }, { testMode: true }),
   C('Another team admin (any email, role admin) is the Admin there', { email: 'ana@example.test', role: 'admin', perms: P.ALL, key: 'ana' }, 'update', 'team/bo@example.test', 'ALLOW', { key: 'bo', x: 1 }, { key: 'bo' }),
 
+  // ── Claude connector (13 Nov, B9): the claude* collections are server-only, the Admin included ──
+  C('Claude: Admin cannot read a connection', ANDRE, 'get', 'claudeConnections/c1', 'DENY', null, { email: 'x' }),
+  C('Claude: Admin cannot write the settings', ANDRE, 'update', 'claudeSettings/main', 'DENY', { signInDays: 365 }, { signInDays: 90 }),
+  C('Claude: Admin cannot read a token record', ANDRE, 'get', 'claudeTokens/abc', 'DENY', null, { type: 'access' }),
+  C('Claude: Admin cannot create a client', ANDRE, 'create', 'claudeClients/dcr_x', 'DENY', { kind: 'dcr' }),
+  C('Claude: Admin cannot read the log', ANDRE, 'get', 'claudeAudit/a1', 'DENY', null, { tool: 'x' }),
+  C('Claude: Admin cannot write usage counters', ANDRE, 'update', 'claudeUsage/2026-11-13_andre', 'DENY', { calls: 0 }, { calls: 5 }),
+  C('Claude: Partner cannot read a connection', PARTNER, 'get', 'claudeConnections/c1', 'DENY', null, { email: 'x' }),
+  C('Claude: the Admin catch-all still covers other collections (subcollection)', ANDRE, 'update', 'outreachLists/l1/members/m1', 'ALLOW', { a: 2 }, { a: 1 }),
+  C('Claude: a collection merely containing claude later in its name stays the Admin one', ANDRE, 'get', 'notclaude/x', 'ALLOW', null, { a: 1 }),
+
   // ── Instance settings (Phase 0): public half readable by anyone, the rest Admin/server only ──
   { label: 'Instance: public settings readable signed out', tc: { expectation: 'ALLOW', request: { path: docPath('instance/public'), method: 'get' }, resource: { data: { orgName: 'X' } } } },
   C('Instance: Admin edits the public settings', ANDRE, 'update', 'instance/public', 'ALLOW', { orgName: 'Y' }, { orgName: 'X' }),

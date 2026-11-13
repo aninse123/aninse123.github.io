@@ -9,11 +9,15 @@ service cloud.firestore {
     // Who the Admin is is not written here: the sign-in functions put
     // role = 'admin' on the token of the emails in instance/settings (one
     // rules file for every team), and nothing else can set that claim.
+    // Claude connector (build plan B9, 13 Nov): the claude* collections hold
+    // the connector's sign-in records and log. Only the server reads them
+    // (the Admin's Claude tab goes through the claudeConnect function), so the
+    // Admin's catch-all below stops short of them; no other rule grants them.
     function isOwner() {
       return request.auth != null && request.auth.token.get('role', '') == 'admin';
     }
-    match /{document=**} {
-      allow read, write: if isOwner();
+    match /{coll}/{document=**} {
+      allow read, write: if isOwner() && !coll.matches('claude.*');
     }
 
     // Investors can read documents where their email is listed

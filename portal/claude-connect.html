@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Connect Claude</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <!--
+    Claude connector sign-in (switch claude.connector; Infrastructure build plan v2, 13 Nov 2026).
+    Claude sends the person here with ?r=<request id> (the request itself stays on the server).
+    1. Not signed in: the usual Douro email link, back to this same page with the same ?r=.
+    2. Signed in: claudeConnect describe → "Allow Claude to read Douro data as you" → Allow / Deny.
+    3. Allow / Deny: claudeConnect returns Claude's return address; the page goes there.
+  -->
+  <style>
+    :root {
+      --primary: #4A6B8A; --primary-dark: #3A5570; --secondary: #3D6430; --bg: #F7F3EC; --text: #2C2C2C; --text-light: #6B7280;
+      --border: #D8D3C8; --white: #FFFFFF; --warn-bg: #FFF4E5; --warn: #8A5A00; --err: #9A3636;
+      --font-serif: 'Playfair Display', Georgia, serif; --font-sans: 'Inter', 'Helvetica Neue', sans-serif; --radius: 8px; --shadow: 0 4px 24px rgba(30, 42, 56, 0.08);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; color: var(--text); }
+    .card { background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow); padding: 40px 32px; width: 100%; max-width: 460px; }
+    .logo { height: 64px; display: block; margin: 0 auto 24px; }
+    h1 { font-family: var(--font-serif); font-size: 1.6rem; color: var(--primary); margin-bottom: 8px; text-align: center; }
+    .subtitle { color: var(--text-light); font-size: 0.92rem; margin-bottom: 24px; line-height: 1.6; text-align: center; }
+    label { display: block; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+    input { width: 100%; padding: 12px 16px; border: 1.5px solid var(--border); border-radius: var(--radius); font: inherit; font-size: 16px; }
+    input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(74, 107, 138, 0.12); }
+    .btn { width: 100%; padding: 14px; background: var(--primary); color: var(--white); border: none; border-radius: var(--radius); font: 600 0.95rem var(--font-sans); cursor: pointer; margin-top: 10px; }
+    .btn:hover { background: var(--primary-dark); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn:focus-visible { outline: 2px solid var(--primary-dark); outline-offset: 2px; }
+    .btn--ghost { background: none; border: 1px solid var(--border); color: var(--text); }
+    .btn--ghost:hover { background: var(--bg); }
+    .facts { list-style: none; border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin: 0 0 16px; font-size: 0.9rem; line-height: 1.55; display: grid; gap: 8px; }
+    .facts b { font-weight: 600; }
+    .warn { background: var(--warn-bg); color: var(--warn); border-radius: var(--radius); padding: 10px 14px; font-size: 0.86rem; line-height: 1.5; margin-bottom: 12px; }
+    .msg { font-size: 0.9rem; line-height: 1.55; margin-top: 12px; }
+    .msg--err { color: var(--err); }
+    .small { font-size: 0.8rem; color: var(--text-light); line-height: 1.5; margin-top: 14px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="../assets/logo.png" alt="" class="logo" id="logo">
+
+    <div id="vLoading"><h1>Connect Claude</h1><p class="subtitle">One moment…</p></div>
+
+    <div id="vEmail" hidden>
+      <h1>Connect Claude</h1>
+      <p class="subtitle">Sign in with your Douro email to let Claude read Douro data as you. We'll send you a sign-in link.</p>
+      <form id="emailForm" novalidate>
+        <label for="email">Your Douro email</label>
+        <input type="email" id="email" autocomplete="email" required>
+        <button class="btn" id="sendBtn" type="submit">Send sign-in link</button>
+      </form>
+      <p class="msg msg--err" id="emailErr" hidden></p>
+    </div>
+
+    <div id="vSent" hidden>
+      <h1>Check your email</h1>
+      <p class="subtitle">We sent a sign-in link to <b id="sentTo"></b>. Open it on this device; it brings you back here. Don't see it? Check your spam folder.</p>
+    </div>
+
+    <div id="vAsk" hidden>
+      <h1>Allow Claude?</h1>
+      <p class="subtitle"><b id="askClient">Claude</b> wants to read Douro data as you.</p>
+      <ul class="facts">
+        <li>Signed in as <b id="askPerson"></b> (<span id="askRole"></span>)</li>
+        <li>Claude sees what your role sees in the portal, and nothing else. It can't change anything.</li>
+        <li>Returns to <b id="askHost"></b></li>
+        <li>The connection lasts while you use it; André can end it at any time in Team &amp; access.</li>
+      </ul>
+      <p class="warn" id="askLoopback" hidden>Press Allow only if you just started this from Claude Code on your own computer.</p>
+      <button class="btn" id="allowBtn" type="button">Allow</button>
+      <button class="btn btn--ghost" id="denyBtn" type="button">Deny</button>
+      <p class="msg msg--err" id="askErr" hidden></p>
+      <p class="small">Text Claude reads from emails and files is written by people outside Douro. Don't let Claude open links, send emails or fetch pages it proposes after reading them.</p>
+    </div>
+
+    <div id="vNo" hidden>
+      <h1>Can't connect</h1>
+      <p class="subtitle" id="noMsg"></p>
+      <button class="btn btn--ghost" id="noBack" type="button">Go back to Claude</button>
+    </div>
+
+    <div id="vDone" hidden>
+      <h1 id="doneTitle">Done</h1>
+      <p class="subtitle" id="doneMsg">Returning to Claude…</p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { auth, db } from './firebase-config.js';
+    import { INSTANCE, isAdminEmail } from './instance-config.js';
+    import { sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+    import { doc, getDoc } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+    import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-functions.js";
+
+    const call = httpsCallable(getFunctions(auth.app, 'us-central1'), 'claudeConnect');
+    document.title = `Connect Claude — ${INSTANCE.orgName}`;
+    document.getElementById('logo').alt = INSTANCE.orgName;
+    const R = new URLSearchParams(location.search).get('r') || '';
+    const PAGE = location.origin + location.pathname + '?r=' + encodeURIComponent(R);
+    const $ = (id) => document.getElementById(id);
+    const VIEWS = ['vLoading', 'vEmail', 'vSent', 'vAsk', 'vNo', 'vDone'];
+    const show = (id) => VIEWS.forEach((v) => { $(v).hidden = v !== id; });
+    const cleanErr = (e) => String(e?.message || e || 'Something went wrong.').replace(/^FirebaseError:\s*/, '');
+    const no = (msg) => { $('noMsg').textContent = msg; show('vNo'); };
+    // Only Claude's return addresses are ever followed (the server checked them too).
+    const safeReturn = (u) => /^https:\/\/claude\.(ai|com)\/api\/mcp\/auth_callback\?/.test(u) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/callback\?/.test(u);
+    function go(url, title, msg) {
+      if (!safeReturn(url)) { no('The return address is not a Claude address, so the page stops here.'); return; }
+      $('doneTitle').textContent = title; $('doneMsg').textContent = msg; show('vDone');
+      location.href = url;
+    }
+
+    if (!/^[A-Za-z0-9_-]{20,100}$/.test(R)) no('This page opens from Claude when you connect the Douro connector. Start again from Claude.');
+    else start();
+
+    async function sha256Hex(s) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join(''); }
+    async function onTeam(email) {
+      if (isAdminEmail(email)) return true;
+      const snap = await getDoc(doc(db, 'config', 'teamEmailHashes')).catch(() => null);
+      return !!(snap?.exists() && (snap.data().hashes || []).includes(await sha256Hex(email)));
+    }
+
+    function start() {
+      if (isSignInWithEmailLink(auth, location.href)) {
+        let email = localStorage.getItem('emailForSignIn');
+        if (!email) { show('vEmail'); $('emailErr').textContent = 'Type your email again to finish signing in on this device.'; $('emailErr').hidden = false; $('emailForm').dataset.finish = '1'; return; }
+        finish(email);
+        return;
+      }
+      let first = true;
+      onAuthStateChanged(auth, (user) => {
+        if (!first) return; first = false;
+        if (user) ask(); else show('vEmail');
+      });
+    }
+    async function finish(email) {
+      show('vLoading');
+      try {
+        await signInWithEmailLink(auth, email, location.href);
+        localStorage.removeItem('emailForSignIn');
+        history.replaceState(null, '', PAGE);
+        ask();
+      } catch (e) {
+        show('vEmail'); $('emailErr').textContent = /expired|invalid-action-code/i.test(String(e?.message)) ? 'This sign-in link has expired or was already used. Send a new one.' : cleanErr(e); $('emailErr').hidden = false;
+      }
+    }
+
+    $('emailForm').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const email = $('email').value.trim().toLowerCase();
+      $('emailErr').hidden = true;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { $('emailErr').textContent = 'Type a valid email.'; $('emailErr').hidden = false; return; }
+      if ($('emailForm').dataset.finish) { finish(email); return; }
+      $('sendBtn').disabled = true;
+      try {
+        if (!(await onTeam(email))) throw new Error('This email isn’t on the Douro team.');
+        await sendSignInLinkToEmail(auth, email, { url: PAGE, handleCodeInApp: true });
+        localStorage.setItem('emailForSignIn', email);
+        $('sentTo').textContent = email; show('vSent');
+      } catch (e) { $('emailErr').textContent = cleanErr(e); $('emailErr').hidden = false; }
+      finally { $('sendBtn').disabled = false; }
+    });
+
+    async function ask() {
+      show('vLoading');
+      try {
+        const { data } = await call({ action: 'describe', r: R });
+        $('askClient').textContent = data.clientName || 'Claude';
+        $('askPerson').textContent = data.person?.name || data.person?.email || '';
+        $('askRole').textContent = data.person?.role || 'no role';
+        $('askHost').textContent = data.redirectHost;
+        $('askLoopback').hidden = !data.loopback;
+        if (!data.ok) { no(data.message || 'You can’t connect Claude to Douro yet.'); $('noBack').onclick = () => answer('deny'); return; }
+        show('vAsk');
+      } catch (e) { no(cleanErr(e)); $('noBack').hidden = true; }
+    }
+    async function answer(action) {
+      $('allowBtn').disabled = $('denyBtn').disabled = true;
+      $('askErr').hidden = true;
+      try {
+        const { data } = await call({ action, r: R });
+        go(data.redirect, action === 'allow' ? 'Connected' : 'Not connected', action === 'allow' ? 'Returning to Claude…' : 'Returning to Claude without connecting…');
+      } catch (e) {
+        if ($('vAsk').hidden) { no(cleanErr(e)); return; }
+        $('askErr').textContent = cleanErr(e); $('askErr').hidden = false;
+        $('allowBtn').disabled = $('denyBtn').disabled = false;
+      }
+    }
+    $('allowBtn').addEventListener('click', () => answer('allow'));
+    $('denyBtn').addEventListener('click', () => answer('deny'));
+  </script>
+</body>
+</html>
