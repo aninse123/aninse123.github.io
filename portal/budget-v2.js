@@ -29,14 +29,14 @@ const PAID_NOW = { cash: 'Cash', personal: 'Paid personally' };
 
 // Hover / tap explanations (the i icon next to a field name).
 const TIPS = {
-  kind: 'Expense = money we spent. Money received = money that came in (investors, interest, refunds…). Plan allocation = how much we planned to spend; it is not money.',
+  kind: 'Expense = money we spent. Money received = money that came in (investors, interest, refunds…). Plan allocation (only with the spending plan on in Settings) = how much we planned to spend; it is not money.',
   category: 'What the money bought: transport, meals, software… You can add or rename values in Settings.',
   purpose: 'Why we spent it: a field visit, sourcing, investor relations… A taxi to a company is Category Transport and Purpose Field visit.',
   tags: 'Free labels such as "Spain trip". Several per item; type and press comma. Each tag gets its own total.',
   paidWith: 'Which company account or card the money left from. Choose "Paid personally" when one of you paid with your own money and the company pays you back later.',
   paidPersonallyBy: 'The partner whose own money was used. The Overview lists what the company still owes each of you.',
   bankNames: 'The name the bank writes on transfers from you, copied from a bank line. It lets the Inbox recognise money from you as a partner loan.',
-  usedBy: 'Who the expense was for, not whose card paid. Tick one or more people; with several, the weight sets their share (equal by default).',
+  usedBy: 'Who the expense was for, not whose card paid. Tick one or more people; with several, the cost is split equally. Use "Unequal split…" to give someone a bigger share.',
   docType: 'What paperwork you have. For tax the company needs an invoice with its NIF; a receipt or simplified invoice alone is not enough.',
   issuedToCompany: 'Does the invoice show the company’s name and NIF? Choose Unknown until you have checked; Unknown counts as a warning.',
   supplier: 'Who we paid. Pick a saved supplier to fill NIF, country and defaults, or type a new name and it is saved for next time.',
@@ -49,7 +49,7 @@ const TIPS = {
   vatAmount: 'The VAT amount on the invoice. Filled in from the rate (assuming the amount includes VAT) while you have not typed it. With several rates on one invoice, type the total VAT shown on it.',
   vatDeductible: 'Whether the company can get this VAT back. The app does not decide: leave "Ask the accountant" unless they told you. "No" takes the item out of the recoverable total.',
   currency: 'The currency of the invoice. The amount above is always the euros that left the bank.',
-  shared: 'Tick when this item has been sent to the accountant. The date and your name are saved.',
+  shared: 'Creating a pack in Packs marks its items as shared with the accountant. Use "Mark as shared outside a pack" only for something you sent them another way, for example by email. The date and your name are saved.',
   incomeType: 'Capital call = an investor paid in. Partner loan = a partner lent money. Refunds and partner reimbursements lower costs.',
   waived: 'Tick for items that never get an invoice (a tip, a toll). Say why; it stops the document warning.',
   counterparty: 'Who the money came from, as written in the bank line.',
@@ -125,6 +125,16 @@ const CSS = `
 #v2root .modal { max-width:640px; }
 #v2root td.chk, #v2root th.chk { width:28px; padding-right:0; }
 #v2root .copy-note { font-size:0.75rem; color:var(--secondary); margin-left:6px; }
+#v2root .summary-grid.three { grid-template-columns:repeat(3, 1fr); }
+@media (max-width:768px){ #v2root .summary-grid.three { grid-template-columns:1fr; } }
+#v2root .setjump { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
+#v2root .setjump .tagchip { font-size:0.8rem; padding:4px 12px; }
+#v2root .section { scroll-margin-top:16px; }
+#v2root details.fold { border:1px dashed var(--border); border-radius:var(--radius); padding:10px 14px; margin-bottom:14px; }
+#v2root details.fold > summary { cursor:pointer; font-weight:600; font-size:0.88rem; color:var(--primary); }
+#v2root details.fold > summary .mini { font-weight:400; margin-left:6px; }
+#v2root details.fold[open] > summary { margin-bottom:12px; }
+#v2root .linkbtn { background:none; border:none; padding:0; color:var(--primary); font:600 0.82rem var(--font-sans); cursor:pointer; text-decoration:underline; }
 `;
 
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -229,9 +239,6 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <button data-tab="reports">Reports</button>
         <button data-tab="packs" data-perm="budget.edit">Packs</button>
         <button data-tab="inbox" data-perm="budget.accounts">Inbox${inboxCount() ? `<span class="cnt" title="Bank lines waiting">${inboxCount()}</span>` : ''}</button>
-        <button data-tab="accounts" data-perm="budget.accounts">Accounts</button>
-        <button data-tab="bank" data-perm="budget.import">Bank</button>
-        <button data-tab="suppliers">Suppliers</button>
         <button data-tab="settings">Settings</button>
       </div>
       <div id="v2body"></div>
@@ -239,11 +246,17 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     root.querySelectorAll('#v2tabs button').forEach((b) => b.addEventListener('click', () => { S.tab = b.dataset.tab; render(); }));
     root.querySelector('#v2modal').addEventListener('click', (e) => { if (e.target.id === 'v2modal') closeModal(); });
   }
+  // Six tabs since 13 Nov 2026: the bank import lives at the top of the Inbox; bank accounts and cards, partner profiles and suppliers are sections of Settings.
+  const TAB_MOVED = { bank: 'inbox', accounts: 'settings', suppliers: 'settings' };
   function render() {
+    if (TAB_MOVED[S.tab]) S.tab = TAB_MOVED[S.tab];
     root.querySelectorAll('#v2tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.tab));
     const body = root.querySelector('#v2body');
-    ({ overview: renderOverview, items: renderItems, reports: renderReports, packs: renderPacks, inbox: renderInbox, bank: renderBank, accounts: renderAccounts, suppliers: renderSuppliers, settings: renderSettings }[S.tab] || renderOverview)(body);
+    ({ overview: renderOverview, items: renderItems, reports: renderReports, packs: renderPacks, inbox: renderInbox, settings: renderSettings }[S.tab] || renderOverview)(body);
   }
+  // The spending plan ("Plan allocation" items) is hidden until it is used: on when ticked in Settings, or, while nobody has chosen, when plan items already exist.
+  const planOn = () => (typeof S.company.usePlan === 'boolean' ? S.company.usePlan : S.items.some((i) => i.kind === 'plan' && !i.archived));
+  const kindsShown = (keep) => KINDS.filter((k) => k.id !== 'plan' || planOn() || keep === 'plan');
   const openModal = (html) => { root.querySelector('#v2modalBox').innerHTML = html; root.querySelector('#v2modal').classList.add('open'); };
   const closeModal = () => { root.querySelector('#v2modal').classList.remove('open'); S.edit = null; };
   const refresh = async () => { await loadAll(); shell(); render(); };
@@ -262,11 +275,11 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const tags = tagTotals(S.items).slice(0, 12);
     body.innerHTML = `
       <div class="section"><div class="section-header"><h2 class="section-title">Overview</h2></div>
-        <div class="summary-grid">
+        <div class="summary-grid ${planOn() ? '' : 'three'}">
           <div class="stat-card"><div class="stat-card__label">Money received</div><div class="stat-card__value">${eur.format(o.received)}</div><div class="stat-card__sub">Capital ${eur.format(o.capital)} · loans ${eur.format(o.loans)} · interest ${eur.format(o.interest)}</div></div>
           <div class="stat-card"><div class="stat-card__label">Costs</div><div class="stat-card__value">${eur.format(o.costs)}</div><div class="stat-card__sub">${costs.length} expense${costs.length === 1 ? '' : 's'}, net of refunds</div></div>
           <div class="stat-card"><div class="stat-card__label">Balance</div><div class="stat-card__value stat-card__value--${o.balance < 0 ? 'bad' : 'good'}">${eur.format(o.balance)}</div><div class="stat-card__sub">Received − costs</div></div>
-          <div class="stat-card"><div class="stat-card__label">Plan used</div><div class="stat-card__value">${o.pctOfPlan == null ? '—' : o.pctOfPlan.toFixed(0) + '%'}</div><div class="stat-card__sub">${o.plan ? `Plan ${eur.format(o.plan)}` : 'No plan allocated yet'}</div>${o.pctOfPlan == null ? '' : `<div class="progress"><div class="progress__bar" style="width:${Math.min(100, o.pctOfPlan)}%"></div></div>`}</div>
+          ${planOn() ? `<div class="stat-card"><div class="stat-card__label">Plan used</div><div class="stat-card__value">${o.pctOfPlan == null ? '—' : o.pctOfPlan.toFixed(0) + '%'}</div><div class="stat-card__sub">${o.plan ? `Plan ${eur.format(o.plan)}` : 'No plan allocated yet'}</div>${o.pctOfPlan == null ? '' : `<div class="progress"><div class="progress__bar" style="width:${Math.min(100, o.pctOfPlan)}%"></div></div>`}</div>` : ''}
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
           ${warn ? `<button class="btn btn--ghost btn--sm" data-go="doc">⚠ ${warn} expense${warn === 1 ? '' : 's'} with missing or wrong paperwork</button>` : '<span class="mini">✓ Every expense has its paperwork.</span>'}
@@ -340,7 +353,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const rev = i.legacy && i.needsReview && !i.archived
       ? (i.kind === 'expense'
         ? `<span class="pill pill--review" title="Old item: check the category and add the new fields">Review</span>`
-        : `<span class="pill pill--review">Review</span> <span class="row-actions" style="display:inline-flex;margin:0" data-perm="budget.edit"><button class="btn btn--ghost btn--sm" data-rev="${i.id}" data-as="capital_call">Capital</button><button class="btn btn--ghost btn--sm" data-rev="${i.id}" data-as="interest">Interest</button><button class="btn btn--ghost btn--sm" data-rev="${i.id}" data-as="plan">Plan</button><button class="btn btn--ghost btn--sm" data-rev="${i.id}" data-as="archive">Archive</button></span>`)
+        : `<span class="pill pill--review">Review</span> <span class="row-actions" style="display:inline-flex;margin:0" data-perm="budget.edit"><button class="btn btn--ghost btn--sm" data-rev="${i.id}" data-as="capital_call">Capital</button><button class="btn btn--ghost btn--sm" data-rev="${i.id}" data-as="interest">Interest</button>${planOn() ? `<button class="btn btn--ghost btn--sm" data-rev="${i.id}" data-as="plan">Plan</button>` : ''}<button class="btn btn--ghost btn--sm" data-rev="${i.id}" data-as="archive">Archive</button></span>`)
       : '';
     return `<tr style="${i.archived ? 'opacity:.5' : ''}">
       <td class="chk"><input type="checkbox" data-sel="${i.id}" ${S.selected.has(i.id) ? 'checked' : ''} aria-label="Select"></td>
@@ -376,7 +389,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="card">
           <div class="filter-bar">
             <input type="text" id="fSearch" placeholder="Search name, supplier, comments…" value="${esc(f.search)}">
-            <select id="fKind"><option value="">All kinds</option>${KINDS.map((k) => `<option value="${k.id}"${f.kind === k.id ? ' selected' : ''}>${k.label}</option>`).join('')}</select>
+            <select id="fKind"><option value="">All kinds</option>${kindsShown(f.kind).map((k) => `<option value="${k.id}"${f.kind === k.id ? ' selected' : ''}>${k.label}</option>`).join('')}</select>
             <select id="fCategory">${opts(S.lists.categories, f.category, 'All categories')}</select>
             <select id="fPurpose">${opts(S.lists.purposes, f.purpose, 'All purposes')}</select>
             <select id="fTag">${opts(allTags().map((t) => ({ id: t, label: t })), f.tag, 'All tags')}</select>
@@ -392,8 +405,6 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           </div>
           <div class="bulkbar ${S.selected.size ? 'on' : ''}" id="bulkbar" data-perm="budget.edit">
             <strong>${S.selected.size} selected</strong>
-            <button class="btn btn--ghost btn--sm" data-bulk="share">Mark shared with accountant</button>
-            <button class="btn btn--ghost btn--sm" data-bulk="unshare">Mark not shared</button>
             <input type="text" id="bulkTag" placeholder="Tag to add…" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font:inherit;font-size:.8rem">
             <button class="btn btn--ghost btn--sm" data-bulk="tag">Add tag</button>
             <select id="bulkCat" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font:inherit;font-size:.8rem">${opts(activeOnly(S.lists.categories), '', 'Category…')}</select>
@@ -401,6 +412,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
             <button class="btn btn--ghost btn--sm" data-bulk="classify">Set category / purpose</button>
             <button class="btn btn--ghost btn--sm" data-bulk="archive">Archive</button>
             <button class="btn btn--ghost btn--sm" data-bulk="restore">Restore</button>
+            <select id="bulkMore" aria-label="More actions" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font:inherit;font-size:.8rem"><option value="">More ▾</option><option value="share">Mark as shared with the accountant (sent outside a pack)</option><option value="unshare">Mark as not shared</option></select>
             <button class="btn btn--ghost btn--sm" data-bulk="clear">Clear</button>
           </div>
           <div class="table-wrap"><table>
@@ -421,6 +433,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     body.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => deleteItem(b.dataset.del)));
     body.querySelectorAll('[data-rev]').forEach((b) => b.addEventListener('click', () => reviewRevenue(b.dataset.rev, b.dataset.as)));
     body.querySelectorAll('[data-bulk]').forEach((b) => b.addEventListener('click', () => bulk(b.dataset.bulk, body)));
+    // Marking shared by hand is for items sent to the accountant another way; packs mark their items themselves.
+    body.querySelector('#bulkMore')?.addEventListener('change', (e) => {
+      const a = e.target.value; e.target.value = ''; if (!a) return;
+      const n = S.selected.size;
+      if (confirm(a === 'share' ? `Mark ${n} item(s) as shared with the accountant?\n\nOnly for items you sent another way, for example by email. Creating a pack in Packs marks its items for you.` : `Mark ${n} item(s) as not shared? They go in the next pack again.`)) bulk(a, body);
+    });
     body.querySelector('#v2new').addEventListener('click', () => openItem(null));
     body.querySelector('#v2export').addEventListener('click', () => exportCsv(list));
   }
@@ -485,17 +503,20 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   function sharesHtml(usedBy) {
     const sel = Object.fromEntries((usedBy || []).map((u) => [u.key, u.weight || 1]));
     const people = [...S.dir.filter((m) => m.active || sel[m.key]).map((m) => ({ key: m.key, label: m.label })), { key: 'external', label: 'External' }];
-    return `<div class="shares">${people.map((p) => `<div class="share-row"><label><input type="checkbox" data-used="${esc(p.key)}" ${sel[p.key] ? 'checked' : ''}> ${esc(p.label)}</label><input type="number" min="0" step="any" data-weight="${esc(p.key)}" value="${esc(sel[p.key] || 1)}" title="Weight (share)" style="${sel[p.key] ? '' : 'visibility:hidden'}"></div>`).join('')}</div>`;
+    // Ticks only: the cost is split equally. The weight boxes appear only after "Unequal split…" (or for an item saved with unequal weights).
+    return `<div class="shares">${people.map((p) => `<div class="share-row"><label><input type="checkbox" data-used="${esc(p.key)}" ${sel[p.key] ? 'checked' : ''}> ${esc(p.label)}</label><input type="number" min="0" step="any" data-weight="${esc(p.key)}" value="${esc(sel[p.key] || 1)}" title="Weight (share)" aria-label="Weight (share) for ${esc(p.label)}" style="visibility:hidden"></div>`).join('')}</div>
+      <div style="margin-top:6px"><button type="button" class="linkbtn" id="f-unequal">Unequal split…</button><button type="button" class="linkbtn" id="f-equal">Split equally again</button></div>`;
   }
+  const unequalWeights = (usedBy) => (usedBy || []).length > 1 && new Set(usedBy.map((u) => Number(u.weight) || 1)).size > 1;
   function openItem(id, preset) {
     const it = id ? S.items.find((x) => x.id === id) : null;
-    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [], movementId: preset?.movementId || null, lines: Array.isArray((it || preset || {}).lines) && (it || preset || {}).lines.length > 1 ? (it || preset).lines.map((l) => ({ ...l })) : [{ weight: 1 }, { weight: 1 }] };
+    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [], movementId: preset?.movementId || null, unequal: unequalWeights((it || preset || {}).usedBy), lines: Array.isArray((it || preset || {}).lines) && (it || preset || {}).lines.length > 1 ? (it || preset).lines.map((l) => ({ ...l })) : [{ weight: 1 }, { weight: 1 }] };
     const d = it || preset || { kind: 'expense', date: today(), country: 'PT', currency: 'EUR', issuedToCompany: 'unknown', docType: 'none', usedBy: [], tags: [], paidWith: '' };
     const sub = TEAM_PAY_SUBTYPES;
     openModal(`
       <h2>${it ? 'Edit item' : 'New item'}${it && it.legacy ? ' <span class="pill pill--review" style="vertical-align:middle">old item</span>' : ''}</h2>
       <div class="sect"><div class="sect-title">What</div>
-        <div class="form-row">${fld('Kind', 'kind', `<select id="f-kind">${KINDS.map((k) => `<option value="${k.id}"${d.kind === k.id ? ' selected' : ''}>${k.label}</option>`).join('')}</select>`)}
+        <div class="form-row">${fld('Kind', 'kind', `<select id="f-kind">${kindsShown(d.kind).map((k) => `<option value="${k.id}"${d.kind === k.id ? ' selected' : ''}>${k.label}</option>`).join('')}</select>`)}
           ${fld('Date', '', `<input type="date" id="f-date" value="${esc(d.date || '')}">`)}</div>
         <div class="form-group"><label for="f-name">Name</label><input type="text" id="f-name" value="${esc(d.name || '')}" placeholder="e.g. Train Lisbon–Porto, Accounting (October)"></div>
         <div class="form-row">${fld('Amount in euros', '', `<input type="number" id="f-amount" step="0.01" min="0" value="${esc(d.amount ?? '')}" placeholder="0.00">`)}
@@ -525,15 +546,17 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="form-row">${fld('Document', 'docType', `<select id="f-doctype">${DOC_TYPES.map((t) => `<option value="${t.id}"${d.docType === t.id ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
           ${fld('Invoice shows our NIF', 'issuedToCompany', `<select id="f-issued"><option value="unknown"${d.issuedToCompany === 'unknown' || !d.issuedToCompany ? ' selected' : ''}>Unknown</option><option value="yes"${d.issuedToCompany === 'yes' ? ' selected' : ''}>Yes</option><option value="no"${d.issuedToCompany === 'no' ? ' selected' : ''}>No</option></select>`)}</div>
         <div class="form-row">${fld('Supplier', 'supplier', `<input type="text" id="f-supplier" list="f-suplist" value="${esc(d.supplierName || '')}" placeholder="Name"><datalist id="f-suplist">${S.suppliers.filter((s) => !s.archived).map((s) => `<option value="${esc(s.name)}">`).join('')}</datalist><div class="hint">Type to search the suppliers, or clear the box to see them all. A new name is saved for next time.</div>`)}
-          ${fld('Supplier NIF / VAT ID', 'supplierTaxId', `<input type="text" id="f-taxid" value="${esc(d.supplierTaxId || '')}" placeholder="NIF or VAT ID">`)}</div>
-        <div class="form-row">${fld('Invoice number', 'docNumber', `<input type="text" id="f-docnum" value="${esc(d.docNumber || '')}">`)}${fld('ATCUD', 'atcud', `<input type="text" id="f-atcud" value="${esc(d.atcud || '')}" placeholder="Optional">`)}</div>
-        <div class="form-row">${fld('Invoice date', 'invoiceDate', `<input type="date" id="f-invdate" value="${esc(d.invoiceDate || '')}">`)}
-          ${fld('Country', 'country', `<select id="f-country">${COUNTRIES.map(([c, n]) => `<option value="${c}"${(d.country || 'PT') === c ? ' selected' : ''}>${n}</option>`).join('')}</select>`)}</div>
-        <div class="form-row">${fld('VAT rate %', 'vatRate', `<input type="number" id="f-vatrate" step="any" min="0" value="${esc(d.vatRate ?? '')}" list="f-vatlist"><datalist id="f-vatlist">${[0, 4, 6, 9, 12, 13, 16, 22, 23].map((v) => `<option value="${v}">`).join('')}</datalist>`)}
           ${fld('VAT amount', 'vatAmount', `<input type="number" id="f-vatamt" step="0.01" min="0" value="${esc(d.vatAmount ?? '')}">`)}</div>
+        <details class="fold" id="f-more"><summary>More invoice details<span class="mini" id="f-moresum"></span></summary>
+        <div class="form-row">${fld('Supplier NIF / VAT ID', 'supplierTaxId', `<input type="text" id="f-taxid" value="${esc(d.supplierTaxId || '')}" placeholder="NIF or VAT ID">`)}
+          ${fld('Invoice date', 'invoiceDate', `<input type="date" id="f-invdate" value="${esc(d.invoiceDate || '')}">`)}</div>
+        <div class="form-row">${fld('Invoice number', 'docNumber', `<input type="text" id="f-docnum" value="${esc(d.docNumber || '')}">`)}${fld('ATCUD', 'atcud', `<input type="text" id="f-atcud" value="${esc(d.atcud || '')}" placeholder="Optional">`)}</div>
+        <div class="form-row">${fld('Country', 'country', `<select id="f-country">${COUNTRIES.map(([c, n]) => `<option value="${c}"${(d.country || 'PT') === c ? ' selected' : ''}>${n}</option>`).join('')}</select>`)}
+          ${fld('VAT rate %', 'vatRate', `<input type="number" id="f-vatrate" step="any" min="0" value="${esc(d.vatRate ?? '')}" list="f-vatlist"><datalist id="f-vatlist">${[0, 4, 6, 9, 12, 13, 16, 22, 23].map((v) => `<option value="${v}">`).join('')}</datalist>`)}</div>
         ${fld('VAT deductible?', 'vatDeductible', `<select id="f-vatded">${DEDUCTIBLE.map((x) => `<option value="${x.id}"${(d.vatDeductible || 'ask') === x.id ? ' selected' : ''}>${x.label}</option>`).join('')}</select>`)}
         <div class="form-row">${fld('Currency', 'currency', `<select id="f-currency">${['EUR', 'GBP', 'USD', 'CHF', 'SEK', 'DKK', 'PLN'].map((c) => `<option${(d.currency || 'EUR') === c ? ' selected' : ''}>${c}</option>`).join('')}</select>`)}
           <div id="f-origwrap">${fld('Amount in that currency', '', `<input type="number" id="f-orig" step="0.01" min="0" value="${esc(d.originalAmount ?? '')}">`)}</div></div>
+        </details>
         </div>
         <div class="checkline" style="margin-bottom:14px"><input type="checkbox" id="f-waived" ${d.docWaived ? 'checked' : ''}><label for="f-waived">No document needed for this item${tip('waived')}</label></div>
         <div id="f-waivedwrap">${fld('Why', '', `<input type="text" id="f-waivedwhy" value="${esc(typeof d.docWaived === 'string' ? d.docWaived : '')}" placeholder="e.g. toll paid in cash, no receipt available">`)}</div>
@@ -542,7 +565,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="form-group"><label for="f-comments">Comments</label><textarea id="f-comments" placeholder="Optional notes…">${esc(d.comments || '')}</textarea></div>
         <div class="form-group"><label>Files (PDF or image)</label><input type="file" id="f-files" accept="application/pdf,image/png,image/jpeg" multiple><div class="attach-list" id="f-attlist"></div>
           <div class="upload-progress" id="f-up"><span class="hint" id="f-uptxt">Uploading…</span><div class="progress"><div class="progress__bar" id="f-upbar" style="width:0%"></div></div></div></div>
-        <div class="checkline" style="margin-bottom:14px"><input type="checkbox" id="f-shared" ${d.sharedAt ? 'checked' : ''}><label for="f-shared">Shared with the accountant${tip('shared')}</label></div>
+        <div class="form-group" id="f-sharedwrap"><label>Accountant${tip('shared')}</label><input type="checkbox" id="f-shared" ${d.sharedAt ? 'checked' : ''} hidden>
+          <div class="mini" style="color:var(--text)"><span id="f-sharedtxt"></span> <button type="button" class="linkbtn" id="f-sharedbtn"></button></div></div>
       </div>
       <div class="modal-actions"><button class="btn btn--ghost" id="f-cancel">Cancel</button><button class="btn btn--primary" id="f-save">Save</button></div>`);
     wireItemForm(it);
@@ -567,14 +591,26 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       $('f-classify').style.display = expense || k === 'plan' ? '' : 'none';
       $('f-who').style.display = expense ? '' : 'none'; $('f-docsect').style.display = expense || (income && incomeDocNeeded($('f-income').value)) ? '' : 'none'; $('f-invfields').style.display = expense ? '' : 'none'; $('f-doctitle').textContent = expense ? 'Paperwork' : 'Supporting document';
       $('f-subwrap').style.display = expense && $('f-category').value === 'team-pay' ? '' : 'none';
+      $('f-sharedwrap').style.display = k === 'plan' ? 'none' : '';
       $('f-personalwrap').style.display = $('f-paidwith').value === 'personal' ? '' : 'none';
       $('f-origwrap').style.display = $('f-currency').value !== 'EUR' ? '' : 'none';
       $('f-waivedwrap').style.display = $('f-waived').checked ? '' : 'none';
+      // "More invoice details": a one-line summary while folded; it opens by itself when something inside needs you (it never closes by itself).
+      const more = { taxid: $('f-taxid').value.trim(), num: $('f-docnum').value.trim(), date: $('f-invdate').value, country: $('f-country').value, rate: $('f-vatrate').value, ded: $('f-vatded').value, cur: $('f-currency').value };
+      $('f-moresum').textContent = ` · ${more.country} · ${more.cur} · ${more.rate !== '' ? more.rate + '% VAT' : 'no VAT rate'}${more.taxid ? ' · NIF ' + more.taxid : ''}${more.num ? ' · No. ' + more.num : ''}${more.date ? ' · ' + fmtDate(more.date) : ''}`;
+      const dsMore = docStatus(readDraft());
+      const needsMore = more.country !== 'PT' || more.cur !== 'EUR' || more.ded !== 'ask' || $('f-atcud').value.trim() !== ''
+        || (dsMore.level === 'warn' && dsMore.missing.some((x) => x === 'supplierTaxId' || x === 'docNumber'));
+      if (needsMore && !$('f-more').open) $('f-more').open = true;
       const split = $('f-split').checked && expense;
       $('f-splitwrap').style.display = split ? '' : 'none'; $('f-companywrap').style.display = expense && !split ? '' : 'none';
       $('f-split').closest('.checkline').style.display = expense ? '' : 'none';
       if (split) paintLines();
-      m.querySelectorAll('[data-used]').forEach((c) => { const w = m.querySelector(`[data-weight="${c.dataset.used}"]`); w.style.visibility = c.checked ? '' : 'hidden'; });
+      const ticked = m.querySelectorAll('[data-used]:checked').length;
+      m.querySelectorAll('[data-used]').forEach((c) => { const w = m.querySelector(`[data-weight="${c.dataset.used}"]`); w.style.visibility = c.checked && S.edit.unequal ? '' : 'hidden'; });
+      $('f-unequal').style.display = ticked > 1 && !S.edit.unequal ? '' : 'none';
+      $('f-equal').style.display = S.edit.unequal ? '' : 'none';
+      $('f-usedhint').textContent = ticked === 0 ? 'Nobody ticked = a company cost (shown as "Company" in Reports).' : ticked > 1 && !S.edit.unequal ? 'Split equally between the people ticked.' : ticked > 1 ? 'Split by the weights next to each name.' : '';
       const ds = docStatus(readDraft()), box = $('f-warn');
       const reminder = company.companyName || company.companyNif ? `Ask for the invoice in the name of <strong>${esc(company.companyName || '')}</strong>${company.companyNif ? `, NIF <strong>${esc(company.companyNif)}</strong>` : ''}${company.companyAddress ? `, ${esc(String(company.companyAddress).replace(/\n/g, ', '))}` : ''}.` : 'Fill in Company details in Settings to see the name and NIF to ask for.';
       const msgs = { ok: 'Invoice complete: file, our NIF, supplier, tax ID and number are all there.', incomplete: `Invoice details missing: ${ds.missing.map((x) => ({ supplierName: 'supplier name', supplierTaxId: 'supplier NIF / VAT ID', docNumber: 'invoice number' }[x] || x)).join(', ')}.`, noNif: 'The invoice must show our company NIF. Set “Invoice shows our NIF” to Yes once you have checked, or ask the supplier to reissue it.', receiptOnly: 'A receipt or simplified invoice is not enough for tax: ask the supplier for an invoice with our NIF.', noDocument: 'No document yet: attach the invoice (PDF or photo) and pick its type.', notRequired: 'No document needed for this item.', attached: 'A file is attached.', incomeMissing: `Attach the ${ds.need || 'supporting document'} (PDF or photo) under Notes and files, or tick “No document needed” and say why.` };
@@ -620,8 +656,23 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     $('f-vatamt').addEventListener('input', () => { vatTouched = true; });
     const vatCalc = () => { if (vatTouched) return; const r = parseFloat($('f-vatrate').value), a = parseFloat($('f-amount').value); if (r >= 0 && a > 0) $('f-vatamt').value = (a - a / (1 + r / 100)).toFixed(2); };
     $('f-vatrate').addEventListener('input', vatCalc); $('f-amount').addEventListener('input', vatCalc);
+    // Shared with the accountant: a pack sets it; by hand only for something sent another way (e-mail, before the Budget existed).
+    const paintShared = () => {
+      const on = $('f-shared').checked, kept = on && existing?.sharedAt;
+      const pk = kept && existing.packId ? S.packs.find((k) => k.id === existing.packId) : null;
+      $('f-sharedtxt').innerHTML = !on ? 'Not shared yet: it goes in the next pack (Packs tab).'
+        : kept ? `✓ Shared ${fmtDate(String(existing.sharedAt).slice(0, 10))}${pk ? ` in the pack for ${fmtDate(pk.from)} – ${fmtDate(pk.to)}` : ' outside a pack'}${existing.sharedBy ? ` by ${esc(String(existing.sharedBy).split('@')[0])}` : ''}.${changedSince(existing) ? ' <span style="color:#8A5A00">⚠ Changed since: it can go in the next pack.</span>' : ''}`
+        : '✓ Will be marked as shared outside a pack when you save.';
+      $('f-sharedbtn').textContent = on ? 'Mark as not shared' : 'Mark as shared outside a pack';
+    };
+    $('f-sharedbtn').addEventListener('click', () => { $('f-shared').checked = !$('f-shared').checked; paintShared(); });
+    paintShared();
+    $('f-unequal').addEventListener('click', () => { S.edit.unequal = true; sync(); });
+    $('f-equal').addEventListener('click', () => { S.edit.unequal = false; m.querySelectorAll('[data-weight]').forEach((w) => { w.value = 1; }); sync(); });
     $('f-cancel').addEventListener('click', closeModal);
     $('f-save').addEventListener('click', () => saveItem(existing));
+    // An item that already has invoice details opens with them shown.
+    if (['f-taxid', 'f-docnum', 'f-atcud', 'f-invdate', 'f-vatrate'].some((id) => String($(id).value).trim() !== '')) $('f-more').open = true;
     sync();
   }
   async function uploadFiles(files, m) {
@@ -649,7 +700,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     try {
       const files = $('f-files').files;
       const attachments = [...S.edit.attachments, ...(files.length ? await uploadFiles(files, m) : [])];
-      const usedBy = [...m.querySelectorAll('[data-used]:checked')].map((c) => ({ key: c.dataset.used, weight: Number(m.querySelector(`[data-weight="${c.dataset.used}"]`).value) > 0 ? Number(m.querySelector(`[data-weight="${c.dataset.used}"]`).value) : 1 }));
+      // Equal split unless "Unequal split…" was chosen: then each weight as typed (1 if empty or zero).
+      const usedBy = [...m.querySelectorAll('[data-used]:checked')].map((c) => { const w = Number(m.querySelector(`[data-weight="${c.dataset.used}"]`).value); return { key: c.dataset.used, weight: S.edit.unequal && w > 0 ? w : 1 }; });
       const expense = kind === 'expense';
       const cat = $('f-category').value;
       const supplierName = expense ? $('f-supplier').value.trim() : '';
@@ -720,12 +772,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
 
   // ── Accounts ──
   const copyText = async (text, el) => { try { await navigator.clipboard.writeText(text); if (el) { const n = document.createElement('span'); n.className = 'copy-note'; n.textContent = 'Copied'; el.after(n); setTimeout(() => n.remove(), 1500); } } catch (e) { prompt('Copy:', text); } };
-  function renderAccounts(body) {
-    const o = overview(S.items);
+  // Bank accounts and cards, and the partners' IBAN profiles: two sections of Settings (budget.accounts).
+  function accountsHtml() {
     const partners = S.dir.filter((m) => m.partner);
     const cardsOf = (id) => S.cards.filter((c) => c.accountId === id);
-    body.innerHTML = `
-      <div class="section"><div class="section-header"><h2 class="section-title">Company accounts</h2><div class="section-actions"><button class="btn btn--primary" id="a-new" data-perm="budget.edit">+ Account</button></div></div>
+    return `
+      <div class="section" id="set-accounts"><div class="section-header"><h2 class="section-title">Bank accounts and cards</h2><div class="section-actions"><button class="btn btn--primary" id="a-new" data-perm="budget.edit">+ Account</button></div></div>
         <div class="cardgrid">${S.accounts.length ? S.accounts.map((a) => `<div class="acard"><h3>${esc(a.name)}</h3><div class="mini">${esc(a.bank || '')} · ${a.kind === 'cash' ? 'Cash' : 'Bank account'} · ${esc(a.currency || 'EUR')}${a.holderKey ? ' · ' + esc(personLabel(a.holderKey)) : ' · Company'}</div>
           <div class="iban">${a.iban ? esc(formatIban(a.iban)) : '<span class="mini">No IBAN yet</span>'}</div>
           ${a.bic ? `<div class="mini">BIC / SWIFT: ${esc(a.bic)}</div>` : ''}
@@ -733,14 +785,17 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           ${a.openingBalance != null && a.openingBalance !== '' ? `<div class="mini">Opening balance ${eur.format(a.openingBalance)} on ${fmtDate(a.openingDate)}</div>` : ''}
           <div style="margin-top:10px">${cardsOf(a.id).map((c) => `<div class="mini" style="display:flex;gap:8px;align-items:center">💳 *${esc(c.last4)} ${esc(c.label || '')} · ${esc(c.holderKey ? personLabel(c.holderKey) : 'Company')} <button class="icon-btn" data-card="${c.id}" data-perm="budget.edit" title="Edit card">✎</button></div>`).join('') || '<div class="mini">No cards.</div>'}</div>
           <div class="row-actions">${a.iban ? `<button class="btn btn--ghost btn--sm" data-copyiban="${a.id}">Copy IBAN</button>` : ''}<button class="btn btn--ghost btn--sm" data-newcard="${a.id}" data-perm="budget.edit">+ Card</button><button class="btn btn--ghost btn--sm" data-acc="${a.id}" data-perm="budget.edit">Edit</button></div></div>`).join('') : '<div class="card" style="padding:24px"><span class="mini">No accounts yet. Add Santander and BiG, then add the company card *0435 on Santander.</span></div>'}</div></div>
-      <div class="section"><div class="section-header"><h2 class="section-title">Partner profiles</h2></div>
+      <div class="section" id="set-partners"><div class="section-header"><h2 class="section-title">Partner profiles</h2></div>
         <p class="mini" style="margin:-6px 0 14px">Each partner keeps their own IBAN here so the other can transfer money back. The app never moves money.</p>
         <div class="cardgrid">${partners.map((p) => { const pr = S.people[p.key] || {}; const mine = isAdmin || myKey === p.key; const bal = partnerBalances(S.items, S.movements).find((x) => x.key === p.key) || { total: 0, expenses: 0, expenseCount: 0, loansOwed: 0 }; const owed = bal.total; return `<div class="acard"><h3>${esc(p.name || p.label)}</h3><div class="mini">${esc(pr.bank || '')}</div>
           <div class="iban">${pr.iban ? esc(formatIban(pr.iban)) : '<span class="mini">No IBAN yet</span>'}</div>
           ${pr.bic ? `<div class="mini">BIC / SWIFT: ${esc(pr.bic)}</div>` : ''}
           ${owed > 0 ? `<div class="mini">The company owes ${eur.format(owed)}${bal.expenses ? ` · ${eur.format(bal.expenses)} paid personally (${bal.expenseCount} expense${bal.expenseCount === 1 ? '' : 's'})` : ''}${bal.loansOwed > 0 ? ` · ${eur.format(bal.loansOwed)} lent` : ''}</div>` : ''}
           <div class="row-actions">${pr.iban ? `<button class="btn btn--ghost btn--sm" data-copyp="${esc(p.key)}">Copy IBAN</button><button class="btn btn--ghost btn--sm" data-copyd="${esc(p.key)}">Copy transfer details</button>` : ''}${mine ? `<button class="btn btn--ghost btn--sm" data-prof="${esc(p.key)}">Edit</button>` : ''}</div></div>`; }).join('') || '<span class="mini">No partners found in the team directory.</span>'}</div></div>`;
-    body.querySelector('#a-new').addEventListener('click', () => openAccount(null));
+  }
+  function wireAccounts(body) {
+    const partners = S.dir.filter((m) => m.partner);
+    body.querySelector('#a-new')?.addEventListener('click', () => openAccount(null));
     body.querySelectorAll('[data-acc]').forEach((b) => b.addEventListener('click', () => openAccount(b.dataset.acc)));
     body.querySelectorAll('[data-newcard]').forEach((b) => b.addEventListener('click', () => openCard(null, b.dataset.newcard)));
     body.querySelectorAll('[data-card]').forEach((b) => b.addEventListener('click', () => openCard(b.dataset.card)));
@@ -823,13 +878,16 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   }
 
   // ── Suppliers ──
-  function renderSuppliers(body) {
+  // Suppliers: a section of Settings.
+  function suppliersHtml() {
     const spent = (s) => S.items.filter((i) => !i.archived && i.kind === 'expense' && (i.supplierId === s.id || (i.supplierName || '').toLowerCase() === s.name.toLowerCase()));
     const rows = S.suppliers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((s) => { const its = spent(s), tot = its.reduce((x, i) => x + i.amount, 0), w = its.filter((i) => docStatus(i).level === 'warn').length; return `<tr style="${s.archived ? 'opacity:.5' : ''}"><td><strong>${esc(s.name)}</strong>${s.aliases?.length ? `<div class="mini">Bank lines: ${esc(s.aliases.join(', '))}</div>` : ''}</td><td>${esc(SUPPLIER_TYPE_NAME[s.type] || '')}</td><td>${esc(s.taxId || '')}</td><td>${esc(COUNTRY_NAME[s.country] || s.country || '')}</td><td>${esc(catLabel(s.defaultCategoryId))}${s.defaultPurposeId ? `<div class="mini">${esc(purLabel(s.defaultPurposeId))}</div>` : ''}</td><td class="num">${eur.format(tot)}<div class="mini">${its.length} item${its.length === 1 ? '' : 's'}${w ? ` · <span style="color:#8A5A00">${w} ⚠</span>` : ''}</div></td><td class="num">${eur.format(its.reduce((x, i) => x + (vatBucket(i) !== 'none' ? Number(i.vatAmount) : 0), 0))}</td><td style="text-align:right"><button class="icon-btn" data-sup="${s.id}" data-perm="budget.edit" title="Edit">✎</button></td></tr>`; }).join('');
-    body.innerHTML = `<div class="section"><div class="section-header"><h2 class="section-title">Suppliers</h2><div class="section-actions"><button class="btn btn--primary" id="s-new" data-perm="budget.edit">+ Supplier</button></div></div>
+    return `<div class="section" id="set-suppliers"><div class="section-header"><h2 class="section-title">Suppliers</h2><div class="section-actions"><button class="btn btn--primary" id="s-new" data-perm="budget.edit">+ Supplier</button></div></div>
       <p class="mini" style="margin:-6px 0 14px">Anyone we pay: the accountant, the lawyer, the office, Uber, a searcher's own company. A new supplier name typed on an item is saved here automatically.</p>
       <div class="card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>NIF / VAT ID</th><th>Country</th><th>Defaults</th><th class="num">Spent</th><th class="num">VAT</th><th></th></tr></thead><tbody>${rows || '<tr class="empty-row"><td colspan="8">No suppliers yet.</td></tr>'}</tbody></table></div></div></div>`;
-    body.querySelector('#s-new').addEventListener('click', () => openSupplier(null));
+  }
+  function wireSuppliers(body) {
+    body.querySelector('#s-new')?.addEventListener('click', () => openSupplier(null));
     body.querySelectorAll('[data-sup]').forEach((b) => b.addEventListener('click', () => openSupplier(b.dataset.sup)));
   }
   function openSupplier(id) {
@@ -870,21 +928,32 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const c = S.company || {};
     const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
     const work = { categories: S.lists.categories.map((x) => ({ ...x })), purposes: S.lists.purposes.map((x) => ({ ...x })) };
+    const accountsOn = can('budget.accounts');
+    const jump = [['set-company', 'Company details'], ['set-accountant', 'Accountant'], ...(accountsOn ? [['set-accounts', 'Bank accounts and cards'], ['set-partners', 'Partner profiles']] : []), ['set-suppliers', 'Suppliers'], ['set-plan', 'Spending plan'], ['set-lists', 'Categories and purposes'], ['set-backup', 'Backup']];
+    const planItems = S.items.filter((i) => i.kind === 'plan' && !i.archived).length;
     body.innerHTML = `
-      <div class="section"><div class="section-header"><h2 class="section-title">Company details</h2></div>
+      <div class="setjump" role="navigation" aria-label="Settings sections">${jump.map(([id, l]) => `<button type="button" class="tagchip" data-jump="${id}">${l}</button>`).join('')}</div>
+      <div class="section" id="set-company"><div class="section-header"><h2 class="section-title">Company details</h2></div>
         <div class="card" style="padding:20px 22px"><p class="hint" style="margin:0 0 14px">Shown as a reminder wherever an invoice is entered: ask the supplier for the invoice in exactly this name, NIF and address.</p>
           <div class="form-group"><label for="cs-name">Company name</label><input type="text" id="cs-name" maxlength="200" value="${esc(c.companyName || '')}"></div>
           <div class="form-group"><label for="cs-nif">NIF</label><input type="text" id="cs-nif" inputmode="numeric" maxlength="14" value="${esc(c.companyNif || '')}"><div class="hint" id="cs-nifhint"></div></div>
           <div class="form-group"><label for="cs-addr">Address on invoices</label><textarea id="cs-addr" maxlength="500">${esc(c.companyAddress || '')}</textarea></div>
           <button class="btn btn--primary" id="cs-save" data-perm="budget.edit">Save company details</button> <span class="mini" id="cs-meta">${c.updatedBy ? 'Last saved by ' + esc(c.updatedBy) : ''}</span></div></div>
-      <div class="section"><div class="section-header"><h2 class="section-title">Accountant</h2></div>
+      <div class="section" id="set-accountant"><div class="section-header"><h2 class="section-title">Accountant</h2></div>
         <div class="card" style="padding:20px 22px"><p class="hint" style="margin:0 0 14px">Who the monthly pack is sent to. The link comes from the portal's no-reply address, and replies go to you. Up to three addresses, separated by commas.</p>
           <div class="form-group"><label for="ac-name">Name</label><input type="text" id="ac-name" maxlength="120" value="${esc(c.accountantName || '')}" placeholder="e.g. the accounting firm"></div>
           <div class="form-group"><label for="ac-emails">Email address(es)</label><input type="text" id="ac-emails" maxlength="300" value="${esc((c.accountantEmails || []).join(', '))}" placeholder="name@firm.pt"></div>
           <div class="form-group"><label for="ac-lang">Language of the emails</label><select id="ac-lang"><option value="pt"${(c.accountantLang || 'pt') === 'pt' ? ' selected' : ''}>Português</option><option value="en"${c.accountantLang === 'en' ? ' selected' : ''}>English</option></select></div>
           <button class="btn btn--primary" id="ac-save" data-perm="budget.edit">Save accountant</button> <span class="mini" id="ac-meta"></span></div></div>
-      <div class="two">${listEditor('categories', 'Categories', work.categories)}${listEditor('purposes', 'Purposes', work.purposes)}</div>
-      <div class="section"><div class="section-header"><h2 class="section-title">Backup and old items</h2></div>
+      ${accountsOn ? accountsHtml() : ''}
+      ${suppliersHtml()}
+      <div class="section" id="set-plan"><div class="section-header"><h2 class="section-title">Spending plan</h2></div>
+        <div class="card" style="padding:20px 22px">
+          <div class="checkline"><input type="checkbox" id="pl-on" ${planOn() ? 'checked' : ''} ${can('budget.edit') ? '' : 'disabled'}><label for="pl-on">Use a spending plan</label></div>
+          <p class="hint" style="margin:10px 0 0">A plan sets how much you mean to spend per category or purpose, for example the budget agreed with the investors. It is entered as "Plan allocation" items, which are not money. With the plan on, Items offers "Plan allocation", Overview shows how much of the plan is used and Reports compares plan and spending.${planItems ? ` ${planItems} plan item${planItems === 1 ? '' : 's'} already exist${planItems === 1 ? 's' : ''}; with the plan off they stay saved and can still be edited.` : ''}</p>
+          <span class="mini" id="pl-meta"></span></div></div>
+      <div class="two" id="set-lists">${listEditor('categories', 'Categories', work.categories)}${listEditor('purposes', 'Purposes', work.purposes)}</div>
+      <div class="section" id="set-backup"><div class="section-header"><h2 class="section-title">Backup and old items</h2></div>
         <div class="card" style="padding:20px 22px"><p class="hint" style="margin:0 0 14px">The backup is every item exactly as stored, in one JSON file. Take one before changing old items.</p>
           <button class="btn btn--ghost" id="bk">↓ Backup (JSON)</button>
           <p class="hint" style="margin:14px 0 0">${unrev ? `${unrev} old item${unrev === 1 ? '' : 's'} from the first version still to review (their category is a guess, and old Revenue entries need a type). ` : 'No old items waiting for review. '}<button class="btn btn--ghost btn--sm" id="goreview">Show them</button></p></div></div>`;
@@ -912,6 +981,14 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     }
     body.querySelector('#bk').addEventListener('click', backupJson);
     body.querySelector('#goreview').addEventListener('click', () => { S.filter = { ...S.filter, review: true, doc: '' }; S.tab = 'items'; render(); });
+    if (accountsOn) wireAccounts(body);
+    wireSuppliers(body);
+    body.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => body.querySelector('#' + b.dataset.jump)?.scrollIntoView({ behavior: 'smooth', block: 'start' })));
+    body.querySelector('#pl-on').addEventListener('change', async (e) => {
+      const usePlan = e.target.checked;
+      try { await setDoc(doc(db, 'budgetSettings', 'main'), { usePlan, updatedAt: serverTimestamp(), updatedBy: access.email }, { merge: true }); S.company = { ...S.company, usePlan }; logEvent('budget_plan_setting', { itemName: usePlan ? 'on' : 'off' }); body.querySelector('#pl-meta').textContent = usePlan ? 'Saved: the plan is shown.' : 'Saved: the plan is hidden.'; }
+      catch (err) { e.target.checked = !usePlan; alert('Failed to save: ' + err.message); }
+    });
   }
   async function saveLists(work, body, say) {
     try {
@@ -947,19 +1024,30 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   const KIND_TEXT = { expense: 'Expense', income: 'Money in', settlement: 'To a partner' };
   let bankPlans = [];
 
-  function renderBank(body) {
+  // The bank import, at the top of the Inbox (its own tab until 13 Nov 2026). Open by itself while no lines wait or a file is being read.
+  const importUi = { open: null, history: false };
+  function bankImportHtml(waiting) {
     const accs = S.accounts.filter((a) => a.kind !== 'cash');
-    body.innerHTML = `
-      <div class="section"><div class="section-header"><h2 class="section-title">Import a bank file</h2></div>
-        <div class="card" style="padding:20px 22px">
-          <p class="hint" style="margin:0 0 14px">Santander: Exportar, then "Tabulado Excel" (or "Tabulado (Folha de Cálculo)"). Pick several files at once if you like, for example one per month: lines already imported are skipped, so overlapping files are safe. Nothing is booked yet; the lines go to the Inbox.</p>
-          <div class="form-row"><div class="form-group"><label for="b-acc">Account</label><select id="b-acc">${accs.length ? opts(accs.map((a) => ({ id: a.id, label: a.name })), '', null) : '<option value="">Add a bank account first (Accounts tab)</option>'}</select></div>
+    const open = bankPlans.length > 0 || (importUi.open == null ? !waiting : importUi.open);
+    const done = S.imports.filter((b) => b.status !== 'undone').length;
+    return `
+      <div class="section" data-perm="budget.import"><details class="fold" id="b-box" ${open ? 'open' : ''}><summary>Import a bank file<span class="mini">${S.imports.length ? `last ${fmtDate(String(S.imports[0].createdAtIso || '').slice(0, 10))} · ${esc(S.imports[0].fileName || '')}` : 'nothing imported yet'}</span></summary>
+          <p class="hint" style="margin:0 0 14px">Santander: Exportar, then "Tabulado Excel" (or "Tabulado (Folha de Cálculo)"). Pick several files at once if you like, for example one per month: lines already imported are skipped, so overlapping files are safe. Nothing is booked yet; the lines land in "Bank lines to categorise" below.</p>
+          <div class="form-row"><div class="form-group"><label for="b-acc">Account</label><select id="b-acc">${accs.length ? opts(accs.map((a) => ({ id: a.id, label: a.name })), '', null) : '<option value="">Add a bank account first (Settings → Bank accounts and cards)</option>'}</select></div>
             <div class="form-group"><label for="b-files">File(s)</label><input type="file" id="b-files" accept=".csv,.txt" multiple></div></div>
           <button class="btn btn--primary" id="b-read" ${accs.length ? '' : 'disabled'}>Read files</button>
-          <div id="b-preview" style="margin-top:18px"></div></div></div>
-      <div class="section"><div class="section-header"><h2 class="section-title">Imports so far</h2></div>
-        <div class="card"><div class="table-wrap"><table><thead><tr><th>When</th><th>File</th><th>Account</th><th>Period</th><th class="num">New lines</th><th class="num">Skipped</th><th>By</th><th></th></tr></thead>
-          <tbody>${S.imports.length ? S.imports.map((b) => `<tr style="${b.status === 'undone' ? 'opacity:.5' : ''}"><td style="white-space:nowrap">${fmtDate(String(b.createdAtIso || '').slice(0, 10))}</td><td>${esc(b.fileName || '')}</td><td>${esc(accountOf(b.accountId)?.name || '')}</td><td style="white-space:nowrap">${fmtDate(b.from)} – ${fmtDate(b.to)}</td><td class="num">${esc(b.newLines)}</td><td class="num">${esc(b.dups)}</td><td class="mini">${esc(String(b.createdBy || '').split('@')[0])}</td><td style="text-align:right">${b.status === 'undone' ? '<span class="mini">undone</span>' : `<button class="btn btn--ghost btn--sm" data-undo="${b.id}">Undo</button>`}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="8">No imports yet.</td></tr>'}</tbody></table></div></div></div>`;
+          <div id="b-preview" style="margin-top:18px"></div>
+          <details class="fold" id="b-hist" style="margin:18px 0 4px" ${importUi.history ? 'open' : ''}><summary>Imports so far<span class="mini">${done} import${done === 1 ? '' : 's'}, each can be undone</span></summary>
+            <div class="table-wrap"><table><thead><tr><th>When</th><th>File</th><th>Account</th><th>Period</th><th class="num">New lines</th><th class="num">Skipped</th><th>By</th><th></th></tr></thead>
+              <tbody>${S.imports.length ? S.imports.map((b) => `<tr style="${b.status === 'undone' ? 'opacity:.5' : ''}"><td style="white-space:nowrap">${fmtDate(String(b.createdAtIso || '').slice(0, 10))}</td><td>${esc(b.fileName || '')}</td><td>${esc(accountOf(b.accountId)?.name || '')}</td><td style="white-space:nowrap">${fmtDate(b.from)} – ${fmtDate(b.to)}</td><td class="num">${esc(b.newLines)}</td><td class="num">${esc(b.dups)}</td><td class="mini">${esc(String(b.createdBy || '').split('@')[0])}</td><td style="text-align:right">${b.status === 'undone' ? '<span class="mini">undone</span>' : `<button class="btn btn--ghost btn--sm" data-undo="${b.id}">Undo</button>`}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="8">No imports yet.</td></tr>'}</tbody></table></div></details>
+        </details></div>`;
+  }
+  function wireBankImport(body) {
+    const box = body.querySelector('#b-box'); if (!box) return;
+    // Remember what the person opened or closed (a click on the title), not the state the page drew.
+    box.querySelector(':scope > summary').addEventListener('click', () => { importUi.open = !box.open; });
+    const hist = body.querySelector('#b-hist');
+    hist?.querySelector(':scope > summary').addEventListener('click', () => { importUi.history = !hist.open; });
     body.querySelector('#b-read').addEventListener('click', () => readBankFiles(body));
     body.querySelectorAll('[data-undo]').forEach((b) => b.addEventListener('click', () => undoImport(b.dataset.undo)));
     if (bankPlans.length) showBankPreview(body);
@@ -1029,7 +1117,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         n += pl.fresh.length;
         logEvent('budget_bank_import', { itemName: b.name, amount: pl.fresh.length });
       }
-      bankPlans = [];
+      bankPlans = []; importUi.open = null;      // the box folds again once there are lines to categorise
       await refresh();
       S.tab = 'inbox'; render();
       alert(`${n} bank line${n === 1 ? '' : 's'} imported. They are waiting in the Inbox.`);
@@ -1043,7 +1131,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       for (let i = 0; i < gone.length; i += 400) { const wb = writeBatch(db); gone.slice(i, i + 400).forEach((m) => wb.delete(doc(db, 'budgetMovements', m.id))); await wb.commit(); }
       await updateDoc(doc(db, 'budgetImports', batchId), { status: 'undone' });
       logEvent('budget_bank_undo', { amount: gone.length });
-      await refresh(); S.tab = 'bank'; render();
+      await refresh(); S.tab = 'inbox'; render();
     } catch (e) { alert('Undo failed: ' + e.message); }
   }
 
@@ -1201,8 +1289,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     body.innerHTML = `
       <div class="section"><div class="section-header"><h2 class="section-title">Inbox</h2></div>
         <p class="mini" style="margin:-6px 0 14px">What needs a decision. Nothing here is created by hand: it fills from the bank files and from your items.</p></div>
+      ${accountsOn ? bankImportHtml(lines.length) : ''}
       ${accountsOn ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Bank lines to categorise (${lines.length})</h2>
-          <div class="section-actions" data-perm="budget.edit">${autoN ? `<button class="btn btn--ghost btn--sm" id="i-auto">Accept all ${autoN} bank charge${autoN === 1 ? '' : 's'} and interest</button>` : ''}<span data-perm="budget.import"><button class="btn btn--ghost btn--sm" id="i-bank">Import a bank file</button></span></div></div>
+          <div class="section-actions" data-perm="budget.edit">${autoN ? `<button class="btn btn--ghost btn--sm" id="i-auto">Accept all ${autoN} bank charge${autoN === 1 ? '' : 's'} and interest</button>` : ''}</div></div>
         <div class="card">
           <div class="bulkbar ${inboxSel.size ? 'on' : ''}" data-perm="budget.edit"><strong>${inboxSel.size} selected</strong>
             <select id="ib-cat" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font:inherit;font-size:.8rem">${opts(activeOnly(S.lists.categories), '', 'Category…')}</select>
@@ -1212,13 +1301,13 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
             <button class="btn btn--ghost btn--sm" id="ib-ign">Ignore</button>
             <button class="btn btn--ghost btn--sm" id="ib-clear">Clear</button></div>
           <div class="table-wrap"><table><thead><tr><th class="chk"><input type="checkbox" id="i-all" aria-label="Select all"></th><th>Date</th><th>Line</th><th class="num">Amount</th><th>Looks like</th><th></th></tr></thead>
-            <tbody>${lines.length ? lines.map(row).join('') : `<tr class="empty-row"><td colspan="6">${S.movements.length ? 'All bank lines are dealt with.' : 'No bank lines yet. Import a Santander file in the Bank tab.'}</td></tr>`}</tbody></table></div></div></div>
+            <tbody>${lines.length ? lines.map(row).join('') : `<tr class="empty-row"><td colspan="6">${S.movements.length ? 'All bank lines are dealt with.' : 'No bank lines yet. Import a Santander file with "Import a bank file" above.'}</td></tr>`}</tbody></table></div></div></div>
         ${settle.length ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Transfers to partners (${settle.length})</h2></div><div class="card"><div class="table-wrap"><table><tbody>${settle.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(personLabel(m.partnerKey || (m.sug || {}).partnerKey))}</td><td>${esc(cleanDescription(m.description))}</td><td class="num">${fmtMoney(m.amount)}${(m.settles || []).length ? `<div class="mini">${m.settles.length} expense${m.settles.length === 1 ? '' : 's'} linked${m.unallocated > 0.004 ? ` · ${fmtMoney(m.unallocated)} left` : ''}</div>` : ''}</td><td style="text-align:right;white-space:nowrap"><span data-perm="budget.edit budget.import"><button class="btn btn--primary btn--sm" data-settle="${m.id}">Link to expenses…</button> <button class="btn btn--ghost btn--sm" data-loan="${m.id}" title="The transfer pays back money the partner lent the company">Repays a loan</button></span> <span data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-back="${m.id}">Back to categorise</button></span></td></tr>`).join('')}</tbody></table></div></div><p class="mini" style="margin-top:8px">Link each transfer to the expenses the partner paid personally. They stop counting as owed.</p></div>` : ''}
         ${settled.length ? `<div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Repaid to partners (${settled.length})</h2></div><div class="card"><div class="table-wrap"><table><tbody>${settled.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(personLabel(m.partnerKey))}</td><td>${m.settlementKind === 'loan' ? 'Repays a loan' : `${(m.settles || []).length} expense${(m.settles || []).length === 1 ? '' : 's'}`}</td><td class="num">${fmtMoney(m.amount)}</td><td style="text-align:right" data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-unsettle="${m.id}">Unlink</button></td></tr>`).join('')}</tbody></table></div></div></div>` : ''}` : ''}
       <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Documents to fix (${docWarn.length})</h2>${docWarn.length > 8 ? '<div class="section-actions"><button class="btn btn--ghost btn--sm" id="i-alldocs">Show all in Items</button></div>' : ''}</div>
         <div class="card"><div class="table-wrap"><table><tbody>${docWarn.length ? docWarn.slice(0, 8).map(itemLine).join('') : '<tr class="empty-row"><td colspan="5">Every item has its paperwork.</td></tr>'}</tbody></table></div></div></div>
       <div class="two">
-        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Not shared with the accountant (${notShared.length})</h2></div><div class="card" style="padding:14px 16px"><span class="mini">${notShared.length ? 'Select them in Items and use "Mark shared with accountant".' : 'Everything has been shared.'}</span> ${notShared.length ? '<button class="btn btn--ghost btn--sm" id="i-notshared">Show them</button>' : ''}</div></div>
+        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Not shared with the accountant (${notShared.length})</h2></div><div class="card" style="padding:14px 16px"><span class="mini">${notShared.length ? 'They go in the next pack: creating the pack in Packs marks them as shared.' : 'Everything has been shared.'}</span> ${notShared.length ? '<button class="btn btn--ghost btn--sm" id="i-notshared">Show them</button> <button class="btn btn--ghost btn--sm" id="i-packs" data-perm="budget.edit">Open Packs</button>' : ''}</div></div>
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">To reimburse</h2></div><div class="card" style="padding:14px 16px">${bal.length ? bal.map((x) => `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:3px 0"><span class="mini" style="color:var(--text)">The company owes <strong>${esc(personLabel(x.key))}</strong> ${fmtMoney(x.total)}${x.expenses ? ` · ${fmtMoney(x.expenses)} for ${x.expenseCount} expense${x.expenseCount === 1 ? '' : 's'}` : ''}${x.loansOwed > 0 ? ` · ${fmtMoney(x.loansOwed)} lent` : ''}</span>${x.expenses ? '<button class="btn btn--ghost btn--sm" data-owedshow="1">Show</button>' : ''}</div>`).join('') : '<span class="mini">Nobody is owed money.</span>'}</div></div></div>
       ${ignored.length ? `<div class="section"><button class="btn btn--ghost btn--sm" id="i-showign">${showIgnored ? 'Hide' : 'Show'} ${ignored.length} ignored line${ignored.length === 1 ? '' : 's'}</button>${showIgnored ? `<div class="card" style="margin-top:10px"><div class="table-wrap"><table><tbody>${ignored.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(cleanDescription(m.description))}</td><td class="num">${fmtMoney(m.amount)}</td><td style="text-align:right" data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-back="${m.id}">Restore</button></td></tr>`).join('')}</tbody></table></div></div>` : ''}</div>` : ''}`;
     const by = (id) => S.movements.find((m) => m.id === id);
@@ -1236,7 +1325,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     q('[data-owedshow]', () => { S.filter = { ...S.filter, reimb: 'owed', doc: '', review: false, vat: '', shared: '' }; S.tab = 'items'; render(); });
     q('[data-ed]', (b) => openItem(b.dataset.ed));
     body.querySelector('#i-auto')?.addEventListener('click', () => { const l = lines.filter((m) => (m.sug || {}).autoAccept); if (confirm(`Book ${l.length} bank charge / interest line(s) as expenses and income? They need no document.`)) acceptMovements(l); });
-    body.querySelector('#i-bank')?.addEventListener('click', () => { S.tab = 'bank'; render(); });
+    wireBankImport(body);
     body.querySelector('#ib-clear')?.addEventListener('click', () => { inboxSel.clear(); renderInbox(body); });
     body.querySelector('#ib-ign')?.addEventListener('click', () => setMovementStatus([...inboxSel], 'ignored'));
     body.querySelector('#ib-acc')?.addEventListener('click', () => acceptMovements([...inboxSel].map(by).filter(Boolean)));
@@ -1249,6 +1338,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     });
     body.querySelector('#i-alldocs')?.addEventListener('click', () => { S.filter = { ...S.filter, doc: 'warn', review: false, vat: '' }; S.tab = 'items'; render(); });
     body.querySelector('#i-notshared')?.addEventListener('click', () => { S.filter = { ...S.filter, shared: 'no', doc: '', review: false, vat: '' }; S.tab = 'items'; render(); });
+    body.querySelector('#i-packs')?.addEventListener('click', () => { S.tab = 'packs'; render(); });
     body.querySelector('#i-showign')?.addEventListener('click', () => { showIgnored = !showIgnored; renderInbox(body); });
   }
 
@@ -1310,10 +1400,10 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="card" style="margin-top:12px"><div class="table-wrap"><table><thead><tr><th>Company</th><th class="num">Items</th><th class="num">Cost</th><th>Mostly</th></tr></thead><tbody>${r.rows.length ? r.rows.map((x) => `<tr><td>${esc(x.name || '—')}${x.companyId ? '' : '<div class="mini">Not linked to a CRM company</div>'}</td><td class="num">${x.count}</td><td class="num">${eur.format(x.total)}</td><td class="mini">${top(x.byCategory, 2)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="4">No costs connected to a company in this period.</td></tr>'}</tbody></table></div></div></div>
       <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per person</h2></div>
         <div class="card"><div class="table-wrap"><table><thead><tr><th>Person</th><th class="num">Direct cost</th><th>Mostly</th></tr></thead><tbody>${pr.people.map((p) => `<tr><td><strong>${esc(personLabel(p.key))}</strong></td><td class="num">${eur.format(p.total)}</td><td class="mini">${top(p.byCategory)}</td></tr>`).join('')}<tr><td><strong>Company</strong><div class="mini">Used by nobody in particular</div></td><td class="num">${eur.format(pr.company.total)}</td><td class="mini">${top(pr.company.byCategory)}</td></tr></tbody><tfoot><tr><td>All expenses</td><td class="num">${eur.format(pr.total)}</td><td></td></tr></tfoot></table></div></div>
-        <p class="mini" style="margin-top:8px">An expense used by several people is shared by their weights. Expenses with nobody chosen in "Used by" stay in the Company line.</p></div>
-      <div class="two"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by category</h2></div>${planTable(pv.categories, catLabel)}</div>
+        <p class="mini" style="margin-top:8px">An expense used by several people is split equally, unless it has an unequal split. Expenses with nobody chosen in "Used by" stay in the Company line.</p></div>
+      ${planOn() ? `<div class="two"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by category</h2></div>${planTable(pv.categories, catLabel)}</div>
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by purpose</h2></div>${planTable(pv.purposes, purLabel)}</div></div>
-      <p class="mini">The plan is made of "Plan allocation" items with a category and/or a purpose. Add them in Items.</p>`;
+      <p class="mini">The plan is made of "Plan allocation" items with a category and/or a purpose. Add them in Items.</p>` : ''}`;
     body.querySelector('#rFrom').addEventListener('change', (e) => { repRange.from = e.target.value; renderReports(body); });
     body.querySelector('#rTo').addEventListener('change', (e) => { repRange.to = e.target.value; renderReports(body); });
   }

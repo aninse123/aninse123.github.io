@@ -8,7 +8,8 @@ const crm = read('../../portal/crm.html'), cat = read('../../functions/features/
 const v2 = read('../../portal/budget-v2.js'), rules = read('../../firestore.rules'), access = read('../../portal/access.js');
 let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  ${l}`); };
 
-ok('tabs: Inbox (needs budget.accounts, shows a count of waiting lines) and Bank (needs budget.import)', /data-tab="inbox" data-perm="budget\.accounts"/.test(v2) && /data-tab="bank" data-perm="budget\.import"/.test(v2) && /const inboxCount = \(\) => S\.movements\.filter\(\(m\) => m\.status === 'new'\)\.length/.test(v2));
+// 13 Nov 2026: the Bank tab became the "Import a bank file" box at the top of the Inbox, still behind budget.import.
+ok('tabs: Inbox (needs budget.accounts, shows a count of waiting lines) holds the bank import (needs budget.import)', /data-tab="inbox" data-perm="budget\.accounts"/.test(v2) && !/data-tab="bank"/.test(v2) && /<div class="section" data-perm="budget\.import"><details class="fold" id="b-box"/.test(v2) && /const inboxCount = \(\) => S\.movements\.filter\(\(m\) => m\.status === 'new'\)\.length/.test(v2));
 ok('the bank file is read in the browser only: decoded as the bank writes it, parsed, nothing is sent anywhere', /decodeBank\(await f\.arrayBuffer\(\)\)/.test(v2) && !/fetch\(|XMLHttpRequest|sendBeacon/.test(v2) && (v2.match(/httpsCallable\(/g) || []).length === 1 && /'budgetPackLink'/.test(v2));
 ok('several files are checked oldest first, each against the one before, and against what is already stored', /parsed\.sort\(\(a, b\) => a\.from\.localeCompare\(b\.from\)\)/.test(v2) && /existing\.add\(l\.id\)/.test(v2) && /lastStored\(accountId\)/.test(v2));
 ok('a file for another account number is blocked; an account without a number remembers it', /but "\$\{acc\.name\}" is set to/.test(v2) && /fileAccountNo: b\.accountNo/.test(v2));
