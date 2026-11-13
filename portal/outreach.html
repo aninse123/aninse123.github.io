@@ -3432,7 +3432,9 @@
             const emails = personDetails(p, 'email', co).map(e => String(e).trim().toLowerCase());
             // 3 Nov: addresses that bounced (or are marked wrong) are left out of `emails` (never written to), but they ARE the person's: the Inbox must not call them "not in the CRM"
             const badEmails = (p.reach || []).filter(e => e && e.type === 'email' && (e.status || 'ok') !== 'ok').map(e => String(e.value).trim().toLowerCase());
-            return { personId: l.personId, badEmails, name: p.name || l.personName || '', role: l.isContact ? (l.contactRole || 'Contact') : (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personDetails(p, 'phone', co)[0] || '', phones: personDetails(p, 'phone', co), linkedin: personDetails(p, 'linkedin', co)[0] || '', rank, isContact: !!l.isContact,
+            // 13 Nov (outreach.callResults): who decides — an owner (any current stake: a sócio) or a top role (gerente, administrador, CEO…), as in the plan's D2
+            const decider = !l.isContact && ((Number(l.shTotalPct ?? l.shDirectPct) || 0) > 0 && l.shCurrent !== false || (l.mgmtCurrent !== false && TOP_ROLE_RE.test((l.mgmtRoles || []).join(' '))));
+            return { personId: l.personId, decider, badEmails, name: p.name || l.personName || '', role: l.isContact ? (l.contactRole || 'Contact') : (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personDetails(p, 'phone', co)[0] || '', phones: personDetails(p, 'phone', co), linkedin: personDetails(p, 'linkedin', co)[0] || '', rank, isContact: !!l.isContact,
               trusts: { emails: emails.map(v => detailTrustKey(p, 'email', v)), phone: personDetails(p, 'phone', co)[0] ? detailTrustKey(p, 'phone', personDetails(p, 'phone', co)[0]) : null, linkedin: personDetails(p, 'linkedin', co)[0] ? detailTrustKey(p, 'linkedin', personDetails(p, 'linkedin', co)[0]) : null } };
           }));
         } catch (e) { console.warn('people', id, e); peopleCache.set(id, []); }
@@ -5107,7 +5109,7 @@ Optional note for them:`, '');
       const win = c.sendWindow || settings?.sendWindow || { days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
       const n = lisbonNow(), open = (win.days || []).includes(n.day) && n.hhmm >= win.from && n.hhmm < win.to;
       if (e.status === 'pending') return c.status === 'active' ? `its turn to start (${num(c.pacing?.newPerDay || 20)} new a day)` : 'the campaign to start';
-      if (e.status === 'paused') return 'you to resume it';
+      if (e.status === 'paused') return e.pausedUntil ? `${esc(dtFmt.format(new Date(tsMs(e.pausedUntil))))} — resumes by itself` : 'you to resume it'; // 13 Nov: Pause until
       if (c.status === 'paused') return 'the campaign to resume';
       if (e.status === 'awaiting_approval') return `approval of ${esc(st?.name || 'the email')} (To approve)`;
       if (e.status === 'awaiting_task') return `the ${esc((CHANNEL_LABELS[st?.channel] || 'task').toLowerCase())} task: ${esc(st?.name || '')}`;
@@ -6643,9 +6645,11 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           if (box.hidden) return null;
           if (!res) return { error: 'Choose what they said.' };
           const out = { result: res, sequence: { mode: seq() } };
-          if (out.sequence.mode === 'pause') {
+          if (out.sequence.mode === 'pause' && !(res === 'callback_later' && !untilTouched)) { // Call back at…: the pause lasts until the call back (the server's default)
             const u = q('[data-auntil]').value; if (!u) return { error: 'Pick the day the sequence starts again.' };
-            out.sequence.until = new Date(u + 'T09:00:00').toISOString();
+            const at = new Date(u + 'T09:00:00');
+            if (at.getTime() <= Date.now()) return { error: 'Pause until a later day (today 09:00 has passed).' };
+            out.sequence.until = at.toISOString();
           }
           if (res === 'callback_later') { const c = q('[data-acbat]').value; if (!c) return { error: 'Pick the day and time to call back.' }; out.callbackAt = new Date(c).toISOString(); }
           if (!q('[data-arem]').hidden) { const a = q('[data-aremat]').value; if (!a) return { error: 'Pick the reminder date.' }; out.reminder = { channel: q('[data-aremch]').value, at: new Date(a + 'T10:00:00').toISOString() }; }
@@ -6673,7 +6677,15 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
     }
     // Who answered: every person of the company (with or without email), its contacts; decision-makers first (the best-person ladder).
     function whoFor(t, c) {
-      const ppl = (peopleCache.get(t.companyId) || []).map(p => ({ personId: p.personId, name: p.name, role: p.role, decider: !p.isContact && p.rank >= 60, phones: (p.phones?.length ? p.phones : [p.phone]).filter(Boolean) }));
+      // one line per person (a person with two roles in the company has two links), decision-makers first
+      const byId = new Map();
+      (peopleCache.get(t.companyId) || []).forEach(p => {
+        const x = byId.get(p.personId);
+        const phones = (p.phones?.length ? p.phones : [p.phone]).filter(Boolean);
+        if (!x) byId.set(p.personId, { personId: p.personId, name: p.name, role: p.role, decider: !!p.decider, phones });
+        else { x.decider = x.decider || !!p.decider; if (p.role && !String(x.role || '').includes(p.role)) x.role = [x.role, p.role].filter(Boolean).join(' · '); x.phones = [...new Set([...x.phones, ...phones])]; }
+      });
+      const ppl = [...byId.values()];
       const cts = (c?.contacts || []).filter(p => p.name).map(p => ({ personId: null, name: p.name, role: p.role || 'Contact', decider: false, phones: p.phone ? [p.phone] : [] }));
       return [...ppl.sort((a, b) => b.decider - a.decider), ...cts];
     }
@@ -6810,7 +6822,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         return `<div class="task${overdue ? ' task--overdue' : ''}" data-tid="${esc(t.id)}">
           <div class="task__head">
             <span class="task__co"><span class="ch">${esc(CHANNEL_LABELS[t.channel])}</span>${c._person ? `${c._person.link ? `<a href="${esc(c._person.link)}" style="color:var(--text);">${esc(c._person.name)}</a>` : esc(c._person.name)}${c._person.org ? ` <span class="hint">· ${esc(c._person.org)}</span>` : ''}` : `<a href="/portal/search.html?company=${encodeURIComponent(t.companyId)}" style="color:var(--text);">${esc(t.companyName || c.name || 'Company')}</a>`}${t.isTest ? '<span class="pill pill--test">TEST</span>' : ''}</span>
-            <span class="hint">${overdue ? '<b style="color:var(--danger);">overdue</b> · ' : ''}due ${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}${t.attempts?.length ? ` · ${t.attempts.length} earlier attempt${t.attempts.length === 1 ? '' : 's'}` : ''}</span>
+            <span class="hint">${overdue ? '<b style="color:var(--danger);">overdue</b> · ' : ''}due ${esc(dayFmt.format(new Date(tsMs(t.dueAt))))}${(() => { const d = new Date(tsMs(t.dueAt)); return t.lastResult === 'callback_later' ? ' at ' + d.toTimeString().slice(0, 5) : ''; })()}${t.attempts?.length ? ` · ${t.attempts.length} earlier attempt${t.attempts.length === 1 ? '' : 's'}` : ''}</span>
           </div>
           <div class="draft__meta">
             ${t.campaignId ? `<span><button class="camp-link" style="font-size:0.76rem;" data-topencamp="${esc(t.campaignId)}">${esc(t.campaignName || 'Campaign')}</button> · ${t.pathName ? esc(t.pathName) + ' · ' : ''}${esc(t.stepName || '')} (${(t.stepIndex ?? 0) + 1} of ${t.stepCount || '?'})</span>`

@@ -118,7 +118,7 @@ function addTrack(cid, companyId, isTest = false) {
   ok("…the enrolment says who answered and the result", e1.answer?.category === "wait_for_response" && e1.answer.line === "Answered by phone: Sofia Soares · +351 912 345 678");
   ok("…the conversation carries the category (Inbox chip, metrics) and the phone answer", get("outreachThreads/th1").responseCategory === "wait_for_response" && !!get("outreachThreads/th1").otherReplyAt);
   const rem = get(`outreachTasks/${r.reminderTaskId}`);
-  ok("…the reminder: a call task, Awaiting reply since today, on the company, assigned to its owner", rem.status === "open" && rem.reminderKind === "awaiting_reply" && rem.channel === "call" && rem.companyId === "c1" && rem.assignee === "andre" && /Awaiting reply since 29 Sept?/.test(rem.instructions) && /Vai falar/.test(rem.instructions));
+  ok("…the reminder: a call task, Awaiting reply since today, on the company, assigned to whoever saved the result", rem.status === "open" && rem.reminderKind === "awaiting_reply" && rem.channel === "call" && rem.companyId === "c1" && rem.assignee === "andre" && /Awaiting reply since 29 Sept?/.test(rem.instructions) && /Vai falar/.test(rem.instructions));
   const act = docs("searchActivities").find((a) => a.taskId === t1);
   ok("…the activity has the result and who answered", act.type === "call_connected" && act.responseCategory === "wait_for_response" && act.contactName === "Sofia Soares" && act.contactPersonId === "p1" && /Answered: Awaiting reply/.test(act.title));
   ok("…the number that answered is marked on the company (first next time)", get("searchCompanies/c1").phoneReach?.["912345678"]?.wrong === false);

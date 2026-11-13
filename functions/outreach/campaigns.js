@@ -1167,6 +1167,14 @@ async function closeAwaitingReminders(companyId, isTest, { exceptTaskId = null, 
   await Promise.all(open.map((d) => d.ref.update({ status: "done", outcome: "answered_elsewhere", closedReason: why, completedAt: FieldValue.serverTimestamp(), completedBy: "system" })));
   return open.length;
 }
+// Who saved the result, as a team key (the reminder is theirs): a founder from the instance settings, else the team directory.
+async function ownerKeyOf(email) {
+  const e = normEmail(email);
+  if (!e) return null;
+  try { const f = ((await require("../instance").getInstance()).founders || []).find((x) => normEmail(x.email) === e); if (f?.key) return f.key; } catch (err) { /* the directory below */ }
+  try { const s = await db().collection("teamDirectory").where("contactEmail", "==", e).limit(1).get(); if (!s.empty) return s.docs[0].id; } catch (err) { /* nobody */ }
+  return null;
+}
 // The reminder as a task (Outreach → Tasks), and for Not now the "Next follow-up" date on the company (Search CRM column and filter, and
 // "Next follow-up … via …" on the related companies).
 async function createReminder({ companyId, isTest, rem, who, note, caller, campaignId, campaignName, threadId, sourceTaskId, now = new Date() }) {
@@ -1178,7 +1186,7 @@ async function createReminder({ companyId, isTest, rem, who, note, caller, campa
   const ref = await db().collection("outreachTasks").add({
     campaignId: null, campaignName: "", enrolmentId: null, stepId: null, stepName: "", stepIndex: null, stepCount: null,
     companyId, companyName: co.name || "", channel: rem.channel, instructions: [text, note].filter(Boolean).join("\n").slice(0, 2000), templateId: null, variantKey: null,
-    assignee: co.owner || null, dueAt: Timestamp.fromDate(rem.at), status: "open", outcome: null, notes: "", activityId: null,
+    assignee: (await ownerKeyOf(caller)) || co.owner || null, dueAt: Timestamp.fromDate(rem.at), status: "open", outcome: null, notes: "", activityId: null, // 13 Nov: whoever saved the result
     source: "own", reminderKind: rem.kind, waitingSince: Timestamp.fromDate(now), fromCampaignId: campaignId || null, fromCampaignName: campaignName || "",
     threadId: threadId || null, isTest: !!isTest, fromTaskId: sourceTaskId || null, inviteUid: null,
     createdAt: FieldValue.serverTimestamp(), createdBy: caller, completedAt: null, completedBy: null,
