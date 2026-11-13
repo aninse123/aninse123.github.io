@@ -19,6 +19,7 @@ const P = require("../access/perms");
 
 const CODE_TTL = 5 * 60 * 1000;
 const REQUEST_TTL = 10 * 60 * 1000;
+const REUSE_GRACE = 2 * 60 * 1000; // a refresh token reused this soon is a client retry
 const ACCESS_TTL = 60 * 60 * 1000;
 const CIMD_TTL = 24 * 60 * 60 * 1000;
 
@@ -239,14 +240,17 @@ async function token(form, { now = Date.now() } = {}) {
     const t = s.exists ? s.data() : null;
     if (!t || t.type !== "refresh") return tokenError("invalid_grant", "Unknown refresh token.");
     if (f.client_id && t.clientId !== String(f.client_id)) return tokenError("invalid_grant", "This token belongs to another client.");
-    if (t.usedAt) { await revokeConnection(t.connectionId, "refresh_reuse"); return tokenError("invalid_grant", "This refresh token was already used; the connection has been ended for safety. Connect again."); }
+    // Claude retries a renewal it didn't get an answer for (seen 13 Nov: the same refresh token
+    // 11 s apart). Within REUSE_GRACE that's a retry, answered with a fresh pair; later reuse
+    // looks like theft and ends the connection.
+    if (t.usedAt && now - (U.ms(t.usedAt) || 0) > REUSE_GRACE) { await revokeConnection(t.connectionId, "refresh_reuse"); return tokenError("invalid_grant", "This refresh token was already used; the connection has been ended for safety. Connect again."); }
     const connRef = U.db().doc(`claudeConnections/${t.connectionId}`);
     const conn = (await connRef.get()).data();
     if (!connectionLive(conn, now)) {
       if (conn && !conn.revokedAt) await revokeConnection(t.connectionId, "expired");
       return tokenError("invalid_grant", "This connection has ended. Connect again.");
     }
-    await ref.update({ usedAt: Timestamp.fromMillis(now) });
+    if (!t.usedAt) await ref.update({ usedAt: Timestamp.fromMillis(now) }); // a retry keeps the first use time (the grace doesn't slide)
     const expiresAt = Timestamp.fromMillis(now + days);
     await connRef.update({ lastUsedAt: Timestamp.fromMillis(now), expiresAt });
     return { status: 200, body: await issueTokens({ id: t.connectionId, clientId: t.clientId, email: t.email, expiresAt }, { now, family: t.family }) };
@@ -301,7 +305,7 @@ async function checkAccessToken(bearer, { now = Date.now() } = {}) {
 }
 
 module.exports = {
-  HOSTED_REDIRECTS, ACCESS_TTL, CODE_TTL, REQUEST_TTL, isLoopback, isAllowedRedirect, redirectMatches, surfaceOf, pkceOk, resourceOk, isCimdId,
+  HOSTED_REDIRECTS, ACCESS_TTL, REUSE_GRACE, CODE_TTL, REQUEST_TTL, isLoopback, isAllowedRedirect, redirectMatches, surfaceOf, pkceOk, resourceOk, isCimdId,
   protectedResourceMetadata, authServerMetadata, openIdConfiguration, wwwAuthenticate, resourceMetadataUrl, registerClient, loadClient, connectPageUrl,
   authorize, token, revoke, issueCode, denyRedirect, revokeConnection, connectionLive, checkAccessToken,
 };

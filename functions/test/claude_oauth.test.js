@@ -134,6 +134,9 @@ async function signIn(email, { redirect = CB, client = null } = {}) {
   ok("refresh gives a new pair (rotated)", r1.status === 200 && r1.body.refresh_token !== t2.refresh_token && r1.body.access_token !== t2.access_token);
   const r1b = await O.token({ grant_type: "refresh_token", refresh_token: r1.body.refresh_token, client_id: "dcr_someoneelse0000" });
   ok("a refresh token belongs to its client", r1b.body.error === "invalid_grant");
+  const retry = await O.token({ grant_type: "refresh_token", refresh_token: t2.refresh_token, client_id: s2.reg.client_id });
+  ok("a renewal retried within 2 minutes (Claude's retry) gets a fresh pair, connection kept", retry.status === 200 && retry.body.access_token && !(await O.checkAccessToken(r1.body.access_token)).error);
+  store.get(`claudeTokens/${U.sha256(t2.refresh_token)}`).usedAt = Timestamp.fromMillis(Date.now() - 3 * 60000);
   const reuse = await O.token({ grant_type: "refresh_token", refresh_token: t2.refresh_token, client_id: s2.reg.client_id });
   ok("reusing an old refresh token is refused (invalid_grant)…", reuse.status === 400 && reuse.body.error === "invalid_grant");
   const connId = (await U.db().collection("claudeConnections").where("email", "==", X.ANT).get()).docs.map((d) => d.data()).filter((c) => c.revokeReason === "refresh_reuse");
