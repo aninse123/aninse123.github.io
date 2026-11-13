@@ -44,8 +44,8 @@ const Related = require("./related"); // owner-aware outreach (22 Oct, switch ou
 const Tracks = require("./tracks"); // several recipients per company (30 Oct, switch outreach.multiRecipient)
 const RL = require("./recipient_list"); // recipient list per company (30 Oct, switch contacts.trustLabels)
 const EN = require("./email_name_check"); // email name check (26 Oct, switch search.emailNameCheck)
-const { addWait, sendingDaysOf, skipHolidaysOf, waitOptsOf, FINAL_GRACE } = require("./schedule_util");
-const { findOutcome, stepOutcome, CHANNEL_LABEL } = require("./task_util");
+const { addWait, sendingDaysOf, skipHolidaysOf, waitOptsOf, FINAL_GRACE, lisbonParts, lisbonAt } = require("./schedule_util");
+const { findOutcome, stepOutcome, CHANNEL_LABEL, findResult, isAnswered, SEQUENCE_MODES, AWAITING_DAYS, PAUSE_DAYS, reachKey, answerLine } = require("./task_util");
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
@@ -366,7 +366,7 @@ async function preview({ campaignId, companyIds }, caller, opts = {}) {
 // default choice (Skip for now when a related company said no, else Proceed)
 // and the companies it would mention.
 const OWNER_PANEL_MAX = 200;
-const slimRelated = (r) => ({ companyId: r.companyId, name: r.name, why: r.why, campaignName: r.campaignName, lastOutreachAt: r.lastOutreachAt, lastReplyAt: r.lastReplyAt, saidNo: r.saidNo, doNotContact: r.doNotContact, email: r.email });
+const slimRelated = (r) => ({ companyId: r.companyId, name: r.name, why: r.why, campaignName: r.campaignName, lastOutreachAt: r.lastOutreachAt, lastReplyAt: r.lastReplyAt, saidNo: r.saidNo, doNotContact: r.doNotContact, email: r.email, nextFollowUpAt: r.nextFollowUpAt || null });
 async function ownerPanel(ids, data, campaign, ctx) {
   const companies = new Map(ids.map((id) => [id, { id, ...(data.get(id)?.company || {}) }]));
   const rel = await Related.relatedFor(ids, { companies });
@@ -736,9 +736,54 @@ async function enrolPeople({ campaignId, people, source }, caller) {
   return { requested: list.length, enrolled, skipped, skippedTotal };
 }
 
-async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId }, caller) {
+// One enrolment paused (from a task card, the approval queue, a related company, or a call result). until: "Pause until" (13 Nov,
+// switch outreach.callResults) — the scheduler resumes it by itself at that time (resumeDuePauses).
+async function pauseOne(ref, caller, { until = null, reason = null } = {}) {
+  return db().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) fail("not-found", "enrolment_not_found", "Enrolment not found.");
+    const e = snap.data();
+    const extra = until ? { pausedUntil: Timestamp.fromDate(until), pauseReason: reason || null } : {};
+    if (e.status === "paused") { if (until) tx.update(ref, extra); return { ok: true, status: "paused" }; }
+    if (!LIVE_ENROLMENT.includes(e.status)) fail("failed-precondition", "not_live", "This company is no longer active in the campaign.");
+    if (e.status === "awaiting_approval" && e.draftMessageId) {
+      // Paused from the approval queue (4 Nov): the waiting draft is dropped and written again when the company is resumed.
+      tx.update(db().doc(`outreachMessages/${e.draftMessageId}`), { status: "cancelled", cancelledReason: `Paused by ${caller} — drafted again when resumed` });
+      tx.update(ref, { status: "paused", pausedFrom: "active", draftMessageId: null, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller, ...extra });
+      return { ok: true, status: "paused" };
+    }
+    if (e.status === "awaiting_task" && e.taskId) {
+      // Paused from a task card (4 Nov): the open task is closed and written again when the company is resumed.
+      tx.update(db().doc(`outreachTasks/${e.taskId}`), { status: "cancelled", cancelledReason: `Paused by ${caller} — created again when resumed` });
+      tx.update(ref, { status: "paused", pausedFrom: "active", taskId: null, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller, ...extra });
+      return { ok: true, status: "paused" };
+    }
+    tx.update(ref, { status: "paused", pausedFrom: e.status, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller, ...extra });
+    return { ok: true, status: "paused" };
+  });
+}
+
+// 13 Nov: a company's live enrolments — every address (root + tracks) in any campaign — on the same side (test or real), so a task of a
+// test campaign never stops or pauses a real company's campaign (staging and production share one Firestore).
+async function companyLiveRefs(companyId, isTest) {
+  if (!companyId) return [];
+  const snap = await db().collection("outreachEnrolments").where("companyId", "==", companyId).get();
+  return snap.docs.filter((d) => LIVE_ENROLMENT.includes(d.data().status) && !!d.data().isTest === !!isTest).map((d) => d.ref);
+}
+
+async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId, wholeCompany }, caller) {
   if (!id || typeof id !== "string") fail("invalid-argument", "enrolment_required", "Choose a company in the campaign.");
   const ref = db().doc(`outreachEnrolments/${id}`);
+  // 13 Nov (B1): "Pause company" on a task card pauses every address of the company, not only this one.
+  if (op === "pause" && wholeCompany) {
+    const e = (await ref.get()).data();
+    if (!e) fail("not-found", "enrolment_not_found", "Enrolment not found.");
+    const refs = e.companyId ? await companyLiveRefs(e.companyId, e.isTest) : [];
+    if (!refs.some((r) => r.id === id)) refs.push(ref);
+    let paused = 0;
+    for (const r of refs) { const x = await pauseOne(r, caller).catch(() => null); if (x?.status === "paused") paused++; }
+    return { ok: true, status: "paused", paused };
+  }
   if (op === "remove") {
     const ok = await endEnrolment(ref, "removed", String(reason || "").slice(0, 200) || `Removed by ${caller}`);
     if (!ok) fail("failed-precondition", "not_live", "This company is no longer active in the campaign.");
@@ -746,33 +791,35 @@ async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId }, ca
   }
   if (op === "move") return moveEnrolment(id, targetCampaignId, caller);
   if (op !== "pause" && op !== "resume") fail("invalid-argument", "bad_op", `Unknown operation "${op}".`);
+  if (op === "pause") return pauseOne(ref, caller);
+  return resumeOne(ref, true);
+}
+// Resume (by hand, or by the scheduler when "Pause until" is reached — strict = false: a company no longer paused is left alone).
+async function resumeOne(ref, strict = true) {
   return db().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) fail("not-found", "enrolment_not_found", "Enrolment not found.");
     const e = snap.data();
-    if (op === "pause") {
-      if (e.status === "paused") return { ok: true, status: "paused" };
-      if (!LIVE_ENROLMENT.includes(e.status)) fail("failed-precondition", "not_live", "This company is no longer active in the campaign.");
-      if (e.status === "awaiting_approval" && e.draftMessageId) {
-        // Paused from the approval queue (4 Nov): the waiting draft is dropped and written again when the company is resumed.
-        tx.update(db().doc(`outreachMessages/${e.draftMessageId}`), { status: "cancelled", cancelledReason: `Paused by ${caller} — drafted again when resumed` });
-        tx.update(ref, { status: "paused", pausedFrom: "active", draftMessageId: null, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller });
-        return { ok: true, status: "paused" };
-      }
-      if (e.status === "awaiting_task" && e.taskId) {
-        // Paused from a task card (4 Nov): the open task is closed and written again when the company is resumed.
-        tx.update(db().doc(`outreachTasks/${e.taskId}`), { status: "cancelled", cancelledReason: `Paused by ${caller} — created again when resumed` });
-        tx.update(ref, { status: "paused", pausedFrom: "active", taskId: null, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller });
-        return { ok: true, status: "paused" };
-      }
-      tx.update(ref, { status: "paused", pausedFrom: e.status, pausedAt: FieldValue.serverTimestamp(), pausedBy: caller });
-      return { ok: true, status: "paused" };
+    if (e.status !== "paused") {
+      if (strict) fail("failed-precondition", "not_paused", "This company isn't paused.");
+      if (e.pausedUntil) tx.update(ref, { pausedUntil: null });
+      return { ok: true, status: e.status, unchanged: true };
     }
-    if (e.status !== "paused") fail("failed-precondition", "not_paused", "This company isn't paused.");
     const status = e.pausedFrom || "active";
-    tx.update(ref, { status, pausedFrom: null, pausedAt: null, pausedBy: null });
+    tx.update(ref, { status, pausedFrom: null, pausedAt: null, pausedBy: null, pausedUntil: null, pauseReason: null });
     return { ok: true, status };
   });
+}
+// 13 Nov (switch outreach.callResults): "Pause until" resumes by itself. Called by the scheduler at the start of each run: one query on
+// pausedUntil (a single-field range, no composite index), so it reads only the pauses that are due. onlyTest: the scheduler is on Test.
+async function resumeDuePauses(now = new Date(), { onlyTest = false } = {}) {
+  const snap = await db().collection("outreachEnrolments").where("pausedUntil", "<=", Timestamp.fromDate(now)).limit(200).get();
+  let resumed = 0;
+  for (const d of snap.docs) {
+    if (onlyTest && !d.data().isTest) continue;
+    try { const r = await resumeOne(d.ref, false); if (!r.unchanged) resumed++; } catch (e) { /* the next run tries again */ }
+  }
+  return resumed;
 }
 
 // What stops a campaign from starting (templates, rules that need tracking).
@@ -1046,10 +1093,136 @@ async function runDynamicAudience(campaign, now) {
 const cleanUrl = (u) => { const s = String(u || "").trim().slice(0, 300); return /^https?:\/\/\S+$/i.test(s) ? s : null; };
 const parseDate = (v) => { const d = v ? new Date(v) : null; return d && !isNaN(d) ? d : null; };
 
+// ── Call results (13 Nov 2026, switch outreach.callResults; plan "Call Results Plan" v3) ─────────────
+// When the company answered (call, WhatsApp, LinkedIn, visit, or "＋ Task or activity"), the card sends the result (an Inbox category),
+// what happens to the sequence (continue / pause until / stop — for every address of the company) and, for some results, a reminder.
+const DAY_MS = 86400000;
+const dayLabel = (d) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "Europe/Lisbon" }).format(d);
+// 10:00 (Lisbon) on the day n working days after `from`, counted with the campaign's sending days and holidays.
+function workingDaysAt(from, n, days, holidays, hhmm = "10:00") {
+  return lisbonAt(lisbonParts(addWait(from, { days: n, unit: "working" }, days, holidays)).dayKey, hhmm);
+}
+// The sending days and holidays reminders count with: the campaign's, else Outreach → Settings.
+async function daysOf(campaignId) {
+  const settings = await store.getSettings();
+  const campaign = campaignId ? ((await db().doc(`outreachCampaigns/${campaignId}`).get()).data() || {}) : {};
+  return { days: sendingDaysOf(campaign, settings), holidays: skipHolidaysOf(campaign, settings) };
+}
+// Checks the card's choice and fills the defaults (the table of the plan). Pure apart from the clock.
+function answerPlan(res, { sequence, callbackAt, reminder } = {}, { days = null, holidays = true, now = new Date() } = {}) {
+  const mode = sequence?.mode || res.sequence;
+  if (!SEQUENCE_MODES.includes(mode)) fail("invalid-argument", "bad_sequence", "Choose Continue, Pause until or Stop.");
+  let callback = null;
+  if (res.reopen) {
+    callback = parseDate(callbackAt);
+    if (!callback || callback.getTime() < now.getTime() - 10 * 60000) fail("invalid-argument", "date_required", "Pick the day and time to call back.");
+  }
+  const channel = OWN_CHANNELS.includes(reminder?.channel) ? reminder.channel : "call";
+  let rem = null;
+  if (res.reminder === "awaiting") rem = { kind: "awaiting_reply", channel, at: parseDate(reminder?.at) || workingDaysAt(now, AWAITING_DAYS, days, holidays) };
+  else if (res.reminder === "referred") rem = { kind: "referred", channel, at: parseDate(reminder?.at) || workingDaysAt(now, 1, days, holidays) };
+  else if (res.reminder === "later") {
+    let at = parseDate(reminder?.at);
+    if (!at) { const d = new Date(now.getTime()); d.setMonth(d.getMonth() + 6); at = lisbonAt(lisbonParts(d).dayKey, "10:00"); }
+    if (at.getTime() < now.getTime()) fail("invalid-argument", "bad_date", "Pick a follow-up date in the future.");
+    rem = { kind: "follow_up", channel, at };
+  }
+  if (rem && rem.at.getTime() < now.getTime() - DAY_MS) fail("invalid-argument", "bad_date", "Pick a reminder date in the future.");
+  let until = null;
+  if (mode === "pause") {
+    until = parseDate(sequence?.until) || callback || (rem?.kind === "awaiting_reply" ? rem.at : null) || workingDaysAt(now, PAUSE_DAYS, days, holidays);
+    if (until.getTime() <= now.getTime()) fail("invalid-argument", "bad_date", "Pause until a later date.");
+    if (until.getTime() > now.getTime() + 120 * DAY_MS) fail("invalid-argument", "pause_too_long", "Pause for at most 4 months. For longer, use Not now (a follow-up date on the company).");
+  }
+  return { mode, until, callback, reminder: rem, note: String(reminder?.note || "").trim().slice(0, 500) };
+}
+const cleanWho = (contact, channel) => {
+  if (!contact || typeof contact !== "object") return null;
+  const one = (v, n) => String(v || "").replace(/\s+/g, " ").trim().slice(0, n);
+  const who = { name: one(contact.name, 80), detail: one(contact.detail, 160), number: one(contact.number, 40), personId: one(contact.personId, 80) || null };
+  if (!who.number && ["call", "whatsapp"].includes(channel) && reachKey(who.detail)) who.number = who.detail;
+  return who;
+};
+// "Reached on <date>" / "Wrong number" on the number used, kept on the company per number (phoneReach.<key>): the card lists the number
+// that answered first next time, and a wrong one last with a warning. Real tasks only.
+async function markNumber(companyId, isTest, number, { wrong = false, name = "", by } = {}) {
+  const key = reachKey(number);
+  if (!companyId || isTest || !key) return;
+  await db().doc(`searchCompanies/${companyId}`).update({ [`phoneReach.${key}`]: { number: String(number).slice(0, 40), at: Timestamp.now(), wrong: !!wrong, name: name || null, by: by || null } }).catch(() => {});
+}
+// An open "Awaiting reply" reminder of the company closes by itself when the company writes in or another answer is logged.
+async function closeAwaitingReminders(companyId, isTest, { exceptTaskId = null, why = "They answered" } = {}) {
+  if (!companyId) return 0;
+  const snap = await db().collection("outreachTasks").where("companyId", "==", companyId).get();
+  const open = snap.docs.filter((d) => d.id !== exceptTaskId && d.data().status === "open" && d.data().reminderKind === "awaiting_reply" && !!d.data().isTest === !!isTest);
+  await Promise.all(open.map((d) => d.ref.update({ status: "done", outcome: "answered_elsewhere", closedReason: why, completedAt: FieldValue.serverTimestamp(), completedBy: "system" })));
+  return open.length;
+}
+// The reminder as a task (Outreach → Tasks), and for Not now the "Next follow-up" date on the company (Search CRM column and filter, and
+// "Next follow-up … via …" on the related companies).
+async function createReminder({ companyId, isTest, rem, who, note, caller, campaignId, campaignName, threadId, sourceTaskId, now = new Date() }) {
+  const co = (await db().doc(`searchCompanies/${companyId}`).get()).data() || {};
+  const whoTxt = [who?.name, who?.number].filter(Boolean).join(", ");
+  const text = rem.kind === "awaiting_reply" ? `Awaiting reply since ${dayLabel(now)}${whoTxt ? ` (${whoTxt})` : ""}. Call again if nothing arrived.`
+    : rem.kind === "referred" ? `Referred${who?.name ? ` by ${who.name}` : ""}: contact the person they pointed to.`
+    : `Not now (${dayLabel(now)}${whoTxt ? `, ${whoTxt}` : ""}): follow up.`;
+  const ref = await db().collection("outreachTasks").add({
+    campaignId: null, campaignName: "", enrolmentId: null, stepId: null, stepName: "", stepIndex: null, stepCount: null,
+    companyId, companyName: co.name || "", channel: rem.channel, instructions: [text, note].filter(Boolean).join("\n").slice(0, 2000), templateId: null, variantKey: null,
+    assignee: co.owner || null, dueAt: Timestamp.fromDate(rem.at), status: "open", outcome: null, notes: "", activityId: null,
+    source: "own", reminderKind: rem.kind, waitingSince: Timestamp.fromDate(now), fromCampaignId: campaignId || null, fromCampaignName: campaignName || "",
+    threadId: threadId || null, isTest: !!isTest, fromTaskId: sourceTaskId || null, inviteUid: null,
+    createdAt: FieldValue.serverTimestamp(), createdBy: caller, completedAt: null, completedBy: null,
+  });
+  if (rem.kind === "follow_up" && !isTest) {
+    await db().doc(`searchCompanies/${companyId}`).update({ nextFollowUp: { at: Timestamp.fromDate(rem.at), note: note || null, channel: rem.channel, taskId: ref.id, campaignName: campaignName || null, by: caller, setAt: Timestamp.now() }, updatedAt: FieldValue.serverTimestamp() }).catch(() => {});
+  }
+  return ref.id;
+}
+// After an answer with a result: the company's conversations and enrolments carry it (chips, campaign rows, Overview counts — also for a
+// company that never had an email), the sequence of every address is stopped or paused, open "Awaiting reply" reminders close and the
+// new reminder is created. keepEnrolmentId: an enrolment left as it is (Call back at…: its task stays open).
+async function applyAnswer({ companyId, isTest, channel, campaignId, campaignName, threadId, res, plan, who, caller, sourceTaskId, keepEnrolmentId = null, now = new Date() }) {
+  const out = { stopped: 0, paused: 0, reminderTaskId: null, closedReminders: 0 };
+  if (!companyId) return out;
+  const line = answerLine(channel, who);
+  const reason = `${line} — ${res.label}`;
+  const answer = { category: res.key, label: res.label, channel, line, name: who?.name || null, number: who?.number || null, personId: who?.personId || null, at: Timestamp.fromDate(now), by: caller };
+  try {
+    const snap = await db().collection("outreachThreads").where("companyId", "==", companyId).get();
+    const mine = snap.docs.filter((d) => !!d.data().isTest === !!isTest && (!campaignId || d.data().campaignId === campaignId || d.id === threadId));
+    await Promise.all(mine.filter((d) => d.data().responseCategory !== "excluded").map((d) => d.ref.update({ responseCategory: res.key, answer, ...(d.data().otherReplyAt ? {} : { otherReplyAt: Timestamp.fromDate(now), otherReplyChannel: channel }) })));
+  } catch (e) { /* best effort: the activity has the result */ }
+  const esnap = await db().collection("outreachEnrolments").where("companyId", "==", companyId).get();
+  const side = esnap.docs.filter((d) => !!d.data().isTest === !!isTest);
+  const live = side.filter((d) => LIVE_ENROLMENT.includes(d.data().status));
+  // The answer on the enrolments it concerns: this campaign's (ended or not) and every live one.
+  await Promise.all(side.filter((d) => (campaignId && d.data().campaignId === campaignId) || LIVE_ENROLMENT.includes(d.data().status)).map((d) => d.ref.update({ answer }).catch(() => {})));
+  if (plan.mode === "stop") {
+    for (const d of live) if (d.id !== keepEnrolmentId && await endEnrolment(d.ref, "replied", reason)) out.stopped++;
+  } else if (plan.mode === "pause") {
+    for (const d of live) {
+      if (d.id === keepEnrolmentId) continue;
+      const r = await pauseOne(d.ref, caller, { until: plan.until, reason }).catch(() => null);
+      if (r?.status === "paused") out.paused++;
+    }
+  }
+  out.closedReminders = await closeAwaitingReminders(companyId, isTest, { exceptTaskId: sourceTaskId, why: reason });
+  if (plan.reminder) out.reminderTaskId = await createReminder({ companyId, isTest, rem: plan.reminder, who, note: plan.note, caller, campaignId, campaignName, threadId, sourceTaskId, now });
+  return out;
+}
+// The Next follow-up date leaves the company once its task is done.
+async function clearFollowUp(t, taskId) {
+  if (t.reminderKind !== "follow_up" || !t.companyId || t.isTest) return;
+  const ref = db().doc(`searchCompanies/${t.companyId}`);
+  const c = (await ref.get()).data() || {};
+  if (c.nextFollowUp?.taskId === taskId) await ref.update({ nextFollowUp: FieldValue.delete() }).catch(() => {});
+}
+
 // Records the outcome on the company (a searchActivities touch, like the
 // Search CRM's own "+ Activity"), then moves the sequence on — or stops it
 // when the company answered and "stop the sequence" is ticked.
-async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, reopenAt, contact }, caller) {
+async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, reopenAt, contact, result, sequence, callbackAt, reminder }, caller) {
   if (!taskId) fail("invalid-argument", "task_required", "Choose a task.");
   const taskRef = db().doc(`outreachTasks/${taskId}`);
   const tSnap = await taskRef.get();
@@ -1060,9 +1233,15 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   const stepDef = t.channel === "other" && t.campaignId ? (((await db().doc(`outreachCampaigns/${t.campaignId}`).get()).data() || {}).steps || []).find((x) => x.id === t.stepId) : null;
   const o = stepOutcome(t.channel, stepDef, outcome);
   if (!o) fail("invalid-argument", "bad_outcome", `Unknown outcome "${outcome}" for a ${t.channel} task.`);
+  // 13 Nov (outreach.callResults): someone answered → the result (an Inbox category), the sequence choice and the reminder.
+  const res = result ? findResult(result) : null;
+  if (result && !res) fail("invalid-argument", "bad_result", `Unknown result "${result}".`);
+  if (res && !isAnswered(o)) fail("invalid-argument", "result_needs_answer", "A result is only for an answer.");
+  if (o.key === "answered" && !res) fail("invalid-argument", "result_required", "Choose what they said.");
+  if (res && !t.companyId) fail("failed-precondition", "company_only", "Results are for company tasks.");
   const note = String(notes || "").trim().slice(0, 2000);
-  // 4 Nov: who / which number it was to (chosen on the card), written on the company's activity
-  const who = contact && typeof contact === "object" ? { name: String(contact.name || "").replace(/\s+/g, " ").trim().slice(0, 80), detail: String(contact.detail || "").replace(/\s+/g, " ").trim().slice(0, 160) } : null;
+  // 4 Nov: who / which number it was to (chosen on the card), written on the company's activity. 13 Nov: + the number used and the person.
+  const who = cleanWho(contact, t.channel);
   const whoText = who ? [who.name, who.detail].filter(Boolean).join(", ") : "";
   const reopen = o.reopen ? parseDate(reopenAt) : null;
   if (o.reopen && (!reopen || reopen.getTime() < Date.now() - 86400000)) fail("invalid-argument", "date_required", "Pick the date for the next attempt.");
@@ -1071,6 +1250,8 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   const settingsNow = await store.getSettings();
   const campaignDays = sendingDaysOf(campaign, settingsNow), campaignHolidays = skipHolidaysOf(campaign, settingsNow);
   const campaignWait = (await waitJobOn(campaign)) ? waitOptsOf(campaign, settingsNow) : null;
+  const plan = res ? answerPlan(res, { sequence, callbackAt, reminder }, { days: campaignDays, holidays: campaignHolidays }) : null;
+  if (plan && !plan.note) plan.note = note.slice(0, 500); // the reminder carries the call's notes
   const linkedinUrl = t.channel === "linkedin" ? cleanUrl(profileUrl) : null;
   // Phase 2c branch for this outcome (set on the step): go to a later step or end.
   // Campaign paths (27 Oct): only the steps of the task's own path.
@@ -1089,13 +1270,13 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     activityId = await store.logPersonTask({ refs: t.refs, channel: t.channel, type, title, content: [note, linkedinUrl].filter(Boolean).join("\n") || null, taskId, campaignId: t.campaignId, createdBy: caller, isTest: t.isTest });
   } else if (o.activity) {
     const visitMeet = !t.isTest && t.channel === "visit" && o.key === "met" && await visitMeetingsOn(); // 3 Nov: a visit that happened is a meeting done
-    const title = `${t.isTest ? "[TEST] " : ""}${CHANNEL_LABEL[t.channel]} — ${o.label}${whoText ? ` · ${whoText}` : ""}${campaign.name ? ` (${campaign.name} · ${t.stepName})` : ""}`;
+    const title = `${t.isTest ? "[TEST] " : ""}${CHANNEL_LABEL[t.channel]} — ${o.label}${res ? `: ${res.label}` : ""}${whoText ? ` · ${whoText}` : ""}${campaign.name ? ` (${campaign.name} · ${t.stepName})` : ""}`;
     const ref = await db().collection("searchActivities").add({
-      companyId: t.companyId, ...(whoText ? { contactName: who.name || null, contactDetail: who.detail || null } : {}),
+      companyId: t.companyId, ...(whoText ? { contactName: who.name || null, contactDetail: who.detail || null } : {}), ...(who?.personId ? { contactPersonId: who.personId } : {}),
       // Test-mode rehearsals never count as a touch on a real company.
       type: t.isTest ? "task_test" : visitMeet ? "meeting_done" : o.activity,
       date: Timestamp.now(), title, content: note || null, via: t.channel, direction: "out",
-      outcome: o.key, responseCategory: null, status: null, isTest: !!t.isTest,
+      outcome: o.key, responseCategory: res ? res.key : null, status: null, isTest: !!t.isTest,
       campaignId: t.campaignId || null, stepId: t.stepId || null, enrolmentId: t.enrolmentId || null, taskId, channel: t.channel,
       threadId: t.threadId || null, linkedinUrl, createdAt: FieldValue.serverTimestamp(), createdBy: caller,
     });
@@ -1103,6 +1284,19 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     await store.touchCompany(t.companyId, { direction: "out", isTest: t.isTest, outreach: t.channel !== "other", channel: t.channel, by: caller, outcome: o.key });
     if (o.reply) { await store.touchCompany(t.companyId, { direction: "in", isTest: t.isTest, channel: t.channel }); await markOtherReply(t.companyId, t.isTest, t.channel); }
     if (visitMeet && t.meetingActivityId) await db().doc(`searchActivities/${t.meetingActivityId}`).update({ status: "happened", closedAt: FieldValue.serverTimestamp(), closedBy: caller }).catch(() => {});
+    // 13 Nov (outreach.callResults): the number that answered goes first next time; a wrong one goes last.
+    if (who?.number && (res || o.key === "wrong_number")) await markNumber(t.companyId, t.isTest, who.number, { wrong: o.key === "wrong_number", name: who.name, by: caller });
+  }
+  const answerArgs = res ? { companyId: t.companyId, isTest: t.isTest, channel: t.channel, campaignId: t.campaignId || null, campaignName: campaign.name || t.campaignName || "", threadId: t.threadId || null, res, plan, who, caller, sourceTaskId: taskId } : null;
+
+  // 2b. 13 Nov: Call back at… — the same task reopens at that day and time; the company's other addresses pause until then (or stop).
+  if (res && plan.callback && plan.mode !== "stop") {
+    await taskRef.update({
+      dueAt: Timestamp.fromDate(plan.callback), notes: note, lastOutcome: o.key, lastResult: res.key,
+      attempts: FieldValue.arrayUnion({ at: Timestamp.now(), outcome: o.key, result: res.key, by: caller, notes: note || null, activityId }),
+    });
+    const a = await applyAnswer({ ...answerArgs, keepEnrolmentId: t.enrolmentId || null });
+    return { ok: true, status: "open", dueAt: plan.callback.toISOString(), activityId, sequence: plan.mode === "pause" ? "paused" : "unchanged", ...a };
   }
 
   // 2. Call back / reschedule: the same task stays open for the new date.
@@ -1119,21 +1313,34 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
   // 3. Close the task, then stop or advance the sequence (an own task has none).
   if (!t.campaignId || !t.enrolmentId) {
     await taskRef.update({
-      status: o.key === "skipped" ? "skipped" : "done", outcome: o.key, notes: note, activityId,
+      status: o.key === "skipped" ? "skipped" : "done", outcome: o.key, notes: note, activityId, ...(res ? { result: res.key } : {}),
       completedAt: FieldValue.serverTimestamp(), completedBy: caller, ...(linkedinUrl ? { linkedinUrl } : {}),
     });
+    await clearFollowUp(t, taskId); // 13 Nov: a Next follow-up task done
+    // 13 Nov: an own task (or a reminder) with a result still stops / pauses the company's campaign, if it is in one.
+    if (res) { const a = await applyAnswer(answerArgs); return { ok: true, status: "done", sequence: a.stopped ? "stopped" : a.paused ? "paused" : "none", activityId, ...a }; }
     return { ok: true, status: o.key === "skipped" ? "skipped" : "done", sequence: "none", activityId };
   }
   const enrolRef = db().doc(`outreachEnrolments/${t.enrolmentId}`);
   await taskRef.update({
-    status: o.key === "skipped" ? "skipped" : "done", outcome: o.key, notes: note, activityId,
+    status: o.key === "skipped" ? "skipped" : "done", outcome: o.key, notes: note, activityId, ...(res ? { result: res.key } : {}),
     completedAt: FieldValue.serverTimestamp(), completedBy: caller, ...(linkedinUrl ? { linkedinUrl } : {}),
   });
-  if (o.reply && stopSequence !== false) {
+  // 13 Nov (outreach.callResults): Stop with a result — every address of the company ends as replied, with who answered and the result.
+  if (res && plan.mode === "stop") {
+    await enrolRef.update({ history: FieldValue.arrayUnion({ stepId: t.stepId, at: Timestamp.now(), result: o.key, answer: res.key, taskId, activityId }), taskId: null }).catch(() => {});
+    const a = await applyAnswer(answerArgs);
+    await db().doc(`outreachCampaigns/${t.campaignId}`).update({ lockedStepIds: FieldValue.arrayUnion(t.stepId), [`stats.tasks_${t.channel}`]: FieldValue.increment(1) }).catch(() => {});
+    return { ok: true, status: "done", sequence: "stopped", activityId, ...a };
+  }
+  if (!res && o.reply && stopSequence !== false) {
     // Keep the step in the history (Overview counts it as done, and as the
     // step the company answered after), then end the enrolment.
     await enrolRef.update({ history: FieldValue.arrayUnion({ stepId: t.stepId, at: Timestamp.now(), result: o.key, taskId, activityId }), taskId: null }).catch(() => {});
     await endEnrolment(enrolRef, "replied", `${CHANNEL_LABEL[t.channel]}: ${o.label}`);
+    // 13 Nov (B1, whatever the switch says): like an email reply, the answer ends every address of the company (root and tracks), not only
+    // this task's — on the same side (a test task never stops a real campaign).
+    for (const r of await companyLiveRefs(t.companyId, t.isTest)) await endEnrolment(r, "replied", `${CHANNEL_LABEL[t.channel]}: ${o.label}`);
     await db().doc(`outreachCampaigns/${t.campaignId}`).update({
       lockedStepIds: FieldValue.arrayUnion(t.stepId),
       [`stats.tasks_${t.channel}`]: FieldValue.increment(1),
@@ -1156,7 +1363,7 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
     tx.update(enrolRef, {
       status: "active", currentStep: nextIndex, taskId: null,
       nextActionAt: Timestamp.fromDate(addWait(new Date(), next ? next.wait : FINAL_GRACE, campaignDays, campaignHolidays, next ? campaignWait : null)),
-      history: FieldValue.arrayUnion({ stepId: t.stepId, at: Timestamp.now(), result: o.key, taskId, activityId }),
+      history: FieldValue.arrayUnion({ stepId: t.stepId, at: Timestamp.now(), result: o.key, ...(res ? { answer: res.key } : {}), taskId, activityId }),
       lastError: null,
     });
     return true;
@@ -1166,6 +1373,12 @@ async function completeTask({ taskId, outcome, notes, stopSequence, profileUrl, 
       lockedStepIds: FieldValue.arrayUnion(t.stepId),
       [`stats.tasks_${t.channel}`]: FieldValue.increment(1),
     }).catch(() => {});
+  }
+  // 13 Nov: Continue / Pause until with a result — the step is done and the sequence moved on above; now the answer is recorded and,
+  // for a pause, every address of the company (this one included) waits until the date. The next email then waits in To approve.
+  if (res) {
+    const a = await applyAnswer(answerArgs);
+    return { ok: true, status: "done", sequence: plan.mode === "pause" ? "paused" : moved ? "next" : "unchanged", until: plan.until ? plan.until.toISOString() : null, activityId, ...a };
   }
   return { ok: true, status: o.key === "skipped" ? "skipped" : "done", sequence: moved ? (branch?.action === "goto" ? "jumped" : "next") : "unchanged", activityId };
 }
@@ -1295,25 +1508,45 @@ async function createTask({ companyId, threadId, channel, dueAt, assignee, instr
   return { ok: true, taskId: ref.id };
 }
 
-async function logActivity({ companyId, threadId, channel, outcome, notes, date }, caller) {
+async function logActivity({ companyId, threadId, channel, outcome, notes, date, contact, result, sequence, callbackAt, reminder }, caller) {
   if (!OWN_CHANNELS.includes(channel)) fail("invalid-argument", "bad_channel", "Choose call, LinkedIn, WhatsApp, letter, visit or other.");
   const o = outcome === "skipped" ? null : findOutcome(channel, outcome);
   if (!o || !o.activity) fail("invalid-argument", "bad_outcome", `Unknown outcome "${outcome}" for ${CHANNEL_LABEL[channel]}.`);
-  const { companyId: cid, thread } = await taskTarget({ companyId, threadId });
+  // 13 Nov (outreach.callResults): "＋ Task or activity" gets the same results and sequence choice as a task card.
+  const res = result ? findResult(result) : null;
+  if (result && !res) fail("invalid-argument", "bad_result", `Unknown result "${result}".`);
+  if (res && !isAnswered(o)) fail("invalid-argument", "result_needs_answer", "A result is only for an answer.");
+  if (o.key === "answered" && !res) fail("invalid-argument", "result_required", "Choose what they said.");
+  if (res?.reopen && !callbackAt) fail("invalid-argument", "date_required", "Pick the day and time to call back.");
+  const { companyId: cid, company, thread } = await taskTarget({ companyId, threadId });
   const when = date ? parseDate(date) : new Date();
   if (!when || when.getTime() > Date.now() + 86400000) fail("invalid-argument", "bad_date", "The date can't be in the future.");
   const isTest = !!thread?.isTest;
   const note = String(notes || "").trim().slice(0, 2000);
   const asMeeting = !isTest && channel === "visit" && o.key === "met" && await visitMeetingsOn(); // 3 Nov: a visit that happened is a meeting done
+  const who = cleanWho(contact, channel);
+  const whoText = who ? [who.name, who.detail].filter(Boolean).join(", ") : "";
+  const camp = res ? await daysOf(company.activeCampaignId || null) : null; // reminders count with the company's campaign days, else Settings
+  const plan = res ? answerPlan(res, { sequence, callbackAt, reminder }, camp) : null;
+  if (plan && !plan.note) plan.note = note.slice(0, 500);
   const ref = await db().collection("searchActivities").add({
     companyId: cid, type: isTest ? "task_test" : asMeeting ? "meeting_done" : o.activity, date: Timestamp.fromDate(when),
-    title: `${isTest ? "[TEST] " : ""}${CHANNEL_LABEL[channel]} — ${o.label}`, content: note || null,
-    via: channel, direction: "out", outcome: o.key, responseCategory: null, status: null, isTest,
+    title: `${isTest ? "[TEST] " : ""}${CHANNEL_LABEL[channel]} — ${o.label}${res ? `: ${res.label}` : ""}${whoText ? ` · ${whoText}` : ""}`, content: note || null,
+    ...(whoText ? { contactName: who.name || null, contactDetail: who.detail || null } : {}), ...(who?.personId ? { contactPersonId: who.personId } : {}),
+    via: channel, direction: "out", outcome: o.key, responseCategory: res ? res.key : null, status: null, isTest,
     channel, threadId: thread?.id || null, source: "outreach",
     createdAt: FieldValue.serverTimestamp(), createdBy: caller,
   });
   await store.touchCompany(cid, { direction: "out", isTest, outreach: channel !== "other", channel, by: caller, outcome: o.key });
   if (o.reply) { await store.touchCompany(cid, { direction: "in", isTest, channel }); await markOtherReply(cid, isTest, channel, when); }
+  if (who?.number && (res || o.key === "wrong_number")) await markNumber(cid, isTest, who.number, { wrong: o.key === "wrong_number", name: who.name, by: caller });
+  if (res) {
+    // Call back at…: a call task for that day and time (there is no task to reopen here).
+    let callbackTaskId = null;
+    if (plan.callback) callbackTaskId = (await createTask({ companyId: cid, threadId: thread?.id || null, channel: "call", dueAt: plan.callback.toISOString(), instructions: `Call back${who?.name ? ` ${who.name}` : ""}${who?.number ? ` (${who.number})` : ""}. ${note}`.trim() }, caller)).taskId;
+    const a = await applyAnswer({ companyId: cid, isTest, channel, campaignId: null, campaignName: "", threadId: thread?.id || null, res, plan, who, caller, sourceTaskId: callbackTaskId });
+    return { ok: true, activityId: ref.id, sequence: a.stopped ? "stopped" : a.paused ? "paused" : "none", callbackTaskId, ...a };
+  }
   return { ok: true, activityId: ref.id };
 }
 
@@ -1520,6 +1753,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
   if (data.action === "saveReceivedFiles") await Feat.requireFeature(request, "outreach.attachments"); // 3 Nov
   if (data.action === "createTask" && data.fromTaskId) await Feat.requireFeature(request, "outreach.taskActions"); // 5 Nov
   if (data.action === "completeTask" && data.contact) await Feat.requireFeature(request, "outreach.taskContact"); // 5 Nov
+  if (["completeTask", "logActivity"].includes(data.action) && (data.result || data.sequence || data.outcome === "answered")) await Feat.requireFeature(request, "outreach.callResults"); // 13 Nov
   if (["tracksFor", "restartCompany"].includes(data.action) || (data.action === "setRecipients" && data.all === true)) await Feat.requireFeature(request, "outreach.multiRecipient"); // 30 Oct
   if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
   if (data.action === "save" && Array.isArray(data.campaign?.cc) && data.campaign.cc.length) await Feat.requireFeature(request, "outreach.campaignCc"); // 28 Oct
@@ -1609,5 +1843,9 @@ exports.stopCompanyEnrolments = stopCompanyEnrolments;
 exports.stopEnrolmentById = stopEnrolmentById;
 exports.runDynamicAudience = runDynamicAudience;
 exports.endEnrolment = endEnrolment;
+// 13 Nov (outreach.callResults): the scheduler resumes "Pause until"; an inbound email closes "Awaiting reply" reminders.
+exports.resumeDuePauses = resumeDuePauses;
+exports.closeAwaitingReminders = closeAwaitingReminders;
+exports._callResults = { answerPlan, workingDaysAt, applyAnswer };
 // Recurring emails (5b) create and start each issue's campaign through these.
 exports._internal = { save, enrolPeople, setStatus };

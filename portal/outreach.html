@@ -854,7 +854,7 @@
     // Same taxonomy as searchActivities.responseCategory; "excluded" also
     // adds the address to the suppression list.
     const CATEGORIES = [
-      ['interested', 'Interested'], ['callback_later', 'Call back later'], ['not_now', 'Not now'],
+      ['interested', 'Interested'], ['wait_for_response', 'Awaiting reply'], ['callback_later', 'Call back later'], ['not_now', 'Not now'], // 13 Nov: Awaiting reply (outreach.callResults; the CRM's wait_for_response)
       ['not_interested', 'Not interested'], ['referred', 'Referred'], ['wrong_contact', 'Wrong contact'],
       ['excluded', 'Unsubscribe / exclude'],
     ];
@@ -2300,6 +2300,7 @@
           <div class="field"><label for="ntOut">What happened</label><select id="ntOut"></select></div>
           <div class="field"><label for="ntDate">When</label><input type="date" id="ntDate" value="${today}" max="${today}"></div>
           <div class="field"><label for="ntNotes">Notes (optional)</label><textarea id="ntNotes" rows="3" placeholder="What was said">${esc(who ? `With ${who}. ` : '')}</textarea></div>
+          ${isOn('outreach.callResults') ? `<div id="ntAns">${answerBlockHtml(true)}</div>` : ''}
         </div>
         <div class="field" id="ntRel" hidden></div>
         <p class="hint" id="ntHint"></p>`, async () => {
@@ -2316,8 +2317,11 @@
           return true;
         }
         const alsoDone = ntRelPicked();
+        const ar = ntAns ? ntAns.read() : null; // 13 Nov (outreach.callResults)
+        if (ar?.error) { modalError(ar.error); return false; }
         const made = (await callCampaign({ action: 'logActivity', companyId: co.id, threadId: pre.threadId || null, channel: ch, outcome: $('ntOut').value,
-          date: new Date($('ntDate').value + 'T12:00:00').toISOString(), notes: $('ntNotes').value })).data;
+          date: new Date($('ntDate').value + 'T12:00:00').toISOString(), notes: $('ntNotes').value, ...(ar || {}), ...(ar?.reminder ? { reminder: { ...ar.reminder, note: $('ntNotes').value.trim().slice(0, 500) } } : {}) })).data;
+        if (ar) toast(answerToast(made));
         let extra = '';
         if (alsoDone.length && made?.activityId) {
           try { const out = (await callCampaign({ action: 'logRelated', activityId: made.activityId, companyIds: alsoDone.map(x => x.companyId) })).data; extra = ` Also on ${out.logged} related compan${out.logged === 1 ? 'y' : 'ies'}.`; }
@@ -2328,6 +2332,7 @@
       }, 'Save');
       // 10 Nov (outreach.relatedActivity): the related companies, unticked — to mention in a call task, or to log the same activity on.
       const relCache = new Map();
+      const ntAns = isOn('outreach.callResults') && $('ntAns') ? wireAnswerBlock($('ntAns')) : null; // 13 Nov: the answer's result and sequence
       const ntRelPicked = () => [...document.querySelectorAll('#ntRel .ntRelCk:checked')].map(x => ({ companyId: x.value, name: x.dataset.name }));
       async function ntRelated() {
         const box = $('ntRel'); if (!box) return;
@@ -2349,15 +2354,17 @@
         ntRelated();
         $('ntTask').hidden = mode !== 'task'; $('ntDone').hidden = mode !== 'done';
         $('ntTplF').hidden = ch !== 'letter';
-        const outs = (TASK_OUTCOMES[ch] || []).filter(o => o[2] !== 'reopen');
+        const outs = (ch === 'call' && ntAns ? CALL_OUTCOMES_V2 : (TASK_OUTCOMES[ch] || [])).filter(o => o[2] !== 'reopen');
         const cur = $('ntOut').value;
         $('ntOut').innerHTML = outs.map(([k, l]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(l)}</option>`).join('');
+        if (ntAns) ntAns.show(mode === 'done' && (outs.find(o => o[0] === $('ntOut').value) || [])[2] === 'reply');
         $('ntHint').textContent = mode === 'task'
           ? `Shows in Tasks → ${ch === 'letter' ? 'Letters to print' : 'To do'} for the person chosen; its outcome is saved on the company's activities. It doesn't change any campaign.`
           : 'Saved now on the company\'s activities (Search CRM → Activities). It doesn\'t change any campaign.';
         document.querySelectorAll('[data-ntmode]').forEach(b => b.classList.toggle('on', b.dataset.ntmode === mode));
       };
       $('ntCh').addEventListener('change', sync);
+      $('ntOut').addEventListener('change', sync);
       document.querySelectorAll('[data-ntmode]').forEach(b => b.addEventListener('click', () => { mode = b.dataset.ntmode; sync(); }));
       if (!co) {
         let timer = null;
@@ -3401,7 +3408,7 @@
             const emails = personDetails(p, 'email', co).map(e => String(e).trim().toLowerCase());
             // 3 Nov: addresses that bounced (or are marked wrong) are left out of `emails` (never written to), but they ARE the person's: the Inbox must not call them "not in the CRM"
             const badEmails = (p.reach || []).filter(e => e && e.type === 'email' && (e.status || 'ok') !== 'ok').map(e => String(e.value).trim().toLowerCase());
-            return { personId: l.personId, badEmails, name: p.name || l.personName || '', role: l.isContact ? (l.contactRole || 'Contact') : (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personDetails(p, 'phone', co)[0] || '', linkedin: personDetails(p, 'linkedin', co)[0] || '', rank, isContact: !!l.isContact,
+            return { personId: l.personId, badEmails, name: p.name || l.personName || '', role: l.isContact ? (l.contactRole || 'Contact') : (l.mgmtRoles || []).join(', ') || (l.shTotalPct ? `Shareholder ${l.shTotalPct}%` : ''), email: emails[0] || '', emails, phone: personDetails(p, 'phone', co)[0] || '', phones: personDetails(p, 'phone', co), linkedin: personDetails(p, 'linkedin', co)[0] || '', rank, isContact: !!l.isContact,
               trusts: { emails: emails.map(v => detailTrustKey(p, 'email', v)), phone: personDetails(p, 'phone', co)[0] ? detailTrustKey(p, 'phone', personDetails(p, 'phone', co)[0]) : null, linkedin: personDetails(p, 'linkedin', co)[0] ? detailTrustKey(p, 'linkedin', personDetails(p, 'linkedin', co)[0]) : null } };
           }));
         } catch (e) { console.warn('people', id, e); peopleCache.set(id, []); }
@@ -4365,7 +4372,7 @@
     // related company said no / is "do not contact", amber when one is in conversation.
     const ownerRisk = (d) => {
       const fl = isOn('outreach.ownerAware') ? (d?.ownerPanel?.flags || []) : [];
-      return fl.some(f => f.kind === 'said_no') ? 'red' : fl.some(f => f.kind === 'in_conversation') ? 'amber' : '';
+      return fl.some(f => f.kind === 'said_no') ? 'red' : fl.some(f => f.kind === 'in_conversation' || f.kind === 'follow_up') ? 'amber' : ''; // 13 Nov: a related company's Next follow-up
     };
     const ownerRiskText = (d) => (d?.ownerPanel?.flags || []).filter(f => f.kind === 'said_no' || f.kind === 'in_conversation').map(f => '• ' + f.text).join('\n');
     // 19 Oct (one inbox): who else has the address, and when it was last emailed.
@@ -4790,6 +4797,7 @@ Optional note for them:`, '');
         // 3 Nov: once per company — answered by email (enrolment), by phone / visit, or classified positive; positive once per company.
         const pc = new Set();
         curThreads.forEach(t => { if (t.companyId && POSITIVE.includes(t.responseCategory)) pc.add(t.companyId); });
+        curEnrols.forEach(e => { if (e.companyId && POSITIVE.includes(e.answer?.category)) pc.add(e.companyId); }); // 13 Nov: a result by phone
         repMap = repliesByCompany(curThreads, curEnrols, POSITIVE); repliedSet = new Set(repMap.keys());
         replied = repMap.size; positive = pc.size;
         const bc = {}; repMap.forEach(v => { bc[v.channel] = (bc[v.channel] || 0) + 1; });
@@ -4952,12 +4960,12 @@ Optional note for them:`, '');
           const head = `<tr>
             <td>${n > 1 ? `<button class="btn btn--ghost btn--sm" data-cotoggle="${esc(key)}" data-open="${open ? 1 : 0}" aria-expanded="${open}" title="${open ? 'Hide' : 'Show'} the addresses" style="padding:0 6px;margin-right:4px;">${open ? '▾' : '▸'}</button>` : ''}<a href="/portal/search.html?company=${encodeURIComponent(root.companyId)}" style="color:var(--primary);">${esc(root.companyName || root.companyId)}</a>
               <div class="hint">${n > 1 ? `<b>${n} addresses</b>${parts ? ' · ' + parts : ''}` : lineOf(root)}</div></td>
-            <td>${left ? '<span class="pill">Left out (paths)</span>' : pill(ENROL_PILL, r.status)}${live && liveG.length < n ? `<div class="hint">${liveG.length} of ${n} addresses active</div>` : ''}</td>
+            <td>${left ? '<span class="pill">Left out (paths)</span>' : pill(ENROL_PILL, r.status)}${r.answer ? ` <span class="pill pill--info" title="${esc(r.answer.line || '')}">${esc(r.answer.label)}</span>` : ''}${r.pausedUntil && r.status === 'paused' ? `<div class="hint">until ${esc(dayFmt.format(new Date(tsMs(r.pausedUntil))))}</div>` : ''}${live && liveG.length < n ? `<div class="hint">${liveG.length} of ${n} addresses active</div>` : ''}</td>
             ${pathsView ? `<td style="font-size:0.78rem;">${esc(pathTxt)}</td>` : ''}
             <td style="font-size:0.8rem;">${r.status === 'pending' ? 'Not started' : stepLabelIn(top, stepsFor(c, top))}</td>
             <td style="font-size:0.78rem;">${live ? waitingFor(nextE, c) : ''}</td>
             <td style="font-size:0.8rem;">${esc(localPart(root.senderId) || '—')}</td>
-            <td class="clip" style="font-size:0.78rem;" title="${esc(!live ? (r.stopReason || '') : '')}">${esc(!live ? (r.stopReason || r.lastError || '') : '')}</td>
+            <td class="clip" style="font-size:0.78rem;" title="${esc(!live ? (r.stopReason || '') : (r.answer?.line || ''))}">${esc(!live ? (r.stopReason || r.lastError || '') : r.answer ? `${r.answer.line} — ${r.answer.label}` : '')}</td>
             <td style="white-space:nowrap;text-align:right;">${btns}</td></tr>`;
           if (!open) return head;
           const subs = g.map(x => {
@@ -6072,7 +6080,7 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       // each related company's figures, address and "open company ↗" (28 Oct; never an automatic Cc).
       const op = isOn('outreach.ownerAware') ? d.ownerPanel : null;
       const risk = ownerRisk(d);
-      const FLAG_PILL = { said_no: 'pill--bad', in_conversation: 'pill--warn' };
+      const FLAG_PILL = { said_no: 'pill--bad', in_conversation: 'pill--warn', follow_up: 'pill--warn' };
       const mentioned = op?.mention || [];
       const opHtml = op?.related?.length ? `<div class="owner-box${risk ? ' owner-box--' + risk : ''}">
           <div class="owner-box__head"><b>${risk === 'red' ? '🚫 Same owner said no — check before approving' : risk === 'amber' ? '💬 Same owner already in conversation — check before approving' : 'Related companies'} (${op.related.length})</b>${(op.flags || []).map(f => `<span class="pill ${FLAG_PILL[f.kind] || 'pill--info'}">${esc(f.text)}</span>`).join('')}</div>
@@ -6083,7 +6091,9 @@ They unsubscribed — say how they asked to receive it again (kept on record):`,
       const ncHtml = isOn('search.emailNameCheck') && d.nameCheck ? nameCheckLine(d.nameCheck, d.companyId, canEditCompanies()) : ''; // 26 Oct
       const mentionHtml = isOn('outreach.ownerAware') && d.checkMention && !op?.related?.length ? '<div style="margin:0 0 6px;"><span class="pill pill--warn" title="The email names the related companies chosen when this company was added ({{owner.otherCompanies}})">Check the mention of the related companies</span></div>' : '';
       const genderHtml = isOn('outreach.multiRecipient') && d.genderCheck ? `<div style="margin:0 0 6px;"><span class="pill pill--warn" title="The wording agrees with gender (e.g. ligado / ligada) and we could not tell it from the owners list or the first name, so the neutral form is used">Check the wording: gender of ${esc(d.genderCheck.name)} not known</span></div>` : '';
-      return ncHtml + genderHtml + mentionHtml + opHtml + `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
+      // 13 Nov (outreach.callResults): the company answered by phone / in person — this email waits for a check (adapt it, e.g. into a reminder, or Skip).
+      const ansHtml = d.answerNote ? `<div style="margin:0 0 6px;"><span class="pill pill--warn" title="Every email after an answer waits here, even in a campaign that sends by itself">📞 ${esc(d.answerNote.line)}${d.answerNote.label ? ': ' + esc(d.answerNote.label) : ''}${d.answerNote.at ? ' · ' + esc(dayFmt.format(new Date(tsMs(d.answerNote.at)))) : ''} — adapt this email or skip it</span></div>` : '';
+      return ansHtml + ncHtml + genderHtml + mentionHtml + opHtml + `<div class="hint" style="margin:-2px 0 6px;">${bits.join(' · ')} · <a href="/portal/search.html?company=${encodeURIComponent(d.companyId)}" target="_blank" rel="noopener" style="color:var(--primary);">open company ↗</a></div>`;
     }
     let approveCtxLoading = false;
     // 19 Oct (one inbox): companies whose first email waits because their address
@@ -6513,6 +6523,186 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       if (p.link) lines.push(`<a href="${esc(p.link)}">Open their record</a>`);
       return lines.map(l => `<div>${l}</div>`).join('');
     }
+    // ── Call results (13 Nov 2026, switch outreach.callResults; plan "Call Results Plan" v3) ──
+    // A call task asks first whether you reached someone (No answer / Voicemail / Wrong number) or they Answered; an answer (call Answered,
+    // WhatsApp / LinkedIn Replied, visit Met, or "＋ Task or activity") then asks for the result — the Inbox categories — and what happens to
+    // the sequence of every address of the company (Continue / Pause until / Stop), pre-chosen by the result, with its reminder.
+    const CALL_OUTCOMES_V2 = [['no_answer', 'No answer'], ['voicemail', 'Voicemail'], ['wrong_number', 'Wrong number'], ['answered', 'Answered', 'reply']];
+    const CALL_RESULTS = [ // key, label, default sequence
+      ['interested', 'Interested', 'stop'], ['wait_for_response', 'Awaiting reply', 'pause'], ['callback_later', 'Call back at…', 'pause'],
+      ['not_now', 'Not now', 'stop'], ['not_interested', 'Not interested', 'stop'], ['referred', 'Referred', 'pause'], ['wrong_contact', 'Wrong contact', 'continue'],
+    ];
+    const callResultsOn = (t) => isOn('outreach.callResults') && !!t.companyId && ['call', 'whatsapp', 'linkedin', 'visit'].includes(t.channel);
+    // The outcome buttons of a task: an Other step's own results, the two-level call, or the channel's list.
+    const outcomesFor = (t) => t.outcomes && t.outcomes.length ? t.outcomes.map(o => [o.key, o.label]) : (t.channel === 'call' && callResultsOn(t) ? CALL_OUTCOMES_V2 : (TASK_OUTCOMES[t.channel] || []));
+    const ymd = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const ymdhm = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    // n working days on (Mon–Fri; the server counts the campaign's own sending days and holidays when nothing is picked)
+    function workingDaysOn(n, from = new Date()) { const d = new Date(from); let k = 0; while (k < n) { d.setDate(d.getDate() + 1); if (![0, 6].includes(d.getDay())) k++; } return d; }
+    const monthsOn = (n) => { const d = new Date(); d.setMonth(d.getMonth() + n); return d; };
+    let ansSeq = 0;
+    function answerBlockHtml(ownTask = false) {
+      const u = ++ansSeq;
+      return `<div data-ansblk hidden style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+        <div class="field" style="margin-bottom:8px;"><label>What did they say?</label><div class="chips" style="flex-wrap:wrap;">${CALL_RESULTS.map(([k, l]) => `<button type="button" class="chip" data-ares="${k}">${esc(l)}</button>`).join('')}</div></div>
+        <div class="field" data-acb hidden style="margin-bottom:8px;"><label for="acb${u}">Call back at</label><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <input type="datetime-local" id="acb${u}" data-acbat style="max-width:230px;">${[['10m', 'in 10 min'], ['1h', 'in 1 h'], ['pm', 'this afternoon'], ['am', 'tomorrow morning']].map(([k, l]) => `<button type="button" class="btn btn--ghost btn--sm" data-acbq="${k}">${l}</button>`).join('')}</div>
+          <span class="hint">This task opens again at that time.</span></div>
+        <div class="field" data-arem hidden style="margin-bottom:8px;"><label data-aremlbl for="arem${u}">Reminder</label><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <select data-aremch style="width:auto;" aria-label="Reminder type">${['call', 'whatsapp', 'linkedin', 'other'].map(k => `<option value="${k}">${esc(CHANNEL_LABELS[k])}</option>`).join('')}</select> <span class="hint">on</span>
+          <input type="date" id="arem${u}" data-aremat style="max-width:170px;"><span data-aremq style="display:flex;gap:6px;"></span></div><span class="hint" data-aremhint></span></div>
+        <div class="field" data-aseq hidden style="margin-bottom:0;"><label>Sequence — every address of the company</label><div style="display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center;">
+          <label class="checkline"><input type="radio" name="aseq${u}" value="continue"> <span>Continue</span></label>
+          <label class="checkline"><input type="radio" name="aseq${u}" value="pause"> <span>Pause until</span></label><input type="date" data-auntil style="max-width:170px;" aria-label="Pause until">
+          <label class="checkline"><input type="radio" name="aseq${u}" value="stop"> <span>Stop</span></label></div>
+          <span class="hint" data-aseqhint></span>${ownTask ? '<span class="hint" style="display:block;">Only changes something if the company is in a campaign.</span>' : ''}</div>
+      </div>`;
+    }
+    // Wires one answer block (on a task card or in the Task or activity window). show(on): shown when the outcome is an answer.
+    function wireAnswerBlock(root, onChange = () => {}) {
+      const box = root.querySelector('[data-ansblk]'); if (!box) return { show() {}, read: () => null };
+      let res = null, untilTouched = false;
+      const q = (s) => box.querySelector(s);
+      const setSeq = (mode) => { box.querySelectorAll('input[type=radio]').forEach(r => { r.checked = r.value === mode; }); hint(); };
+      const seq = () => box.querySelector('input[type=radio]:checked')?.value || '';
+      const hint = () => {
+        const m = seq();
+        q('[data-aseqhint]').textContent = m === 'stop' ? 'Every address of the company stops, as after an email reply. You can restart it from the campaign.'
+          : m === 'pause' ? 'Every address waits until that day, then goes on with its next step by itself. The next email waits in To approve.'
+          : m === 'continue' ? 'The sequence goes on. The next email waits in To approve, so you can adapt it.' : '';
+        q('[data-auntil]').disabled = m !== 'pause';
+      };
+      const remShortcuts = (list) => { q('[data-aremq]').innerHTML = list.map(([n, l]) => `<button type="button" class="btn btn--ghost btn--sm" data-aremm="${n}">${l}</button>`).join(''); q('[data-aremq]').querySelectorAll('[data-aremm]').forEach(b => b.addEventListener('click', () => { q('[data-aremat]').value = ymd(monthsOn(Number(b.dataset.aremm))); sync(); })); };
+      const sync = () => { // the pause follows the reminder / call-back date until it is changed by hand
+        if (untilTouched || seq() !== 'pause') return;
+        if (res === 'wait_for_response' && q('[data-aremat]').value) q('[data-auntil]').value = q('[data-aremat]').value;
+        if (res === 'callback_later' && q('[data-acbat]').value) q('[data-auntil]').value = q('[data-acbat]').value.slice(0, 10);
+      };
+      box.querySelectorAll('[data-ares]').forEach(b => b.addEventListener('click', () => {
+        res = b.dataset.ares; untilTouched = false;
+        box.querySelectorAll('[data-ares]').forEach(x => x.classList.toggle('on', x.dataset.ares === res));
+        const def = CALL_RESULTS.find(x => x[0] === res);
+        q('[data-aseq]').hidden = false; q('[data-acb]').hidden = res !== 'callback_later';
+        const rem = { wait_for_response: ['Follow-up if nothing arrives', workingDaysOn(3), 'Shows in Tasks as “Awaiting reply since …”, and closes by itself when they write or another answer is logged.'],
+          not_now: ['Next follow-up', monthsOn(6), 'A task on that day, and the date on the company (Search CRM: Next follow-up).'],
+          referred: ['Contact the person they pointed to', workingDaysOn(1), 'Write who in the notes; add them to the company with Someone else….'] }[res];
+        q('[data-arem]').hidden = !rem;
+        if (rem) { q('[data-aremlbl]').textContent = rem[0]; q('[data-aremat]').value = ymd(rem[1]); q('[data-aremhint]').textContent = rem[2]; remShortcuts(res === 'not_now' ? [[3, '3 months'], [6, '6 months'], [12, '12 months']] : []); }
+        q('[data-auntil]').value = ymd(res === 'wait_for_response' ? workingDaysOn(3) : workingDaysOn(3));
+        if (res === 'callback_later' && !q('[data-acbat]').value) q('[data-acbat]').value = ymdhm(new Date(Date.now() + 3600000));
+        setSeq(def[2]); sync(); onChange();
+      }));
+      box.querySelectorAll('[data-acbq]').forEach(b => b.addEventListener('click', () => {
+        const d = new Date(), k = b.dataset.acbq;
+        if (k === '10m') d.setMinutes(d.getMinutes() + 10);
+        else if (k === '1h') d.setHours(d.getHours() + 1);
+        else if (k === 'pm') { if (d.getHours() * 60 + d.getMinutes() >= 14 * 60 + 30) { const n = workingDaysOn(1); d.setTime(n.getTime()); } d.setHours(15, 0, 0, 0); }
+        else { const n = workingDaysOn(1); d.setTime(n.getTime()); d.setHours(10, 0, 0, 0); }
+        q('[data-acbat]').value = ymdhm(d); sync();
+      }));
+      q('[data-acbat]').addEventListener('change', sync); q('[data-aremat]').addEventListener('change', sync);
+      q('[data-auntil]').addEventListener('change', () => { untilTouched = true; });
+      box.querySelectorAll('input[type=radio]').forEach(r => r.addEventListener('change', () => { hint(); sync(); }));
+      return {
+        show(on) { box.hidden = !on; },
+        // What the server needs, or an error text.
+        read() {
+          if (box.hidden) return null;
+          if (!res) return { error: 'Choose what they said.' };
+          const out = { result: res, sequence: { mode: seq() } };
+          if (out.sequence.mode === 'pause') {
+            const u = q('[data-auntil]').value; if (!u) return { error: 'Pick the day the sequence starts again.' };
+            out.sequence.until = new Date(u + 'T09:00:00').toISOString();
+          }
+          if (res === 'callback_later') { const c = q('[data-acbat]').value; if (!c) return { error: 'Pick the day and time to call back.' }; out.callbackAt = new Date(c).toISOString(); }
+          if (!q('[data-arem]').hidden) { const a = q('[data-aremat]').value; if (!a) return { error: 'Pick the reminder date.' }; out.reminder = { channel: q('[data-aremch]').value, at: new Date(a + 'T10:00:00').toISOString() }; }
+          return out;
+        },
+      };
+    }
+    // What the server said, in one line.
+    function answerToast(x) {
+      const n = (k) => `${k} address${k === 1 ? '' : 'es'}`;
+      return [x.status === 'open' ? `Saved — call back on ${dayFmt.format(new Date(x.dueAt))} at ${new Date(x.dueAt).toTimeString().slice(0, 5)}.` : 'Saved.',
+        x.stopped ? `The sequence stopped for ${n(x.stopped)}.` : '', x.paused ? `${n(x.paused)} paused${x.until ? ` until ${dayFmt.format(new Date(x.until))}` : ''}.` : '',
+        x.reminderTaskId ? 'The reminder is in Tasks.' : '', x.closedReminders ? 'An Awaiting reply reminder was closed.' : ''].filter(Boolean).join(' ');
+    }
+    // Number used: the company's and the people's phones — the one that answered last first, wrong ones last.
+    function numbersFor(t, c) {
+      const out = [], seen = new Set(), reach = c?.phoneReach || {};
+      const add = (number, owner, name) => { const k = phoneKey(number) || String(number || '').replace(/\D/g, ''); if (!number || !k || seen.has(k)) return; seen.add(k); const r = reach[phoneKey(number) || ('x' + k)] || null; out.push({ number: String(number).trim(), key: k, owner, name, reach: r }); };
+      if (c?.companyPhone) add(c.companyPhone, '@co', 'Company line');
+      (c?.reach || []).filter(e => e && e.type === 'phone' && (e.status || 'ok') === 'ok').forEach(e => add(e.value, '@co', 'Company line'));
+      (peopleCache.get(t.companyId) || []).forEach(p => (p.phones?.length ? p.phones : [p.phone]).filter(Boolean).forEach(ph => add(ph, p.personId, p.name)));
+      (c?.contacts || []).forEach(p => { if (p.phone) add(p.phone, '@contact', p.name || 'Contact'); });
+      const score = (x) => (x.reach?.wrong ? -1e15 : 0) + (x.reach && !x.reach.wrong ? tsMs(x.reach.at) || 1 : 0);
+      return out.sort((a, b) => score(b) - score(a));
+    }
+    // Who answered: every person of the company (with or without email), its contacts; decision-makers first (the best-person ladder).
+    function whoFor(t, c) {
+      const ppl = (peopleCache.get(t.companyId) || []).map(p => ({ personId: p.personId, name: p.name, role: p.role, decider: !p.isContact && p.rank >= 60, phones: (p.phones?.length ? p.phones : [p.phone]).filter(Boolean) }));
+      const cts = (c?.contacts || []).filter(p => p.name).map(p => ({ personId: null, name: p.name, role: p.role || 'Contact', decider: false, phones: p.phone ? [p.phone] : [] }));
+      return [...ppl.sort((a, b) => b.decider - a.decider), ...cts];
+    }
+    function numberWhoHtml(t, c) {
+      const nums = numbersFor(t, c), who = whoFor(t, c), vis = t.channel === 'visit';
+      const numLabel = (x) => [x.number, x.name, x.reach?.wrong ? '⚠ wrong number' : x.reach ? `reached ${dayFmt.format(new Date(tsMs(x.reach.at)))}` : ''].filter(Boolean).join(' · ');
+      return `<div style="display:flex;gap:8px 14px;flex-wrap:wrap;margin-bottom:8px;">
+        ${vis ? '' : `<div class="field" style="margin:0;min-width:220px;flex:1;"><label>Number used</label>
+          <select data-tnum><option value="">—</option>${nums.map((x, i) => `<option value="${i}"${i === 0 && !x.reach?.wrong ? ' selected' : ''}>${esc(numLabel(x))}</option>`).join('')}<option value="other">Other number…</option></select>
+          <input type="text" data-tnumother hidden placeholder="+351 912 345 678" style="margin-top:6px;max-width:220px;" aria-label="Other number"></div>`}
+        <div class="field" style="margin:0;min-width:220px;flex:1;"><label>Who answered</label>
+          <select data-twho2><option value="">—</option>${who.map((p, i) => `<option value="${i}">${esc(p.name)}${p.role ? ' · ' + esc(p.role) : ''}${p.decider ? ' · Decision-maker' : ''}</option>`).join('')}<option value="new">Someone else…</option></select>
+          <input type="text" data-twhoname hidden placeholder="Name" style="margin-top:6px;max-width:220px;" aria-label="Name"></div>
+      </div>
+      <div data-tsavenumbox hidden style="margin:-2px 0 8px;"><label class="checkline"><input type="checkbox" data-tsavenum> <span data-tsavenumlbl></span></label></div>`;
+    }
+    // The number and the person chosen, and whether the number is saved on the person (only when it is new for them).
+    function wireNumberWho(el, t) {
+      const c = taskCo(t), nums = numbersFor(t, c), who = whoFor(t, c);
+      const nSel = el.querySelector('[data-tnum]'), wSel = el.querySelector('[data-twho2]');
+      const number = () => !nSel ? '' : nSel.value === 'other' ? el.querySelector('[data-tnumother]').value.trim() : nSel.value === '' ? '' : nums[Number(nSel.value)].number;
+      const person = () => (!wSel || wSel.value === '' ? null : wSel.value === 'new' ? { personId: null, name: el.querySelector('[data-twhoname]').value.trim(), isNew: true } : who[Number(wSel.value)]);
+      const sync = () => {
+        if (nSel) el.querySelector('[data-tnumother]').hidden = nSel.value !== 'other';
+        if (wSel) el.querySelector('[data-twhoname]').hidden = wSel.value !== 'new';
+        const p = person(), num = number(), k = phoneKey(num) || num.replace(/\D/g, '');
+        const box = el.querySelector('[data-tsavenumbox]'); if (!box) return;
+        const hasIt = p && (p.phones || []).some(x => (phoneKey(x) || String(x).replace(/\D/g, '')) === k);
+        const show = !!(p && p.personId && num && k && !hasIt);
+        box.hidden = !show;
+        if (show) {
+          const ownedElse = nums.some(x => x.key === k && x.owner !== p.personId); // a general line or someone else's phone
+          el.querySelector('[data-tsavenumlbl]').innerHTML = `Save this number on <b>${esc(p.name)}</b>${ownedElse ? ' <span class="hint">(it is already the company\'s or another person\'s)</span>' : ''}`;
+          el.querySelector('[data-tsavenum]').checked = !ownedElse;
+        }
+      };
+      [nSel, wSel].forEach(s => s?.addEventListener('change', sync));
+      el.querySelector('[data-tnumother]')?.addEventListener('input', sync);
+      sync();
+      return { read: () => { const p = person(), num = number(); return { number: num, person: p, save: !el.querySelector('[data-tsavenumbox]')?.hidden && !!el.querySelector('[data-tsavenum]')?.checked }; } };
+    }
+    // A number saved on a person from a call (the same record the Inbox's Add to company writes: reach + reachPhones).
+    async function savePhoneOnPerson(t, personId, value) {
+      const ref = doc(db, 'searchPeople', personId), snap = await getDoc(ref); addReads(1);
+      if (!snap.exists()) return false;
+      const reach = snap.data().reach || [], k = phoneKey(value) || String(value).replace(/\D/g, '');
+      if (reach.some(e => e.type === 'phone' && (phoneKey(e.value) || String(e.value).replace(/\D/g, '')) === k)) return false;
+      const at = new Date().toISOString();
+      const next = [...reach, { id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type: 'phone', value, note: 'Answered a call', source: 'call', status: 'ok', primary: !reach.some(e => e.type === 'phone' && (e.status || 'ok') === 'ok'), addedBy: me, addedAt: at, origin: 'person', confirmedAt: at, confirmedBy: 'call', confirmedVia: 'call' }];
+      await updateDoc(ref, { reach: next, reachPhones: reachPhonesOf(next, snap.data()), updatedAt: serverTimestamp(), updatedBy: me });
+      await addDoc(collection(db, 'searchActivities'), { companyId: t.companyId, type: 'company_edited', date: serverTimestamp(), title: null, content: `Phone of ${snap.data().name || 'a person'}: added ${value} (answered a call)`, status: null, createdAt: serverTimestamp(), createdBy: me });
+      peopleCache.delete(t.companyId);
+      return true;
+    }
+    // A reminder task says what it is waiting for.
+    const REMINDER_PILL = { awaiting_reply: 'Awaiting reply', follow_up: 'Next follow-up', referred: 'Referred' };
+    function reminderTag(t) {
+      if (!t.reminderKind) return '';
+      const since = t.waitingSince ? dayFmt.format(new Date(tsMs(t.waitingSince))) : '';
+      return `<span class="pill pill--info">${esc(t.reminderKind === 'awaiting_reply' ? `Awaiting reply since ${since}` : t.reminderKind === 'follow_up' ? `Next follow-up · set ${since}` : `Referred · ${since}`)}</span>${t.fromCampaignName ? ` <span class="hint">from ${esc(t.fromCampaignName)}</span>` : ''} · `;
+    }
+
     // 4 Nov: who a call / WhatsApp / LinkedIn / visit was to: the contacts the card lists (a company line, its people, its contacts)
     const WHO_CHANNELS = ['call', 'whatsapp', 'linkedin', 'visit'];
     function taskContacts(t, c) {
@@ -6580,7 +6770,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         const c = taskCo(t);
         const overdue = tsMs(t.dueAt) < new Date().setHours(0, 0, 0, 0);
         const txt = taskTemplateText(t, c);
-        const outs = t.outcomes && t.outcomes.length ? t.outcomes.map(o => [o.key, o.label]) : (TASK_OUTCOMES[t.channel] || []); // 4 Nov: an Other step's own results
+        const outs = outcomesFor(t); // 4 Nov: an Other step's own results; 13 Nov: the two-level call (outreach.callResults)
+        const CR = callResultsOn(t);
         const waPeople = isOn('search.people') ? (peopleCache.get(t.companyId) || []).slice().sort((a, b) => (b.personId === c?.primaryContact?.personId) - (a.personId === c?.primaryContact?.personId)).find(p => p.phone)?.phone : null; // People merge
         const wa = t.channel === 'whatsapp' ? waNumber(c.companyPhone || (c.contacts || []).find(p => p.phone)?.phone || waPeople) : null;
         return `<div class="task${overdue ? ' task--overdue' : ''}" data-tid="${esc(t.id)}">
@@ -6590,7 +6781,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
           </div>
           <div class="draft__meta">
             ${t.campaignId ? `<span><button class="camp-link" style="font-size:0.76rem;" data-topencamp="${esc(t.campaignId)}">${esc(t.campaignName || 'Campaign')}</button> · ${t.pathName ? esc(t.pathName) + ' · ' : ''}${esc(t.stepName || '')} (${(t.stepIndex ?? 0) + 1} of ${t.stepCount || '?'})</span>`
-              : `<span>Own task · added by ${esc(OWNER_LABEL[OWNER_BY_EMAIL[t.createdBy]] || localPart(t.createdBy) || '—')}${t.threadId ? ` · <button class="camp-link" style="font-size:0.76rem;" data-topenthread="${esc(t.threadId)}">from a conversation</button>` : ''}</span>`}
+              : `<span>${reminderTag(t)}Own task · added by ${esc(OWNER_LABEL[OWNER_BY_EMAIL[t.createdBy]] || localPart(t.createdBy) || '—')}${t.threadId ? ` · <button class="camp-link" style="font-size:0.76rem;" data-topenthread="${esc(t.threadId)}">from a conversation</button>` : ''}</span>`}
             <span>for <select data-tassign style="width:auto;padding:2px 6px;font-size:0.76rem;"><option value="">nobody</option>${ownerOpts(t.assignee)}</select></span>
             ${txt ? `<span title="Name, phone and email in the ${t.channel === 'call' ? 'script' : 'text'}">signed by <select data-tsigner style="width:auto;padding:2px 6px;font-size:0.76rem;">${ownerOpts(signerFor(t, c))}</select></span>` : ''}
           </div>
@@ -6604,14 +6795,16 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             </div>
           </div>
           <div class="field" style="margin-bottom:8px;"><label>Notes</label><textarea data-tnotes rows="2" placeholder="What happened (saved on the ${c._person ? 'person\'s record' : 'company\'s activity'})">${esc(t.notes || '')}</textarea></div>
-          ${isOn('outreach.taskContact') && WHO_CHANNELS.includes(t.channel) && !c._person ? (() => { const wl = taskContacts(t, c), li = t.channel === 'linkedin', vis = t.channel === 'visit'; return `<div class="field" style="margin-bottom:8px;"><label>Who${vis ? '' : li ? ' / which profile' : ' / which number'} (optional)</label>
+          ${CR && t.channel !== 'linkedin' ? numberWhoHtml(t, c) : ''}
+          ${CR ? answerBlockHtml(!t.campaignId) : ''}
+          ${!(CR && t.channel !== 'linkedin') && isOn('outreach.taskContact') && WHO_CHANNELS.includes(t.channel) && !c._person ? (() => { const wl = taskContacts(t, c), li = t.channel === 'linkedin', vis = t.channel === 'visit'; return `<div class="field" style="margin-bottom:8px;"><label>Who${vis ? '' : li ? ' / which profile' : ' / which number'} (optional)</label>
             <select data-twho style="max-width:440px;"><option value="">—</option>${wl.map((x, i) => `<option value="${i}"${wl.length === 1 ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}<option value="new">A new contact…</option></select>
             <div data-twhonew hidden style="margin-top:6px;"><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
               <input type="text" data-tnname placeholder="Name (optional)" style="max-width:210px;" aria-label="Name">
               <input type="text" data-tndetail placeholder="${li ? 'https://www.linkedin.com/in/…' : vis ? 'Role (optional)' : '+351 912 345 678'}" style="max-width:250px;" aria-label="${li ? 'Profile' : vis ? 'Role' : 'Number'}">
               ${vis || !t.companyId ? '' : '<label class="checkline"><input type="checkbox" data-tncrm checked> <span>Also add to the CRM</span></label>'}</div></div></div>`; })() : ''}
           ${outs.some(o => o[2] === 'reopen') ? '<div class="field" style="margin-bottom:8px;max-width:260px;"><label>Next attempt (for call back / reschedule)</label><input type="date" data-treopen></div>' : ''}
-          ${t.campaignId && outs.some(o => o[2] === 'reply') ? `<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this ${c._person ? 'person' : 'company'}</span></label>` : ''}
+          ${!CR && t.campaignId && outs.some(o => o[2] === 'reply') ? `<label class="checkline" style="margin-bottom:8px;"><input type="checkbox" data-tstop checked> <span>When they answered, stop the sequence for this ${c._person ? 'person' : 'company'}</span></label>` : ''}
           <div class="outcomes">${outs.map(([k, l]) => `<button class="btn btn--ghost btn--sm" data-tout="${k}" data-perm="out.tasks" aria-pressed="${taskPick.get(t.id) === k}">${esc(l)}</button>`).join('')}
             <button class="btn btn--ghost btn--sm" data-tout="skipped" data-perm="out.tasks" aria-pressed="${taskPick.get(t.id) === 'skipped'}" style="margin-left:auto;" title="${t.campaignId ? 'Move on without doing this step' : 'Close this task without doing it'}">${t.campaignId ? 'Skip step' : 'Cancel task'}</button></div>
           <div class="actions" style="margin-top:8px;align-items:center;"><span class="hint" data-tpicked>${taskPick.has(t.id) ? `Selected: <b>${esc(pickedLabel(t, taskPick.get(t.id)))}</b> — nothing is saved until you press Save.` : 'Choose what happened, then Save.'}</span>
@@ -6655,10 +6848,16 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         el.querySelector('[data-tsigner]')?.addEventListener('change', async (e) => {
           await campCall({ action: 'updateTask', taskId: t.id, signer: e.target.value || null }, `Signed by ${OWNER_LABEL[e.target.value] || e.target.value}.`);
         });
+        // 13 Nov (outreach.callResults): the result and the sequence choice show once the outcome is an answer.
+        const ans = wireAnswerBlock(el);
+        const nw = callResultsOn(t) && t.channel !== 'linkedin' ? wireNumberWho(el, t) : null;
+        const isReplyPick = () => (outcomesFor(t).find(o => o[0] === taskPick.get(t.id)) || [])[2] === 'reply';
+        ans.show(callResultsOn(t) && isReplyPick());
         // Q1: an outcome button only selects; Save records it.
         el.querySelectorAll('[data-tout]').forEach(b => b.addEventListener('click', () => {
           const k = b.dataset.tout;
           if (taskPick.get(t.id) === k) taskPick.delete(t.id); else taskPick.set(t.id, k);
+          ans.show(callResultsOn(t) && isReplyPick());
           el.querySelectorAll('[data-tout]').forEach(x => x.setAttribute('aria-pressed', String(taskPick.get(t.id) === x.dataset.tout)));
           el.querySelector('[data-tpicked]').innerHTML = taskPick.has(t.id) ? `Selected: <b>${esc(pickedLabel(t, taskPick.get(t.id)))}</b> — nothing is saved until you press Save.` : 'Choose what happened, then Save.';
           el.querySelector('[data-tsave]').disabled = !taskPick.has(t.id);
@@ -6669,7 +6868,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         });
         el.querySelector('[data-tpause]')?.addEventListener('click', async (ev) => {
           const unbusy = busyBtn(ev.currentTarget, 'Pausing…');
-          const r = await campCall({ action: 'enrolment', enrolmentId: t.enrolmentId, op: 'pause' }, 'Paused — resume it in the Companies tab of the campaign. The task is created again after that.');
+          const r = await campCall({ action: 'enrolment', enrolmentId: t.enrolmentId, op: 'pause', wholeCompany: true }, 'Paused, with every address of the company — resume it in the Companies tab of the campaign. The task is created again after that.'); // 13 Nov (B1)
           if (!r) unbusy();
         });
         el.querySelector('[data-tremove]')?.addEventListener('click', async (ev) => {
@@ -6710,8 +6909,14 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
         });
         el.querySelector('[data-tsave]')?.addEventListener('click', async () => {
           const outcome = taskPick.get(t.id); if (!outcome) return;
-          const def = (TASK_OUTCOMES[t.channel] || []).find(o => o[0] === outcome);
+          const def = outcomesFor(t).find(o => o[0] === outcome);
           const payload = { action: 'completeTask', taskId: t.id, outcome, notes: el.querySelector('[data-tnotes]').value };
+          // 13 Nov (outreach.callResults): the result, the sequence choice and the reminder; the number used and who answered.
+          const ar = ans.read();
+          if (ar?.error) { toast(ar.error); return; }
+          if (ar) { Object.assign(payload, ar); if (ar.reminder) payload.reminder = { ...ar.reminder, note: payload.notes.trim().slice(0, 500) }; }
+          const nwv = nw ? nw.read() : null;
+          if (nwv && (nwv.number || nwv.person)) payload.contact = { name: nwv.person?.name || '', detail: nwv.number || '', number: nwv.number || '', personId: nwv.person?.personId || null };
           if (def?.[2] === 'reopen') {
             const d = el.querySelector('[data-treopen]')?.value;
             if (!d) { toast('Pick the date for the next attempt first.'); el.querySelector('[data-treopen]')?.focus(); return; }
@@ -6729,13 +6934,18 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             const x = taskContacts(t, taskCo(t))[Number(whoSel.value)];
             if (x) payload.contact = { name: x.name, detail: x.detail };
           }
+          if (nwv?.person?.isNew && t.companyId) addCrm = { name: nwv.person.name, type: 'phone', value: nwv.number || '', display: nwv.number || nwv.person.name || '' }; // Someone else… → the Inbox's Add to company window
           payload.profileUrl = t.channel === 'linkedin' && payload.contact?.detail && /linkedin\.|^https?:/i.test(payload.contact.detail) ? payload.contact.detail : null;
           if (outcome === 'skipped' && !confirm(t.campaignId ? 'Skip this step? The sequence moves on without it.' : 'Cancel this task? It closes without an activity.')) return;
           el.querySelectorAll('button').forEach(x => { x.disabled = true; });
           const unbusySave = busyBtn(el.querySelector('[data-tsave]'), 'Saving…');
           document.activeElement?.blur();
-          const r = await campCall(payload, (x) => x.status === 'open' ? `Saved — next attempt on ${dayFmt.format(new Date(x.dueAt))}.` : x.sequence === 'stopped' ? `Saved — the sequence stopped for this ${t.companyId ? 'company' : 'person'}.` : outcome === 'skipped' ? 'Step skipped.' : 'Saved.');
-          if (r) { taskPick.delete(t.id); if (addCrm) openAddToCompany(t, '', { type: addCrm.type, value: addCrm.value, display: addCrm.display }, null, addCrm.name); }
+          const r = await campCall(payload, (x) => payload.result ? answerToast(x) : x.status === 'open' ? `Saved — next attempt on ${dayFmt.format(new Date(x.dueAt))}.` : x.sequence === 'stopped' ? `Saved — the sequence stopped for this ${t.companyId ? 'company' : 'person'}.` : outcome === 'skipped' ? 'Step skipped.' : 'Saved.');
+          if (r) {
+            taskPick.delete(t.id);
+            if (nwv?.save && nwv.person?.personId && nwv.number) { try { if (await savePhoneOnPerson(t, nwv.person.personId, nwv.number)) toast(`${nwv.number} saved on ${nwv.person.name}.`); } catch (e) { toast('The number could not be saved on the person: ' + errText(e)); } }
+            if (addCrm && (addCrm.value || addCrm.name)) openAddToCompany(t, '', { type: addCrm.type, value: addCrm.value, display: addCrm.display }, null, addCrm.name);
+          }
           else { unbusySave(); el.querySelectorAll('button').forEach(x => { x.disabled = false; }); }
         });
       });
@@ -6743,7 +6953,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
 
     // Q1: the outcome chosen on each task card, kept until saved (survives re-renders).
     const taskPick = new Map();
-    const pickedLabel = (t, k) => k === 'skipped' ? 'Skip step' : (((t.outcomes && t.outcomes.length ? t.outcomes.map(o => [o.key, o.label]) : TASK_OUTCOMES[t.channel]) || []).find(o => o[0] === k)?.[1] || k);
+    const pickedLabel = (t, k) => k === 'skipped' ? 'Skip step' : (outcomesFor(t).find(o => o[0] === k)?.[1] || k);
 
     // ── Letters to print (C1: plain A4, address block for a left window envelope, typed signature) ──
     let letterSel = new Set();

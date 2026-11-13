@@ -527,6 +527,7 @@
       <select class="filter-sel" id="subsFilter" data-feature="search.ownership" title="Current shareholdings between companies that are both in the CRM"><option value="">Subsidiaries: Any</option><option value="subs">Has subsidiaries in the CRM</option><option value="parent">Has a parent in the CRM</option></select>
       <select class="filter-sel" id="ownerOtherFilter" data-feature="search.ownership" title="Its owners (any %, since 22 Oct) and managers are owners or managers of other CRM companies too. Auditors and assembly roles left out."><option value="">Owner's other companies: Any</option><option value="yes">Owner has other companies</option><option value="no">Owner has no other company</option></select>
       <select class="filter-sel" id="emailNameFilter" data-feature="search.emailNameCheck" title="The name each company gets inside the emails ({{company.shortName}}). To check = it looks wrong (a trade name naming another activity, legal-form words, a short name not in the legal name, capitals, extra spaces). Long = over 45 characters."><option value="">Email name: Any</option><option value="warn">Email name: to check</option><option value="long">Email name: long</option></select>
+      <select class="filter-sel" id="followUpFilter" data-feature="outreach.callResults" title="Companies that said “not now” on a call (or by another channel) and have a date to be contacted again — set from Outreach, with a task on that day"><option value="">Next follow-up: Any</option><option value="any">Has a next follow-up</option><option value="due">Follow-up due (today or earlier)</option><option value="30">Follow-up in the next 30 days</option></select>
       <select class="filter-sel" id="sameEmailFilter" data-feature="search.sameEmail" title="Same company email address as another CRM company (the full address). Possible link = not the same group and not yet confirmed or dismissed; the company's Ownership tab also checks the people in Orbis."><option value="">Same email: Any</option><option value="possible">Possible same-email link</option><option value="confirmed">Same email, confirmed</option></select>
       <input type="hidden" id="groupKeyFilter"><span class="badge badge-blue" id="groupKeyChip" data-feature="search.ownership" style="display:none;align-self:center;"></span>
       <button class="btn btn--ghost btn--sm" id="clearFiltersBtn">Clear all</button>
@@ -562,6 +563,7 @@
               <th data-col="ownGroupSize" class="num" data-feature="search.ownership" title="Companies in the CRM with the same ultimate owner">Group</th>
               <th data-col="ownGroupRevenue" class="num" data-feature="search.ownership" title="Revenue of the group's companies in the CRM, added up">Group rev.</th>
               <th data-col="lastTouchAt">Last Touch</th>
+              <th data-col="nextFollowUpAt" data-feature="outreach.callResults" title="Said “not now”: the date to contact them again (set from Outreach, with a task on that day). Red = due.">Next follow-up</th>
               <th data-col="outreachAttempts" class="num">Att.</th>
             </tr>
           </thead>
@@ -1509,7 +1511,7 @@ const MANUAL_ACT_TYPES = ['note','letter','call_attempted','call_connected','ema
 
 const RESPONSE_CATS = {
   interested:'Interested', not_interested:'Not interested', not_now:'Not now',
-  callback_later:'Call-back later', referred:'Referred', wait_for_response:'Wait for response',
+  callback_later:'Call-back later', referred:'Referred', wait_for_response:'Awaiting reply', // 13 Nov: same name as Outreach (outreach.callResults)
   wrong_contact:'Wrong contact', no_response:'No response', excluded:'Excluded',
 };
 
@@ -1716,6 +1718,10 @@ function extUrl(u){
 }
 function showEl(id, show){ document.getElementById(id).style.display = show ? '' : 'none'; }
 function tsToDate(ts){ return ts?.toDate ? ts.toDate() : (ts ? new Date(ts) : null); }
+// 13 Nov (outreach.callResults): the company's Next follow-up ("not now" on a call), as ms — also from the local cache, where a Timestamp
+// inside an object comes back as { seconds, nanoseconds }.
+function followUpMs(c){ const a = c?.nextFollowUp?.at; if (!a) return 0; if (a.toMillis) return a.toMillis(); if (typeof a.seconds === 'number') return a.seconds * 1000; const t = new Date(a).getTime(); return isFinite(t) ? t : 0; }
+function followUpCell(c){ const f = followUpMs(c); if (!f) return '<span style="color:var(--text-light);">—</span>'; const due = f <= new Date().setHours(23, 59, 59, 999); return `<span${due ? ' style="color:var(--danger);font-weight:600;"' : ''} title="${esc(c.nextFollowUp?.note || 'Said not now')}${c.nextFollowUp?.campaignName ? ' · ' + esc(c.nextFollowUp.campaignName) : ''}">${new Date(f).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</span>`; }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 function num(v){ const n = Number(v); return isFinite(n) ? n : 0; }
 
@@ -3376,7 +3382,7 @@ function renderSummary(){
 // Shared with the filter-input listeners near the bottom of the file and with
 // the subset-of-loaded disclaimer banner below — one list, so a filter added
 // in one place is never silently missing from the other two.
-const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter','tierFilter','contactableFilter','groupFilter','subsFilter','ownerOtherFilter','groupKeyFilter','sameEmailFilter','emailNameFilter'];
+const FILTER_INPUT_IDS = ['searchInput','stageFilter','ownerFilter','fitMin','fitMax','sectorFilter','subSectorFilter','nuts2Filter','nuts3Filter','sourceFilter','legalFormFilter','naceFilter','caeFilter','revMin','revMax','ebitdaMin','ebitdaMax','marginMin','marginMax','cagrMin','cagrMax','lastTouchFilter','websiteFilter','tierFilter','contactableFilter','groupFilter','subsFilter','ownerOtherFilter','groupKeyFilter','sameEmailFilter','emailNameFilter','followUpFilter'];
 // Always states the true total (not just what's loaded) whenever the two
 // differ, right where people are actually looking — the results count next
 // to the table — rather than a separate banner that's easy to scan past.
@@ -3418,6 +3424,7 @@ function getFiltered(){
   const cgMin  = parseFloat(document.getElementById('cagrMin').value);
   const cgMax  = parseFloat(document.getElementById('cagrMax').value);
   const ltF    = document.getElementById('lastTouchFilter').value;
+  const fuF    = isOn('outreach.callResults') ? (document.getElementById('followUpFilter')?.value || '') : ''; // 13 Nov: Next follow-up
   const webF   = document.getElementById('websiteFilter').value;
   const tierF  = document.getElementById('tierFilter')?.value || '';
   const ctF    = document.getElementById('contactableFilter')?.value || '';
@@ -3482,6 +3489,7 @@ function getFiltered(){
     if (seF === 'confirmed' && !(c.sameEmailLinks || []).length) return false;
     if (seF === 'possible' && !hasPossibleSameEmail(c, seMap)) return false;
     if (enF && !nameIssues(c).some(i => enF === 'warn' ? i.level === 'warn' : i.kind === 'long')) return false;
+    if (fuF) { const f = followUpMs(c); if (!f) return false; if (fuF === 'due' && f > new Date().setHours(23, 59, 59, 999)) return false; if (fuF === '30' && f > Date.now() + 30 * 86400000) return false; }
     return true;
   });
 }
@@ -3490,6 +3498,7 @@ function sortList(list){
     let va = a[sortCol], vb = b[sortCol];
     if (sortCol === 'name' || sortCol === 'sector') { va=(va||'').toLowerCase(); vb=(vb||'').toLowerCase(); }
     else if (sortCol === 'lastTouchAt') { va = tsToDate(va)?.getTime()||0; vb = tsToDate(vb)?.getTime()||0; }
+    else if (sortCol === 'nextFollowUpAt') { va = followUpMs(a) || Infinity; vb = followUpMs(b) || Infinity; }
     else if (sortCol === 'priority') { va = a.targetTier||'Z'; vb = b.targetTier||'Z'; }
     else { va = (va==null?-Infinity:Number(va)); vb = (vb==null?-Infinity:Number(vb)); }
     if (va < vb) return sortDir==='asc'?-1:1;
@@ -3524,7 +3533,7 @@ function renderList(){
   renderResultsCount(list.length);
   const tbody = document.getElementById('companyBody');
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="16"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No companies found</div><div>Adjust filters or add a company.</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="17"><div class="empty"><div class="empty__icon">🔍</div><div class="empty__title">No companies found</div><div>Adjust filters or add a company.</div></div></td></tr>`;
     showEl('pagination', false);
     return;
   }
@@ -3612,6 +3621,7 @@ function rowHtml(c){
     <td class="num" data-feature="search.ownership">${c.ownGroupSize > 1 ? c.ownGroupSize : '—'}</td>
     <td class="num" data-feature="search.ownership">${c.ownGroupSize > 1 ? fmtEurShort(c.ownGroupRevenue) : '—'}</td>
     <td style="color:var(--text-light);">${relTime(c.lastTouchAt)}</td>
+    <td data-feature="outreach.callResults">${followUpCell(c)}</td>
     <td class="num">${c.outreachAttempts||0}</td>
   </tr>`;
 }
@@ -3936,6 +3946,7 @@ function renderDetail(){
     ${SOURCE_LABELS[c.sourceType]?`<span class="badge badge-grey">${SOURCE_LABELS[c.sourceType]}</span>`:''}
     ${c.activeCampaignName ? `<a class="badge badge-blue" href="/portal/outreach.html" title="In this Outreach campaign" style="text-decoration:none;">📣 ${esc(c.activeCampaignName)}</a>` : ''}
     ${c.doNotContact?.on ? `<span class="badge badge-red" title="${esc('Do not contact (stop) — ' + (c.doNotContact.reason || 'no reason given'))}">🚫 Do not contact · stop</span>` : ''}
+    ${isOn('outreach.callResults') && followUpMs(c) ? `<span class="badge badge-warn" title="${esc('Said not now' + (c.nextFollowUp?.note ? ' — ' + c.nextFollowUp.note : '') + '. A task is in Outreach → Tasks on that day.')}">⏰ Next follow-up ${new Date(followUpMs(c)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>` : ''}
     ${contactableBadge(c)}${c.doNotContact?.on || c.contactable === false ? contactHelpIcon() : ''}${c.contactableSource === 'manual' || (c.contactableSource == null && typeof c.contactable === 'boolean') ? ' <button type="button" class="btn btn--ghost btn--sm" data-ct-reset data-feature="search.contactableRules" title="Forget the choice made by hand; the contactable rules decide at the next Run rules">↺ Back to the rules</button>' : ''}
     ${headerOwner(c, primary)}`;
   const ctB = document.getElementById('contactableBtn');
@@ -5655,6 +5666,7 @@ async function renderOutreachRelated(c){
   const actFlags = isOn('outreach.relatedActivity') ? convFlags.filter(f => f.activity) : [];
   el.innerHTML = `<div class="card"><div class="sec-title">Related companies in outreach</div>
     ${conv.length ? `<div class="contact-detail" style="margin-bottom:6px;">💬 <b>In conversation via ${conv.map(x => esc(x.name)).join(', ')}</b></div>` : ''}
+    ${(r.flags || []).filter(f => f.kind === 'follow_up').map(f => `<div class="contact-detail" style="margin-bottom:6px;">⏰ <b>${esc(f.text.replace(/^next/, 'Next'))}</b> <span class="hint">— the group said “not now”; wait before writing here.</span></div>`).join('')}
     ${actFlags.length ? `<div class="contact-detail" style="margin-bottom:6px;">${actFlags.map(f => esc(f.text)).join('; ')}<br><button class="btn btn--ghost btn--sm" id="relPauseBtn" data-perm="out.write" style="margin-top:4px;">Pause this company's email sequence</button> <span class="hint">You confirm; it can be resumed in Outreach.</span></div>` : ''}
     ${r.related.map(x => `<div class="contact-detail"><span class="person-link" data-gotoco="${esc(x.companyId)}">${esc(x.name)}</span> ${relatedLine({ ...x, name: '' }).replace(/^\s*/, '')}</div>`).join('')}
     ${r.lead ? `<div class="hint" style="margin-top:6px;">Suggested lead company for the group: <b>${leadText(r.lead)}</b>.</div>` : ''}

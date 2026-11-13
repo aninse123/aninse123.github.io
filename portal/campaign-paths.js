@@ -75,7 +75,9 @@ export const REPLY_LABEL = { email: 'email', call: 'call', visit: 'visit', linke
 export function repliesByCompany(threads, enrols, positive = []) {
   const m = new Map();
   const add = (k, at, channel) => { if (!k) return; const o = m.get(k); if (!o || at < o.at) m.set(k, { at, channel }); };
-  for (const e of enrols) if (e.status === 'replied') add(e.companyId, msOf(e.endedAt) || Infinity, 'email');
+  for (const e of enrols) if (e.status === 'replied') add(e.companyId, msOf(e.endedAt) || Infinity, e.answer?.channel || 'email');
+  // 13 Nov (outreach.callResults): an answer logged with a result counts for the campaign even with no email conversation (a call first)
+  for (const e of enrols) if (e.answer) add(e.companyId, msOf(e.answer.at) || Infinity, e.answer.channel || 'other');
   for (const t of threads) {
     if (t.repliedAt) add(t.companyId, msOf(t.repliedAt) || Infinity, 'email');
     if (t.otherReplyAt) add(t.companyId, msOf(t.otherReplyAt) || Infinity, t.otherReplyChannel || 'other');

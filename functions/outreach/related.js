@@ -167,6 +167,7 @@ async function relatedFor(companyIds, opts = {}) {
         lastOutreachAt: ms(o.lastOutreachAt) || null, lastReplyAt: ms(o.lastReplyAt) || null,
         ...signalOf(o),
         saidNo: saidNo.has(oid) || o.outreachStatus === "unsubscribed", doNotContact: !!o.doNotContact?.on,
+        nextFollowUpAt: ms(o.nextFollowUp?.at) || null, // 13 Nov (outreach.callResults): "Not now" — call again on that date
         contactable: o.contactable !== false, email: o.companyEmail || null,
         parent: [...why].some((w) => w.startsWith("parent")), // it holds shares in this company
       };
@@ -208,6 +209,8 @@ function flagsFor(entry, opts = {}) {
     else if (opts.activity && r.engaged) flags.push({ kind: "in_conversation", activity: true, companyId: r.companyId, text: `in conversation via ${r.name} (engaged)` });
     // 2 Nov: no window — like the "contacted before" warning of a single company, it stays; the reason is in the related list
     else if (r.lastOutreachAt) flags.push({ kind: "group_contacted", companyId: r.companyId, text: `related company contacted via ${r.name} (${day(r.lastOutreachAt)})` });
+    // 13 Nov (outreach.callResults): the group said "not now" through this company — wait for its follow-up before writing to another one.
+    if (r.nextFollowUpAt && r.nextFollowUpAt > now) flags.push({ kind: "follow_up", companyId: r.companyId, text: `next follow-up ${day(r.nextFollowUpAt)} via ${r.name}` });
     if (r.campaignId && r.campaignId !== campaignId) flags.push({ kind: "other_campaign", companyId: r.companyId, text: `${r.name} is in campaign "${r.campaignName || "another campaign"}"` });
     if (batch && batch.has(r.companyId) && r.companyId !== selfId) flags.push({ kind: "same_batch", companyId: r.companyId, text: `${r.name} is being added too` });
   }

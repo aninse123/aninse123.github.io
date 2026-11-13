@@ -30,7 +30,8 @@ const Feat = require("../features"); // feature switches (Team & access → Feat
 const DAY = 86400000;
 const NOT_SENT = ["draft", "approved", "approving", "cancelled", "returned", "draftSent", "queued", "failed"];
 const LIVE = ["pending", "active", "awaiting_approval", "awaiting_task", "paused"];
-const CATS = { interested: "Interested", callback_later: "Call back later", not_now: "Not now", not_interested: "Not interested", referred: "Referred", wrong_contact: "Wrong contact", excluded: "Unsubscribe / exclude" };
+// 13 Nov (outreach.callResults): + Awaiting reply (the CRM's wait_for_response) — counts as a reply, not as positive.
+const CATS = { interested: "Interested", wait_for_response: "Awaiting reply", callback_later: "Call back later", not_now: "Not now", not_interested: "Not interested", referred: "Referred", wrong_contact: "Wrong contact", excluded: "Unsubscribe / exclude" };
 const ms = (t) => (t?.toMillis ? t.toMillis() : t ? new Date(t).getTime() : 0);
 const inc = (o, k, n = 1) => { o[k || "—"] = (o[k || "—"] || 0) + n; };
 

@@ -9,7 +9,7 @@
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const day = (t) => (t ? new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
-const KIND_ICON = { said_no: '🚫', in_conversation: '💬', group_contacted: '✉', other_campaign: '📣', same_batch: '➕' };
+const KIND_ICON = { said_no: '🚫', in_conversation: '💬', group_contacted: '✉', other_campaign: '📣', same_batch: '➕', follow_up: '⏰' };
 export const MAX_MENTION = 3;
 const PLAIN = 'text-transform:none;letter-spacing:normal;font-weight:400;color:inherit;'; // the pages' label style is uppercase
 
@@ -59,6 +59,7 @@ export function relatedLine(r) {
     r.doNotContact ? 'do not contact' : '', r.saidNo ? 'said no' : '',
     r.lastReplyAt ? `replied ${day(r.lastReplyAt)}` : (r.lastOutreachAt ? `contacted ${day(r.lastOutreachAt)}` : ''),
     r.campaignName ? `campaign “${r.campaignName}”` : '',
+    r.nextFollowUpAt && r.nextFollowUpAt > Date.now() ? `next follow-up ${day(r.nextFollowUpAt)}` : '', // 13 Nov (outreach.callResults): said "not now"
   ].filter(Boolean).join(' · ');
   return `${esc(r.name)} <span style="color:#64748B;">(${esc((r.why || []).join('; '))})</span>${status ? ` — ${esc(status)}` : ''}`;
 }

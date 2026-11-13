@@ -14,7 +14,7 @@ const {
 } = require("./util");
 const { getReceivedEmail, listReceivedAttachments } = require("./resend");
 const store = require("./store");
-const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
+const { stopCompanyEnrolments, stopEnrolmentById, closeAwaitingReminders } = require("./campaigns");
 const Tracks = require("./tracks"); // several recipients per company (30 Oct, switch outreach.multiRecipient)
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const Feat = require("../features"); // feature switches (one inbox, 19 Oct)
@@ -252,6 +252,8 @@ async function handleReceived(data) {
   let why = "Replied";
   if (!autoReply && thread.companyId) { try { if ((await Feat.jobState("outreach.multiRecipient")) !== "off" && await Tracks.hasTracks(thread.companyId)) why = `Stopped: ${from.name ? from.name + " " : ""}(${from.email}) replied`; } catch (e) { /* keep the plain reason */ } }
   if (!autoReply && thread.companyId) await stopCompanyEnrolments(thread.companyId, why, "replied");
+  // 13 Nov (outreach.callResults): the company wrote in — its open "Awaiting reply" reminders close by themselves.
+  if (!autoReply && thread.companyId) { try { if ((await Feat.jobState("outreach.callResults")) !== "off") await closeAwaitingReminders(thread.companyId, thread.isTest, { why: `Email from ${from.email || "the company"}` }); } catch (e) { logger.warn("outreach: closing awaiting-reply reminders failed", { message: e.message }); } }
   else if (!autoReply && thread.enrolmentId) await stopEnrolmentById(thread.enrolmentId, "Replied", "replied");
 }
 
