@@ -61,6 +61,7 @@ async function handle(req, res, { fetchImpl } = {}) {
   const path = pathOf(req);
   const method = req.method || "GET";
   try {
+    await P.loadIdentity(); // the team's name and sites, for every answer below
     if (method === "GET" && path === "/.well-known/oauth-protected-resource") return json(res, 200, O.protectedResourceMetadata(), { "Access-Control-Allow-Origin": "*" });
     if (method === "GET" && (path === "/.well-known/oauth-authorization-server" || path === "/.well-known/openid-configuration")) return json(res, 200, O.authServerMetadata(), { "Access-Control-Allow-Origin": "*" });
     if (method === "OPTIONS") { res.statusCode = 204; res.setHeader("Access-Control-Allow-Origin", "*"); res.setHeader("Access-Control-Allow-Headers", "authorization, content-type, mcp-protocol-version"); res.setHeader("Access-Control-Allow-Methods", "GET, POST"); return res.end(); }
