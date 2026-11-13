@@ -117,7 +117,7 @@ export function createClaudeTab({ root, call, toast, roles = () => [] }) {
       <div class="table-wrap"><table class="u-table"><thead><tr><th>Applies to</th><th class="num">Calls an hour</th><th class="num">Calls a day</th><th class="num">Rows per answer (max 100)</th></tr></thead><tbody>
         <tr data-lim="defaults" data-key="defaults"><td><b>Everyone</b></td>${['hour', 'day', 'rows'].map((f) => `<td class="num"><input type="number" min="1" step="1" data-f="${f}" value="${d[f]}" aria-label="Everyone ${f}" style="width:90px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font:inherit;text-align:right;"></td>`).join('')}</tr>
         ${roleIds.map((r) => limRow('role', r, `Role: ${r}`, s.roles[r], d)).join('')}
-        ${keys.map((p) => limRow('person', p.key, p.name, s.people[p.key], s.roles[p.roleId] || d)).join('')}
+        ${keys.map((p) => limRow('person', p.key, p.name, s.people[p.key], { ...d, ...(s.roles[p.roleId] || {}) })).join('')}
       </tbody></table></div>
       <p class="err" id="cErr" hidden style="margin:12px 16px;"></p>
       <div class="modal-actions" style="padding:0 16px 16px;"><button class="btn btn--ghost" id="cIndex">Rebuild company index now</button><button class="btn btn--primary" id="cSave">Save settings</button></div></div>`;

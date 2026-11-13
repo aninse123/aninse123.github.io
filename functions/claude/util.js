@@ -39,7 +39,17 @@ function normalizeLimits(src, base) {
 function normalizeSettings(raw) {
   const s = raw || {};
   const defaults = normalizeLimits(s.defaults, DEFAULT_SETTINGS.defaults);
-  const clean = (m) => Object.fromEntries(Object.entries(m && typeof m === "object" ? m : {}).filter(([k]) => /^[a-z0-9_-]{1,40}$/i.test(k)).map(([k, v]) => [k, normalizeLimits(v, defaults)]));
+  // Roles and people keep only the limits actually set (a cell left empty follows the line above).
+  const partial = (v) => {
+    const o = v && typeof v === "object" ? v : {};
+    const out = {};
+    const h = clampInt(o.hour, 1, 100000, null), d = clampInt(o.day, 1, 1000000, null), r = clampInt(o.rows, 1, 100, null);
+    if (h != null) out.hour = h;
+    if (d != null) out.day = d;
+    if (r != null) out.rows = r;
+    return out;
+  };
+  const clean = (m) => Object.fromEntries(Object.entries(m && typeof m === "object" ? m : {}).filter(([k]) => /^[a-z0-9_-]{1,40}$/i.test(k)).map(([k, v]) => [k, partial(v)]).filter(([, v]) => Object.keys(v).length));
   return { signInDays: clampInt(s.signInDays, 1, 365, DEFAULT_SETTINGS.signInDays), defaults, roles: clean(s.roles), people: clean(s.people) };
 }
 async function getSettings({ force = false } = {}) {
@@ -51,9 +61,9 @@ async function getSettings({ force = false } = {}) {
   return settingsCache;
 }
 function _resetSettings() { settingsCache = null; settingsAt = 0; }
-// A person's limits: their own override, else their role's, else the defaults.
+// A person's limits, limit by limit: their own, else their role's, else everyone's.
 function limitsFor(settings, { key, roleId }) {
-  return settings.people[key] || settings.roles[roleId] || settings.defaults;
+  return { ...settings.defaults, ...(settings.roles[roleId] || {}), ...(settings.people[key] || {}) };
 }
 
 module.exports = { REGION, PROJECT, BASE, SCOPE, FEATURE, db, sha256, b64url, randomToken, ms, lisbonParts, lisbonDay, lisbonHour, nextHourLabel, DEFAULT_SETTINGS, normalizeSettings, getSettings, limitsFor, _resetSettings };

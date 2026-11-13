@@ -59,6 +59,9 @@ const usageDoc = (key, now = new Date()) => `claudeUsage/${U.lisbonDay(now)}_${k
   ok("defaults: 300 an hour, 3,000 a day, 100 rows", JSON.stringify(U.limitsFor(U.normalizeSettings(null), { key: "x", roleId: "analyst" })) === '{"hour":300,"day":3000,"rows":100}');
   ok("a role's limit applies to its people", U.limitsFor(S, { key: "zoe", roleId: "intern" }).hour === 50);
   ok("a person's limit beats their role's", U.limitsFor(S, { key: "maria", roleId: "intern" }).hour === 70);
+  const S2 = U.normalizeSettings({ defaults: { hour: 300, day: 3000, rows: 100 }, roles: { intern: { day: 500 } }, people: { maria: { hour: 70 }, empty: { hour: "", day: null } } });
+  ok("a cell left empty follows the line above (role day 500, person hour 70, defaults rows)", JSON.stringify(U.limitsFor(S2, { key: "maria", roleId: "intern" })) === '{"hour":70,"day":500,"rows":100}');
+  ok("a person row with nothing set is not stored", !("empty" in S2.people) && JSON.stringify(S2.people.maria) === '{"hour":70}');
   ok("silly values fall back (rows above 100, negative hours)", U.normalizeSettings({ defaults: { rows: 5000, hour: -3 } }).defaults.rows === 100 && U.normalizeSettings({ defaults: { hour: -3 } }).defaults.hour === 300);
   ok("sign-in days kept between 1 and 365", U.normalizeSettings({ signInDays: 900 }).signInDays === 90 && U.normalizeSettings({ signInDays: 30 }).signInDays === 30);
 
