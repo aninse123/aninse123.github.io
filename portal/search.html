@@ -4642,7 +4642,8 @@ function companyReachCardHtml(c){
 }
 async function saveCompanyReach(c, list, change){
   const extra = list.filter(e => e.type === 'email' && (e.status || 'ok') === 'ok').map(e => ({ email: e.value }));
-  const emailKeys = companyEmailKeys({ ...c, contacts: [...(c.contacts || []), ...extra] }); // the same-email index includes the new addresses
+  // the same-email index includes the new addresses, and keeps the keys savePersonReach added for the company's people (15 Nov)
+  const emailKeys = mergeEmailKeys(c.emailKeys, companyEmailKeys({ ...c, contacts: [...(c.contacts || []), ...extra] }));
   const phoneKeys = companyPhoneKeys({ ...c, reach: list });
   await updateDoc(doc(db, 'searchCompanies', c.id), { reach: list, emailKeys, phoneKeys, updatedAt: serverTimestamp(), updatedBy: currentUser });
   c.reach = list; c.emailKeys = emailKeys; c.phoneKeys = phoneKeys; companyReachEditId = null;
@@ -4671,7 +4672,7 @@ function wireCompanyReach(c){
       t.disabled = true;
       try {
         const extra = r.list.filter(x => x.type === 'email' && (x.status || 'ok') === 'ok').map(x => ({ email: x.value }));
-        const emailKeys = companyEmailKeys({ ...c, ...r.patch, contacts: [...(c.contacts || []), ...extra] });
+        const emailKeys = mergeEmailKeys(c.emailKeys, companyEmailKeys({ ...c, ...r.patch, contacts: [...(c.contacts || []), ...extra] }));
         const phoneKeys = companyPhoneKeys({ ...c, ...r.patch, reach: r.list });
         await updateDoc(doc(db, 'searchCompanies', c.id), { ...r.patch, emailKeys, phoneKeys, updatedAt: serverTimestamp(), updatedBy: currentUser });
         Object.assign(c, r.patch, { emailKeys, phoneKeys });
@@ -13448,6 +13449,13 @@ function companyEmailKeys(c){
     for (let i = 3; i <= Math.min(d.length, 60); i++) keys.add(d.slice(0, i));
   }
   return [...keys];
+}
+// 15 Nov: the company's existing keys plus new ones. emailKeys also hold its
+// people's addresses (savePersonReach adds them), which companyEmailKeys can't
+// rebuild from the company alone, so saving the company's own contact details
+// adds keys and never drops any.
+function mergeEmailKeys(existing, fresh){
+  return [...new Set([...(Array.isArray(existing) ? existing : []), ...(fresh || [])])];
 }
 // The search fields for a company record (name + its other names + emails).
 function companyIndexFields(c){ return { ...companySearchFields(c?.name, companyAltNames(c)), emailKeys: companyEmailKeys(c), phoneKeys: companyPhoneKeys(c) }; }
