@@ -10,7 +10,7 @@ ok('the split line keeps the hooks the form reads (weight, category, purpose, co
 
 ok('on a narrow screen the split line puts category and purpose on their own full-width rows so the names are not cut off', /@media \(max-width:560px\) \{ #v2root \.split-line \{ grid-template-columns:76px minmax\(0,1fr\); \} #v2root \.split-line \[data-lc\], #v2root \.split-line \[data-lp\] \{ grid-column:1 \/ -1; \} \}/.test(v2));
 
-ok('Used by says what an empty choice means: nobody ticked is a company cost, shown as Company in Reports', /id="f-usedhint">Nobody ticked = a company cost \(shown as "Company" in Reports\)\./.test(v2) && /stay in the Company line/.test(v2));
+ok('Used by says what an empty choice means: nobody chosen is a company cost, shown as Company in Reports', /id="f-usedhint"/.test(v2) && /'Nobody chosen = a company cost \(shown as "Company" in Reports\)\.'/.test(v2) && /stay in the Company line/.test(v2));
 
 ok('a partner remembers the names the bank writes for them (own profile, max 10), and the Inbox passes them to the recogniser; a partner-loan suggestion carries the partner to the item', /id="p-banknames"/.test(v2) && /bankNames: m\.querySelector\('#p-banknames'\)\.value\.split/.test(v2) && /bankNames: \(S\.people\[m\.key\] \|\| \{\}\)\.bankNames \|\| \[\]/.test(v2) && /partnerKey: g\.partnerKey \|\| ''/.test(v2) && /partnerKey: exp \? '' : d\.partnerKey \|\| ''/.test(v2));
 

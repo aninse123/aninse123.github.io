@@ -36,7 +36,7 @@ const TIPS = {
   paidWith: 'Which company account or card the money left from. Choose "Paid personally" when one of you paid with your own money and the company pays you back later.',
   paidPersonallyBy: 'The partner whose own money was used. The Overview lists what the company still owes each of you.',
   bankNames: 'The name the bank writes on transfers from you, copied from a bank line. It lets the Inbox recognise money from you as a partner loan.',
-  usedBy: 'Who the expense was for, not whose card paid. Tick one or more people; with several, the cost is split equally. Use "Unequal split…" to give someone a bigger share.',
+  usedBy: 'Who the expense was for, not whose card paid. Click one or more names; with several, the cost is split equally. Use "Unequal split…" to give someone a bigger share: each name then gets a share, and you see their % and euros.',
   docType: 'What paperwork you have. For tax the company needs an invoice with its NIF; a receipt or simplified invoice alone is not enough.',
   issuedToCompany: 'Does the invoice show the company’s name and NIF? Choose Unknown until you have checked; Unknown counts as a warning.',
   supplier: 'Who we paid. Pick a saved supplier to fill NIF, country and defaults, or type a new name and it is saved for next time.',
@@ -90,11 +90,21 @@ const CSS = `
 #v2root .sect > .sect-title { font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--primary); margin-bottom:12px; }
 #v2root .warnbox { border-radius:var(--radius); padding:10px 12px; font-size:0.82rem; line-height:1.5; margin-bottom:14px; }
 #v2root .warnbox.warn { background:#FFF3D6; color:#6B4700; } #v2root .warnbox.ok { background:#EBF5EB; color:#2A5A22; } #v2root .warnbox.na { background:#F0EDE8; color:var(--text-light); }
-#v2root .shares { display:flex; flex-direction:column; gap:6px; }
-#v2root .share-row { display:flex; align-items:center; gap:10px; font-size:0.88rem; }
-#v2root .share-row label { text-transform:none; letter-spacing:0; font-weight:500; margin:0; display:flex; align-items:center; gap:6px; min-width:140px; }
-#v2root .share-row input[type=number] { width:80px; padding:6px 8px; }
-#v2root .share-row input[type=checkbox] { width:auto; }
+/* "Used by": one chip per person (the tick box sits inside, out of sight); the weights line under the chips only for an unequal split. */
+#v2root .uchips { display:flex; flex-wrap:wrap; gap:8px; }
+#v2root .uchip { position:relative; display:inline-flex; align-items:center; height:34px; padding:0 14px; margin:0; border-radius:100px; border:1.5px solid var(--border); background:var(--white); color:var(--text); font:500 0.86rem var(--font-sans); text-transform:none; letter-spacing:0; cursor:pointer; user-select:none; }
+#v2root .uchip input { position:absolute; opacity:0; width:1px; height:1px; margin:0; pointer-events:none; }
+#v2root .uchip:hover { border-color:var(--primary); }
+#v2root .uchip:has(input:checked) { background:var(--primary); border-color:var(--primary); color:#fff; }
+#v2root .uchip:has(input:checked) span::before { content:'✓'; margin-right:6px; font-weight:700; }
+#v2root .uchip:has(input:focus-visible) { box-shadow:0 0 0 3px rgba(74,107,138,0.3); }
+#v2root .ushares { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; margin-top:12px; padding:10px 12px; border-radius:var(--radius); background:#F4F6F8; font-size:0.86rem; }
+#v2root .ush { display:inline-flex; align-items:center; gap:8px; }
+#v2root .ush input[type=number] { width:64px; padding:5px 8px; text-align:center; }
+#v2root .ush .mini { font-variant-numeric:tabular-nums; }
+#v2root .ufoot { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:10px; min-height:18px; }
+#v2root .ufoot .hint { margin:0; }
+#v2root .ufoot .linkbtn { margin-left:auto; }
 /* Any text box, date box, number box, dropdown or text area that has no style of its own gets the portal look (zero specificity: anything with its own rule wins). */
 :where(#v2root) :where(input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=hidden]), select, textarea) { padding:7px 12px; border:1.5px solid var(--border); border-radius:var(--radius); font-family:var(--font-sans); font-size:0.85rem; color:var(--text); background:var(--white); max-width:100%; }
 :where(#v2root) :where(input, select, textarea):focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(74,107,138,0.1); }
@@ -503,9 +513,11 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   function sharesHtml(usedBy) {
     const sel = Object.fromEntries((usedBy || []).map((u) => [u.key, u.weight || 1]));
     const people = [...S.dir.filter((m) => m.active || sel[m.key]).map((m) => ({ key: m.key, label: m.label })), { key: 'external', label: 'External' }];
-    // Ticks only: the cost is split equally. The weight boxes appear only after "Unequal split…" (or for an item saved with unequal weights).
-    return `<div class="shares">${people.map((p) => `<div class="share-row"><label><input type="checkbox" data-used="${esc(p.key)}" ${sel[p.key] ? 'checked' : ''}> ${esc(p.label)}</label><input type="number" min="0" step="any" data-weight="${esc(p.key)}" value="${esc(sel[p.key] || 1)}" title="Weight (share)" aria-label="Weight (share) for ${esc(p.label)}" style="visibility:hidden"></div>`).join('')}</div>
-      <div style="margin-top:6px"><button type="button" class="linkbtn" id="f-unequal">Unequal split…</button><button type="button" class="linkbtn" id="f-equal">Split equally again</button></div>`;
+    // One chip per person (a tick box underneath): the cost is split equally and nothing more is shown. "Unequal split…" opens a line of
+    // weights under the chips with each person's % and euros (it is open from the start for an item saved with unequal weights).
+    return `<div class="uchips">${people.map((p) => `<label class="uchip"><input type="checkbox" data-used="${esc(p.key)}" ${sel[p.key] ? 'checked' : ''}><span>${esc(p.label)}</span></label>`).join('')}</div>
+      <div class="ushares" id="f-shares">${people.map((p) => `<span class="ush" data-ush="${esc(p.key)}">${esc(p.label)} <input type="number" min="0" step="any" data-weight="${esc(p.key)}" value="${esc(sel[p.key] || 1)}" aria-label="Share for ${esc(p.label)}"><span class="mini" data-wres="${esc(p.key)}"></span></span>`).join('')}</div>
+      <div class="ufoot"><span class="hint" id="f-usedhint"></span><button type="button" class="linkbtn" id="f-unequal">Unequal split…</button><button type="button" class="linkbtn" id="f-equal">Split equally again</button></div>`;
   }
   const unequalWeights = (usedBy) => (usedBy || []).length > 1 && new Set(usedBy.map((u) => Number(u.weight) || 1)).size > 1;
   function openItem(id, preset) {
@@ -538,7 +550,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="form-row">${fld('Paid with', 'paidWith', `<select id="f-paidwith">${paidWithOptions(d.paidWith)}</select>`)}
           <div id="f-personalwrap">${fld('Paid personally by', 'paidPersonallyBy', `<select id="f-personal"><option value="">Choose…</option>${S.dir.filter((m) => m.active || m.key === d.paidPersonallyBy).map((m) => `<option value="${esc(m.key)}"${d.paidPersonallyBy === m.key ? ' selected' : ''}>${esc(m.label)}</option>`).join('')}</select>`)}
             <div class="checkline" style="margin-bottom:14px"><input type="checkbox" id="f-reimb" ${d.reimbursement?.status === 'reimbursed' ? 'checked' : ''} ${d.reimbursement?.movementId ? 'disabled' : ''}><label for="f-reimb">${d.reimbursement?.movementId ? 'Reimbursed by a bank transfer' : 'Already reimbursed (outside the bank)'}${tip('reimbursed')}</label></div></div></div>
-        ${fld('Used by', 'usedBy', sharesHtml(d.usedBy) + '<p class="hint" id="f-usedhint">Nobody ticked = a company cost (shown as "Company" in Reports).</p>')}
+        ${fld('Used by', 'usedBy', sharesHtml(d.usedBy))}
       </div>
       <div class="sect" id="f-docsect"><div class="sect-title" id="f-doctitle">Paperwork</div>
         <div class="warnbox" id="f-warn"></div>
@@ -607,10 +619,19 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       $('f-split').closest('.checkline').style.display = expense ? '' : 'none';
       if (split) paintLines();
       const ticked = m.querySelectorAll('[data-used]:checked').length;
-      m.querySelectorAll('[data-used]').forEach((c) => { const w = m.querySelector(`[data-weight="${c.dataset.used}"]`); w.style.visibility = c.checked && S.edit.unequal ? '' : 'hidden'; });
+      if (ticked < 2) S.edit.unequal = false;
+      const showShares = S.edit.unequal && ticked > 1;
+      $('f-shares').style.display = showShares ? '' : 'none';
+      const on = [...m.querySelectorAll('[data-used]:checked')].map((c) => c.dataset.used);
+      m.querySelectorAll('[data-ush]').forEach((s) => { s.style.display = on.includes(s.dataset.ush) ? '' : 'none'; });
+      if (showShares) {
+        const total = parseFloat($('f-amount').value) || 0;
+        const parts = splitShares(total, on.map((k) => ({ key: k, weight: Number(m.querySelector(`[data-weight="${k}"]`).value) > 0 ? Number(m.querySelector(`[data-weight="${k}"]`).value) : 1 })));
+        parts.forEach((x) => { const el = m.querySelector(`[data-wres="${x.key}"]`); if (el) el.textContent = `→ ${total ? Math.round((x.amount / total) * 100) : 0}% · ${eur.format(x.amount)}`; });
+      }
       $('f-unequal').style.display = ticked > 1 && !S.edit.unequal ? '' : 'none';
-      $('f-equal').style.display = S.edit.unequal ? '' : 'none';
-      $('f-usedhint').textContent = ticked === 0 ? 'Nobody ticked = a company cost (shown as "Company" in Reports).' : ticked > 1 && !S.edit.unequal ? 'Split equally between the people ticked.' : ticked > 1 ? 'Split by the weights next to each name.' : '';
+      $('f-equal').style.display = showShares ? '' : 'none';
+      $('f-usedhint').textContent = ticked === 0 ? 'Nobody chosen = a company cost (shown as "Company" in Reports).' : '';
       const ds = docStatus(readDraft()), box = $('f-warn');
       const reminder = company.companyName || company.companyNif ? `Ask for the invoice in the name of <strong>${esc(company.companyName || '')}</strong>${company.companyNif ? `, NIF <strong>${esc(company.companyNif)}</strong>` : ''}${company.companyAddress ? `, ${esc(String(company.companyAddress).replace(/\n/g, ', '))}` : ''}.` : 'Fill in Company details in Settings to see the name and NIF to ask for.';
       const msgs = { ok: 'Invoice complete: file, our NIF, supplier, tax ID and number are all there.', incomplete: `Invoice details missing: ${ds.missing.map((x) => ({ supplierName: 'supplier name', supplierTaxId: 'supplier NIF / VAT ID', docNumber: 'invoice number' }[x] || x)).join(', ')}.`, noNif: 'The invoice must show our company NIF. Set “Invoice shows our NIF” to Yes once you have checked, or ask the supplier to reissue it.', receiptOnly: 'A receipt or simplified invoice is not enough for tax: ask the supplier for an invoice with our NIF.', noDocument: 'No document yet: attach the invoice (PDF or photo) and pick its type.', notRequired: 'No document needed for this item.', attached: 'A file is attached.', incomeMissing: `Attach the ${ds.need || 'supporting document'} (PDF or photo) under Notes and files, or tick “No document needed” and say why.` };

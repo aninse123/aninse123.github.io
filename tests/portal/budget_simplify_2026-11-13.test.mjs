@@ -26,7 +26,11 @@ ok('S2: the fold shows a one-line summary and opens by itself for a foreign coun
 ok('S2: an item that already has invoice details opens with them shown', /\['f-taxid', 'f-docnum', 'f-atcud', 'f-invdate', 'f-vatrate'\]\.some\(/.test(v2));
 
 // S3 — Used by as ticks
-ok('S3: the weight boxes start hidden; "Unequal split…" shows them, "Split equally again" resets them to 1', /style="visibility:hidden"><\/div>`\)\.join\(''\)\}<\/div>/.test(v2) && /id="f-unequal">Unequal split…/.test(v2) && /\$\('f-equal'\)\.addEventListener\('click', \(\) => \{ S\.edit\.unequal = false; m\.querySelectorAll\('\[data-weight\]'\)\.forEach\(\(w\) => \{ w\.value = 1; \}\)/.test(v2));
+// 15 Nov 2026: the people are chips; the weights sit on their own line under the chips, shown only for an unequal split, with % and euros.
+ok('S3: one chip per person with the tick box inside', /<label class="uchip"><input type="checkbox" data-used="\$\{esc\(p\.key\)\}"/.test(v2) && /#v2root \.uchip:has\(input:checked\)/.test(v2));
+ok('S3: the weights line is shown only for an unequal split with two or more people, one box per person picked, with % and euros', /const showShares = S\.edit\.unequal && ticked > 1;/.test(v2) && /\$\('f-shares'\)\.style\.display = showShares \? '' : 'none'/.test(v2) && /s\.style\.display = on\.includes\(s\.dataset\.ush\)/.test(v2) && /el\.textContent = `→ \$\{total \? Math\.round/.test(v2));
+ok('S3: an equal split shows no split text; only "nobody chosen" is explained', /\$\('f-usedhint'\)\.textContent = ticked === 0 \? 'Nobody chosen = a company cost \(shown as "Company" in Reports\)\.' : ''/.test(v2));
+ok('S3: "Unequal split…" opens the weights, "Split equally again" resets them to 1', /id="f-unequal">Unequal split…/.test(v2) && /\$\('f-equal'\)\.addEventListener\('click', \(\) => \{ S\.edit\.unequal = false; m\.querySelectorAll\('\[data-weight\]'\)\.forEach\(\(w\) => \{ w\.value = 1; \}\)/.test(v2));
 ok('S3: an item saved with unequal weights opens with the boxes shown', /unequal: unequalWeights\(\(it \|\| preset \|\| \{\}\)\.usedBy\)/.test(v2) && /new Set\(usedBy\.map\(\(u\) => Number\(u\.weight\) \|\| 1\)\)\.size > 1/.test(v2));
 ok('S3: without an unequal split every person ticked is saved with weight 1', /weight: S\.edit\.unequal && w > 0 \? w : 1/.test(v2));
 
