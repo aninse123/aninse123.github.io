@@ -34,7 +34,7 @@ const TIPS = {
   purpose: 'Why we spent it: a field visit, sourcing, investor relations… A taxi to a company is Category Transport and Purpose Field visit.',
   tags: 'Free labels such as "Spain trip". Several per item; type and press comma. Each tag gets its own total.',
   paidWith: 'Which company account or card the money left from. Choose "Paid personally" when one of you paid with your own money and the company pays you back later.',
-  paidPersonallyBy: 'The partner whose own money was used. The Overview lists what the company still owes each of you.',
+  paidPersonallyBy: 'The partner whose own money was used. Reports lists what the company still owes each of you.',
   bankNames: 'The name the bank writes on transfers from you, copied from a bank line. It lets the Inbox recognise money from you as a partner loan.',
   usedBy: 'Who the expense was for, not whose card paid. Click one or more names; with several, the cost is split equally. Use "Unequal split…" to give someone a bigger share: each name then gets a share, and you see their % and euros.',
   docType: 'What paperwork you have. For tax the company needs an invoice with its NIF; a receipt or simplified invoice alone is not enough.',
@@ -49,7 +49,7 @@ const TIPS = {
   vatAmount: 'The VAT amount on the invoice. Filled in from the rate (assuming the amount includes VAT) while you have not typed it. With several rates on one invoice, type the total VAT shown on it.',
   vatDeductible: 'Whether the company can get this VAT back. The app does not decide: leave "Ask the accountant" unless they told you. "No" takes the item out of the recoverable total.',
   currency: 'The currency of the invoice. The amount above is always the euros that left the bank.',
-  shared: 'Creating a pack in Packs marks its items as shared with the accountant. Use "Mark as shared outside a pack" only for something you sent them another way, for example by email. The date and your name are saved.',
+  shared: 'Creating a pack in the Accountant tab marks its items as shared with the accountant. Use "Mark as shared outside a pack" only for something you sent them another way, for example by email. The date and your name are saved.',
   incomeType: 'Capital call = an investor paid in. Partner loan = a partner lent money. Refunds and partner reimbursements lower costs.',
   waived: 'Tick for items that never get an invoice (a tip, a toll). Say why; it stops the document warning.',
   counterparty: 'Who the money came from, as written in the bank line.',
@@ -139,6 +139,8 @@ const CSS = `
 @media (max-width:768px){ #v2root .summary-grid.three { grid-template-columns:1fr; } }
 #v2root .setjump { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
 #v2root .setjump .tagchip { font-size:0.8rem; padding:4px 12px; }
+#v2root .period { flex-wrap:wrap; }
+#v2root .period .btn.on { background:var(--primary); border-color:var(--primary); color:#fff; }
 #v2root .section { scroll-margin-top:16px; }
 #v2root details.fold { border:1px dashed var(--border); border-radius:var(--radius); padding:10px 14px; margin-bottom:14px; }
 #v2root details.fold > summary { cursor:pointer; font-weight:600; font-size:0.88rem; color:var(--primary); }
@@ -158,7 +160,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
 
   // ── State ──
   const S = {
-    tab: 'overview', items: [], accounts: [], cards: [], suppliers: [], people: {}, company: {}, lists: { categories: [], purposes: [] },
+    tab: 'reports', items: [], accounts: [], cards: [], suppliers: [], people: {}, company: {}, lists: { categories: [], purposes: [] },
     movements: [], imports: [], investors: [], packs: [], packLinks: {}, dir: [], filter: { search: '', kind: '', category: '', purpose: '', tag: '', doc: '', shared: '', usedBy: '', from: '', to: '', archived: false, review: false, vat: '', reimb: '' },
     sort: { field: 'date', dir: 'desc' }, selected: new Set(), edit: null,
   };
@@ -244,11 +246,10 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
     root.innerHTML = `
       <div class="v2-tabs" id="v2tabs">
-        <button data-tab="overview">Overview</button>
-        <button data-tab="items">Items${unrev ? `<span class="cnt" title="Old items to review">${unrev}</span>` : ''}</button>
         <button data-tab="reports">Reports</button>
-        <button data-tab="packs" data-perm="budget.edit">Packs</button>
+        <button data-tab="items">Items${unrev ? `<span class="cnt" title="Old items to review">${unrev}</span>` : ''}</button>
         <button data-tab="inbox" data-perm="budget.accounts">Inbox${inboxCount() ? `<span class="cnt" title="Bank lines waiting">${inboxCount()}</span>` : ''}</button>
+        <button data-tab="packs" data-perm="budget.edit">Accountant</button>
         <button data-tab="settings">Settings</button>
       </div>
       <div id="v2body"></div>
@@ -257,12 +258,13 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     root.querySelector('#v2modal').addEventListener('click', (e) => { if (e.target.id === 'v2modal') closeModal(); });
   }
   // Six tabs since 13 Nov 2026: the bank import lives at the top of the Inbox; bank accounts and cards, partner profiles and suppliers are sections of Settings.
-  const TAB_MOVED = { bank: 'inbox', accounts: 'settings', suppliers: 'settings' };
+  // Five since 15 Nov 2026: Overview is the top of Reports; the tab with the packs is labelled Accountant (its key stays 'packs').
+  const TAB_MOVED = { bank: 'inbox', accounts: 'settings', suppliers: 'settings', overview: 'reports' };
   function render() {
     if (TAB_MOVED[S.tab]) S.tab = TAB_MOVED[S.tab];
     root.querySelectorAll('#v2tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.tab));
     const body = root.querySelector('#v2body');
-    ({ overview: renderOverview, items: renderItems, reports: renderReports, packs: renderPacks, inbox: renderInbox, settings: renderSettings }[S.tab] || renderOverview)(body);
+    ({ items: renderItems, reports: renderReports, packs: renderPacks, inbox: renderInbox, settings: renderSettings }[S.tab] || renderReports)(body);
   }
   // The spending plan ("Plan allocation" items) is hidden until it is used: on when ticked in Settings, or, while nobody has chosen, when plan items already exist.
   const planOn = () => (typeof S.company.usePlan === 'boolean' ? S.company.usePlan : S.items.some((i) => i.kind === 'plan' && !i.archived));
@@ -270,52 +272,6 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   const openModal = (html) => { root.querySelector('#v2modalBox').innerHTML = html; root.querySelector('#v2modal').classList.add('open'); };
   const closeModal = () => { root.querySelector('#v2modal').classList.remove('open'); S.edit = null; };
   const refresh = async () => { await loadAll(); shell(); render(); };
-
-  // ── Overview ──
-  function renderOverview(body) {
-    const o = overview(S.items), vat = vatSummary(S.items);
-    const costs = S.items.filter((i) => i.kind === 'expense' && !i.archived);
-    const warn = costs.filter((i) => docStatus(i).level === 'warn').length;
-    const incWarn = S.items.filter((i) => i.kind === 'income' && !i.archived && docStatus(i).level === 'warn').length;
-    const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
-    const owed = partnerBalances(S.items, S.movements);
-    const byCat = {}, byPur = {};
-    costs.forEach((i) => itemLines(i).forEach((l) => { byCat[l.categoryId || 'other'] = (byCat[l.categoryId || 'other'] || 0) + l.amount; byPur[l.purposeId || ''] = (byPur[l.purposeId || ''] || 0) + l.amount; }));
-    const tbl = (m, lab) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(lab(k) || 'No purpose yet')}</td><td class="num">${eur.format(v)}</td></tr>`).join('') || '<tr class="empty-row"><td colspan="2">Nothing yet.</td></tr>';
-    const tags = tagTotals(S.items).slice(0, 12);
-    body.innerHTML = `
-      <div class="section"><div class="section-header"><h2 class="section-title">Overview</h2></div>
-        <div class="summary-grid ${planOn() ? '' : 'three'}">
-          <div class="stat-card"><div class="stat-card__label">Money received</div><div class="stat-card__value">${eur.format(o.received)}</div><div class="stat-card__sub">Capital ${eur.format(o.capital)} · loans ${eur.format(o.loans)} · interest ${eur.format(o.interest)}</div></div>
-          <div class="stat-card"><div class="stat-card__label">Costs</div><div class="stat-card__value">${eur.format(o.costs)}</div><div class="stat-card__sub">${costs.length} expense${costs.length === 1 ? '' : 's'}, net of refunds</div></div>
-          <div class="stat-card"><div class="stat-card__label">Balance</div><div class="stat-card__value stat-card__value--${o.balance < 0 ? 'bad' : 'good'}">${eur.format(o.balance)}</div><div class="stat-card__sub">Received − costs</div></div>
-          ${planOn() ? `<div class="stat-card"><div class="stat-card__label">Plan used</div><div class="stat-card__value">${o.pctOfPlan == null ? '—' : o.pctOfPlan.toFixed(0) + '%'}</div><div class="stat-card__sub">${o.plan ? `Plan ${eur.format(o.plan)}` : 'No plan allocated yet'}</div>${o.pctOfPlan == null ? '' : `<div class="progress"><div class="progress__bar" style="width:${Math.min(100, o.pctOfPlan)}%"></div></div>`}</div>` : ''}
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
-          ${warn ? `<button class="btn btn--ghost btn--sm" data-go="doc">⚠ ${warn} expense${warn === 1 ? '' : 's'} with missing or wrong paperwork</button>` : '<span class="mini">✓ Every expense has its paperwork.</span>'}
-          ${incWarn ? `<button class="btn btn--ghost btn--sm" data-go="doc">⚠ ${incWarn} money-received item${incWarn === 1 ? '' : 's'} without the document</button>` : ''}
-          ${unrev ? `<button class="btn btn--ghost btn--sm" data-go="review">⚠ ${unrev} old item${unrev === 1 ? '' : 's'} to review</button>` : ''}
-          ${owed.length ? `<button class="btn btn--ghost btn--sm" data-go="owed" title="Expenses paid with a partner's own money and loans not yet paid back">The company owes: ${owed.map((x) => `${esc(personLabel(x.key))} ${eur.format(x.total)}`).join(' · ')}</button>` : ''}
-        </div>
-      </div>
-      <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">VAT paid ${tip('vatDeductible')}</h2></div>
-        <div class="summary-grid">
-          <div class="stat-card" title="All VAT on expenses, whatever its status"><div class="stat-card__label">Total VAT paid</div><div class="stat-card__value">${eur.format(vat.total)}</div><div class="stat-card__sub">On ${costs.filter((i) => vatBucket(i) !== 'none').length} expense${costs.filter((i) => vatBucket(i) !== 'none').length === 1 ? '' : 's'} with a VAT amount</div></div>
-          <div class="stat-card" title="VAT refunds booked in Items as money received"><div class="stat-card__label">VAT recovered</div><div class="stat-card__value stat-card__value--good">${eur.format(vat.recovered)}</div><div class="stat-card__sub">Booked as "VAT refund" in money received</div></div>
-          <div class="stat-card" title="Potentially recoverable plus foreign VAT, minus what is already back"><div class="stat-card__label">Still to recover</div><div class="stat-card__value">${eur.format(vat.toRecover)}</div><div class="stat-card__sub">Potential, the accountant decides</div></div>
-          <div class="stat-card" title="${esc(VAT_BUCKETS.atRisk.hint)}"><div class="stat-card__label">At risk</div><div class="stat-card__value ${vat.atRisk > 0 ? 'stat-card__value--bad' : ''}">${eur.format(vat.atRisk)}</div><div class="stat-card__sub">${vat.atRisk > 0 ? '<button class="btn btn--ghost btn--sm" data-go="vatrisk">Show them</button>' : 'Paperwork is in order'}</div></div>
-        </div>
-        <p class="mini" style="margin-top:10px">Of the total: ${eur.format(vat.recoverable)} potentially recoverable (complete invoice with our NIF), ${eur.format(vat.atRisk)} at risk (paperwork to fix), ${eur.format(vat.foreign)} foreign, ${eur.format(vat.notDeductible)} marked not deductible. The app only groups the VAT; your accountant decides what can be recovered. When a refund arrives, add it in Items as money received, type "VAT refund".${vat.missing ? ` ${vat.missing} complete invoice${vat.missing === 1 ? ' has' : 's have'} no VAT amount typed yet.` : ''}</p>
-      </div>
-      <div class="two">
-        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Costs by category</h2></div><div class="card"><table><tbody>${tbl(byCat, catLabel)}</tbody></table></div></div>
-        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Costs by purpose</h2></div><div class="card"><table><tbody>${tbl(byPur, purLabel)}</tbody></table></div></div>
-      </div>
-      <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per tag</h2></div>
-        <div class="card" style="padding:14px 16px;">${tags.length ? tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t.tag)}">${esc(t.tag)} · ${eur.format(t.total)}<small>${t.count}</small></button>`).join('') : '<span class="mini">No tags yet. Add tags such as "Spain trip" on an item.</span>'}</div></div>`;
-    body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { S.filter = { ...S.filter, doc: b.dataset.go === 'doc' ? 'warn' : '', review: b.dataset.go === 'review', vat: b.dataset.go === 'vatrisk' ? 'atRisk' : '', reimb: b.dataset.go === 'owed' ? 'owed' : '' }; S.tab = 'items'; render(); }));
-    body.querySelectorAll('[data-tagfilter]').forEach((b) => b.addEventListener('click', () => { S.filter.tag = b.dataset.tagfilter; S.tab = 'items'; render(); }));
-  }
 
   // ── Items ──
   function filtered() {
@@ -447,7 +403,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     body.querySelector('#bulkMore')?.addEventListener('change', (e) => {
       const a = e.target.value; e.target.value = ''; if (!a) return;
       const n = S.selected.size;
-      if (confirm(a === 'share' ? `Mark ${n} item(s) as shared with the accountant?\n\nOnly for items you sent another way, for example by email. Creating a pack in Packs marks its items for you.` : `Mark ${n} item(s) as not shared? They go in the next pack again.`)) bulk(a, body);
+      if (confirm(a === 'share' ? `Mark ${n} item(s) as shared with the accountant?\n\nOnly for items you sent another way, for example by email. Creating a pack in the Accountant tab marks its items for you.` : `Mark ${n} item(s) as not shared? They go in the next pack again.`)) bulk(a, body);
     });
     body.querySelector('#v2new').addEventListener('click', () => openItem(null));
     body.querySelector('#v2export').addEventListener('click', () => exportCsv(list));
@@ -681,7 +637,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const paintShared = () => {
       const on = $('f-shared').checked, kept = on && existing?.sharedAt;
       const pk = kept && existing.packId ? S.packs.find((k) => k.id === existing.packId) : null;
-      $('f-sharedtxt').innerHTML = !on ? 'Not shared yet: it goes in the next pack (Packs tab).'
+      $('f-sharedtxt').innerHTML = !on ? 'Not shared yet: it goes in the next pack (Accountant tab).'
         : kept ? `✓ Shared ${fmtDate(String(existing.sharedAt).slice(0, 10))}${pk ? ` in the pack for ${fmtDate(pk.from)} – ${fmtDate(pk.to)}` : ' outside a pack'}${existing.sharedBy ? ` by ${esc(String(existing.sharedBy).split('@')[0])}` : ''}.${changedSince(existing) ? ' <span style="color:#8A5A00">⚠ Changed since: it can go in the next pack.</span>' : ''}`
         : '✓ Will be marked as shared outside a pack when you save.';
       $('f-sharedbtn').textContent = on ? 'Mark as not shared' : 'Mark as shared outside a pack';
@@ -971,7 +927,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="section" id="set-plan"><div class="section-header"><h2 class="section-title">Spending plan</h2></div>
         <div class="card" style="padding:20px 22px">
           <div class="checkline"><input type="checkbox" id="pl-on" ${planOn() ? 'checked' : ''} ${can('budget.edit') ? '' : 'disabled'}><label for="pl-on">Use a spending plan</label></div>
-          <p class="hint" style="margin:10px 0 0">A plan sets how much you mean to spend per category or purpose, for example the budget agreed with the investors. It is entered as "Plan allocation" items, which are not money. With the plan on, Items offers "Plan allocation", Overview shows how much of the plan is used and Reports compares plan and spending.${planItems ? ` ${planItems} plan item${planItems === 1 ? '' : 's'} already exist${planItems === 1 ? 's' : ''}; with the plan off they stay saved and can still be edited.` : ''}</p>
+          <p class="hint" style="margin:10px 0 0">A plan sets how much you mean to spend per category or purpose, for example the budget agreed with the investors. It is entered as "Plan allocation" items, which are not money. With the plan on, Items offers "Plan allocation", Reports shows how much of the plan is used and Reports compares plan and spending.${planItems ? ` ${planItems} plan item${planItems === 1 ? '' : 's'} already exist${planItems === 1 ? 's' : ''}; with the plan off they stay saved and can still be edited.` : ''}</p>
           <span class="mini" id="pl-meta"></span></div></div>
       <div class="two" id="set-lists">${listEditor('categories', 'Categories', work.categories)}${listEditor('purposes', 'Purposes', work.purposes)}</div>
       <div class="section" id="set-backup"><div class="section-header"><h2 class="section-title">Backup and old items</h2></div>
@@ -1328,7 +1284,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Documents to fix (${docWarn.length})</h2>${docWarn.length > 8 ? '<div class="section-actions"><button class="btn btn--ghost btn--sm" id="i-alldocs">Show all in Items</button></div>' : ''}</div>
         <div class="card"><div class="table-wrap"><table><tbody>${docWarn.length ? docWarn.slice(0, 8).map(itemLine).join('') : '<tr class="empty-row"><td colspan="5">Every item has its paperwork.</td></tr>'}</tbody></table></div></div></div>
       <div class="two">
-        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Not shared with the accountant (${notShared.length})</h2></div><div class="card" style="padding:14px 16px"><span class="mini">${notShared.length ? 'They go in the next pack: creating the pack in Packs marks them as shared.' : 'Everything has been shared.'}</span> ${notShared.length ? '<button class="btn btn--ghost btn--sm" id="i-notshared">Show them</button> <button class="btn btn--ghost btn--sm" id="i-packs" data-perm="budget.edit">Open Packs</button>' : ''}</div></div>
+        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Not shared with the accountant (${notShared.length})</h2></div><div class="card" style="padding:14px 16px"><span class="mini">${notShared.length ? 'They go in the next pack: creating the pack in the Accountant tab marks them as shared.' : 'Everything has been shared.'}</span> ${notShared.length ? '<button class="btn btn--ghost btn--sm" id="i-notshared">Show them</button> <button class="btn btn--ghost btn--sm" id="i-packs" data-perm="budget.edit">Open the Accountant tab</button>' : ''}</div></div>
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">To reimburse</h2></div><div class="card" style="padding:14px 16px">${bal.length ? bal.map((x) => `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:3px 0"><span class="mini" style="color:var(--text)">The company owes <strong>${esc(personLabel(x.key))}</strong> ${fmtMoney(x.total)}${x.expenses ? ` · ${fmtMoney(x.expenses)} for ${x.expenseCount} expense${x.expenseCount === 1 ? '' : 's'}` : ''}${x.loansOwed > 0 ? ` · ${fmtMoney(x.loansOwed)} lent` : ''}</span>${x.expenses ? '<button class="btn btn--ghost btn--sm" data-owedshow="1">Show</button>' : ''}</div>`).join('') : '<span class="mini">Nobody is owed money.</span>'}</div></div></div>
       ${ignored.length ? `<div class="section"><button class="btn btn--ghost btn--sm" id="i-showign">${showIgnored ? 'Hide' : 'Show'} ${ignored.length} ignored line${ignored.length === 1 ? '' : 's'}</button>${showIgnored ? `<div class="card" style="margin-top:10px"><div class="table-wrap"><table><tbody>${ignored.map((m) => `<tr><td>${fmtDate(m.posted)}</td><td>${esc(cleanDescription(m.description))}</td><td class="num">${fmtMoney(m.amount)}</td><td style="text-align:right" data-perm="budget.import"><button class="btn btn--ghost btn--sm" data-back="${m.id}">Restore</button></td></tr>`).join('')}</tbody></table></div></div>` : ''}</div>` : ''}`;
     const by = (id) => S.movements.find((m) => m.id === id);
@@ -1403,30 +1359,89 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     reads(docs.length || 1);
     return docs.slice(0, 12).map((d) => ({ id: d.id, name: d.data().name || d.data().nameKey || '', nif: d.data().nif || '' }));
   }
-  // ── Reports (Stage 3) ──
-  const repRange = { from: '', to: '' };
+  // ── Reports (Overview merged in on 15 Nov 2026) ──
+  // One period picker drives every figure on the page; the to-do warnings under the cards (paperwork, old items, what the company owes) always count everything.
+  const PERIODS = [['all', 'All time'], ['year', 'This year'], ['q', 'Last 3 months'], ['month', 'This month'], ['custom', 'From – to']];
+  const repRange = { preset: 'all', from: '', to: '' };
+  function periodRange() {
+    const now = new Date(), iso = (d) => d.toISOString().slice(0, 10), today = iso(now);
+    if (repRange.preset === 'year') return { from: today.slice(0, 4) + '-01-01', to: '' };
+    if (repRange.preset === 'month') return { from: today.slice(0, 7) + '-01', to: '' };
+    if (repRange.preset === 'q') { const d = new Date(now); d.setMonth(d.getMonth() - 3); return { from: iso(d), to: '' }; }
+    if (repRange.preset === 'custom') return { from: repRange.from, to: repRange.to };
+    return { from: '', to: '' };
+  }
   function renderReports(body) {
-    const r = companyReport(S.items, repRange), pr = personReport(S.items, repRange), pv = planVsActual(S.items, repRange);
+    const rg = periodRange();
+    const inPer = (d) => (!rg.from || (d && d >= rg.from)) && (!rg.to || (d && d <= rg.to));
+    const items = S.items.filter((i) => i.kind === 'plan' || inPer(i.date));   // plan allocations have no period: "Plan used" compares the period's costs with the whole plan
+    const o = overview(items), vat = vatSummary(items);
+    const costs = items.filter((i) => i.kind === 'expense' && !i.archived);
+    const warn = S.items.filter((i) => i.kind === 'expense' && !i.archived && docStatus(i).level === 'warn').length;
+    const incWarn = S.items.filter((i) => i.kind === 'income' && !i.archived && docStatus(i).level === 'warn').length;
+    const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
+    const owed = partnerBalances(S.items, S.movements);
+    const byCat = {}, byPur = {};
+    costs.forEach((i) => itemLines(i).forEach((l) => { byCat[l.categoryId || 'other'] = (byCat[l.categoryId || 'other'] || 0) + l.amount; byPur[l.purposeId || ''] = (byPur[l.purposeId || ''] || 0) + l.amount; }));
+    const tbl = (m, lab) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(lab(k) || 'No purpose yet')}</td><td class="num">${eur.format(v)}</td></tr>`).join('') || '<tr class="empty-row"><td colspan="2">Nothing yet.</td></tr>';
+    const tags = tagTotals(items).slice(0, 12);
+    const r = companyReport(S.items, rg), pr = personReport(S.items, rg), pv = planVsActual(S.items, rg);
     const top = (m, n = 3) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${esc(catLabel(k))} ${eur.format(v)}`).join(' · ');
     const bar = (pct) => pct == null ? '' : `<div class="progress" style="margin-top:4px;width:120px"><div class="progress__bar" style="width:${Math.min(100, pct)}%;${pct > 100 ? 'background:var(--danger)' : ''}"></div></div>`;
     const planTable = (rows, lab) => `<div class="card"><div class="table-wrap"><table><thead><tr><th></th><th class="num">Planned</th><th class="num">Spent</th><th class="num">Used</th><th class="num">Left</th></tr></thead><tbody>${rows.length ? rows.map((x) => `<tr><td>${esc(lab(x.id) || x.id)}</td><td class="num">${x.planned ? eur.format(x.planned) : '—'}</td><td class="num">${eur.format(x.actual)}</td><td class="num">${x.pct == null ? '—' : x.pct + '%'}${bar(x.pct)}</td><td class="num" style="${x.planned && x.left < 0 ? 'color:var(--danger)' : ''}">${x.planned ? eur.format(x.left) : '—'}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="5">Nothing yet.</td></tr>'}</tbody></table></div></div>`;
-    body.innerHTML = `<div class="section"><div class="section-header"><h2 class="section-title">Reports</h2>
-        <div class="section-actions"><span class="filter-bar__label">From</span><input type="date" id="rFrom" value="${esc(repRange.from)}"><span class="filter-bar__label">To</span><input type="date" id="rTo" value="${esc(repRange.to)}"></div></div>
-        <p class="mini" style="margin:-6px 0 0">Costs are picked by the expense's date. Archived items are left out.</p></div>
-      <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per company</h2></div>
+    const periodText = rg.from || rg.to ? `${rg.from ? fmtDate(rg.from) : 'The start'} to ${rg.to ? fmtDate(rg.to) : 'today'}.` : 'Everything since the start.';
+    const jump = [['rep-summary', 'Summary'], ['rep-vat', 'VAT'], ['rep-cat', 'Category and purpose'], ['rep-people', 'People'], ['rep-companies', 'Companies'], ['rep-tags', 'Tags'], ...(planOn() ? [['rep-plan', 'Plan']] : [])];
+    body.innerHTML = `
+      <div class="section" id="rep-summary"><div class="section-header"><h2 class="section-title">Reports</h2>
+        <div class="section-actions period" role="group" aria-label="Period">${PERIODS.map(([id, l]) => `<button type="button" class="btn btn--ghost btn--sm${repRange.preset === id ? ' on' : ''}" data-period="${id}" aria-pressed="${repRange.preset === id}">${l}</button>`).join('')}
+          ${repRange.preset === 'custom' ? `<span class="filter-bar__label">From</span><input type="date" id="rFrom" value="${esc(repRange.from)}"><span class="filter-bar__label">To</span><input type="date" id="rTo" value="${esc(repRange.to)}">` : ''}</div></div>
+        <p class="mini" style="margin:-6px 0 12px">${periodText} Costs are picked by the expense's date. Archived items are left out.</p>
+        <div class="setjump" role="navigation" aria-label="Report sections">${jump.map(([id, l]) => `<button type="button" class="tagchip" data-jump="${id}">${l}</button>`).join('')}</div>
+        <div class="summary-grid ${planOn() ? '' : 'three'}">
+          <div class="stat-card"><div class="stat-card__label">Money received</div><div class="stat-card__value">${eur.format(o.received)}</div><div class="stat-card__sub">Capital ${eur.format(o.capital)} · loans ${eur.format(o.loans)} · interest ${eur.format(o.interest)}</div></div>
+          <div class="stat-card"><div class="stat-card__label">Costs</div><div class="stat-card__value">${eur.format(o.costs)}</div><div class="stat-card__sub">${costs.length} expense${costs.length === 1 ? '' : 's'}, net of refunds</div></div>
+          <div class="stat-card"><div class="stat-card__label">Balance</div><div class="stat-card__value stat-card__value--${o.balance < 0 ? 'bad' : 'good'}">${eur.format(o.balance)}</div><div class="stat-card__sub">${rg.from || rg.to ? 'Received − costs in this period' : 'Received − costs'}</div></div>
+          ${planOn() ? `<div class="stat-card"><div class="stat-card__label">Plan used</div><div class="stat-card__value">${o.pctOfPlan == null ? '—' : o.pctOfPlan.toFixed(0) + '%'}</div><div class="stat-card__sub">${o.plan ? `Plan ${eur.format(o.plan)}` : 'No plan allocated yet'}</div>${o.pctOfPlan == null ? '' : `<div class="progress"><div class="progress__bar" style="width:${Math.min(100, o.pctOfPlan)}%"></div></div>`}</div>` : ''}
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;" title="These always count everything, whatever the period">
+          ${warn ? `<button class="btn btn--ghost btn--sm" data-go="doc">⚠ ${warn} expense${warn === 1 ? '' : 's'} with missing or wrong paperwork</button>` : '<span class="mini">✓ Every expense has its paperwork.</span>'}
+          ${incWarn ? `<button class="btn btn--ghost btn--sm" data-go="doc">⚠ ${incWarn} money-received item${incWarn === 1 ? '' : 's'} without the document</button>` : ''}
+          ${unrev ? `<button class="btn btn--ghost btn--sm" data-go="review">⚠ ${unrev} old item${unrev === 1 ? '' : 's'} to review</button>` : ''}
+          ${owed.length ? `<button class="btn btn--ghost btn--sm" data-go="owed" title="Expenses paid with a partner's own money and loans not yet paid back">The company owes: ${owed.map((x) => `${esc(personLabel(x.key))} ${eur.format(x.total)}`).join(' · ')}</button>` : ''}
+        </div>
+      </div>
+      <div class="section" id="rep-vat"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">VAT paid ${tip('vatDeductible')}</h2></div>
+        <div class="summary-grid">
+          <div class="stat-card" title="All VAT on expenses, whatever its status"><div class="stat-card__label">Total VAT paid</div><div class="stat-card__value">${eur.format(vat.total)}</div><div class="stat-card__sub">On ${costs.filter((i) => vatBucket(i) !== 'none').length} expense${costs.filter((i) => vatBucket(i) !== 'none').length === 1 ? '' : 's'} with a VAT amount</div></div>
+          <div class="stat-card" title="VAT refunds booked in Items as money received"><div class="stat-card__label">VAT recovered</div><div class="stat-card__value stat-card__value--good">${eur.format(vat.recovered)}</div><div class="stat-card__sub">Booked as "VAT refund" in money received</div></div>
+          <div class="stat-card" title="Potentially recoverable plus foreign VAT, minus what is already back"><div class="stat-card__label">Still to recover</div><div class="stat-card__value">${eur.format(vat.toRecover)}</div><div class="stat-card__sub">Potential, the accountant decides</div></div>
+          <div class="stat-card" title="${esc(VAT_BUCKETS.atRisk.hint)}"><div class="stat-card__label">At risk</div><div class="stat-card__value ${vat.atRisk > 0 ? 'stat-card__value--bad' : ''}">${eur.format(vat.atRisk)}</div><div class="stat-card__sub">${vat.atRisk > 0 ? '<button class="btn btn--ghost btn--sm" data-go="vatrisk">Show them</button>' : 'Paperwork is in order'}</div></div>
+        </div>
+        <p class="mini" style="margin-top:10px">Of the total: ${eur.format(vat.recoverable)} potentially recoverable (complete invoice with our NIF), ${eur.format(vat.atRisk)} at risk (paperwork to fix), ${eur.format(vat.foreign)} foreign, ${eur.format(vat.notDeductible)} marked not deductible. The app only groups the VAT; your accountant decides what can be recovered. When a refund arrives, add it in Items as money received, type "VAT refund".${vat.missing ? ` ${vat.missing} complete invoice${vat.missing === 1 ? ' has' : 's have'} no VAT amount typed yet.` : ''}</p>
+      </div>
+      <div class="two" id="rep-cat">
+        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Costs by category</h2></div><div class="card"><table><tbody>${tbl(byCat, catLabel)}</tbody></table></div></div>
+        <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Costs by purpose</h2></div><div class="card"><table><tbody>${tbl(byPur, purLabel)}</tbody></table></div></div>
+      </div>
+      <div class="section" id="rep-people"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per person</h2></div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Person</th><th class="num">Direct cost</th><th>Mostly</th></tr></thead><tbody>${pr.people.map((p) => `<tr><td><strong>${esc(personLabel(p.key))}</strong></td><td class="num">${eur.format(p.total)}</td><td class="mini">${top(p.byCategory)}</td></tr>`).join('')}<tr><td><strong>Company</strong><div class="mini">Used by nobody in particular</div></td><td class="num">${eur.format(pr.company.total)}</td><td class="mini">${top(pr.company.byCategory)}</td></tr></tbody><tfoot><tr><td>All expenses</td><td class="num">${eur.format(pr.total)}</td><td></td></tr></tfoot></table></div></div>
+        <p class="mini" style="margin-top:8px">An expense used by several people is split equally, unless it has an unequal split. Expenses with nobody chosen in "Used by" stay in the Company line.</p></div>
+      <div class="section" id="rep-companies"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per company</h2></div>
         <div class="summary-grid">
           <div class="stat-card"><div class="stat-card__label">Companies</div><div class="stat-card__value">${r.companies}</div><div class="stat-card__sub">with costs connected</div></div>
           <div class="stat-card"><div class="stat-card__label">Connected to companies</div><div class="stat-card__value">${eur.format(r.total)}</div><div class="stat-card__sub">${top(r.byCategory) || 'Nothing connected yet'}</div></div></div>
         <p class="mini" style="margin-top:8px">Only costs connected to a company count. Searcher salaries and shared overhead are not part of a company's cost. Use "Connect cost to a company" on an item.</p>
         <div class="card" style="margin-top:12px"><div class="table-wrap"><table><thead><tr><th>Company</th><th class="num">Items</th><th class="num">Cost</th><th>Mostly</th></tr></thead><tbody>${r.rows.length ? r.rows.map((x) => `<tr><td>${esc(x.name || '—')}${x.companyId ? '' : '<div class="mini">Not linked to a CRM company</div>'}</td><td class="num">${x.count}</td><td class="num">${eur.format(x.total)}</td><td class="mini">${top(x.byCategory, 2)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="4">No costs connected to a company in this period.</td></tr>'}</tbody></table></div></div></div>
-      <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per person</h2></div>
-        <div class="card"><div class="table-wrap"><table><thead><tr><th>Person</th><th class="num">Direct cost</th><th>Mostly</th></tr></thead><tbody>${pr.people.map((p) => `<tr><td><strong>${esc(personLabel(p.key))}</strong></td><td class="num">${eur.format(p.total)}</td><td class="mini">${top(p.byCategory)}</td></tr>`).join('')}<tr><td><strong>Company</strong><div class="mini">Used by nobody in particular</div></td><td class="num">${eur.format(pr.company.total)}</td><td class="mini">${top(pr.company.byCategory)}</td></tr></tbody><tfoot><tr><td>All expenses</td><td class="num">${eur.format(pr.total)}</td><td></td></tr></tfoot></table></div></div>
-        <p class="mini" style="margin-top:8px">An expense used by several people is split equally, unless it has an unequal split. Expenses with nobody chosen in "Used by" stay in the Company line.</p></div>
-      ${planOn() ? `<div class="two"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by category</h2></div>${planTable(pv.categories, catLabel)}</div>
+      <div class="section" id="rep-tags"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per tag</h2></div>
+        <div class="card" style="padding:14px 16px;">${tags.length ? tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t.tag)}">${esc(t.tag)} · ${eur.format(t.total)}<small>${t.count}</small></button>`).join('') : '<span class="mini">No tags yet. Add tags such as "Spain trip" on an item.</span>'}</div></div>      ${planOn() ? `<div class="two" id="rep-plan"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by category</h2></div>${planTable(pv.categories, catLabel)}</div>
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by purpose</h2></div>${planTable(pv.purposes, purLabel)}</div></div>
       <p class="mini">The plan is made of "Plan allocation" items with a category and/or a purpose. Add them in Items.</p>` : ''}`;
-    body.querySelector('#rFrom').addEventListener('change', (e) => { repRange.from = e.target.value; renderReports(body); });
-    body.querySelector('#rTo').addEventListener('change', (e) => { repRange.to = e.target.value; renderReports(body); });
+    body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { S.filter = { ...S.filter, doc: b.dataset.go === 'doc' ? 'warn' : '', review: b.dataset.go === 'review', vat: b.dataset.go === 'vatrisk' ? 'atRisk' : '', reimb: b.dataset.go === 'owed' ? 'owed' : '' }; S.tab = 'items'; render(); }));
+    body.querySelectorAll('[data-tagfilter]').forEach((b) => b.addEventListener('click', () => { S.filter.tag = b.dataset.tagfilter; S.tab = 'items'; render(); }));
+    body.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => body.querySelector('#' + b.dataset.jump)?.scrollIntoView({ behavior: 'smooth', block: 'start' })));
+    body.querySelectorAll('[data-period]').forEach((b) => b.addEventListener('click', () => { repRange.preset = b.dataset.period; renderReports(body); }));
+    body.querySelector('#rFrom')?.addEventListener('change', (e) => { repRange.from = e.target.value; renderReports(body); });
+    body.querySelector('#rTo')?.addEventListener('change', (e) => { repRange.to = e.target.value; renderReports(body); });
   }
 
   // ── Packs (Stage 5a): the monthly pack for the accountant ──

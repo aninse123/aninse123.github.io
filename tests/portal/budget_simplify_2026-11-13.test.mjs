@@ -7,8 +7,9 @@ let fail = 0; const ok = (l, c) => { if (!c) fail++; console.log(`${c ? 'PASS' :
 const tabs = [...v2.matchAll(/<button data-tab="([a-z]+)"/g)].map((m) => m[1]);
 
 // S1 — six tabs
-ok('S1: exactly six tabs, in order: Overview, Items, Reports, Packs, Inbox, Settings', tabs.join(',') === 'overview,items,reports,packs,inbox,settings');
-ok('S1: an old Bank / Accounts / Suppliers tab value opens Inbox or Settings', /const TAB_MOVED = \{ bank: 'inbox', accounts: 'settings', suppliers: 'settings' \}/.test(v2) && /if \(TAB_MOVED\[S\.tab\]\) S\.tab = TAB_MOVED\[S\.tab\]/.test(v2));
+// 15 Nov 2026: five tabs; Overview is the top of Reports and Packs is labelled Accountant (key 'packs').
+ok('S1: exactly five tabs, in order: Reports, Items, Inbox, Accountant, Settings', tabs.join(',') === 'reports,items,inbox,packs,settings' && /<button data-tab="packs" data-perm="budget\.edit">Accountant<\/button>/.test(v2));
+ok('S1: an old Bank / Accounts / Suppliers tab value opens Inbox or Settings', /const TAB_MOVED = \{ bank: 'inbox', accounts: 'settings', suppliers: 'settings', overview: 'reports' \}/.test(v2) && /if \(TAB_MOVED\[S\.tab\]\) S\.tab = TAB_MOVED\[S\.tab\]/.test(v2));
 ok('S1: no renderBank / renderAccounts / renderSuppliers left, and nothing sends you to a Bank tab', !/renderBank|renderAccounts|renderSuppliers/.test(v2) && !/S\.tab = 'bank'/.test(v2) && !/Bank tab/.test(v2));
 ok('S1: the Inbox draws the import box (budget.import) above the bank lines and wires it', /\$\{accountsOn \? bankImportHtml\(lines\.length\) : ''\}/.test(v2) && /wireBankImport\(body\);/.test(v2));
 ok('S1: the import box is open while no lines wait or a file is being read; the person\'s own open/close is remembered', /const open = bankPlans\.length > 0 \|\| \(importUi\.open == null \? !waiting : importUi\.open\)/.test(v2) && /importUi\.open = !box\.open/.test(v2));
@@ -37,14 +38,24 @@ ok('S3: without an unequal split every person ticked is saved with weight 1', /w
 // S4 — spending plan hidden until used
 ok('S4: the plan is on when ticked in Settings, or (nobody chose yet) when plan items exist', /const planOn = \(\) => \(typeof S\.company\.usePlan === 'boolean' \? S\.company\.usePlan : S\.items\.some\(\(i\) => i\.kind === 'plan' && !i\.archived\)\)/.test(v2));
 ok('S4: "Plan allocation" is offered in the form and the Items filter only with the plan on (an existing plan item keeps it)', /<select id="f-kind">\$\{kindsShown\(d\.kind\)/.test(v2) && /<select id="fKind">.*\$\{kindsShown\(f\.kind\)/.test(v2) && /k\.id !== 'plan' \|\| planOn\(\) \|\| keep === 'plan'/.test(v2));
-ok('S4: the Overview card, the Reports tables and the review "Plan" button are behind planOn()', /\$\{planOn\(\) \? `<div class="stat-card"><div class="stat-card__label">Plan used/.test(v2) && /\$\{planOn\(\) \? `<div class="two"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1\.15rem">Plan against actual/.test(v2) && /\$\{planOn\(\) \? `<button class="btn btn--ghost btn--sm" data-rev="\$\{i\.id\}" data-as="plan">/.test(v2));
+ok('S4: the Plan used card, the Reports tables and the review "Plan" button are behind planOn()', /\$\{planOn\(\) \? `<div class="stat-card"><div class="stat-card__label">Plan used/.test(v2) && /\$\{planOn\(\) \? `<div class="two" id="rep-plan"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1\.15rem">Plan against actual/.test(v2) && /\$\{planOn\(\) \? `<button class="btn btn--ghost btn--sm" data-rev="\$\{i\.id\}" data-as="plan">/.test(v2));
 ok('S4: the Settings tick saves usePlan in budgetSettings/main (no new rule needed)', /id="pl-on"/.test(v2) && /setDoc\(doc\(db, 'budgetSettings', 'main'\), \{ usePlan, updatedAt: serverTimestamp\(\), updatedBy: access\.email \}, \{ merge: true \}\)/.test(v2));
 
 // S5 — shared mark tucked away
 ok('S5: the form shows the shared state as text with a link, no visible tick box', /<input type="checkbox" id="f-shared" \$\{d\.sharedAt \? 'checked' : ''\} hidden>/.test(v2) && /'Mark as shared outside a pack'/.test(v2) && /Not shared yet: it goes in the next pack/.test(v2));
 ok('S5: a shared item names its pack (or "outside a pack") and the changed-since warning', /in the pack for \$\{fmtDate\(pk\.from\)\}/.test(v2) && /' outside a pack'/.test(v2) && /changedSince\(existing\)/.test(v2));
 ok('S5: bulk mark shared / not shared moved into a More menu that asks first', /<select id="bulkMore"/.test(v2) && !/data-bulk="share"/.test(v2) && /Only for items you sent another way/.test(v2));
-ok('S5: the Inbox card points to Packs instead of the bulk button', /creating the pack in Packs marks them as shared/.test(v2) && /id="i-packs"/.test(v2) && !/use "Mark shared with accountant"/.test(v2));
+ok('S5: the Inbox card points to Packs instead of the bulk button', /creating the pack in the Accountant tab marks them as shared/.test(v2) && /id="i-packs"/.test(v2) && !/use "Mark shared with accountant"/.test(v2));
+
+// 15 Nov 2026 — Reports with Overview merged in, one period for every figure
+const rep = v2.slice(v2.indexOf('function renderReports('), v2.indexOf('// ── Packs (Stage 5a)'));
+ok('R: no renderOverview left; an old "overview" tab value and the default open Reports', !/renderOverview/.test(v2) && /tab: 'reports', items: \[\]/.test(v2) && /\[S\.tab\] \|\| renderReports\)\(body\)/.test(v2));
+ok('R: period picker All time / This year / Last 3 months / This month / From – to, All time by default; dates only for From – to', /const PERIODS = \[\['all', 'All time'\], \['year', 'This year'\], \['q', 'Last 3 months'\], \['month', 'This month'\], \['custom', 'From – to'\]\]/.test(v2) && /const repRange = \{ preset: 'all', from: '', to: '' \}/.test(v2) && /repRange\.preset === 'custom' \? `<span class="filter-bar__label">From<\/span><input type="date" id="rFrom"/.test(rep));
+ok('R: the cards, VAT, category/purpose and tags use the period; people, companies and plan use the same range', /const items = S\.items\.filter\(\(i\) => i\.kind === 'plan' \|\| inPer\(i\.date\)\)/.test(rep) && /const o = overview\(items\), vat = vatSummary\(items\)/.test(rep) && /const tags = tagTotals\(items\)/.test(rep) && /companyReport\(S\.items, rg\), pr = personReport\(S\.items, rg\), pv = planVsActual\(S\.items, rg\)/.test(rep));
+ok('R: the to-do warnings (paperwork, old items, what the company owes) always count everything', /const warn = S\.items\.filter/.test(rep) && /const owed = partnerBalances\(S\.items, S\.movements\)/.test(rep) && /These always count everything, whatever the period/.test(rep));
+ok('R: Balance says "in this period" when a period is picked; the page says which period it shows', /'Received − costs in this period' : 'Received − costs'/.test(rep) && /Everything since the start\./.test(rep));
+ok('R: a jump list to Summary, VAT, Category and purpose, People, Companies, Tags (and Plan when on)', ['rep-summary', 'rep-vat', 'rep-cat', 'rep-people', 'rep-companies', 'rep-tags', 'rep-plan'].every((id) => rep.includes(`'${id}'`) && rep.includes(`id="${id}"`)));
+ok('R: the old wording points to Reports and the Accountant tab, not Overview or Packs', !/Packs tab|in Packs|Open Packs|The Overview lists|Overview shows/.test(v2) && /Open the Accountant tab/.test(v2));
 
 console.log(fail ? `${fail} FAILED` : 'All passed');
 process.exit(fail ? 1 : 0);
