@@ -163,7 +163,7 @@ export function recognise(line, ctx = {}) {
     return { ...out, kind: 'income', incomeType: 'interest', name: 'Interest received', counterparty: 'Bank', reason: 'Interest received', sure: true, autoAccept: true };
   }
   const partnerKey = matchPartner(d, ctx.partners);
-  if (partnerKey && line.amount < 0) return { ...out, kind: 'settlement', partnerKey, name: clean, reason: 'Transfer to a partner (reimbursement)', sure: true };
+  if (partnerKey && line.amount < 0) return { ...out, kind: 'settlement', partnerKey, name: clean, reason: 'Transfer to a partner', sure: true };
   // Money from a partner is a loan to the company until you say otherwise; never an investor, never accepted without a click.
   if (partnerKey && line.amount > 0) {
     const p = (ctx.partners || []).find((x) => x.key === partnerKey) || {};

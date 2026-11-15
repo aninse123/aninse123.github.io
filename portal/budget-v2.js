@@ -139,6 +139,8 @@ const CSS = `
 @media (max-width:768px){ #v2root .summary-grid.three { grid-template-columns:1fr; } }
 #v2root .setjump { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
 #v2root .setjump .tagchip { font-size:0.8rem; padding:4px 12px; }
+#v2root .linekind { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:-10px 0 18px; }
+#v2root .linekind .lk-label { font-size:0.78rem; font-weight:600; color:var(--text-light); text-transform:uppercase; letter-spacing:.05em; margin-right:4px; }
 #v2root .period { flex-wrap:wrap; }
 #v2root .period .btn.on { background:var(--primary); border-color:var(--primary); color:#fff; }
 #v2root .section { scroll-margin-top:16px; }
@@ -486,6 +488,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const sub = TEAM_PAY_SUBTYPES;
     openModal(`
       <h2>${it ? 'Edit item' : 'New item'}${it && it.legacy ? ' <span class="pill pill--review" style="vertical-align:middle">old item</span>' : ''}</h2>
+      ${!it && lineOut(preset) ? lineKindRow('expense') : ''}
       <div class="sect"><div class="sect-title">What</div>
         <div class="form-row">${fld('Kind', 'kind', `<select id="f-kind">${kindsShown(d.kind).map((k) => `<option value="${k.id}"${d.kind === k.id ? ' selected' : ''}>${k.label}</option>`).join('')}</select>`)}
           ${fld('Date', '', `<input type="date" id="f-date" value="${esc(d.date || '')}">`)}</div>
@@ -1178,9 +1181,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
 
   // ── Reimbursements (Stage 4): a transfer to a partner repays the expenses they paid personally ──
   const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-  function openSettle(id) {
+  function openSettle(id, keyOver = '') {
     const m = S.movements.find((x) => x.id === id); if (!m) return;
-    const key = m.partnerKey || (m.sug || {}).partnerKey || '';
+    const key = keyOver || m.partnerKey || (m.sug || {}).partnerKey || '';
     const total = r2(Math.abs(m.amount)), done = r2((m.settles || []).reduce((x, y) => x + (Number(y.amount) || 0), 0)), room = r2(total - done);
     const cands = S.items.filter((i) => i.kind === 'expense' && !i.archived && i.paidPersonallyBy === key && i.reimbursement?.status !== 'reimbursed').sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
     const sug = new Set(suggestSettlement(room, cands) || []);
@@ -1214,12 +1217,47 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       } catch (e) { alert('Could not save: ' + e.message); }
     });
   }
-  async function repayLoan(id) {
+  async function repayLoan(id, keyOver = '') {
     const m = S.movements.find((x) => x.id === id); if (!m) return;
-    const key = m.partnerKey || (m.sug || {}).partnerKey || '';
-    if (!confirm(`Mark this ${fmtMoney(Math.abs(m.amount))} transfer as ${personLabel(key)}'s loan being paid back?`)) return;
+    const key = keyOver || m.partnerKey || (m.sug || {}).partnerKey || '';
+    const open = (partnerBalances(S.items, S.movements).find((b) => b.key === key) || {}).loansOwed || 0, amt = Math.abs(m.amount);
+    if (!confirm(`Mark this ${fmtMoney(amt)} transfer as ${personLabel(key)}'s loan being paid back?\n\n${open > 0.004 ? `Open loan now: ${fmtMoney(open)}. After this: ${fmtMoney(Math.max(0, open - amt))}.` : `${personLabel(key)} has no open loan in the Budget.`}${amt > open + 0.004 ? ' This is more than the open loan.' : ''} It is not a cost and creates no item.`)) return;
     try { await updateDoc(doc(db, 'budgetMovements', id), { status: 'settled', settlementKind: 'loan', partnerKey: key, settles: [], unallocated: 0 }); logEvent('budget_loan_repaid', { itemName: personLabel(key), amount: Math.abs(m.amount) }); await refresh(); S.tab = 'inbox'; render(); }
     catch (e) { alert('Could not save: ' + e.message); }
+  }
+  // A transfer to a partner pays back either expenses they paid with their own money or their loan; the bank line cannot say which.
+  // The guess: an exact combination of their unpaid expenses means expenses; otherwise an open loan means a loan repayment. One click confirms either.
+  function partnerGuess(m, key) {
+    const amt = r2(Math.abs(m.amount)), name = personLabel(key);
+    const cands = S.items.filter((i) => i.kind === 'expense' && !i.archived && i.paidPersonallyBy === key && i.reimbursement?.status !== 'reimbursed');
+    const combo = suggestSettlement(amt, cands);
+    const bal = partnerBalances(S.items, S.movements).find((b) => b.key === key) || { loans: 0, loansOwed: 0 };
+    if (combo) return { as: 'expenses', why: `Looks like it pays back ${combo.length} expense${combo.length === 1 ? '' : 's'} ${name} paid personally (adds up to exactly ${fmtMoney(amt)}).` };
+    if (bal.loansOwed > 0.004) return { as: 'loan', why: `Looks like a loan repayment: ${name} lent ${fmtMoney(bal.loans)}, ${fmtMoney(bal.loansOwed)} still open${cands.length ? `, and no unpaid expenses add up to ${fmtMoney(amt)}` : ', and no unpaid expenses'}.` };
+    return { as: 'expenses', why: cands.length ? `Transfer to ${name}. No open loan: tick the expenses it pays back.` : `Transfer to ${name}. No open loan and no unpaid expenses in the Budget.` };
+  }
+  // A money-out bank line can also be a transfer to a partner the app did not recognise: the item form and this window switch between the two.
+  const lineOut = (preset) => { const m = preset?.movementId && S.movements.find((x) => x.id === preset.movementId); return !!m && m.amount < 0 && can('budget.import'); };
+  const lineKindRow = (on) => `<div class="linekind" role="group" aria-label="What is this line?"><span class="lk-label">What is this line?</span><button type="button" class="btn btn--sm btn--${on === 'expense' ? 'primary' : 'ghost'}" data-linekind="expense" aria-pressed="${on === 'expense'}">An expense</button><button type="button" class="btn btn--sm btn--${on === 'partner' ? 'primary' : 'ghost'}" data-linekind="partner" aria-pressed="${on === 'partner'}">Went to a partner</button></div>`;
+  root.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-linekind]'); if (!b || !S.edit?.movementId && !S.lineChoice) return;
+    const m = S.movements.find((x) => x.id === (S.edit?.movementId || S.lineChoice)); if (!m) return;   // the open item form wins over a partner window closed with Esc
+    if (b.dataset.linekind === 'partner' && S.edit?.movementId) openPartnerChoice(m, (m.sug || {}).partnerKey || '');
+    else if (b.dataset.linekind === 'expense' && S.lineChoice) { S.lineChoice = null; openItem(null, draftFromMovement(m, (m.sug || {}).kind === 'settlement' ? { kind: 'expense' } : {})); }
+  });
+  function openPartnerChoice(m, key = '') {
+    const partners = S.dir.filter((p) => p.partner || p.key === key);
+    openModal(`<h2>${esc(cleanDescription(m.description))}</h2>
+      <p class="mini" style="margin:-14px 0 16px">${fmtDate(m.posted)} · ${fmtMoney(m.amount)} · ${esc(m.description)}</p>
+      ${lineKindRow('partner')}
+      <div class="form-group"><label for="pt-who">Which partner?</label><select id="pt-who"><option value="">Choose…</option>${partners.map((p) => `<option value="${esc(p.key)}"${p.key === key ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}</select></div>
+      <p class="mini">Not a cost: no category and no item. Choose who it went to, then what it pays back.</p>
+      <div class="modal-actions"><button class="btn btn--ghost" id="pt-cancel">Cancel</button><button class="btn btn--ghost" id="pt-loan">Repays a loan</button><button class="btn btn--primary" id="pt-exp">Pays back expenses…</button></div>`);
+    S.edit = null; S.lineChoice = m.id;
+    const box = root.querySelector('#v2modalBox'), who = () => { const v = box.querySelector('#pt-who').value; if (!v) { box.querySelector('#pt-who').focus(); alert('Choose the partner first.'); } return v; };
+    box.querySelector('#pt-cancel').addEventListener('click', () => { S.lineChoice = null; closeModal(); });
+    box.querySelector('#pt-loan').addEventListener('click', () => { const k = who(); if (!k) return; S.lineChoice = null; closeModal(); repayLoan(m.id, k); });
+    box.querySelector('#pt-exp').addEventListener('click', () => { const k = who(); if (!k) return; S.lineChoice = null; openSettle(m.id, k); });
   }
   async function unsettle(id) {
     const m = S.movements.find((x) => x.id === id); if (!m) return;
@@ -1250,18 +1288,20 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const bal = partnerBalances(S.items, S.movements);
     const settled = S.movements.filter((m) => m.status === 'settled').sort((a, b) => (a.posted < b.posted ? 1 : -1));
     const autoN = lines.filter((m) => (m.sug || {}).autoAccept).length;
-    const sugPill = (m) => { const g = m.sug || {}; const t = KIND_TEXT[g.kind] || ''; return `<span class="pill ${g.kind === 'income' ? 'pill--income' : g.kind === 'settlement' ? 'pill--plan' : 'pill--cost'}">${esc(t)}</span><div class="mini">${esc(g.reason || '')}${g.categoryId ? ' · ' + esc(catLabel(g.categoryId)) : ''}</div>`; };
+    const sugPill = (m) => { const g = m.sug || {}; const t = g.kind === 'settlement' && g.partnerKey ? `To ${personLabel(g.partnerKey)}` : KIND_TEXT[g.kind] || ''; const why = g.kind === 'settlement' && g.partnerKey ? partnerGuess(m, g.partnerKey).why : g.reason || ''; return `<span class="pill ${g.kind === 'income' ? 'pill--income' : g.kind === 'settlement' ? 'pill--plan' : 'pill--cost'}">${esc(t)}</span><div class="mini">${esc(why)}${g.categoryId ? ' · ' + esc(catLabel(g.categoryId)) : ''}</div>`; };
     const row = (m) => {
       const g = m.sug || {}, cands = matchCandidates(m, S.items);
-      const canAccept = g.kind === 'income' || g.kind === 'settlement' || (g.kind === 'expense' && g.categoryId);
+      const toPartner = g.kind === 'settlement' && !!g.partnerKey, pg = toPartner ? partnerGuess(m, g.partnerKey) : null;
+      const canAccept = g.kind === 'income' || (g.kind === 'settlement' && !toPartner) || (g.kind === 'expense' && g.categoryId);
+      const partnerBtns = toPartner ? `<span data-perm="budget.edit budget.import">${[['loan', `<button class="btn btn--${pg.as === 'loan' ? 'primary' : 'ghost'} btn--sm" data-loan="${m.id}" title="The transfer pays back money the partner lent the company">Repays a loan</button>`], ['expenses', `<button class="btn btn--${pg.as === 'expenses' ? 'primary' : 'ghost'} btn--sm" data-settle="${m.id}" title="The transfer pays back expenses the partner paid with their own money">Pays back expenses…</button>`]].sort((a) => (a[0] === pg.as ? -1 : 1)).map((x) => x[1]).join(' ')}</span>` : '';
       return `<tr><td class="chk"><input type="checkbox" data-isel="${m.id}" ${inboxSel.has(m.id) ? 'checked' : ''} aria-label="Select"></td>
         <td style="white-space:nowrap">${fmtDate(m.posted)}</td>
         <td><strong>${esc(g.name || cleanDescription(m.description))}</strong><div class="mini" title="As in the bank file">${esc(m.description)}</div></td>
         <td class="num ${m.amount > 0 ? 'amt-in' : ''}">${m.amount > 0 ? '+' : ''}${fmtMoney(m.amount)}</td>
         <td>${sugPill(m)}</td>
         <td style="white-space:nowrap" data-perm="budget.edit">
-          ${canAccept ? `<button class="btn btn--primary btn--sm" data-acc="${m.id}">Accept</button>` : ''}
-          <button class="btn btn--ghost btn--sm" data-cat="${m.id}">${canAccept ? 'Edit…' : 'Categorise…'}</button>
+          ${canAccept ? `<button class="btn btn--primary btn--sm" data-acc="${m.id}">Accept</button>` : ''}${partnerBtns}
+          <button class="btn btn--ghost btn--sm" data-cat="${m.id}">${canAccept || toPartner ? 'Edit…' : 'Categorise…'}</button>
           ${cands.length ? `<button class="btn btn--ghost btn--sm" data-link="${m.id}" title="${esc(cands.map((c) => c.name).join(', '))}">Link to “${esc(cands[0].name.slice(0, 18))}”</button>` : ''}
           <button class="btn btn--ghost btn--sm" data-ign="${m.id}" title="For example a transfer between our own accounts">Ignore</button></td></tr>`;
     };
@@ -1295,7 +1335,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     q('[data-isel]', (c) => { c.checked ? inboxSel.add(c.dataset.isel) : inboxSel.delete(c.dataset.isel); renderInbox(body); }, 'change');
     body.querySelector('#i-all')?.addEventListener('change', (e) => { lines.forEach((m) => (e.target.checked ? inboxSel.add(m.id) : inboxSel.delete(m.id))); renderInbox(body); });
     q('[data-acc]', (b) => acceptMovements([by(b.dataset.acc)]));
-    q('[data-cat]', (b) => { const m = by(b.dataset.cat); openItem(null, draftFromMovement(m)); });
+    q('[data-cat]', (b) => { const m = by(b.dataset.cat), g = m.sug || {}; if (g.kind === 'settlement' && g.partnerKey && can('budget.import')) openPartnerChoice(m, g.partnerKey); else openItem(null, draftFromMovement(m)); });
     q('[data-link]', (b) => { const m = by(b.dataset.link), c = matchCandidates(m, S.items)[0]; if (c && confirm(`Link this bank line to the expense "${c.name}" (${fmtMoney(c.amount)}, ${c.date})?`)) linkMovement(m, c.id); });
     q('[data-ign]', (b) => setMovementStatus([b.dataset.ign], 'ignored'));
     q('[data-back]', (b) => setMovementStatus([b.dataset.back], 'new'));
