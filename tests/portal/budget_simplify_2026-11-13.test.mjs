@@ -57,5 +57,8 @@ ok('R: Balance says "in this period" when a period is picked; the page says whic
 ok('R: a jump list to Summary, VAT, Category and purpose, People, Companies, Tags (and Plan when on)', ['rep-summary', 'rep-vat', 'rep-cat', 'rep-people', 'rep-companies', 'rep-tags', 'rep-plan'].every((id) => rep.includes(`'${id}'`) && rep.includes(`id="${id}"`)));
 ok('R: the old wording points to Reports and the Accountant tab, not Overview or Packs', !/Packs tab|in Packs|Open Packs|The Overview lists|Overview shows/.test(v2) && /Open the Accountant tab/.test(v2));
 
+// 15 Nov 2026 — the Items search also finds tags (André: typing "ETA" found nothing although 17 items carry the tag "ETA IESE 2026")
+ok('Search: the Items search box looks in name, comments, supplier, counterparty, invoice number, supplier NIF, tags, category, purpose and connected company', /const searchText = \(i\) => \[i\.name, i\.comments, i\.supplierName, i\.counterparty, i\.docNumber, i\.supplierTaxId, \.\.\.\(i\.tags \|\| \[\]\),\s*\.\.\.itemLines\(i\)\.flatMap\(\(l\) => \[catLabel\(l\.categoryId\), purLabel\(l\.purposeId\), l\.companyName\]\)\]/.test(v2) && /if \(q && !searchText\(i\)\.includes\(q\)\) return false;/.test(v2) && /placeholder="Search name, supplier, tag, category, company…"/.test(v2));
+
 console.log(fail ? `${fail} FAILED` : 'All passed');
 process.exit(fail ? 1 : 0);

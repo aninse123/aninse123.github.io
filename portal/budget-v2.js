@@ -274,12 +274,15 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   const refresh = async () => { await loadAll(); shell(); render(); };
 
   // ── Items ──
+  // What the Items search box looks in (15 Nov 2026: also tags, category, purpose, connected company, invoice number and supplier NIF).
+  const searchText = (i) => [i.name, i.comments, i.supplierName, i.counterparty, i.docNumber, i.supplierTaxId, ...(i.tags || []),
+    ...itemLines(i).flatMap((l) => [catLabel(l.categoryId), purLabel(l.purposeId), l.companyName])].filter(Boolean).join(' ').toLowerCase();
   function filtered() {
     const f = S.filter, q = f.search.toLowerCase();
     let list = S.items.filter((i) => {
       if (!f.archived && i.archived) return false;
       if (f.review && !(i.legacy && i.needsReview)) return false;
-      if (q && !`${i.name || ''} ${i.comments || ''} ${i.supplierName || ''} ${i.counterparty || ''}`.toLowerCase().includes(q)) return false;
+      if (q && !searchText(i).includes(q)) return false;
       if (f.kind && i.kind !== f.kind) return false;
       if (f.category && !(i.kind === 'expense' ? itemLines(i).some((l) => l.categoryId === f.category) : i.categoryId === f.category)) return false;
       if (f.purpose && !(i.kind === 'expense' ? itemLines(i).some((l) => l.purposeId === f.purpose) : i.purposeId === f.purpose)) return false;
@@ -354,7 +357,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         ${tags.length ? `<div style="margin-bottom:10px">${tags.slice(0, 14).map((t) => `<button class="tagchip" data-tagfilter="${esc(t.tag)}" style="${f.tag.toLowerCase() === t.tag.toLowerCase() ? 'outline:2px solid var(--primary)' : ''}">${esc(t.tag)} · ${eur.format(t.total)}<small>${t.count}</small></button>`).join('')}</div>` : ''}
         <div class="card">
           <div class="filter-bar">
-            <input type="text" id="fSearch" placeholder="Search name, supplier, comments…" value="${esc(f.search)}">
+            <input type="text" id="fSearch" placeholder="Search name, supplier, tag, category, company…" value="${esc(f.search)}">
             <select id="fKind"><option value="">All kinds</option>${kindsShown(f.kind).map((k) => `<option value="${k.id}"${f.kind === k.id ? ' selected' : ''}>${k.label}</option>`).join('')}</select>
             <select id="fCategory">${opts(S.lists.categories, f.category, 'All categories')}</select>
             <select id="fPurpose">${opts(S.lists.purposes, f.purpose, 'All purposes')}</select>
