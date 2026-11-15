@@ -13,7 +13,7 @@ const U = require("./util");
 const { tierOf } = require("../outreach/campaign_util");
 
 const PATH = "claude/index/companies.json.gz";
-const SELECT = ["name", "nif", "domain", "emailKeys", "legalForm", "caeCode", "caeDescription", "naceCode", "sector", "subSector", "distrito", "concelho", "city", "nuts2", "country",
+const SELECT = ["name", "nif", "domain", "emailKeys", "companyEmail", "contacts", "reach", "legalForm", "caeCode", "caeDescription", "naceCode", "sector", "subSector", "distrito", "concelho", "city", "nuts2", "country",
   "computedRevenue", "computedEBITDA", "computedEBITDAMargin", "computedEmployees", "computedGrowthRecent", "computedGrowthSustained", "computedFinYear", "fitScore",
   "priority", "targetTierManual", "contactable", "doNotContact", "stage", "owner", "outreachStatus", "touches", "lastTouchAt", "lastOutreachAt", "lastReplyAt",
   "activeCampaignId", "activeCampaignName", "ownGroupKey", "ownGroupSize", "yearFounded", "createdAt"];
@@ -24,6 +24,18 @@ const ratio = (v) => (num(v) == null ? null : Math.round(v * 10000) / 10000);
 // Order by document id (FieldPath.documentId(); the test stand-in has no FieldPath).
 const DOC_ID = () => { const FP = require("firebase-admin/firestore").FieldPath; return FP && FP.documentId ? FP.documentId() : "__name__"; };
 
+// Full email addresses of a company (15 Nov): its own (companyEmail, contacts, reach)
+// and the full ones among emailKeys, which also holds its people's addresses
+// (savePersonReach adds them). emailKeys are prefixes, so a full address is a key
+// that is no other key's prefix. Kept in the index only, never returned.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
+function fullEmails(c) {
+  const own = [c.companyEmail, ...(Array.isArray(c.contacts) ? c.contacts.map((x) => x && x.email) : []), ...(Array.isArray(c.reach) ? c.reach.filter((x) => x && x.type === "email").map((x) => x.value) : [])];
+  const keys = Array.isArray(c.emailKeys) ? [...new Set(c.emailKeys.map((e) => String(e || "").trim().toLowerCase()))] : [];
+  const fromKeys = keys.filter((k) => !k.startsWith("@") && EMAIL_RE.test(k) && !keys.some((o) => o !== k && o.startsWith(k)));
+  return [...new Set([...own.map((e) => String(e || "").trim().toLowerCase()), ...fromKeys].filter((e) => EMAIL_RE.test(e)))].slice(0, 40);
+}
+
 // One company document → one index row. Money in euros.
 function rowOf(id, c, tierRules = []) {
   const touches = c.touches && typeof c.touches === "object" ? c.touches : {};
@@ -31,7 +43,7 @@ function rowOf(id, c, tierRules = []) {
   const answered = Object.values(touches).some((t) => t && t.inAt);
   return {
     id, name: c.name || "", nif: c.nif || "", domain: String(c.domain || "").toLowerCase(),
-    emails: Array.isArray(c.emailKeys) ? c.emailKeys.slice(0, 10).map((e) => String(e).toLowerCase()) : [],
+    emails: fullEmails(c),
     legalForm: c.legalForm || "", cae: String(c.caeCode || ""), caeDescription: c.caeDescription || "", nace: String(c.naceCode || ""),
     sector: c.sector || "", subSector: c.subSector || "", district: c.distrito || "", concelho: c.concelho || "", city: c.city || "", nuts2: c.nuts2 || "", country: c.country || "",
     revenue: euros(c.computedRevenue), ebitda: euros(c.computedEBITDA), margin: ratio(c.computedEBITDAMargin), employees: num(c.computedEmployees),
@@ -218,4 +230,4 @@ function sortRows(list, sort) {
   });
 }
 
-module.exports = { PATH, SELECT, rowOf, build, load, rows, matches, aggregate, sortRows, groupValue, NUMERIC, GROUPABLE, _reset, _set };
+module.exports = { PATH, SELECT, rowOf, fullEmails, build, load, rows, matches, aggregate, sortRows, groupValue, NUMERIC, GROUPABLE, _reset, _set };

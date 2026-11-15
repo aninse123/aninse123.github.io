@@ -26,12 +26,18 @@ const FIELDS = {
     "stage", "reasonExcluded", "owner", "priority", "targetTierManual", "contactable", "contactableNote", "doNotContact",
     "dealSource", "dealSizeBand", "projectName", "askingPrice", "targetEV", "targetMultiple", "loiTerms", "dealNotes",
     "lastTouchAt", "lastOutreachAt", "lastReplyAt", "outreachAttempts", "nextContactAt", "outreachStatus", "touches", "activeCampaignId", "activeCampaignName",
-    "guoName", "ownGroupSize", "ownSubs", "ownParents", "peopleCounts", "manualLinks", "createdAt", "updatedAt"],
-  searchPeople: ["name", "entityType", "country", "nationality", "notes", "linkCount", "currentLinkCount", "matchedCompanyId", "reach", "source"],
+    "guoName", "ownGroupSize", "ownSubs", "ownParents", "peopleCounts", "manualLinks", "createdAt", "updatedAt",
+    // Campaign prep (15 Nov): greeting, subject and letter wording, the company's own contact details and their trust.
+    // reach / contacts entries carry only team emails in addedBy / confirmedBy; BAD_KEY still drops bank-shaped keys inside them.
+    "letterIntro", "sectorWording", "akaName", "emailName", "emailOwners", "reach", "contacts",
+    "companyEmailConfirmedAt", "companyEmailConfirmedBy", "companyEmailConfirmedFor", "companyEmailConfirmedVia", "companyEmailBounce", "nextFollowUp", "activeEnrolmentId"],
+  searchPeople: ["name", "entityType", "country", "nationality", "notes", "linkCount", "currentLinkCount", "matchedCompanyId", "reach", "source", "gender", "genderSource"],
   searchPersonLinks: ["personId", "companyId", "personName", "companyName", "personEntityType", "mgmtRoles", "mgmtCurrent", "mgmtLevel", "mgmtBoard", "alsoShareholder", "alsoManager", "shDirectPct", "shTotalPct", "shCurrent", "shDate", "shType", "shTypeOrbis", "isContact", "contactRole", "contactCurrent"],
   searchActivities: ["companyId", "type", "date", "title", "content", "via", "direction", "contactName", "contactRole", "responseCategory", "time", "duration", "guests", "status", "closedNotes", "closedAt", "campaignId", "channel", "createdBy", "threadId", "isTest"],
   outreachCampaigns: ["name", "description", "status", "priority", "assignee", "signer", "audienceType", "steps", "paths", "stats", "isTest", "createdAt", "updatedAt", "startedAt"],
-  outreachEnrolments: ["campaignId", "campaignName", "companyId", "companyName", "owner", "contactEmail", "status", "stopReason", "currentStep", "nextActionAt", "threadId", "plannedPathId", "enrolledAt"],
+  outreachEnrolments: ["campaignId", "campaignName", "companyId", "companyName", "owner", "contactEmail", "status", "stopReason", "currentStep", "nextActionAt", "threadId", "plannedPathId", "enrolledAt",
+    // Who the email goes to (15 Nov): recipient = { email, name, kind, personId, gender }; contactEmail is the company address at enrolment.
+    "recipient", "recipientList", "pathId", "pathName", "lastSentAt", "multiRecipient", "variants"],
   outreachThreads: ["companyId", "companyName", "contactEmail", "contactName", "senderId", "owner", "subject", "status", "lastMessageAt", "lastInboundAt", "lastDirection", "firstTouchAt", "repliedAt", "campaignId", "enrolmentId", "pathId", "responseCategory", "isTest"],
   outreachMessages: ["threadId", "companyId", "direction", "via", "from", "to", "cc", "subject", "status", "campaignId", "stepId", "isAutoReply", "isTest", "createdAt"],
   outreachTasks: ["campaignId", "enrolmentId", "companyId", "stepName", "channel", "instructions", "assignee", "dueAt", "status", "outcome", "notes", "completedAt", "completedBy", "personEmail"],

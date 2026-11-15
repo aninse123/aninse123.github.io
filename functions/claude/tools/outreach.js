@@ -21,7 +21,7 @@ const listCampaigns = {
       .map((c) => {
         const o = R.pick("outreachCampaigns", c.id, c, a.includeSteps === false ? ["name", "description", "status", "priority", "assignee", "audienceType", "stats", "isTest", "createdAt"] : null);
         if (Array.isArray(o.steps)) o.steps = o.steps.map((s) => ({ id: s.id, order: s.order, pathId: s.pathId || null, channel: s.channel, name: s.name, wait: s.wait, approval: s.approval, templateId: s.templateId || null, instructions: s.instructions || null }));
-        if (Array.isArray(o.paths)) o.paths = o.paths.map((p) => ({ id: p.id, name: p.name, filter: p.filter || p.spec || null }));
+        if (Array.isArray(o.paths)) o.paths = o.paths.map((p) => ({ id: p.id, name: p.name, filters: p.filters || p.filter || p.spec || null }));
         return o;
       });
     rows.sort((x, y) => String(y.createdAt || "").localeCompare(String(x.createdAt || "")));

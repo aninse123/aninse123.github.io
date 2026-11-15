@@ -16,8 +16,9 @@ const filtersSchema = z.object({
   district: z.array(z.string()).optional().describe("Distrito names, e.g. [\"Braga\", \"Porto\"]"), concelho: z.array(z.string()).optional(), nuts2: z.array(z.string()).optional(),
   revenueMin: z.number().optional().describe("Euros"), revenueMax: z.number().optional(), ebitdaMin: z.number().optional().describe("Euros"), ebitdaMax: z.number().optional(),
   marginMin: z.number().optional().describe("EBITDA margin as a fraction or percent, as stored"), marginMax: z.number().optional(),
-  employeesMin: z.number().optional(), employeesMax: z.number().optional(), growthMin: z.number().optional(), growthMax: z.number().optional(), fitMin: z.number().optional(),
-  tier: z.array(z.string()).optional().describe("A, B, C or none"), stage: z.array(z.string()).optional().describe("universe, screened, outreach, engaged, teaser_received, under_nda, cim_received, nbo, loi, due_diligence, financing, closing, closed, pass, on_hold"),
+  employeesMin: z.number().optional(), employeesMax: z.number().optional(), growthMin: z.number().optional(), growthMax: z.number().optional(),
+  fitMin: z.number().optional().describe("Fit score 0-100, e.g. 60"), fitMax: z.number().optional().describe("Fit score 0-100; fitMin 60 + fitMax 74.9 = the campaign path \"B · fit 60-74\""),
+  tier: z.array(z.string()).optional().describe("The Search CRM target tier (manual priority, else the rules in Search settings): A, B, C or none. Empty for every company today, so tier filters return 0. Not the campaign path (A · fit 75+, B · fit 60-74, C…): for those use fitMin / fitMax."), stage: z.array(z.string()).optional().describe("universe, screened, outreach, engaged, teaser_received, under_nda, cim_received, nbo, loi, due_diligence, financing, closing, closed, pass, on_hold"),
   owner: z.array(z.string()).optional().describe("Team short names, e.g. andre"),
   contactable: z.boolean().optional(), doNotContact: z.boolean().optional(), contacted: z.boolean().optional().describe("Ever contacted on any channel"), answered: z.boolean().optional(),
   inCampaign: z.boolean().optional(), campaignId: z.string().optional(),
@@ -124,7 +125,7 @@ const getCompany = {
       if (inc.has("people")) {
         const ids = [...new Set(links.map((l) => l.personId).filter((p) => p && /^[A-Za-z0-9_-]{1,200}$/.test(p)))].slice(0, 60);
         const people = await ctx.docs(ids.map((p) => `searchPeople/${p}`));
-        out.people = people.filter(Boolean).map((p) => R.pick("searchPeople", p.id, p, ["name", "entityType", "country", "reach", "notes", "matchedCompanyId"]));
+        out.people = people.filter(Boolean).map((p) => R.pick("searchPeople", p.id, p, ["name", "entityType", "country", "gender", "genderSource", "reach", "notes", "matchedCompanyId"]));
       }
     }
     if (inc.has("activities")) {
@@ -135,7 +136,8 @@ const getCompany = {
     }
     if (inc.has("campaigns")) {
       const en = await ctx.query(C.db().collection("outreachEnrolments").where("companyId", "==", id).limit(50));
-      out.campaigns = en.map((e) => R.pick("outreachEnrolments", e.id, e));
+      // Multi-recipient campaigns write one enrolment per track: <campaign>_<company> (main), …__t1, …__t2.
+      out.campaigns = en.map((e) => ({ ...R.pick("outreachEnrolments", e.id, e), track: String(e.id).split("__")[1] || "main" }));
     }
     if (inc.has("files")) {
       const files = await ctx.query(C.db().collection("outreachFiles").where("companyId", "==", id).limit(100));

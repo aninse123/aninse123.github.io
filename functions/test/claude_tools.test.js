@@ -21,6 +21,14 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   ok("find by @domain", (await X.tool(X.ANDRE, "find_companies", { text: "@metalnorte.pt" })).result.rows[0]?.id === "c1");
   ok("find by email", (await X.tool(X.ANDRE, "find_companies", { text: "geral@metalnorte.pt" })).result.rows[0]?.id === "c1");
   ok("find by name without accents or case", (await X.tool(X.ANDRE, "find_companies", { text: "metalúrgica" })).result.rows[0]?.id === "c1");
+  // Full email addresses (15 Nov): the company's own, contacts, contact details, and its people's (from emailKeys); prefixes alone don't match.
+  for (const e of ["geral@metalnorte.pt", "vendas@metalnorte.pt", "rui.costa@metalnorte.pt", "joao@metalnorte.pt", "JOAO@metalnorte.pt"]) ok(`find by full email ${e}`, (await X.tool(X.ANDRE, "find_companies", { text: e })).result.rows.map((r) => r.id).join() === "c1");
+  ok("a prefix key is not taken as a full address", !IX.fullEmails({ emailKeys: ["geral@metalnorte.p", "geral@metalnorte.pt"] }).includes("geral@metalnorte.p") && (await X.tool(X.ANDRE, "find_companies", { text: "nobody@metalnorte.pt" })).result.total === 0);
+  ok("the index's email list never comes back in a row", !(await X.tool(X.ANDRE, "find_companies", { text: "metalurgica", fields: require("../claude/tools/search").ROW_FIELDS })).text.includes("rui.costa"));
+  // fitMax (15 Nov): fit 60-74 = campaign path B.
+  const fb = await X.tool(X.ANDRE, "find_companies", { filters: { fitMin: 60, fitMax: 74.9 } });
+  ok("fitMin + fitMax: fit 60-74 only", fb.result.total === 1 && fb.result.rows[0].id === "c2");
+  ok("count_companies with fitMax", (await X.tool(X.ANDRE, "count_companies", { filters: { fitMax: 59.9 } })).result.total === 231);
   const f1 = await X.tool(X.ANDRE, "find_companies", { filters: { district: ["braga"], ebitdaMin: 500000, contacted: false } });
   ok("filters: district + EBITDA ≥ 500k + never contacted", f1.result.total === 1 && f1.result.rows[0].id === "c2");
   const f2 = await X.tool(X.ANDRE, "find_companies", { filters: { cae: ["2562"] } });
@@ -48,6 +56,18 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   ok("people with contact details", gc.result.people[0].reach.some((x) => x.value === "joao@metalnorte.pt"));
   ok("activities newest first", gc.result.activities.latest[0].id === "a2" && gc.result.activities.total === 2);
   ok("campaigns it is in", gc.result.campaigns[0].campaignId === "k1");
+  const co = gc.result.company;
+  ok("campaign prep fields: email name, owners for greetings, wording, letter intro, aka", co.emailName === "Metalnorte" && co.emailOwners[0].gender === "M" && co.sectorWording === "metalomecânica" && /feira/.test(co.letterIntro) && co.akaName === "Metal Norte");
+  ok("company contact details and contacts, with trust fields; no bank keys inside", co.reach[0].value === "Vendas@metalnorte.pt" && co.reach[0].addedBy === X.ANDRE && co.contacts[0].email === "rui.costa@metalnorte.pt" && !("iban" in co.reach[0]) && !("iban" in co.contacts[0]) && /\[bank detail removed\]/.test(co.reach[0].note));
+  ok("company email trust, follow-up and active enrolment", co.companyEmailConfirmedFor === "geral@metalnorte.pt" && co.nextFollowUp.channel === "call" && co.activeEnrolmentId === "k1_c1");
+  ok("main track marked", gc.result.campaigns[0].track === "main");
+  ok("people: gender and where it came from", gc.result.people[0].gender === "M" && gc.result.people[0].genderSource === "name");
+  const g2 = await X.tool(X.ANDRE, "get_company", { id: "c2", include: ["campaigns"] });
+  const k2 = g2.result.campaigns.filter((e) => e.campaignId === "k2");
+  const main = k2.find((e) => e.track === "main"), t1 = k2.find((e) => e.track === "t1");
+  ok("enrolments: the real recipient (not the company address at enrolment), path, last sent, variants", main && main.recipient.email === "ana@metaisbraga.pt" && main.recipient.gender === "F" && main.recipientList[0] === "ana@metaisbraga.pt" && main.pathId === "B" && main.pathName === "B · fit 60-74" && main.multiRecipient === true && !!main.lastSentAt && main.variants.p1 === "A" && !("history" in main));
+  ok("enrolments: each track marked (main, t1)", t1 && t1.id === "k2_c2__t1" && t1.recipient.email === "info@metaisbraga.pt");
+  ok("find_people: gender", (await X.tool(X.ANDRE, "find_people", { email: "joao@metalnorte.pt" })).result.rows[0].gender === "M");
   ok("files with ids to read", gc.result.files.some((f) => f.fileId === "file:f1"));
   ok("unknown company: a clear message", (await X.tool(X.ANDRE, "get_company", { id: "nope" })).result.error === "No company with that id.");
   const rel = await X.tool(X.ANDRE, "related_companies", { companyId: "c1" });
@@ -66,6 +86,8 @@ const ok = (label, cond) => { if (!cond) fail++; console.log(`${cond ? "PASS" : 
   // ── Outreach ──
   const lc = await X.tool(X.ANDRE, "list_campaigns", {});
   ok("list_campaigns with steps", lc.result.rows[0].name === "Metals Norte" && lc.result.rows[0].steps.length === 2);
+  const kp = lc.result.rows.find((r) => r.id === "k2");
+  ok("list_campaigns: path rules (filters) shown", kp.paths.length === 2 && kp.paths[1].filters.length === 2 && kp.paths[1].filters[0].field === "fitScore" && kp.paths[1].filters[1].value === 75);
   const cr = await X.tool(X.ANDRE, "campaign_results", { campaignId: "k1" });
   const s1 = cr.result.rows.find((r) => r.step === "s1");
   ok("campaign results per step: sent, opened, replied, positive", s1 && s1.sent === 1 && s1.opened === 1 && s1.replied === 1 && s1.positive === 1);
