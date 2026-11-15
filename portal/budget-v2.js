@@ -1285,7 +1285,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const costs = S.items.filter((i) => i.kind === 'expense' && !i.archived);
     const docWarn = S.items.filter((i) => (i.kind === 'expense' || i.kind === 'income') && !i.archived && docStatus(i).level === 'warn');
     const notShared = S.items.filter((i) => !i.archived && i.kind !== 'plan' && !(i.legacy && i.needsReview) && !i.sharedAt);
-    const bal = partnerBalances(S.items, S.movements);
+    const bal = partnerBalances(S.items, S.movements).filter((x) => x.total > 0.004);   // a partner whose loan is fully paid back is not listed at €0
     const settled = S.movements.filter((m) => m.status === 'settled').sort((a, b) => (a.posted < b.posted ? 1 : -1));
     const autoN = lines.filter((m) => (m.sug || {}).autoAccept).length;
     const sugPill = (m) => { const g = m.sug || {}; const t = g.kind === 'settlement' && g.partnerKey ? `To ${personLabel(g.partnerKey)}` : KIND_TEXT[g.kind] || ''; const why = g.kind === 'settlement' && g.partnerKey ? partnerGuess(m, g.partnerKey).why : g.reason || ''; return `<span class="pill ${g.kind === 'income' ? 'pill--income' : g.kind === 'settlement' ? 'pill--plan' : 'pill--cost'}">${esc(t)}</span><div class="mini">${esc(why)}${g.categoryId ? ' · ' + esc(catLabel(g.categoryId)) : ''}</div>`; };
@@ -1423,7 +1423,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const warn = S.items.filter((i) => i.kind === 'expense' && !i.archived && docStatus(i).level === 'warn').length;
     const incWarn = S.items.filter((i) => i.kind === 'income' && !i.archived && docStatus(i).level === 'warn').length;
     const unrev = S.items.filter((i) => i.legacy && i.needsReview && !i.archived).length;
-    const owed = partnerBalances(S.items, S.movements);
+    const owed = partnerBalances(S.items, S.movements).filter((x) => x.total > 0.004);
     const byCat = {}, byPur = {};
     costs.forEach((i) => itemLines(i).forEach((l) => { byCat[l.categoryId || 'other'] = (byCat[l.categoryId || 'other'] || 0) + l.amount; byPur[l.purposeId || ''] = (byPur[l.purposeId || ''] || 0) + l.amount; }));
     const tbl = (m, lab) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(lab(k) || 'No purpose yet')}</td><td class="num">${eur.format(v)}</td></tr>`).join('') || '<tr class="empty-row"><td colspan="2">Nothing yet.</td></tr>';

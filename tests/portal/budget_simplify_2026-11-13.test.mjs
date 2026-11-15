@@ -69,5 +69,7 @@ ok('P: the same functions as Transfers to partners are used, with a partner chos
 ok('P: the loan confirmation shows the open loan before and after, and says it is not a cost', /Open loan now: \$\{fmtMoney\(open\)\}\. After this:/.test(v2) && /It is not a cost and creates no item\./.test(v2));
 ok('P: a money-out line opened with Categorise/Edit asks "What is this line?": An expense or Went to a partner (only with budget.import); the partner window needs a partner first', /\$\{!it && lineOut\(preset\) \? lineKindRow\('expense'\) : ''\}/.test(v2) && /m\.amount < 0 && can\('budget\.import'\)/.test(v2) && /function openPartnerChoice\(m, key = ''\)/.test(v2) && /Choose the partner first\./.test(v2) && /openPartnerChoice\(m, g\.partnerKey\)/.test(v2));
 
+ok('P: To reimburse (Inbox) and the Reports warning leave out a partner owed €0, for example a loan fully paid back', /const bal = partnerBalances\(S\.items, S\.movements\)\.filter\(\(x\) => x\.total > 0\.004\);/.test(v2) && /const owed = partnerBalances\(S\.items, S\.movements\)\.filter\(\(x\) => x\.total > 0\.004\);/.test(v2));
+
 console.log(fail ? `${fail} FAILED` : 'All passed');
 process.exit(fail ? 1 : 0);
