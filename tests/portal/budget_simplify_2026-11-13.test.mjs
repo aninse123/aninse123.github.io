@@ -71,5 +71,10 @@ ok('P: a money-out line opened with Categorise/Edit asks "What is this line?": A
 
 ok('P: To reimburse (Inbox) and the Reports warning leave out a partner owed €0, for example a loan fully paid back', /const bal = partnerBalances\(S\.items, S\.movements\)\.filter\(\(x\) => x\.total > 0\.004\);/.test(v2) && /const owed = partnerBalances\(S\.items, S\.movements\)\.filter\(\(x\) => x\.total > 0\.004\);/.test(v2));
 
+// 15 Nov 2026 — a bank line booked as the wrong item can go back to the Inbox (André: three partner reimbursements were booked as expenses)
+ok('L: an item booked from a bank line shows the line with "Send back to the Inbox" (budget.import to see it, budget.edit to use it)', /\$\{it \? bankLineNote\(it\) : ''\}/.test(v2) && /if \(!m \|\| !can\('budget\.import'\)\) return '';/.test(v2) && /id="f-lineback" data-perm="budget\.edit">Send back to the Inbox</.test(v2) && /\$\('f-lineback'\)\?\.addEventListener\('click', \(\) => sendLineBack\(existing\)\)/.test(v2));
+ok('L: sending back asks first, keeps the item (only its movementId is cleared) and puts the line back to new when it was booked to this item', /async function sendLineBack\(it\)/.test(v2) && /stays as it is, without the bank line; nothing is deleted/.test(v2) && /wb\.update\(doc\(db, 'budgetItems', it\.id\), \{ movementId: '' \}\);/.test(v2) && /if \(m\.status === 'linked' && m\.itemId === it\.id\) wb\.update\(doc\(db, 'budgetMovements', m\.id\), \{ status: 'new', itemId: '' \}\);/.test(v2));
+ok('L: deleting an item booked from a bank line sends the line back to the Inbox in the same write, and says so first', /const line = linkedLine\(it\), back = !!line && can\('budget\.import'\);/.test(v2) && /Its bank line \(\$\{fmtDate\(line\.posted\)\}/.test(v2) && /wb\.delete\(doc\(db, 'budgetItems', id\)\); wb\.update\(doc\(db, 'budgetMovements', line\.id\), \{ status: 'new', itemId: '' \}\);/.test(v2));
+
 console.log(fail ? `${fail} FAILED` : 'All passed');
 process.exit(fail ? 1 : 0);

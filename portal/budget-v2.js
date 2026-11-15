@@ -140,6 +140,8 @@ const CSS = `
 #v2root .setjump { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
 #v2root .setjump .tagchip { font-size:0.8rem; padding:4px 12px; }
 #v2root .linekind { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:-10px 0 18px; }
+#v2root .banknote { background:#F0EDE8; border-radius:var(--radius); padding:8px 12px; font-size:0.8rem; color:var(--text-light); margin:-10px 0 18px; }
+#v2root .banknote .linkbtn { margin-left:6px; }
 #v2root .linekind .lk-label { font-size:0.78rem; font-weight:600; color:var(--text-light); text-transform:uppercase; letter-spacing:.05em; margin-right:4px; }
 #v2root .period { flex-wrap:wrap; }
 #v2root .period .btn.on { background:var(--primary); border-color:var(--primary); color:#fff; }
@@ -446,11 +448,32 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   }
   async function deleteItem(id) {
     const it = S.items.find((x) => x.id === id); if (!it) return;
-    if (!confirm(`Delete "${it.name}"?\n\nThis permanently removes the item${it.attachments.length ? ' and its attachment(s)' : ''}. Archive it instead if you only want it out of the totals.`)) return;
+    const line = linkedLine(it), back = !!line && can('budget.import');   // 15 Nov 2026: the bank line goes back to the Inbox instead of staying booked to nothing
+    if (!confirm(`Delete "${it.name}"?\n\nThis permanently removes the item${it.attachments.length ? ' and its attachment(s)' : ''}. Archive it instead if you only want it out of the totals.${back ? `\n\nIts bank line (${fmtDate(line.posted)} · ${fmtMoney(line.amount)}) goes back to the Inbox.` : ''}`)) return;
     for (const a of it.attachments) { if (!a.filename) continue; try { await deleteObject(ref(storage, `budget/${a.filename}`)); } catch (e) { if (e.code !== 'storage/object-not-found') console.error('attachment delete:', e); } }
-    await deleteDoc(doc(db, 'budgetItems', id));
+    if (back) { const wb = writeBatch(db); wb.delete(doc(db, 'budgetItems', id)); wb.update(doc(db, 'budgetMovements', line.id), { status: 'new', itemId: '' }); await wb.commit(); }
+    else await deleteDoc(doc(db, 'budgetItems', id));
     logEvent('budget_deleted', { itemName: it.name, amount: it.amount });
     await refresh();
+  }
+  // An item booked from a bank line (Accept, Categorise, Book as expenses, Link) can let go of it: the item stays, the line goes back to the Inbox.
+  // For a line that was really a transfer to a partner, or a line booked into the wrong item.
+  const linkedLine = (it) => (it.movementId ? S.movements.find((x) => x.id === it.movementId && x.status === 'linked' && x.itemId === it.id) || null : null);
+  function bankLineNote(it) {
+    const m = it.movementId ? S.movements.find((x) => x.id === it.movementId) : null;
+    if (!m || !can('budget.import')) return '';
+    return `<div class="banknote">Bank line: ${fmtDate(m.posted)} · ${fmtMoney(m.amount)} · ${esc(m.description)}<button type="button" class="linkbtn" id="f-lineback" data-perm="budget.edit">Send back to the Inbox</button></div>`;
+  }
+  async function sendLineBack(it) {
+    const m = it.movementId ? S.movements.find((x) => x.id === it.movementId) : null; if (!m) return;
+    if (!confirm(`Send this bank line back to the Inbox?\n\n${fmtDate(m.posted)} · ${fmtMoney(m.amount)} · ${m.description}\n\n"${it.name}" stays as it is, without the bank line; nothing is deleted. Changes not saved in this window are lost: save them first. In the Inbox you then say what the line was, for example Went to a partner.`)) return;
+    try {
+      const wb = writeBatch(db);
+      wb.update(doc(db, 'budgetItems', it.id), { movementId: '' });
+      if (m.status === 'linked' && m.itemId === it.id) wb.update(doc(db, 'budgetMovements', m.id), { status: 'new', itemId: '' });
+      await wb.commit(); logEvent('budget_line_back', { itemName: it.name, amount: Math.abs(m.amount) });
+      closeModal(); await refresh(); S.tab = 'inbox'; render();
+    } catch (e) { alert('Could not save: ' + e.message); }
   }
   function exportCsv(list) {
     if (!list.length) { alert('No items to export.'); return; }
@@ -489,6 +512,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     openModal(`
       <h2>${it ? 'Edit item' : 'New item'}${it && it.legacy ? ' <span class="pill pill--review" style="vertical-align:middle">old item</span>' : ''}</h2>
       ${!it && lineOut(preset) ? lineKindRow('expense') : ''}
+      ${it ? bankLineNote(it) : ''}
       <div class="sect"><div class="sect-title">What</div>
         <div class="form-row">${fld('Kind', 'kind', `<select id="f-kind">${kindsShown(d.kind).map((k) => `<option value="${k.id}"${d.kind === k.id ? ' selected' : ''}>${k.label}</option>`).join('')}</select>`)}
           ${fld('Date', '', `<input type="date" id="f-date" value="${esc(d.date || '')}">`)}</div>
@@ -547,6 +571,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   }
   function wireItemForm(existing) {
     const m = root.querySelector('#v2modalBox'), $ = (id) => m.querySelector('#' + id);
+    if (existing) $('f-lineback')?.addEventListener('click', () => sendLineBack(existing));
     wireCompanyPickers(m);
     const company = S.company || {};
     const readDraft = () => ({
