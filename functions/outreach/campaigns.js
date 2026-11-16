@@ -162,7 +162,7 @@ function assertEnrollable(campaign) {
 function endEnrolmentWrites(tx, enrolRef, companyRef, companyData, status, reason, extra = {}) {
   tx.update(enrolRef, { status, stopReason: reason || null, endedAt: FieldValue.serverTimestamp(), nextActionAt: null, ...extra });
   if (companyData && companyData.activeEnrolmentId === enrolRef.id) {
-    tx.update(companyRef, { activeCampaignId: FieldValue.delete(), activeCampaignName: FieldValue.delete(), activeEnrolmentId: FieldValue.delete() });
+    tx.update(companyRef, { activeCampaignId: FieldValue.delete(), activeCampaignName: FieldValue.delete(), activeEnrolmentId: FieldValue.delete(), campaignChangedAt: FieldValue.serverTimestamp() });
   }
 }
 
@@ -537,7 +537,7 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller, ex
     });
     // A test campaign after go-live (22 Oct) doesn't take the company's campaign slot:
     // real campaigns can still add it, and the related-company flags ignore it.
-    if (!(campaign.isTest && !ctx.testMode)) tx.update(companyRef, { activeCampaignId: campaign.id, activeCampaignName: campaign.name, activeEnrolmentId: enrolRef.id });
+    if (!(campaign.isTest && !ctx.testMode)) tx.update(companyRef, { activeCampaignId: campaign.id, activeCampaignName: campaign.name, activeEnrolmentId: enrolRef.id, campaignChangedAt: FieldValue.serverTimestamp() });
     return { result: moveFrom ? "moved" : "enrolled" };
   });
 }

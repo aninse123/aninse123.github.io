@@ -176,7 +176,7 @@ async function onHardBounce(enrolmentId, bouncedEmail, now = new Date()) {
     ...(e.pathId ? { pathId: e.pathId, pathName: e.pathName || null } : {}),
   });
   await campaigns().endEnrolment(ref, "stopped", `Email bounced (${bounced}); trying ${pick}`);
-  if (!camp.isTest) await db().doc(`searchCompanies/${e.companyId}`).update({ activeCampaignId: e.campaignId, activeCampaignName: camp.name || "", activeEnrolmentId: trackId(root, n) });
+  if (!camp.isTest) await db().doc(`searchCompanies/${e.companyId}`).update({ activeCampaignId: e.campaignId, activeCampaignName: camp.name || "", activeEnrolmentId: trackId(root, n), campaignChangedAt: FieldValue.serverTimestamp() });
   return "fallback";
 }
 
@@ -231,7 +231,7 @@ async function restartCompany({ enrolmentId, includeReplier = false }, caller, n
     // a reply from before this feature has no resumeStep: the step it was on is still there
     await d.ref.update({ status: "active", currentStep: s.resumeStep ?? s.currentStep ?? 0, nextActionAt: ts(due), stopReason: null, endedAt: null, lockUntil: null,
       restartedAt: FieldValue.serverTimestamp(), restartedBy: caller, resumeStep: FieldValue.delete(), resumeStatus: FieldValue.delete() });
-    if (!(camp.isTest)) await db().doc(`searchCompanies/${e0.companyId}`).update({ activeCampaignId: e0.campaignId, activeCampaignName: camp.name || "", activeEnrolmentId: rootOf(d.id, s) });
+    if (!(camp.isTest)) await db().doc(`searchCompanies/${e0.companyId}`).update({ activeCampaignId: e0.campaignId, activeCampaignName: camp.name || "", activeEnrolmentId: rootOf(d.id, s), campaignChangedAt: FieldValue.serverTimestamp() });
     restarted.push(d.id);
   }
   return { restarted, skipped };
