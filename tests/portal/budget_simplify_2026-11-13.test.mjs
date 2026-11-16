@@ -94,5 +94,8 @@ ok('W: VAT on a partly invoiced item counts as potentially recoverable; the pack
 ok('W: a Paperwork choice is not styled as a field label (no capitals, no letter spacing, normal weight; the title semi-bold)', /#v2root \.form-group \.paperopt \{ text-transform:none; letter-spacing:normal; font-size:0\.88rem; font-weight:400;/.test(v2) && /#v2root \.paperopt strong \{ font-weight:600; \}/.test(v2));
 ok('T: Cost per tag is a table (tag, items, cost, top categories), every tag of the period, the tag opens Items filtered by it', /<th>Tag<\/th><th class="num">Items<\/th><th class="num">Cost<\/th><th>Mostly<\/th>/.test(v2) && /class="linklike" data-tagfilter="\$\{esc\(t\.tag\)\}"/.test(v2) && /<td class="mini">\$\{top\(t\.byCategory\)\}<\/td>/.test(v2) && /const tags = tagTotals\(items\);/.test(v2) && /if \(sign > 0\) itemLines\(it\)\.forEach\(\(l\) => \{ cur\.byCategory\[l\.categoryId\]/.test(read('../../portal/budget-lib.js')));
 
+// 16 Nov 2026 — tags in the accountant pack
+ok('K: the pack shows each line\'s tags (Expenses after Purpose, Money received after Description); tags stay out of the fingerprint', /\{ header: 'Purpose', width: 20 \}, \{ header: 'Tags', width: 24 \}/.test(pack) && /it\.name, cat\(it\), purpose\(it\), tagsOf\(it\),/.test(pack) && /it\.name, tagsOf\(it\), round2\(it\.amount\)/.test(pack) && !/PACK_FIELDS = \[[^\]]*'tags'/.test(pack));
+
 console.log(fail ? `${fail} FAILED` : 'All passed');
 process.exit(fail ? 1 : 0);
