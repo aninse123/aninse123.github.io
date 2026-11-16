@@ -17,7 +17,8 @@ const SELECT = ["name", "nif", "domain", "emailKeys", "companyEmail", "contacts"
   "computedRevenue", "computedEBITDA", "computedEBITDAMargin", "computedEmployees", "computedGrowthRecent", "computedGrowthSustained", "computedFinYear", "fitScore",
   "priority", "targetTierManual", "contactable", "doNotContact", "stage", "owner", "outreachStatus", "touches", "lastTouchAt", "lastOutreachAt", "lastReplyAt",
   "activeCampaignId", "activeCampaignName", "ownGroupKey", "ownGroupSize", "yearFounded", "createdAt"];
-const CHANGE_FIELDS = ["updatedAt", "updatedByAt", "lastTouchAt", "createdAt"];
+// campaignChangedAt (16 Nov, Campaigns hub): joining or leaving a campaign; updatedAt is left alone there.
+const CHANGE_FIELDS = ["updatedAt", "updatedByAt", "lastTouchAt", "createdAt", "campaignChangedAt"];
 const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const euros = (v) => (num(v) == null ? null : Math.round(v)); // money: whole euros
 const ratio = (v) => (num(v) == null ? null : Math.round(v * 10000) / 10000);
@@ -61,11 +62,36 @@ async function tierRules() {
   try { return (await U.db().doc("searchConfig/targetTiers").get()).data()?.rules || []; } catch (e) { return []; }
 }
 
-// The nightly build: every company, selected fields only. Returns { rows, reads }.
-async function build({ now = Date.now() } = {}) {
-  const rules = await tierRules();
+// The nightly build (16 Nov: changes only on most nights). A full build reads every
+// company (~39k reads); most nights start from the stored index instead (a Storage
+// file, no database reads) and re-read only the companies changed since it was
+// built, plus a count to catch deleted ones. A full build runs when the stored
+// index is missing or from an older format, on Sundays (Lisbon), when the last
+// full build is a week old, when the tier rules changed, when too many companies
+// changed, or when the count doesn't match. Returns { count, reads, mode, reason }.
+const FORMAT = 2;              // bump when rowOf or SELECT change: forces a full build
+const WEEK = 7 * 86400000;
+const CHANGED_CAP = 5000;      // more changes than this: a full build is simpler
+const MARGIN = 10 * 60000;     // clock margin on "changed since"
+const isSundayLisbon = (ms) => new Date(ms).toLocaleDateString("en-GB", { timeZone: "Europe/Lisbon", weekday: "short" }) === "Sun";
+
+async function readStored() {
+  try {
+    const [buf] = await getStorage().bucket().file(PATH).download();
+    return JSON.parse(zlib.gunzipSync(buf).toString("utf8"));
+  } catch (e) { return null; }
+}
+function fullReason(prev, now, rulesKey) {
+  if (!prev || !Array.isArray(prev.rows)) return "no stored index";
+  if (prev.format !== FORMAT || !prev.fullAt) return "older index format";
+  if (isSundayLisbon(now)) return "weekly (Sunday)";
+  if (now - prev.fullAt >= WEEK - 3600000) return "last full build a week ago";
+  if (prev.rulesKey !== rulesKey) return "tier rules changed";
+  return null;
+}
+async function fullRows(rules) {
   const rows = [];
-  let last = null, reads = 1;
+  let last = null, reads = 0;
   for (;;) {
     let q = U.db().collection("searchCompanies").select(...SELECT).orderBy(DOC_ID()).limit(5000);
     if (last) q = q.startAfter(last);
@@ -75,11 +101,52 @@ async function build({ now = Date.now() } = {}) {
     if (snap.size < 5000) break;
     last = snap.docs[snap.docs.length - 1];
   }
-  const body = zlib.gzipSync(Buffer.from(JSON.stringify({ builtAt: now, rows })));
+  return { rows, reads };
+}
+// Changes since the stored build, or { reason } when a full build is needed instead.
+async function changedRows(prev, rules) {
+  const since = new Date(prev.builtAt - MARGIN);
+  const ids = new Set();
+  let reads = 0;
+  for (const f of CHANGE_FIELDS) {
+    let snap;
+    try { snap = await U.db().collection("searchCompanies").where(f, ">=", since).select("name").limit(CHANGED_CAP + 1).get(); } catch (e) { return { reason: `changes on ${f} can't be read`, reads }; }
+    reads += Math.max(1, snap.size);
+    if (snap.size > CHANGED_CAP) return { reason: `more than ${CHANGED_CAP} changes`, reads };
+    snap.docs.forEach((d) => ids.add(d.id));
+  }
+  const map = new Map(prev.rows.map((r) => [r.id, r]));
+  const list = [...ids];
+  for (let i = 0; i < list.length; i += 100) {
+    const snaps = await U.db().getAll(...list.slice(i, i + 100).map((id) => U.db().doc(`searchCompanies/${id}`)));
+    reads += snaps.length;
+    for (const s of snaps) { if (s.exists) map.set(s.id, rowOf(s.id, s.data(), rules)); else map.delete(s.id); }
+  }
+  let total;
+  try { total = (await U.db().collection("searchCompanies").count().get()).data().count; } catch (e) { return { reason: "company count can't be read", reads }; }
+  reads += Math.max(1, Math.ceil(total / 1000));
+  if (total !== map.size) return { reason: `count ${total} ≠ index ${map.size} (deleted companies)`, reads };
+  return { rows: [...map.values()], reads, changed: ids.size };
+}
+async function build({ now = Date.now(), full = false } = {}) {
+  const rules = await tierRules();
+  const rulesKey = JSON.stringify(rules);
+  let reads = 1;
+  const prev = full ? null : await readStored();
+  let reason = full ? "asked for" : fullReason(prev, now, rulesKey);
+  let rows = null, fullAt = now, changed = null;
+  if (!reason) {
+    const ch = await changedRows(prev, rules);
+    reads += ch.reads;
+    if (ch.reason) reason = ch.reason;
+    else { rows = ch.rows; fullAt = prev.fullAt; changed = ch.changed; }
+  }
+  if (!rows) { const f = await fullRows(rules); rows = f.rows; reads += f.reads; }
+  const body = zlib.gzipSync(Buffer.from(JSON.stringify({ format: FORMAT, builtAt: now, fullAt, rulesKey, rows })));
   await getStorage().bucket().file(PATH).save(body, { contentType: "application/json", metadata: { contentEncoding: "identity", cacheControl: "no-store" } });
   mem = { builtAt: now, rows: new Map(rows.map((r) => [r.id, r])), loadedAt: Date.now() };
   overlay = { at: 0, rows: new Map() };
-  return { count: rows.length, reads };
+  return reason ? { count: rows.length, reads, mode: "full", reason } : { count: rows.length, reads, mode: "changes", changed };
 }
 
 // ── In memory per instance ──
@@ -230,4 +297,4 @@ function sortRows(list, sort) {
   });
 }
 
-module.exports = { PATH, SELECT, rowOf, fullEmails, build, load, rows, matches, aggregate, sortRows, groupValue, NUMERIC, GROUPABLE, _reset, _set };
+module.exports = { PATH, SELECT, FORMAT, rowOf, fullEmails, build, load, rows, matches, aggregate, sortRows, groupValue, NUMERIC, GROUPABLE, _reset, _set };
