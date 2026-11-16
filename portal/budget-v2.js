@@ -139,6 +139,9 @@ const CSS = `
 @media (max-width:768px){ #v2root .summary-grid.three { grid-template-columns:1fr; } }
 #v2root .setjump { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
 #v2root .setjump .tagchip { font-size:0.8rem; padding:4px 12px; }
+#v2root input[type=number] { -moz-appearance:textfield; appearance:textfield; }
+#v2root input[type=number]::-webkit-outer-spin-button, #v2root input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+#v2root .attach-chip--new { background:#E8F0F8; }
 #v2root .linekind { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:-10px 0 18px; }
 #v2root .banknote { background:#F0EDE8; border-radius:var(--radius); padding:8px 12px; font-size:0.8rem; color:var(--text-light); margin:-10px 0 18px; }
 #v2root .banknote .linkbtn { margin-left:6px; }
@@ -506,7 +509,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   const unequalWeights = (usedBy) => (usedBy || []).length > 1 && new Set(usedBy.map((u) => Number(u.weight) || 1)).size > 1;
   function openItem(id, preset) {
     const it = id ? S.items.find((x) => x.id === id) : null;
-    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [], movementId: preset?.movementId || null, unequal: unequalWeights((it || preset || {}).usedBy), lines: Array.isArray((it || preset || {}).lines) && (it || preset || {}).lines.length > 1 ? (it || preset).lines.map((l) => ({ ...l })) : [{ weight: 1 }, { weight: 1 }] };
+    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [], pending: [], movementId: preset?.movementId || null, unequal: unequalWeights((it || preset || {}).usedBy), lines: Array.isArray((it || preset || {}).lines) && (it || preset || {}).lines.length > 1 ? (it || preset).lines.map((l) => ({ ...l })) : [{ weight: 1 }, { weight: 1 }] };
     const d = it || preset || { kind: 'expense', date: today(), country: 'PT', currency: 'EUR', issuedToCompany: 'unknown', docType: 'none', usedBy: [], tags: [], paidWith: '' };
     const sub = TEAM_PAY_SUBTYPES;
     openModal(`
@@ -561,7 +564,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       </div>
       <div class="sect"><div class="sect-title">Notes and files</div>
         <div class="form-group"><label for="f-comments">Comments</label><textarea id="f-comments" placeholder="Optional notes…">${esc(d.comments || '')}</textarea></div>
-        <div class="form-group"><label>Files (PDF or image)</label><input type="file" id="f-files" accept="application/pdf,image/png,image/jpeg" multiple><div class="attach-list" id="f-attlist"></div>
+        <div class="form-group"><label for="f-files">Files (PDF or image)</label><input type="file" id="f-files" accept="application/pdf,image/png,image/jpeg" multiple><div class="hint">Pick several at once or one after another; they are uploaded when you save.</div><div class="attach-list" id="f-attlist"></div>
           <div class="upload-progress" id="f-up"><span class="hint" id="f-uptxt">Uploading…</span><div class="progress"><div class="progress__bar" id="f-upbar" style="width:0%"></div></div></div></div>
         <div class="form-group" id="f-sharedwrap"><label>Accountant${tip('shared')}</label><input type="checkbox" id="f-shared" ${d.sharedAt ? 'checked' : ''} hidden>
           <div class="mini" style="color:var(--text)"><span id="f-sharedtxt"></span> <button type="button" class="linkbtn" id="f-sharedbtn"></button></div></div>
@@ -578,7 +581,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       kind: $('f-kind').value, incomeType: $('f-income').value, categoryId: $('f-category').value, amount: parseFloat($('f-amount').value) || 0, docType: $('f-doctype').value,
       issuedToCompany: $('f-issued').value, supplierName: $('f-supplier').value, supplierTaxId: $('f-taxid').value, docNumber: $('f-docnum').value,
       // Files picked but not saved yet count too, so the warning clears as soon as a file is chosen.
-      attachments: [...S.edit.attachments, ...Array.from($('f-files').files || []).map((f) => ({ name: f.name }))],
+      attachments: [...S.edit.attachments, ...S.edit.pending.map((f) => ({ name: f.name }))],
       docWaived: $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
     });
     const sync = () => {
@@ -646,10 +649,18 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     m.addEventListener('input', sync); m.addEventListener('change', sync);
     const renderAtt = () => {
       const el = $('f-attlist');
-      el.innerHTML = S.edit.attachments.map((a, i) => `<span class="attach-chip"><a href="${esc(a.url || '#')}" target="_blank" rel="noopener">${esc(a.name || 'file')}</a><span class="rm" data-rm="${i}" title="Remove">×</span></span>`).join('');
-      el.querySelectorAll('.rm').forEach((r) => r.addEventListener('click', () => { S.edit.attachments.splice(Number(r.dataset.rm), 1); renderAtt(); sync(); }));
+      el.innerHTML = S.edit.attachments.map((a, i) => `<span class="attach-chip"><a href="${esc(a.url || '#')}" target="_blank" rel="noopener">${esc(a.name || 'file')}</a><span class="rm" data-rm="${i}" title="Remove">×</span></span>`).join('')
+        + S.edit.pending.map((f, i) => `<span class="attach-chip attach-chip--new">${esc(f.name)} <span class="mini">to upload</span><span class="rm" data-rmp="${i}" title="Remove">×</span></span>`).join('');
+      el.querySelectorAll('[data-rm]').forEach((r) => r.addEventListener('click', () => { S.edit.attachments.splice(Number(r.dataset.rm), 1); renderAtt(); sync(); }));
+      el.querySelectorAll('[data-rmp]').forEach((r) => r.addEventListener('click', () => { S.edit.pending.splice(Number(r.dataset.rmp), 1); renderAtt(); sync(); }));
     };
     renderAtt();
+    // 16 Nov 2026: picking files again adds to the list (the browser alone replaces the earlier pick); the same file twice is kept once.
+    $('f-files').addEventListener('change', () => {
+      const inp = $('f-files'), same = (a, b) => a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
+      Array.from(inp.files || []).forEach((f) => { if (!S.edit.pending.some((p) => same(p, f))) S.edit.pending.push(f); });
+      inp.value = ''; renderAtt(); sync();
+    });
     // Picking a saved supplier fills what is still empty.
     $('f-supplier').addEventListener('change', () => {
       const s = S.suppliers.find((x) => x.name.toLowerCase() === $('f-supplier').value.trim().toLowerCase()); if (!s) return;
@@ -706,7 +717,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     if (kind === 'expense' && !$('f-category').value) { alert('Choose a category.'); return; }
     const btn = $('f-save'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const files = $('f-files').files;
+      const files = S.edit.pending;
       const attachments = [...S.edit.attachments, ...(files.length ? await uploadFiles(files, m) : [])];
       // Equal split unless "Unequal split…" was chosen: then each weight as typed (1 if empty or zero).
       const usedBy = [...m.querySelectorAll('[data-used]:checked')].map((c) => { const w = Number(m.querySelector(`[data-weight="${c.dataset.used}"]`).value); return { key: c.dataset.used, weight: S.edit.unequal && w > 0 ? w : 1 }; });
@@ -1264,6 +1275,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // A money-out bank line can also be a transfer to a partner the app did not recognise: the item form and this window switch between the two.
   const lineOut = (preset) => { const m = preset?.movementId && S.movements.find((x) => x.id === preset.movementId); return !!m && m.amount < 0 && can('budget.import'); };
   const lineKindRow = (on) => `<div class="linekind" role="group" aria-label="What is this line?"><span class="lk-label">What is this line?</span><button type="button" class="btn btn--sm btn--${on === 'expense' ? 'primary' : 'ghost'}" data-linekind="expense" aria-pressed="${on === 'expense'}">An expense</button><button type="button" class="btn btn--sm btn--${on === 'partner' ? 'primary' : 'ghost'}" data-linekind="partner" aria-pressed="${on === 'partner'}">Went to a partner</button></div>`;
+  // 16 Nov 2026: an amount never changes by itself. The mouse wheel over a number box scrolls the page (the box lets go of the focus first) and the up/down keys do nothing.
+  root.addEventListener('wheel', (e) => { const t = e.target; if (t instanceof HTMLInputElement && t.type === 'number' && document.activeElement === t) t.blur(); }, { passive: true });
+  root.addEventListener('keydown', (e) => { const t = e.target; if (t instanceof HTMLInputElement && t.type === 'number' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) e.preventDefault(); });
   root.addEventListener('click', (e) => {
     const b = e.target.closest('[data-linekind]'); if (!b || !S.edit?.movementId && !S.lineChoice) return;
     const m = S.movements.find((x) => x.id === (S.edit?.movementId || S.lineChoice)); if (!m) return;   // the open item form wins over a partner window closed with Esc
