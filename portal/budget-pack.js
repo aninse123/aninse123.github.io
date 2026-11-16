@@ -1,6 +1,6 @@
 // Budget v2 — the accountant pack, pure logic (plan "Budget v2 - Plan.md", Stage 5a). No Firebase, no DOM:
 // tested in Node (tests/portal/budget_stage5_*.test.mjs) and used by portal/budget-v2.js.
-import { docStatus, DOC_TYPES, INCOME_TYPES, KINDS, labelOf, itemLines, normalizeItem } from './budget-lib.js';
+import { docStatus, paperOf, DOC_TYPES, INCOME_TYPES, KINDS, labelOf, itemLines, normalizeItem } from './budget-lib.js';
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -14,7 +14,7 @@ export function monthRange(ym) {
 
 // ── Has an item changed since it was sent? ──
 // The fingerprint covers what the accountant sees; a comment or a tag does not count. Stored on the item when it is shared.
-export const PACK_FIELDS = ['kind', 'name', 'amount', 'date', 'invoiceDate', 'categoryId', 'subtype', 'purposeId', 'supplierName', 'supplierTaxId', 'docType', 'docNumber', 'atcud', 'issuedToCompany', 'country', 'vatRate', 'vatAmount', 'vatDeductible', 'currency', 'incomeType', 'counterparty', 'investorId', 'partnerKey', 'paidWith', 'paidPersonallyBy', 'docWaived'];
+export const PACK_FIELDS = ['kind', 'name', 'amount', 'date', 'invoiceDate', 'categoryId', 'subtype', 'purposeId', 'supplierName', 'supplierTaxId', 'docType', 'docNumber', 'atcud', 'issuedToCompany', 'paper', 'docPartAmount', 'docRest', 'country', 'vatRate', 'vatAmount', 'vatDeductible', 'currency', 'incomeType', 'counterparty', 'investorId', 'partnerKey', 'paidWith', 'paidPersonallyBy', 'docWaived'];
 const fnv = (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); };
 export function packHash(item) {
   const it = item || {}, o = {};
@@ -73,11 +73,11 @@ export function receiptName(item, attachment, index, used = new Set()) {
 
 // What to ask the supplier for, by paperwork status.
 export const FIX_HINT = {
-  noDocument: 'Send the invoice (PDF or photo).',
-  receiptOnly: 'Ask the supplier for an invoice with the company name and NIF.',
-  noNif: 'The invoice must show the company NIF: ask the supplier to reissue it.',
-  incomplete: 'The invoice details (supplier, NIF or VAT ID, number) are not filled in yet.',
+  noDocument: 'Send the invoice (PDF or photo), in the company name and NIF.',
+  noNif: 'Ask the supplier for an invoice with the company name and NIF.',
 };
+// A partly invoiced item: say which part is not covered and what it has.
+export const partHint = (d) => `€${(Number(d.left) || 0).toFixed(2)} is not covered by the invoice with the company NIF: ${d.rest === 'nonif' ? 'it has a document without the NIF; ask for it in the company name and NIF' : 'it has no document; ask the supplier for it, or treat it as not deductible'}.`;
 
 // ── The sheets ──
 // ctx = { company:{companyName,companyNif,companyAddress}, createdBy, createdAt, catLabel(id), purLabel(id), personLabel(key), paidWithLabel(item),
@@ -102,7 +102,7 @@ export function packSheets(selected, ctx) {
     ],
     rows: exp.map((it) => [
       it.date, it.invoiceDate, it.supplierName, it.supplierTaxId, it.docNumber, it.atcud, labelOf(DOC_TYPES, it.docType, ''),
-      it.issuedToCompany === 'yes' ? 'Yes' : it.issuedToCompany === 'no' ? 'No' : 'Unknown', it.name, cat(it), purpose(it),
+      ({ nif: 'Yes', part: 'Part', nonif: 'No', none: '' })[paperOf(it)], it.name, cat(it), purpose(it),
       round2(it.amount), it.vatRate == null || it.vatRate === '' ? null : Number(it.vatRate), Number(it.vatAmount) > 0 ? round2(it.vatAmount) : null,
       it.vatDeductible === 'yes' ? 'Yes' : it.vatDeductible === 'no' ? 'No' : 'Ask accountant',
       c.countryName ? c.countryName(it.country) : it.country, it.currency && it.currency !== 'EUR' ? it.currency : 'EUR',
@@ -125,7 +125,7 @@ export function packSheets(selected, ctx) {
   const missing = {
     name: 'Missing documents',
     columns: [{ header: 'Date', width: 12 }, { header: 'Item', width: 30 }, { header: 'Supplier', width: 26 }, { header: 'Amount (EUR)', width: 14, fmt: 'money' }, { header: 'Problem', width: 26 }, { header: 'What to do', width: 60, fmt: 'wrap' }],
-    rows: [...exp, ...inc].filter((it) => docStatus(it).level === 'warn').map((it) => { const d = docStatus(it); return [it.date, it.name, it.kind === 'income' ? (it.counterparty || it.investorName || '') : it.supplierName, round2(it.amount), d.label, d.code === 'incomeMissing' ? `Send the ${d.need}.` : FIX_HINT[d.code] || '']; }),
+    rows: [...exp, ...inc].filter((it) => docStatus(it).level === 'warn').map((it) => { const d = docStatus(it); return [it.date, it.name, it.kind === 'income' ? (it.counterparty || it.investorName || '') : it.supplierName, round2(it.amount), d.label, d.code === 'incomeMissing' ? `Send the ${d.need}.` : d.code === 'part' ? partHint(d) : FIX_HINT[d.code] || '']; }),
   };
   const totalExp = round2(exp.reduce((x, i) => x + i.amount, 0)), totalInc = round2(inc.reduce((x, i) => x + i.amount, 0));
   const vat = round2(exp.reduce((x, i) => x + (Number(i.vatAmount) > 0 ? Number(i.vatAmount) : 0), 0));

@@ -10,7 +10,7 @@ import { buildXlsx, XLSX_MIME } from './xlsx-write.js';
 import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDescription, matchCandidates, findInvestor } from './budget-bank.js';
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
-  DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, INCOME_DOC, incomeDocNeeded, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
+  DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, PAPER, paperOf, INCOME_DOC, incomeDocNeeded, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
   docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, itemLines, companyIdsOf, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban, cleanBic, bicStatus,
   last4, labelOf, mergeLists, activeOnly, newListId,
 } from './budget-lib.js';
@@ -37,8 +37,8 @@ const TIPS = {
   paidPersonallyBy: 'The partner whose own money was used. Reports lists what the company still owes each of you.',
   bankNames: 'The name the bank writes on transfers from you, copied from a bank line. It lets the Inbox recognise money from you as a partner loan.',
   usedBy: 'Who the expense was for, not whose card paid. Click one or more names; with several, the cost is split equally. Use "Unequal split…" to give someone a bigger share: each name then gets a share, and you see their % and euros.',
-  docType: 'What paperwork you have. For tax the company needs an invoice with its NIF; a receipt or simplified invoice alone is not enough.',
-  issuedToCompany: 'Does the invoice show the company’s name and NIF? Choose Unknown until you have checked; Unknown counts as a warning.',
+  paper: 'What paperwork you have for this expense. For tax the company needs a document that shows its name and NIF. Choose "Part with our NIF" when the supplier invoiced only part of it.',
+  docType: 'Optional. The kind of document; a recibo verde matters to the accountant (withholding tax). The accountant can also read it from the file.',
   supplier: 'Who we paid. Pick a saved supplier to fill NIF, country and defaults, or type a new name and it is saved for next time.',
   supplierTaxId: 'The supplier’s NIF (Portugal) or VAT ID (abroad, for example ES B1234567). NIF and VAT are different: the NIF identifies a person or company, VAT (IVA) is the tax on the invoice.',
   docNumber: 'The invoice number printed on the document.',
@@ -139,6 +139,12 @@ const CSS = `
 @media (max-width:768px){ #v2root .summary-grid.three { grid-template-columns:1fr; } }
 #v2root .setjump { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
 #v2root .setjump .tagchip { font-size:0.8rem; padding:4px 12px; }
+#v2root .paperopts { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:8px; }
+#v2root .paperopt { display:flex; gap:10px; align-items:flex-start; border:1.5px solid var(--border); border-radius:var(--radius); padding:9px 12px; cursor:pointer; background:var(--white); }
+#v2root .paperopt span { display:flex; flex-direction:column; gap:2px; font-size:0.86rem; }
+#v2root .paperopt:has(input:checked) { border-color:var(--primary); background:#E8F0F8; }
+#v2root .paperopt input { margin-top:3px; }
+#v2root .partrow { background:#F7F3EC; border-radius:var(--radius); padding:10px 12px 0; margin-bottom:14px; }
 #v2root input[type=number] { -moz-appearance:textfield; appearance:textfield; }
 #v2root input[type=number]::-webkit-outer-spin-button, #v2root input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
 #v2root .attach-chip--new { background:#E8F0F8; }
@@ -544,11 +550,15 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="sect" id="f-docsect"><div class="sect-title" id="f-doctitle">Paperwork</div>
         <div class="warnbox" id="f-warn"></div>
         <div id="f-invfields">
-        <div class="form-row">${fld('Document', 'docType', `<select id="f-doctype">${DOC_TYPES.map((t) => `<option value="${t.id}"${d.docType === t.id ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
-          ${fld('Invoice shows our NIF', 'issuedToCompany', `<select id="f-issued"><option value="unknown"${d.issuedToCompany === 'unknown' || !d.issuedToCompany ? ' selected' : ''}>Unknown</option><option value="yes"${d.issuedToCompany === 'yes' ? ' selected' : ''}>Yes</option><option value="no"${d.issuedToCompany === 'no' ? ' selected' : ''}>No</option></select>`)}</div>
+        <div class="form-group"><label>Paperwork${tip('paper')}</label>
+          <div class="paperopts" role="radiogroup" aria-label="Paperwork">${PAPER.map((p) => `<label class="paperopt"><input type="radio" name="f-paper" value="${p.id}"${paperOf(d) === p.id ? ' checked' : ''}><span><strong>${p.label}</strong><span class="mini">${p.hint}</span></span></label>`).join('')}</div></div>
+        <div class="form-row partrow" id="f-partwrap">${fld('Covered by the document with our NIF (€)', '', `<input type="number" id="f-partamt" step="0.01" min="0" value="${esc(d.docPartAmount ?? '')}"><div class="hint" id="f-parthint"></div>`)}
+          ${fld('The rest has', '', `<select id="f-partrest"><option value="none">No document</option><option value="nonif"${d.docRest === 'nonif' ? ' selected' : ''}>A document without our NIF</option></select>`)}</div>
         <div class="form-row">${fld('Supplier', 'supplier', `<input type="text" id="f-supplier" list="f-suplist" value="${esc(d.supplierName || '')}" placeholder="Name"><datalist id="f-suplist">${S.suppliers.filter((s) => !s.archived).map((s) => `<option value="${esc(s.name)}">`).join('')}</datalist><div class="hint">Type to search the suppliers, or clear the box to see them all. A new name is saved for next time.</div>`)}
           ${fld('VAT amount', 'vatAmount', `<input type="number" id="f-vatamt" step="0.01" min="0" value="${esc(d.vatAmount ?? '')}">`)}</div>
         <details class="fold" id="f-more"><summary>More invoice details<span class="mini" id="f-moresum"></span></summary>
+        <p class="mini" style="margin:10px 0 0">All optional: none of these is a warning. Fill them in when you have them; the accountant can also read them from the file.</p>
+        ${fld('Type of document', 'docType', `<select id="f-doctype"><option value="">Not said</option>${DOC_TYPES.filter((t) => t.pick).map((t) => `<option value="${t.id}"${d.docType === t.id ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
         <div class="form-row">${fld('Supplier NIF / VAT ID', 'supplierTaxId', `<input type="text" id="f-taxid" value="${esc(d.supplierTaxId || '')}" placeholder="NIF or VAT ID">`)}
           ${fld('Invoice date', 'invoiceDate', `<input type="date" id="f-invdate" value="${esc(d.invoiceDate || '')}">`)}</div>
         <div class="form-row">${fld('Invoice number', 'docNumber', `<input type="text" id="f-docnum" value="${esc(d.docNumber || '')}">`)}${fld('ATCUD', 'atcud', `<input type="text" id="f-atcud" value="${esc(d.atcud || '')}" placeholder="Optional">`)}</div>
@@ -579,7 +589,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const company = S.company || {};
     const readDraft = () => ({
       kind: $('f-kind').value, incomeType: $('f-income').value, categoryId: $('f-category').value, amount: parseFloat($('f-amount').value) || 0, docType: $('f-doctype').value,
-      issuedToCompany: $('f-issued').value, supplierName: $('f-supplier').value, supplierTaxId: $('f-taxid').value, docNumber: $('f-docnum').value,
+      paper: m.querySelector('input[name="f-paper"]:checked')?.value || 'none', docPartAmount: $('f-partamt').value === '' ? null : Number($('f-partamt').value), docRest: $('f-partrest').value, supplierName: $('f-supplier').value, supplierTaxId: $('f-taxid').value, docNumber: $('f-docnum').value,
       // Files picked but not saved yet count too, so the warning clears as soon as a file is chosen.
       attachments: [...S.edit.attachments, ...S.edit.pending.map((f) => ({ name: f.name }))],
       docWaived: $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
@@ -600,9 +610,10 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       // "More invoice details": a one-line summary while folded; it opens by itself when something inside needs you (it never closes by itself).
       const more = { taxid: $('f-taxid').value.trim(), num: $('f-docnum').value.trim(), date: $('f-invdate').value, country: $('f-country').value, rate: $('f-vatrate').value, ded: $('f-vatded').value, cur: $('f-currency').value };
       $('f-moresum').textContent = ` · ${more.country} · ${more.cur} · ${more.rate !== '' ? more.rate + '% VAT' : 'no VAT rate'}${more.taxid ? ' · NIF ' + more.taxid : ''}${more.num ? ' · No. ' + more.num : ''}${more.date ? ' · ' + fmtDate(more.date) : ''}`;
-      const dsMore = docStatus(readDraft());
-      const needsMore = more.country !== 'PT' || more.cur !== 'EUR' || more.ded !== 'ask' || $('f-atcud').value.trim() !== ''
-        || (dsMore.level === 'warn' && dsMore.missing.some((x) => x === 'supplierTaxId' || x === 'docNumber'));
+      const needsMore = more.country !== 'PT' || more.cur !== 'EUR' || more.ded !== 'ask' || $('f-atcud').value.trim() !== '';
+      const paper = m.querySelector('input[name="f-paper"]:checked')?.value || 'none', amtNow = parseFloat($('f-amount').value) || 0, partNow = Number($('f-partamt').value) || 0;
+      $('f-partwrap').style.display = paper === 'part' ? '' : 'none';
+      $('f-parthint').textContent = `Of ${eur.format(amtNow)}. The rest: ${eur.format(Math.max(0, amtNow - partNow))}.`;
       if (needsMore && !$('f-more').open) $('f-more').open = true;
       const split = $('f-split').checked && expense;
       $('f-splitwrap').style.display = split ? '' : 'none'; $('f-companywrap').style.display = expense && !split ? '' : 'none';
@@ -624,7 +635,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       $('f-usedhint').textContent = ticked === 0 ? 'Nobody chosen = a company cost (shown as "Company" in Reports).' : '';
       const ds = docStatus(readDraft()), box = $('f-warn');
       const reminder = company.companyName || company.companyNif ? `Ask for the invoice in the name of <strong>${esc(company.companyName || '')}</strong>${company.companyNif ? `, NIF <strong>${esc(company.companyNif)}</strong>` : ''}${company.companyAddress ? `, ${esc(String(company.companyAddress).replace(/\n/g, ', '))}` : ''}.` : 'Fill in Company details in Settings to see the name and NIF to ask for.';
-      const msgs = { ok: 'Invoice complete: file, our NIF, supplier, tax ID and number are all there.', incomplete: `Invoice details missing: ${ds.missing.map((x) => ({ supplierName: 'supplier name', supplierTaxId: 'supplier NIF / VAT ID', docNumber: 'invoice number' }[x] || x)).join(', ')}.`, noNif: 'The invoice must show our company NIF. Set “Invoice shows our NIF” to Yes once you have checked, or ask the supplier to reissue it.', receiptOnly: 'A receipt or simplified invoice is not enough for tax: ask the supplier for an invoice with our NIF.', noDocument: 'No document yet: attach the invoice (PDF or photo) and pick its type.', notRequired: 'No document needed for this item.', attached: 'A file is attached.', incomeMissing: `Attach the ${ds.need || 'supporting document'} (PDF or photo) under Notes and files, or tick “No document needed” and say why.` };
+      const msgs = { ok: 'Document with our NIF. The supplier, NIF and invoice number under "More invoice details" are optional.', part: `${eur.format(ds.part || 0)} is covered by the document with our NIF; ${eur.format(ds.left || 0)} ${ds.rest === 'nonif' ? 'has a document without our NIF' : 'has no document'}.`, noNif: 'The document does not show our company NIF: ask the supplier for one that does.', noDocument: ds.missing.includes('file') && (m.querySelector('input[name="f-paper"]:checked')?.value || 'none') !== 'none' ? 'Attach the document (PDF or photo) under Notes and files.' : 'No document yet: attach the invoice (PDF or photo) under Notes and files.', notRequired: 'No document needed for this item.', attached: 'A file is attached.', incomeMissing: `Attach the ${ds.need || 'supporting document'} (PDF or photo) under Notes and files, or tick “No document needed” and say why.` };
       box.className = 'warnbox ' + ds.level;
       box.innerHTML = `<strong>${esc(ds.label)}.</strong> ${msgs[ds.code]}${ds.level === 'warn' && $('f-kind').value === 'expense' ? `<div style="margin-top:4px">${reminder}</div>` : ''}`;
     };
@@ -754,7 +765,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           }
           const co = $('f-company'), cid = co.dataset.cid || '', cname = co.value.trim(); return { lines: [], companyId: cid, companyName: cname, companyIds: cid ? [cid] : [] };
         })(),
-        docType: expense ? $('f-doctype').value : '', issuedToCompany: expense ? $('f-issued').value : '',
+        ...(() => {   // the Paperwork answer; "shows our NIF" is kept in step for the pack's Expenses sheet and older readers
+          if (!expense) return { docType: '', issuedToCompany: '', paper: '', docPartAmount: null, docRest: '' };
+          const paper = m.querySelector('input[name="f-paper"]:checked')?.value || 'none', part = $('f-partamt').value === '' ? null : Number($('f-partamt').value);
+          return { paper, docType: $('f-doctype').value || (paper === 'none' ? 'none' : ''), issuedToCompany: { nif: 'yes', part: 'yes', nonif: 'no', none: 'unknown' }[paper],
+            docPartAmount: paper === 'part' ? part : null, docRest: paper === 'part' ? $('f-partrest').value : '' };
+        })(),
         supplierName, supplierTaxId: taxId, docNumber: expense ? $('f-docnum').value.trim() : '', atcud: expense ? $('f-atcud').value.trim() : '',
         invoiceDate: expense ? $('f-invdate').value || '' : '', country: expense ? $('f-country').value : '',
         vatRate: expense && $('f-vatrate').value !== '' ? Number($('f-vatrate').value) : null,
