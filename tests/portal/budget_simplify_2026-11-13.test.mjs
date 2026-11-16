@@ -90,5 +90,9 @@ ok('W: the form has the four answers, and the covered amount + what the rest has
 ok('W: the type of document is optional, inside "More invoice details", with five choices and "Not said"', /<select id="f-doctype"><option value="">Not said<\/option>\$\{DOC_TYPES\.filter\(\(t\) => t\.pick\)/.test(v2) && (lib.match(/pick: true/g) || []).length === 5);
 ok('W: VAT on a partly invoiced item counts as potentially recoverable; the pack says which part is missing and keeps the answer in its fingerprint', /\['ok', 'part'\]\.includes\(docStatus\(it\)\.code\) \? 'recoverable' : 'atRisk'/.test(lib) && /d\.code === 'part' \? partHint\(d\)/.test(pack) && /'issuedToCompany', 'paper', 'docPartAmount', 'docRest',/.test(pack));
 
+// 16 Nov 2026 — the Paperwork choices read like the portal's options; Cost per tag is a table like Cost per company
+ok('W: a Paperwork choice is not styled as a field label (no capitals, no letter spacing, normal weight; the title semi-bold)', /#v2root \.form-group \.paperopt \{ text-transform:none; letter-spacing:normal; font-size:0\.88rem; font-weight:400;/.test(v2) && /#v2root \.paperopt strong \{ font-weight:600; \}/.test(v2));
+ok('T: Cost per tag is a table (tag, items, cost, top categories), every tag of the period, the tag opens Items filtered by it', /<th>Tag<\/th><th class="num">Items<\/th><th class="num">Cost<\/th><th>Mostly<\/th>/.test(v2) && /class="linklike" data-tagfilter="\$\{esc\(t\.tag\)\}"/.test(v2) && /<td class="mini">\$\{top\(t\.byCategory\)\}<\/td>/.test(v2) && /const tags = tagTotals\(items\);/.test(v2) && /if \(sign > 0\) itemLines\(it\)\.forEach\(\(l\) => \{ cur\.byCategory\[l\.categoryId\]/.test(read('../../portal/budget-lib.js')));
+
 console.log(fail ? `${fail} FAILED` : 'All passed');
 process.exit(fail ? 1 : 0);

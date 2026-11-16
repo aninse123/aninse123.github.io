@@ -274,8 +274,9 @@ export function tagTotals(items) {
     if (!sign) continue;
     for (const tag of it.tags) {
       const k = tag.toLowerCase();
-      const cur = m.get(k) || { tag, total: 0, count: 0 };
+      const cur = m.get(k) || { tag, total: 0, count: 0, byCategory: {} };
       cur.total = round2(cur.total + sign * it.amount); cur.count++;
+      if (sign > 0) itemLines(it).forEach((l) => { cur.byCategory[l.categoryId] = round2((cur.byCategory[l.categoryId] || 0) + l.amount); });   // what the tag's money bought (refunds left out)
       m.set(k, cur);
     }
   }

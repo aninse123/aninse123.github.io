@@ -144,6 +144,11 @@ const CSS = `
 #v2root .paperopt span { display:flex; flex-direction:column; gap:2px; font-size:0.86rem; }
 #v2root .paperopt:has(input:checked) { border-color:var(--primary); background:#E8F0F8; }
 #v2root .paperopt input { margin-top:3px; }
+#v2root .form-group .paperopt { text-transform:none; letter-spacing:normal; font-size:0.88rem; font-weight:400; color:var(--text); margin-bottom:0; }   /* each choice is a label: it must not look like a field label */
+#v2root .paperopt strong { font-weight:600; }
+#v2root .paperopt .mini { text-transform:none; letter-spacing:normal; font-weight:400; }
+#v2root .linklike { background:none; border:none; padding:0; font:inherit; color:var(--primary); cursor:pointer; text-align:left; }
+#v2root .linklike:hover { text-decoration:underline; }
 #v2root .partrow { background:#F7F3EC; border-radius:var(--radius); padding:10px 12px 0; margin-bottom:14px; }
 #v2root input[type=number] { -moz-appearance:textfield; appearance:textfield; }
 #v2root input[type=number]::-webkit-outer-spin-button, #v2root input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
@@ -1482,7 +1487,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const byCat = {}, byPur = {};
     costs.forEach((i) => itemLines(i).forEach((l) => { byCat[l.categoryId || 'other'] = (byCat[l.categoryId || 'other'] || 0) + l.amount; byPur[l.purposeId || ''] = (byPur[l.purposeId || ''] || 0) + l.amount; }));
     const tbl = (m, lab) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(lab(k) || 'No purpose yet')}</td><td class="num">${eur.format(v)}</td></tr>`).join('') || '<tr class="empty-row"><td colspan="2">Nothing yet.</td></tr>';
-    const tags = tagTotals(items).slice(0, 12);
+    const tags = tagTotals(items);
     const r = companyReport(S.items, rg), pr = personReport(S.items, rg), pv = planVsActual(S.items, rg);
     const top = (m, n = 3) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${esc(catLabel(k))} ${eur.format(v)}`).join(' · ');
     const bar = (pct) => pct == null ? '' : `<div class="progress" style="margin-top:4px;width:120px"><div class="progress__bar" style="width:${Math.min(100, pct)}%;${pct > 100 ? 'background:var(--danger)' : ''}"></div></div>`;
@@ -1531,7 +1536,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <p class="mini" style="margin-top:8px">Only costs connected to a company count. Searcher salaries and shared overhead are not part of a company's cost. Use "Connect cost to a company" on an item.</p>
         <div class="card" style="margin-top:12px"><div class="table-wrap"><table><thead><tr><th>Company</th><th class="num">Items</th><th class="num">Cost</th><th>Mostly</th></tr></thead><tbody>${r.rows.length ? r.rows.map((x) => `<tr><td>${esc(x.name || '—')}${x.companyId ? '' : '<div class="mini">Not linked to a CRM company</div>'}</td><td class="num">${x.count}</td><td class="num">${eur.format(x.total)}</td><td class="mini">${top(x.byCategory, 2)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="4">No costs connected to a company in this period.</td></tr>'}</tbody></table></div></div></div>
       <div class="section" id="rep-tags"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per tag</h2></div>
-        <div class="card" style="padding:14px 16px;">${tags.length ? tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t.tag)}">${esc(t.tag)} · ${eur.format(t.total)}<small>${t.count}</small></button>`).join('') : '<span class="mini">No tags yet. Add tags such as "Spain trip" on an item.</span>'}</div></div>      ${planOn() ? `<div class="two" id="rep-plan"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by category</h2></div>${planTable(pv.categories, catLabel)}</div>
+        ${tags.length ? `<div class="card"><div class="table-wrap"><table><thead><tr><th>Tag</th><th class="num">Items</th><th class="num">Cost</th><th>Mostly</th></tr></thead><tbody>${tags.map((t) => `<tr><td><button type="button" class="linklike" data-tagfilter="${esc(t.tag)}" title="Show these items">${esc(t.tag)}</button></td><td class="num">${t.count}</td><td class="num">${eur.format(t.total)}</td><td class="mini">${top(t.byCategory)}</td></tr>`).join('')}</tbody></table></div></div>
+        <p class="mini" style="margin-top:8px">Expenses with the tag, net of refunds that carry the same tag. An item with two tags counts in both rows. Click a tag to see its items.</p>` : '<div class="card" style="padding:14px 16px;"><span class="mini">No tags yet. Add tags such as "Spain trip" on an item.</span></div>'}</div>      ${planOn() ? `<div class="two" id="rep-plan"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by category</h2></div>${planTable(pv.categories, catLabel)}</div>
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by purpose</h2></div>${planTable(pv.purposes, purLabel)}</div></div>
       <p class="mini">The plan is made of "Plan allocation" items with a category and/or a purpose. Add them in Items.</p>` : ''}`;
     body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { S.filter = { ...S.filter, doc: b.dataset.go === 'doc' ? 'warn' : '', review: b.dataset.go === 'review', vat: b.dataset.go === 'vatrisk' ? 'atRisk' : '', reimb: b.dataset.go === 'owed' ? 'owed' : '' }; S.tab = 'items'; render(); }));
