@@ -492,8 +492,39 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
 /* same size, single colour */
 .investors__logos img { max-width: 100%; max-height: 100%; object-fit: contain; filter: grayscale(1) brightness(0.35) sepia(0.3) hue-rotate(180deg); opacity: 0.85; }
 
+/* ===== FAQ ===== */
+.faq { background: var(--white); }
+.faq__list { max-width: 760px; margin: 0 auto; border-top: 1px solid var(--border); }
+.faq__item { border-bottom: 1px solid var(--border); }
+.faq__item summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  padding: 20px 4px;
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: var(--navy);
+}
+.faq__item summary::-webkit-details-marker { display: none; }
+.faq__item summary::after {
+  content: '';
+  flex-shrink: 0;
+  width: 10px; height: 10px;
+  border-right: 1.5px solid var(--gold-ink);
+  border-bottom: 1.5px solid var(--gold-ink);
+  transform: rotate(45deg) translateY(-3px);
+  transition: transform 0.25s ease;
+}
+.faq__item[open] summary::after { transform: rotate(-135deg) translateY(-3px); }
+.faq__item summary:hover { color: var(--gold-ink); }
+.faq__item p { padding: 0 4px 22px; max-width: 40em; color: var(--text); line-height: 1.7; }
+
 /* ===== CONTACT ===== */
-.contact { background: var(--white); }
+.contact { background: var(--white); border-top: 1px solid var(--border); }
 .contact__subtitle {
   text-align: center;
   color: var(--text-light);
@@ -767,6 +798,7 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   .lookfor__fig { padding: 22px 4px; }
   .lookfor__list { grid-template-columns: 1fr; gap: 16px; margin-top: 32px; }
   .lookfor__list li { font-size: 1rem; }
+  .faq__item summary { font-size: 1.08rem; padding: 18px 2px; }
   .team__bio { font-size: 0.95rem; line-height: 1.65; }
   .how__note { margin-top: 40px; font-size: 1.12rem; }
   .team__grid { grid-template-columns: 1fr; max-width: 420px; }

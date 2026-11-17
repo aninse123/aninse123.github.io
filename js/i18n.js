@@ -55,6 +55,21 @@ const translations = {
       title: "Our investors",
       text: "The acquisition is backed by Portuguese and international investors with experience running and growing companies."
     },
+    faq: {
+      title: "Frequently asked questions",
+      q1: "Is the conversation really confidential?",
+      a1: "Yes. We speak to no one in your company or your sector without your agreement, and we sign a confidentiality agreement before receiving any information.",
+      q2: "Why only one company?",
+      a2: "Because we will run it ourselves, full time. We are not building a portfolio or preparing a sale.",
+      q3: "What happens to the people who work there?",
+      a3: "They stay. We buy the company to run it as it is, with the people who make it work.",
+      q4: "Can I stay involved?",
+      a4: "Yes, if you wish. Some stay through the transition for a while, others take on another role. We design this with you.",
+      q5: "How long does it take?",
+      a5: "Usually six to nine months, from the first conversation to closing. You set the pace with us.",
+      q6: "How is the acquisition financed?",
+      a6: "By our investors, Portuguese and international, with experience running companies, and by bank financing where it makes sense."
+    },
     contact: {
       title: "Talk to us",
       subtitle: "If you built a company and are thinking about its next chapter, we would like to hear its story. The conversation is confidential and carries no commitment.",
@@ -136,6 +151,21 @@ const translations = {
     investors: {
       title: "Os nossos investidores",
       text: "A aquisição conta com o apoio de investidores portugueses e internacionais, com experiência a gerir e a fazer crescer empresas."
+    },
+    faq: {
+      title: "Perguntas frequentes",
+      q1: "A conversa é mesmo confidencial?",
+      a1: "Sim. Não falamos com ninguém da sua empresa nem do seu setor sem o seu acordo, e assinamos um acordo de confidencialidade antes de receber qualquer informação.",
+      q2: "Porquê uma única empresa?",
+      a2: "Porque vamos geri-la nós, a tempo inteiro. Não estamos a construir um portfólio nem a preparar uma venda.",
+      q3: "O que acontece às pessoas que trabalham na empresa?",
+      a3: "Continuam. Compramos a empresa para a gerir como ela é, com as pessoas que a fazem funcionar.",
+      q4: "Posso continuar ligado à empresa?",
+      a4: "Pode, se quiser. Há quem acompanhe a transição durante algum tempo e quem passe a outro papel. Desenhamos isso consigo.",
+      q5: "Quanto tempo demora?",
+      a5: "Normalmente seis a nove meses, da primeira conversa ao fecho. O ritmo é definido consigo.",
+      q6: "Como é financiada a compra?",
+      a6: "Pelos nossos investidores, portugueses e internacionais com experiência a gerir empresas, e por financiamento bancário quando faz sentido."
     },
     contact: {
       title: "Fale connosco",

@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="A Douro Partners quer encontrar uma única empresa portuguesa de qualidade, comprá-la e geri-la a longo prazo.">
-  <title>Douro Partners</title>
+  <title>Douro Partners | Compramos e gerimos uma empresa portuguesa</title>
+  <link rel="canonical" href="https://douropartners.pt/">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <!-- Headings use the system Palatino (Windows, Mac, iPhone); Gentium Book Plus is the closest
@@ -12,29 +13,155 @@
   <link href="https://fonts.googleapis.com/css2?family=Gentium+Book+Plus:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <!-- Open Graph / LinkedIn -->
   <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="Douro Partners">
+  <meta property="og:locale"      content="pt_PT">
+  <meta property="og:locale:alternate" content="en_GB">
   <meta property="og:url"         content="https://douropartners.pt/">
   <meta property="og:title"       content="Douro Partners | Uma nova geração. O mesmo compromisso.">
   <meta property="og:description" content="Compramos uma única empresa portuguesa de qualidade e dedicamo-nos a ela a tempo inteiro, com respeito pelo seu legado.">
   <meta property="og:image"       content="https://douropartners.pt/assets/og-image.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt"   content="Uma nova geração. O mesmo compromisso. Douro Partners.">
   <meta name="twitter:card"       content="summary_large_image">
   <meta name="twitter:title"      content="Douro Partners | Uma nova geração. O mesmo compromisso.">
   <meta name="twitter:description" content="Compramos uma única empresa portuguesa de qualidade e dedicamo-nos a ela a tempo inteiro, com respeito pelo seu legado.">
   <meta name="twitter:image"      content="https://douropartners.pt/assets/og-image.jpg">
+  <meta name="twitter:image:alt"  content="Uma nova geração. O mesmo compromisso. Douro Partners.">
 
-  <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="icon" href="/assets/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta name="theme-color" content="#1C2A39">
   <link rel="stylesheet" href="css/style.css">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "Organization",
-    "name": "Douro Partners",
-    "url": "https://douropartners.pt/",
-    "logo": "https://douropartners.pt/assets/logo.png",
-    "description": "A Douro Partners quer encontrar uma única empresa portuguesa de qualidade, comprá-la e geri-la a longo prazo.",
-    "email": "andre.rocha@douropartners.pt",
-    "address": { "@type": "PostalAddress", "addressCountry": "PT" }
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://douropartners.pt/#org",
+        "name": "Douro Partners",
+        "url": "https://douropartners.pt/",
+        "logo": "https://douropartners.pt/assets/logo.png",
+        "description": "A Douro Partners quer encontrar uma única empresa portuguesa de qualidade, comprá-la e geri-la a longo prazo.",
+        "email": "andre.rocha@douropartners.pt",
+        "address": {
+          "@type": "PostalAddress",
+          "addressCountry": "PT"
+        },
+        "areaServed": {
+          "@type": "Country",
+          "name": "Portugal"
+        },
+        "sameAs": [
+          "https://www.linkedin.com/company/douro-partners"
+        ],
+        "founder": [
+          {
+            "@id": "https://douropartners.pt/#andre"
+          },
+          {
+            "@id": "https://douropartners.pt/#antonio"
+          }
+        ]
+      },
+      {
+        "@type": "Person",
+        "@id": "https://douropartners.pt/#andre",
+        "name": "André Rocha",
+        "jobTitle": "Sócio-fundador / Managing Partner",
+        "worksFor": {
+          "@id": "https://douropartners.pt/#org"
+        },
+        "image": "https://douropartners.pt/assets/andre.jpg",
+        "sameAs": [
+          "https://www.linkedin.com/in/andrenorocha"
+        ]
+      },
+      {
+        "@type": "Person",
+        "@id": "https://douropartners.pt/#antonio",
+        "name": "António Carvalho",
+        "jobTitle": "Sócio-fundador / Managing Partner",
+        "worksFor": {
+          "@id": "https://douropartners.pt/#org"
+        },
+        "image": "https://douropartners.pt/assets/antonio.jpg",
+        "sameAs": [
+          "https://www.linkedin.com/in/amobnc"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://douropartners.pt/#website",
+        "url": "https://douropartners.pt/",
+        "name": "Douro Partners",
+        "inLanguage": [
+          "pt-PT",
+          "en"
+        ],
+        "publisher": {
+          "@id": "https://douropartners.pt/#org"
+        }
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://douropartners.pt/#faq",
+        "inLanguage": "pt-PT",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "A conversa é mesmo confidencial?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Sim. Não falamos com ninguém da sua empresa nem do seu setor sem o seu acordo, e assinamos um acordo de confidencialidade antes de receber qualquer informação."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Porquê uma única empresa?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Porque vamos geri-la nós, a tempo inteiro. Não estamos a construir um portfólio nem a preparar uma venda."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "O que acontece às pessoas que trabalham na empresa?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Continuam. Compramos a empresa para a gerir como ela é, com as pessoas que a fazem funcionar."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Posso continuar ligado à empresa?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Pode, se quiser. Há quem acompanhe a transição durante algum tempo e quem passe a outro papel. Desenhamos isso consigo."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Quanto tempo demora?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Normalmente seis a nove meses, da primeira conversa ao fecho. O ritmo é definido consigo."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Como é financiada a compra?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Pelos nossos investidores, portugueses e internacionais com experiência a gerir empresas, e por financiamento bancário quando faz sentido."
+            }
+          }
+        ]
+      }
+    ]
   }
   </script>
   <!-- Microsoft Clarity -->
@@ -61,21 +188,21 @@
         <li><a href="#look-for" data-i18n="nav.lookFor">O que procuramos</a></li>
         <li><a href="#how"      data-i18n="nav.howWeWork">Como trabalhamos</a></li>
         <li><a href="#team"     data-i18n="nav.team">Quem somos</a></li>
-        <li><a href="#contact"  data-i18n="nav.contact">Contact</a></li>
-        <li class="nav__links--investor"><a href="/portal/login.html" data-i18n="nav.investorLogin">Investor Login</a></li>
+        <li><a href="#contact"  data-i18n="nav.contact">Contacto</a></li>
+        <li class="nav__links--investor"><a href="/portal/login.html" data-i18n="nav.investorLogin">Área de Investidores</a></li>
       </ul>
-      <a href="/portal/login.html" class="nav__investor-login" data-i18n="nav.investorLogin">Investor Login</a>
+      <a href="/portal/login.html" class="nav__investor-login" data-i18n="nav.investorLogin">Área de Investidores</a>
       <div class="nav__lang" role="group" aria-label="Language">
-        <button class="lang-btn active" id="btn-en" onclick="setLang('en')" aria-pressed="true">
+        <button class="lang-btn" id="btn-en" onclick="setLang('en')" aria-pressed="false">
           <svg class="lang-flag" viewBox="0 0 20 14" aria-hidden="true"><defs><clipPath id="flagClipEn"><rect width="20" height="14" rx="2"/></clipPath></defs><g clip-path="url(#flagClipEn)"><rect width="20" height="14" fill="#00247D"/><path d="M0 0L20 14M20 0L0 14" stroke="#fff" stroke-width="3"/><path d="M0 0L20 14M20 0L0 14" stroke="#CF142B" stroke-width="1.2"/><path d="M10 0V14M0 7H20" stroke="#fff" stroke-width="4.6"/><path d="M10 0V14M0 7H20" stroke="#CF142B" stroke-width="2.4"/></g></svg>
           <span>EN</span>
         </button>
-        <button class="lang-btn" id="btn-pt" onclick="setLang('pt')" aria-pressed="false">
+        <button class="lang-btn active" id="btn-pt" onclick="setLang('pt')" aria-pressed="true">
           <svg class="lang-flag" viewBox="0 0 20 14" aria-hidden="true"><defs><clipPath id="flagClipPt"><rect width="20" height="14" rx="2"/></clipPath></defs><g clip-path="url(#flagClipPt)"><rect width="20" height="14" fill="#FF0000"/><rect width="8" height="14" fill="#046A38"/><circle cx="8" cy="7" r="2.6" fill="#FFCC00" stroke="#FF0000" stroke-width="0.5"/></g></svg>
           <span>PT</span>
         </button>
       </div>
-      <button class="nav__hamburger" id="hamburger" aria-label="Open menu" aria-expanded="false">
+      <button class="nav__hamburger" id="hamburger" aria-label="Abrir o menu" aria-expanded="false">
         <span></span><span></span><span></span>
       </button>
     </div>
@@ -202,6 +329,39 @@
     </div>
   </section>
 
+  <!-- FAQ -->
+  <section class="faq section" id="faq">
+    <div class="container">
+      <h2 class="section__title" data-i18n="faq.title">Perguntas frequentes</h2>
+      <div class="faq__list">
+        <details class="faq__item">
+          <summary data-i18n="faq.q1">A conversa é mesmo confidencial?</summary>
+          <p data-i18n="faq.a1">Sim. Não falamos com ninguém da sua empresa nem do seu setor sem o seu acordo, e assinamos um acordo de confidencialidade antes de receber qualquer informação.</p>
+        </details>
+        <details class="faq__item">
+          <summary data-i18n="faq.q2">Porquê uma única empresa?</summary>
+          <p data-i18n="faq.a2">Porque vamos geri-la nós, a tempo inteiro. Não estamos a construir um portfólio nem a preparar uma venda.</p>
+        </details>
+        <details class="faq__item">
+          <summary data-i18n="faq.q3">O que acontece às pessoas que trabalham na empresa?</summary>
+          <p data-i18n="faq.a3">Continuam. Compramos a empresa para a gerir como ela é, com as pessoas que a fazem funcionar.</p>
+        </details>
+        <details class="faq__item">
+          <summary data-i18n="faq.q4">Posso continuar ligado à empresa?</summary>
+          <p data-i18n="faq.a4">Pode, se quiser. Há quem acompanhe a transição durante algum tempo e quem passe a outro papel. Desenhamos isso consigo.</p>
+        </details>
+        <details class="faq__item">
+          <summary data-i18n="faq.q5">Quanto tempo demora?</summary>
+          <p data-i18n="faq.a5">Normalmente seis a nove meses, da primeira conversa ao fecho. O ritmo é definido consigo.</p>
+        </details>
+        <details class="faq__item">
+          <summary data-i18n="faq.q6">Como é financiada a compra?</summary>
+          <p data-i18n="faq.a6">Pelos nossos investidores, portugueses e internacionais com experiência a gerir empresas, e por financiamento bancário quando faz sentido.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
   <!-- CONTACT -->
   <section class="contact section" id="contact">
     <div class="container">
@@ -228,7 +388,7 @@
           <input type="hidden" name="subject" value="New message from douropartners.pt">
           <input type="checkbox" name="botcheck" style="display:none">
           <div class="form__group">
-            <label for="fname" data-i18n="contact.form.name">Name</label>
+            <label for="fname" data-i18n="contact.form.name">Nome</label>
             <input type="text" id="fname" name="name" autocomplete="name" required>
           </div>
           <div class="form__group">
@@ -236,11 +396,11 @@
             <input type="email" id="femail" name="_replyto" autocomplete="email" required>
           </div>
           <div class="form__group form__group--full">
-            <label for="fphone"><span data-i18n="contact.form.phone">Phone</span> <span class="form__optional" data-i18n="contact.form.optional">(optional)</span></label>
+            <label for="fphone"><span data-i18n="contact.form.phone">Telefone</span> <span class="form__optional" data-i18n="contact.form.optional">(opcional)</span></label>
             <input type="tel" id="fphone" name="phone" autocomplete="tel">
           </div>
           <div class="form__group form__group--full">
-            <label for="fmessage" data-i18n="contact.form.message">Message</label>
+            <label for="fmessage" data-i18n="contact.form.message">Mensagem</label>
             <textarea id="fmessage" name="message" rows="5" required></textarea>
           </div>
           <div class="form__message form__message--success" id="formSuccess"></div>
@@ -260,7 +420,7 @@
       <img src="assets/logo-cream.png" alt="Douro Partners" class="footer__logo">
       <p class="footer__tagline" data-i18n="footer.tagline">Uma nova geração. O mesmo compromisso.</p>
       <p class="footer__copy" data-i18n="footer.copy">&copy; 2026 Douro Partners. All rights reserved.</p>
-      <a href="/portal/login.html" class="footer__investor-login" data-i18n="nav.investorLogin">Investor Login</a>
+      <a href="/portal/login.html" class="footer__investor-login" data-i18n="nav.investorLogin">Área de Investidores</a>
     </div>
   </footer>
 
@@ -268,11 +428,11 @@
   <script src="js/main.js"></script>
 
   <!-- Cookie Consent Banner -->
-  <div id="cookieBanner" class="cookie-banner" role="alertdialog" aria-label="Cookie consent">
-    <p class="cookie-banner__text" data-i18n="cookie.text"></p>
+  <div id="cookieBanner" class="cookie-banner" role="alertdialog" aria-label="Consentimento de cookies">
+    <p class="cookie-banner__text" data-i18n="cookie.text">Utilizamos cookies para analisar o tráfego e melhorar a sua experiência. Os cookies de análise requerem o seu consentimento.</p>
     <div class="cookie-banner__actions">
-      <button class="cookie-btn cookie-btn--accept" onclick="acceptCookies()" data-i18n="cookie.accept"></button>
-      <button class="cookie-btn cookie-btn--decline" onclick="declineCookies()" data-i18n="cookie.decline"></button>
+      <button class="cookie-btn cookie-btn--accept" onclick="acceptCookies()" data-i18n="cookie.accept">Aceitar</button>
+      <button class="cookie-btn cookie-btn--decline" onclick="declineCookies()" data-i18n="cookie.decline">Recusar</button>
     </div>
   </div>
 </body>
