@@ -16,7 +16,8 @@ const { stopCompanyEnrolments, stopEnrolmentById } = require("./campaigns");
 const Tracks = require("./tracks"); // several recipients per company (30 Oct, switch outreach.multiRecipient)
 const Usage = require("../usage"); // Team & access → Usage (best-effort counters)
 const Feat = require("../features");
-const multiOn = async (isTest) => { const st = await Feat.jobState("outreach.multiRecipient"); return st === "on" || (st === "test" && !!isTest); }; // People merge (Stage 6): bounces mark people's addresses
+const multiOn = async (isTest) => { const st = await Feat.jobState("outreach.multiRecipient"); return st === "on" || (st === "test" && !!isTest); };
+const bounceRetryOn = async (isTest) => { const st = await Feat.jobState("outreach.bounceRetry"); return st === "on" || (st === "test" && !!isTest); }; // 17 Nov: the general address after a bounce // People merge (Stage 6): bounces mark people's addresses
 // People conversations (Phase 5) have no company: stop the conversation's own enrolment.
 // People merge, Stage 6 (21 Oct): the bounced address is marked on people's own lists
 // (production setting: On = always; Test = test emails only). Best effort.
@@ -175,7 +176,7 @@ async function handleDeliveryEvent(type, data) {
     if (threadRef) await threadRef.update({ status: "bounced" });
     // 30 Oct (outreach.multiRecipient): another address takes over, or the company's other conversations carry on
     let carry = "none";
-    if (companyId && thread?.enrolmentId && await multiOn(isTest)) { try { carry = await Tracks.onHardBounce(thread.enrolmentId, recipient); } catch (e) { logger.warn("outreach: bounce fallback failed", { message: e.message }); } }
+    if (companyId && thread?.enrolmentId && await multiOn(isTest)) { try { carry = await Tracks.onHardBounce(thread.enrolmentId, recipient, new Date(), { companyFallback: await bounceRetryOn(isTest) }); } catch (e) { logger.warn("outreach: bounce fallback failed", { message: e.message }); } }
     if (carry === "none") await store.setCompanyOutreachStatus(companyId, "bounced", isTest);
     await store.markCompanyEmailBounced(companyId, recipient, "hard bounce", isTest);
     if (carry === "none") await stopFor(companyId, thread, "Email bounced");

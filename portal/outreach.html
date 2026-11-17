@@ -4986,7 +4986,7 @@ Optional note for them:`, '');
           const open = n > 1 && (audToggle.has(key) ? audToggle.get(key) : audAll !== null ? audAll : g.some(x => x.status === 'stopped' || x.lastError));
           const parts = n > 1 ? [liveG.length ? `${liveG.length} in sequence` : '', g.filter(x => x.status === 'replied').length ? `${g.filter(x => x.status === 'replied').length} replied` : '', bouncedN ? `${bouncedN} bounced` : '', stoppedN - bouncedN > 0 ? `${stoppedN - bouncedN} stopped` : ''].filter(Boolean).join(' · ') : '';
           const live = liveG.length > 0, allPaused = live && liveG.every(x => x.status === 'paused');
-          const btns = !live ? (r.status === 'replied' && root.companyId && isOn('outreach.multiRecipient') ? `<button class="btn btn--ghost btn--sm" data-eop="restart" data-perm="out.campaigns" data-eid="${esc(top.id)}" title="A reply stopped this company. Bring it back at the step it was on.">Restart company…</button>` : '') : [
+          const btns = !live ? (r.status === 'replied' && root.companyId && isOn('outreach.multiRecipient') ? `<button class="btn btn--ghost btn--sm" data-eop="restart" data-perm="out.campaigns" data-eid="${esc(top.id)}" title="A reply stopped this company. Bring it back at the step it was on.">Restart company…</button>` : canRetryAddress(c, g) ? retryBtn(root) : '') : [
             canChooseRecipients(root, liveG) ? `<button class="btn btn--ghost btn--sm" data-eop="recipients" data-perm="out.campaigns" data-eid="${esc(root.id)}" title="Choose which addresses this company is written to, and in what order">Addresses…</button>` : '',
             `<button class="btn btn--ghost btn--sm" data-coop="${allPaused ? 'resume' : 'pause'}" data-ckey="${esc(key)}" data-perm="out.campaigns">${allPaused ? 'Resume' : 'Pause'}</button>`,
             `<button class="btn btn--ghost btn--sm" data-coop="move" data-ckey="${esc(key)}" data-perm="out.campaigns">Move…</button>`,
@@ -5040,7 +5040,7 @@ Optional note for them:`, '');
               const live = LIVE_ENROL.includes(e.status);
               const next = live ? waitingFor(e, c) : '';
               const note = e.lastError || e.stopReason || '';
-              const btns = !live ? (e.status === 'replied' && e.companyId && isOn('outreach.multiRecipient') ? `<button class="btn btn--ghost btn--sm" data-eop="restart" data-perm="out.campaigns" data-eid="${esc(e.id)}" title="A reply stopped this company. Bring it back at the step it was on.">Restart company…</button>` : '') : [
+              const btns = !live ? (e.status === 'replied' && e.companyId && isOn('outreach.multiRecipient') ? `<button class="btn btn--ghost btn--sm" data-eop="restart" data-perm="out.campaigns" data-eid="${esc(e.id)}" title="A reply stopped this company. Bring it back at the step it was on.">Restart company…</button>` : !e.trackOf && canRetryAddress(c, [e, ...(tracksOf.get(e.id) || [])]) ? retryBtn(e) : '') : [
                 e.status === 'paused' ? `<button class="btn btn--ghost btn--sm" data-eop="resume" data-perm="out.campaigns" data-eid="${esc(e.id)}">Resume</button>` : `<button class="btn btn--ghost btn--sm" data-eop="pause" data-perm="out.campaigns" data-eid="${esc(e.id)}">Pause</button>`,
                 `<button class="btn btn--ghost btn--sm" data-eop="move" data-perm="out.campaigns" data-eid="${esc(e.id)}">Move…</button>`,
                 `<button class="btn btn--danger btn--sm" data-eop="remove" data-perm="out.campaigns" data-eid="${esc(e.id)}">Remove</button>`,
@@ -5086,6 +5086,7 @@ Optional note for them:`, '');
         const e = curEnrols.find(x => x.id === eid);
         if (op === 'move') { openMoveCompany(e); return; }
         if (op === 'recipients') { openChooseRecipients(e); return; }
+        if (op === 'retry') { openRetryAddress(e); return; }
         if (op === 'restart') {
           if (!confirm(`${e.companyName || 'This company'} was stopped by a reply (${e.stopReason || 'replied'}). Restart it at the step it was on, from the next working day?`)) return;
           let r = await campCall({ action: 'restartCompany', enrolmentId: eid });
@@ -5184,6 +5185,55 @@ Optional note for them:`, '');
           try { previews[x.email] = (await callCampaign({ action: 'previewRecipient', enrolmentId: e.id, email: x.email })).data; } catch (err) { previews[x.email] = { ok: false, error: errText(err) }; }
           draw();
         } else if (t.dataset.rc !== undefined) { list[+t.dataset.rc].selected = t.checked; draw(); }
+      };
+    }
+
+    // 17 Nov (outreach.bounceRetry): a company whose email bounced and that has nothing left running in this campaign: pick
+    // another of its addresses; email 1 goes to it as a draft in To approve. g = the company's enrolments in this campaign.
+    const BOUNCED_RE = /bounce|can't receive/i;
+    function canRetryAddress(c, g) {
+      return isOn('outreach.bounceRetry') && isOn('outreach.multiRecipient') && isOn('contacts.trustLabels') && !!c && c.audienceType !== 'people' && ['active', 'paused'].includes(c.status)
+        && g.length > 0 && !!g[0].companyId && !g.some(x => LIVE_ENROL.includes(x.status)) && g.some(x => x.status === 'stopped' && BOUNCED_RE.test(x.stopReason || ''));
+    }
+    const retryBtn = (e) => `<button class="btn btn--ghost btn--sm" data-eop="retry" data-perm="out.campaigns" data-eid="${esc(e.id)}" title="The email bounced and nothing else is running. Choose another address of the company: email 1 goes to it as a draft in To approve.">Try another address…</button>`;
+    const RETRY_REFUSED = { still_running: 'Something is already running for this company in this campaign.', not_bounced: 'This company was not stopped by a bounce.', other_campaign: 'The company is now in another campaign.', do_not_contact: 'The company is marked do not contact.', unsubscribed: 'They unsubscribed.', campaign_not_running: 'The campaign is not running.', already_used: 'That address was already written to in this campaign.', suppressed: 'That address is on the do-not-email list.', bounced_address: 'That address has bounced.', blocked_address: 'That address is not verified and this campaign does not use not-verified addresses.', unknown_address: "That address is not one of the company's.", address_required: 'Choose an address.' };
+    async function openRetryAddress(e) {
+      let r;
+      try { r = (await callCampaign({ action: 'recipientsFor', enrolmentId: e.id })).data; } catch (err) { toast(errText(err)); return; }
+      const g = curEnrols.filter(x => x.companyId === e.companyId);
+      const used = new Set(g.flatMap(x => [x.recipient?.email, x.contactEmail, ...(x.recipientTried || [])]).filter(Boolean).map(x => String(x).toLowerCase()));
+      const why = (x) => used.has(x.email) ? 'already written to in this campaign' : x.trust === 'bounced' ? 'bounced' : x.blocked ? 'not verified (this campaign does not use not-verified addresses)' : '';
+      const list = [...r.list.filter(x => !why(x)), ...r.list.filter(x => why(x))];
+      const KIND = { company: 'company address', contact: 'contact', person: 'person' };
+      const bouncedTo = g.filter(x => x.status === 'stopped' && BOUNCED_RE.test(x.stopReason || '')).map(x => x.recipient?.email || x.contactEmail).filter(Boolean);
+      let pick = list.find(x => !why(x))?.email || null;
+      const previews = {};
+      const prevHtml = (p) => p.ok ? `<b>To:</b> ${esc(p.to)}\n<b>Subject:</b> ${esc(p.subject)}\n\n${esc(p.text)}\n<span class="hint">${esc(p.note)}</span>` : `<span style="color:var(--danger)">Cannot be previewed: ${esc(p.error)}</span>`;
+      const draw = () => {
+        $('modalBody').innerHTML = `<p class="hint">The email to ${esc(bouncedTo.join(', ') || 'this company')} bounced and nothing else is running. Choose another address: email 1 goes to it as a draft in To approve, and the company stays in this campaign.</p>
+          <div style="display:grid;gap:6px;">${list.map((x, i) => { const w = why(x); return `<div style="padding:6px 0;border-bottom:1px solid var(--border);${w ? 'opacity:0.55;' : ''}"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="radio" name="raPick" data-ra="${i}" aria-label="Write to ${esc(x.email)}"${pick === x.email ? ' checked' : ''}${w ? ' disabled' : ''}>
+            <div style="flex:1;min-width:200px;"><b>${esc(x.name || x.email)}</b> <span class="hint">· ${esc(KIND[x.kind] || '')}${x.role ? ' · ' + esc(x.role) : ''}</span>${x.name ? `<div class="hint">${esc(x.email)}</div>` : ''}
+              <div>${trustPillHtml(x.trust, '', esc)}${w ? ` <span class="hint">${esc(w)}</span>` : ''}${x.domain === 'none' ? ' <span style="font-size:0.76rem;color:var(--danger)">⚠ the domain does not seem to receive email</span>' : ''}</div></div>
+            ${w ? '' : `<button class="btn btn--ghost btn--sm" data-raprev="${i}">Preview</button>`}</div>
+            ${previews[x.email] ? `<div style="margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:0.8rem;white-space:pre-wrap;">${prevHtml(previews[x.email])}</div>` : ''}</div>`; }).join('')}</div>
+          ${list.some(x => !why(x)) ? '' : '<p class="hint" style="margin-top:8px;">No other usable address on file. Add one to the company in the Search CRM first.</p>'}`;
+      };
+      openModal(`Try another address — ${r.companyName || e.companyName || 'company'}`, '', async () => {
+        if (!pick) { modalError('Choose an address.'); return false; }
+        const res = (await callCampaign({ action: 'retryAddress', enrolmentId: e.id, email: pick })).data;
+        if (!res.ok) { modalError(RETRY_REFUSED[res.reason] || 'Not possible.'); return false; }
+        toast(`Email 1 to ${res.email} will wait in To approve.`);
+        loadCampaignData();
+        return true;
+      }, 'Write to this address');
+      draw();
+      $('modalBody').onclick = async (ev) => {
+        const t = ev.target.closest('[data-ra],[data-raprev]'); if (!t) return;
+        if (t.dataset.ra !== undefined) { pick = list[+t.dataset.ra].email; return; }
+        const x = list[+t.dataset.raprev]; t.disabled = true;
+        try { previews[x.email] = (await callCampaign({ action: 'previewRecipient', enrolmentId: e.id, email: x.email })).data; } catch (err) { previews[x.email] = { ok: false, error: errText(err) }; }
+        draw();
       };
     }
 

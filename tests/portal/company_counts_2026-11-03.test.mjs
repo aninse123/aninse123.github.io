@@ -92,7 +92,7 @@ ok('Metrics uses it behind the switch', html.includes("isOn('outreach.companyCou
 const raSrc = html.match(/    function renderAudience\(\) \{[\s\S]*?\n    \}\n(?=\n    \/\/ I22)/)[0];
 const aud = { innerHTML: '', querySelectorAll: () => [] };
 const mkAud = (on) => {
-  const names = ['isOn', 'curCamp', 'curEnrols', 'rollupByCompany', 'norm', 'audSearch', 'audPath', 'audFilter', 'audAll', 'audToggle', 'hasPaths', 'pathsOf', 'pathIdOf', 'isLeftOut', 'campEditable', '$', 'num', 'esc', 'LIVE_ENROL', 'ENROL_PILL', 'pill', 'tsMs', 'stepLabelIn', 'stepsFor', 'waitingFor', 'canChooseRecipients', 'localPart', 'stepLabel', 'goesTo', 'loadCampaignData', 'openAddPeople', 'openAddCompanies', 'repliesByCompany', 'curThreads', 'POSITIVE'];
+  const names = ['isOn', 'curCamp', 'curEnrols', 'rollupByCompany', 'norm', 'audSearch', 'audPath', 'audFilter', 'audAll', 'audToggle', 'hasPaths', 'pathsOf', 'pathIdOf', 'isLeftOut', 'campEditable', '$', 'num', 'esc', 'LIVE_ENROL', 'ENROL_PILL', 'pill', 'tsMs', 'stepLabelIn', 'stepsFor', 'waitingFor', 'canChooseRecipients', 'localPart', 'stepLabel', 'goesTo', 'loadCampaignData', 'openAddPeople', 'openAddCompanies', 'repliesByCompany', 'curThreads', 'POSITIVE', 'canRetryAddress', 'retryBtn'];
   const camp = { id: 'c1', audienceType: 'companies', status: 'active', steps: [] };
   const enr = [
     { id: 'm', companyId: 'cm', companyName: 'MODULAQUADRO', status: 'stopped', stopReason: 'Email bounced', recipient: { email: 'fernando@m.pt' }, senderId: 'a@x.pt', pathName: 'B' },
@@ -105,7 +105,7 @@ const mkAud = (on) => {
   const stand = { $: () => ({ addEventListener() {}, value: '', focus() {}, setSelectionRange() {} }) };
   const vals = [(k) => on && k === 'outreach.companyCounts', () => camp, enr, P.rollupByCompany, (x) => String(x || '').toLowerCase(), '', 'all', 'all', null, new Map(), () => false, () => [{ id: 'main' }], () => null, () => false, () => true,
     (id) => (id === 'cs-audience' ? aud : stand.$()), (n) => String(n), (x) => String(x == null ? '' : x), ['pending', 'active', 'awaiting_approval', 'awaiting_task', 'paused'],
-    { active: ['In sequence'], stopped: ['Stopped'], replied: ['Replied'], pending: ['Pending'], paused: ['Paused'] }, (m, st) => `[${st}]`, () => 0, () => 'STEP', () => [], () => 'WAIT', () => false, (x) => String(x || ''), () => 'STEP', () => 'GOES', () => {}, () => {}, () => {}, P.repliesByCompany, [], []];
+    { active: ['In sequence'], stopped: ['Stopped'], replied: ['Replied'], pending: ['Pending'], paused: ['Paused'] }, (m, st) => `[${st}]`, () => 0, () => 'STEP', () => [], () => 'WAIT', () => false, (x) => String(x || ''), () => 'STEP', () => 'GOES', () => {}, () => {}, () => {}, P.repliesByCompany, [], [], () => false, () => ''];
   aud.innerHTML = '';
   new Function(...names, raSrc + '; renderAudience();')(...vals);
   return aud.innerHTML;
