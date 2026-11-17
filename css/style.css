@@ -390,7 +390,7 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   border-radius: 50%;
   overflow: hidden;
   margin: 0 auto 24px;
-  background: var(--cream);
+  background: var(--white); /* same white behind both photos */
   border: 2px solid var(--gold);
   display: flex;
   align-items: center;
@@ -462,31 +462,29 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   margin-left: auto;
   margin-right: auto;
 }
-/* The two of us first, then "or leave us a message", then the form */
-.contact__people {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 20px;
-  max-width: 800px;
+/* Option C: the two of us on the left, a gold vertical line, the form on the right */
+.contact__grid {
+  display: grid;
+  grid-template-columns: 330px 1px 1fr;
+  gap: 0 48px;
+  max-width: 960px;
   margin: 0 auto;
 }
-.contact__person {
-  flex: 1 1 320px;
-  max-width: 390px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 18px 20px;
-  background: var(--cream);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+.contact__side { display: flex; flex-direction: column; gap: 24px; padding-top: 4px; }
+.contact__direct {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  line-height: 1.3;
+  color: var(--navy);
 }
+.contact__vline { background: linear-gradient(180deg, var(--gold) 0%, rgba(196, 166, 118, 0.15) 100%); }
+.contact__person { display: flex; align-items: center; gap: 14px; }
 .contact__person img {
   width: 56px; height: 56px;
   flex-shrink: 0;
   border-radius: 50%;
   object-fit: cover;
+  background: var(--white);
   border: 2px solid var(--gold);
 }
 .contact__person div { min-width: 0; }
@@ -503,29 +501,11 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   transition: var(--transition);
 }
 .contact__person a:hover { color: var(--navy); }
-.contact__or {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  max-width: 680px;
-  margin: 40px auto 28px;
-  color: var(--text-light);
-  font-size: 0.95rem;
-  white-space: nowrap;
-}
-.contact__or::before, .contact__or::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--gold);
-  opacity: 0.6;
-}
 .contact__form {
-  max-width: 680px;
-  margin: 0 auto;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+  min-width: 0;
 }
 .form__group--full, .contact__form .form__message, .form__actions { grid-column: 1 / -1; }
 .form__actions { display: flex; justify-content: flex-end; }
@@ -722,6 +702,8 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   }
   .how__step { padding-top: 0; }
   .how__num { top: 4px; left: -36px; }
+  .contact__grid { grid-template-columns: 1fr; gap: 32px; max-width: 640px; }
+  .contact__vline { height: 1px; background: linear-gradient(90deg, var(--gold), rgba(196, 166, 118, 0.15)); }
 }
 
 @media (max-width: 768px) {
@@ -742,7 +724,6 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   .team__grid { grid-template-columns: 1fr; max-width: 420px; }
   .contact__form { grid-template-columns: 1fr; }
   .form__actions .btn { width: 100%; }
-  .contact__or { margin: 32px auto 24px; }
   .team__intro { margin-bottom: 36px; }
   .goldline--footer { height: 50px; }
 }
