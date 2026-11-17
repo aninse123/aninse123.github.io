@@ -68,7 +68,9 @@ const translations = {
       q5: "How long does it take?",
       a5: "Usually six to nine months, from the first conversation to closing. You set the pace with us.",
       q6: "How is the acquisition financed?",
-      a6: "By our investors, Portuguese and international, with experience running companies, and by bank financing where it makes sense."
+      a6: "By our investors, Portuguese and international, with experience running companies, and by bank financing where it makes sense.",
+      q7: "Is Douro Partners a search fund?",
+      a7: "“Search fund” is the name of a model created at Stanford, in the US, in 1984: entrepreneurs look for a company, buy it and go on to run it. But <strong>we are not a fund</strong>: we buy a single company and we run it ourselves."
     },
     contact: {
       title: "Talk to us",
@@ -165,7 +167,9 @@ const translations = {
       q5: "Quanto tempo demora?",
       a5: "Normalmente seis a nove meses, da primeira conversa ao fecho. O ritmo é definido consigo.",
       q6: "Como é financiada a compra?",
-      a6: "Pelos nossos investidores, portugueses e internacionais com experiência a gerir empresas, e por financiamento bancário quando faz sentido."
+      a6: "Pelos nossos investidores, portugueses e internacionais com experiência a gerir empresas, e por financiamento bancário quando faz sentido.",
+      q7: "A Douro Partners é um search fund?",
+      a7: "“Search fund” é o nome de um modelo criado em Stanford, nos EUA, em 1984: empreendedores procuram uma empresa, compram-na e passam a geri-la. Mas <strong>não somos um fundo</strong>: compramos uma só empresa e somos nós que a gerimos."
     },
     contact: {
       title: "Fale connosco",
