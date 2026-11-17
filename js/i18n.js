@@ -15,13 +15,18 @@ const translations = {
     },
     about: {
       title: "About Douro Partners",
+      statement: "We are not a fund.",
       p1: "Douro Partners wants to find one single high-quality Portuguese company, buy it and run it for the long term.",
-      p2: "<strong>We are not a fund.</strong> We are not building a portfolio. We have no exit or sale horizon.",
+      p2: "We are not building a portfolio. We have no exit or sale horizon.",
       p3: "We want to carry on the current shareholders' work and build on what they did. The focus is a careful transition that preserves the company's culture, its people and its relationships with customers and partners."
     },
     lookFor: {
       title: "What we look for",
-      i1: "A profitable Portuguese company, with revenue above €6M and EBITDA above €1.5M.",
+      revenueNum: "<small>&gt;</small>€6M",
+      revenue: "in revenue",
+      ebitdaNum: "<small>&gt;</small>€1.5M",
+      ebitda: "in EBITDA",
+      i1: "A profitable Portuguese company.",
       i2: "Recurring and diversified business (B2B) customers.",
       i3: "One or a few shareholders thinking about the company's continuity.",
       i4: "Little debt and little recurring investment in equipment.",
@@ -92,13 +97,18 @@ const translations = {
     },
     about: {
       title: "Sobre a Douro Partners",
+      statement: "Não somos um fundo.",
       p1: "A Douro Partners quer encontrar uma única empresa portuguesa de qualidade, comprá-la e geri-la a longo prazo.",
-      p2: "<strong>Não somos um fundo.</strong> Não estamos a construir um portfólio. Não temos um horizonte de saída ou de venda.",
+      p2: "Não estamos a construir um portfólio. Não temos um horizonte de saída ou de venda.",
       p3: "Queremos continuar o trabalho dos atuais sócios e construir a partir do que fizeram. O foco é uma transição cuidada, que preserva a cultura do negócio, os trabalhadores e as relações com clientes e parceiros."
     },
     lookFor: {
       title: "O que procuramos",
-      i1: "Uma empresa portuguesa e rentável, com faturação acima de 6 M€ e EBITDA acima de 1,5 M€.",
+      revenueNum: "<small>&gt;</small>6&nbsp;M€",
+      revenue: "de faturação",
+      ebitdaNum: "<small>&gt;</small>1,5&nbsp;M€",
+      ebitda: "de EBITDA",
+      i1: "Uma empresa portuguesa e rentável.",
       i2: "Clientes empresariais (B2B) recorrentes e diversificados.",
       i3: "Um ou poucos sócios, a pensar na continuidade da empresa.",
       i4: "Pouca dívida e pouco investimento recorrente em equipamento.",
