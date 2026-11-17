@@ -1,6 +1,6 @@
 // Budget v2 — the accountant pack, pure logic (plan "Budget v2 - Plan.md", Stage 5a). No Firebase, no DOM:
 // tested in Node (tests/portal/budget_stage5_*.test.mjs) and used by portal/budget-v2.js.
-import { docStatus, paperOf, DOC_TYPES, INCOME_TYPES, KINDS, labelOf, itemLines, normalizeItem } from './budget-lib.js';
+import { docStatus, INCOME_TYPES, labelOf, normalizeItem, isSupplierRefund } from './budget-lib.js';
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -14,7 +14,7 @@ export function monthRange(ym) {
 
 // ── Has an item changed since it was sent? ──
 // The fingerprint covers what the accountant sees; a comment or a tag does not count. Stored on the item when it is shared.
-export const PACK_FIELDS = ['kind', 'name', 'amount', 'date', 'invoiceDate', 'categoryId', 'subtype', 'purposeId', 'supplierName', 'supplierTaxId', 'docType', 'docNumber', 'atcud', 'issuedToCompany', 'paper', 'docPartAmount', 'docRest', 'country', 'vatRate', 'vatAmount', 'vatDeductible', 'currency', 'incomeType', 'counterparty', 'investorId', 'partnerKey', 'paidWith', 'paidPersonallyBy', 'docWaived'];
+export const PACK_FIELDS = ['kind', 'name', 'amount', 'date', 'invoiceDate', 'categoryId', 'subtype', 'purposeId', 'supplierName', 'supplierTaxId', 'docType', 'docNumber', 'atcud', 'issuedToCompany', 'paper', 'docPartAmount', 'docRest', 'country', 'vatRate', 'vatAmount', 'vatDeductible', 'currency', 'incomeType', 'counterparty', 'investorId', 'partnerKey', 'paidWith', 'paidPersonallyBy', 'docWaived', 'refundOf'];
 const fnv = (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); };
 export function packHash(item) {
   const it = item || {}, o = {};
@@ -46,13 +46,16 @@ export function packCandidates(items, { from = '', to = '', includeSent = false 
 }
 
 // What the person sees before creating the pack.
+// A supplier refund is a credit note on an expense: it counts with the expenses (as a minus), not with the money received.
+const onExpenses = (it) => it.kind === 'expense' || isSupplierRefund(it);
+const signed = (it) => (isSupplierRefund(it) ? -1 : 1) * (Number(it.amount) || 0);
 export function packSummary(selected) {
-  const exp = selected.filter((s) => s.item.kind === 'expense'), inc = selected.filter((s) => s.item.kind === 'income');
+  const exp = selected.filter((s) => onExpenses(s.item)), inc = selected.filter((s) => s.item.kind === 'income' && !isSupplierRefund(s.item));
   const warn = selected.filter((s) => (s.item.kind === 'expense' || s.item.kind === 'income') && docStatus(s.item).level === 'warn');
   return {
     expenses: exp.length, income: inc.length, files: selected.reduce((n, s) => n + (s.item.attachments || []).length, 0),
-    expenseTotal: round2(exp.reduce((x, s) => x + s.item.amount, 0)), incomeTotal: round2(inc.reduce((x, s) => x + s.item.amount, 0)),
-    vatTotal: round2(exp.reduce((x, s) => x + (Number(s.item.vatAmount) > 0 ? Number(s.item.vatAmount) : 0), 0)),
+    expenseTotal: round2(exp.reduce((x, s) => x + signed(s.item), 0)), incomeTotal: round2(inc.reduce((x, s) => x + s.item.amount, 0)),
+    vatTotal: round2(exp.reduce((x, s) => x + (s.item.kind === 'expense' && Number(s.item.vatAmount) > 0 ? Number(s.item.vatAmount) : 0), 0)),
     warnCount: warn.length, warn,
     changed: selected.filter((s) => s.state === 'changed').length,
   };
@@ -83,34 +86,28 @@ export const partHint = (d) => `€${(Number(d.left) || 0).toFixed(2)} is not co
 
 // ── The sheets ──
 // ctx = { company:{companyName,companyNif,companyAddress}, createdBy, createdAt, catLabel(id), purLabel(id), personLabel(key), paidWithLabel(item),
-//         countryName(code), accountName(id), movements:[], period:{from,to} }
+//         countryName(code), accountName(id), itemName(id), movements:[], period:{from,to} }
 export function packSheets(selected, ctx) {
   const c = ctx || {};
-  const exp = selected.filter((s) => s.item.kind === 'expense').map((s) => s.item);
-  const inc = selected.filter((s) => s.item.kind === 'income').map((s) => s.item);
+  const exp = selected.filter((s) => onExpenses(s.item)).map((s) => s.item);
+  const inc = selected.filter((s) => s.item.kind === 'income' && !isSupplierRefund(s.item)).map((s) => s.item);
   const used = new Set(), files = [];
   const fileNames = (it) => (it.attachments || []).map((a, i) => { const n = receiptName(it, a, i, used); files.push({ item: it, original: a.name || '', name: n, storagePath: a.filename ? `budget/${a.filename}` : '' }); return n; });
-  const cat = (it) => (Array.isArray(it.lines) && it.lines.length > 1 ? `Split (${it.lines.length} lines)` : (c.catLabel ? c.catLabel(it.categoryId) : it.categoryId) || '');
-  const purpose = (it) => (Array.isArray(it.lines) && it.lines.length > 1 ? itemLines(it).map((l) => (c.purLabel ? c.purLabel(l.purposeId) : l.purposeId)).filter(Boolean).join(' / ') : (c.purLabel ? c.purLabel(it.purposeId) : it.purposeId) || '');
+  // A refund reads "Refund of: <the expense>" when it is linked to one, otherwise "Supplier refund: <its name>".
+  const describe = (it) => { if (!isSupplierRefund(it)) return it.name; const of = it.refundOf && c.itemName ? c.itemName(it.refundOf) : ''; return of ? `Refund of: ${of}` : `Supplier refund: ${it.name || it.counterparty || ''}`; };
   const expenses = {
     name: 'Expenses',
+    // 17 Nov 2026: ten columns, as André chose. Supplier, NIF, invoice number and the rest stay in the app and come back if the accountant asks.
     columns: [
-      { header: 'Payment date', width: 12 }, { header: 'Invoice date', width: 12 }, { header: 'Supplier', width: 26 }, { header: 'Supplier NIF / VAT ID', width: 18 },
-      { header: 'Invoice no.', width: 14 }, { header: 'ATCUD', width: 14 }, { header: 'Document', width: 18 }, { header: 'Invoice shows company NIF', width: 14 },
-      { header: 'Description', width: 30 }, { header: 'Category', width: 20 }, { header: 'Purpose', width: 20 }, { header: 'Tags', width: 24 }, { header: 'Country', width: 12 },   // 17 Nov 2026: Country read next to what the item is
-      { header: 'Total (EUR)', width: 12, fmt: 'money' }, { header: 'VAT %', width: 8, fmt: 'pct' }, { header: 'VAT (EUR)', width: 11, fmt: 'money' }, { header: 'VAT deductible', width: 14 },
-      { header: 'Currency', width: 9 }, { header: 'Paid with', width: 20 }, { header: 'Paid personally by', width: 16 },
-      { header: 'Paperwork', width: 22 }, { header: 'Files in the pack', width: 40 }, { header: 'Comments', width: 30, fmt: 'wrap' },
+      { header: 'Payment date', width: 12 }, { header: 'Description', width: 34 }, { header: 'Tags', width: 24 }, { header: 'Country', width: 12 },
+      { header: 'Total (EUR)', width: 12, fmt: 'money' }, { header: 'VAT (EUR)', width: 11, fmt: 'money' }, { header: 'Paid with', width: 20 }, { header: 'Paid personally by', width: 16 },
+      { header: 'Paperwork', width: 22 }, { header: 'Files in the pack', width: 40 },
     ],
-    rows: exp.map((it) => [
-      it.date, it.invoiceDate, it.supplierName, it.supplierTaxId, it.docNumber, it.atcud, labelOf(DOC_TYPES, it.docType, ''),
-      ({ nif: 'Yes', part: 'Part', nonif: 'No', none: '' })[paperOf(it)], it.name, cat(it), purpose(it), tagsOf(it), c.countryName ? c.countryName(it.country) : it.country,
-      round2(it.amount), it.vatRate == null || it.vatRate === '' ? null : Number(it.vatRate), Number(it.vatAmount) > 0 ? round2(it.vatAmount) : null,
-      it.vatDeductible === 'yes' ? 'Yes' : it.vatDeductible === 'no' ? 'No' : 'Ask accountant',
-      it.currency && it.currency !== 'EUR' ? it.currency : 'EUR',
-      c.paidWithLabel ? c.paidWithLabel(it) : it.paidWith, it.paidPersonallyBy ? (c.personLabel ? c.personLabel(it.paidPersonallyBy) : it.paidPersonallyBy) : '',
-      docStatus(it).label, fileNames(it).join('\n'), it.comments,
-    ]),
+    rows: exp.map((it) => isSupplierRefund(it)
+      ? [it.date, describe(it), tagsOf(it), '', round2(-it.amount), null, '', '', docStatus(it).label, fileNames(it).join('\n')]
+      : [it.date, it.name, tagsOf(it), c.countryName ? c.countryName(it.country) : it.country, round2(it.amount), Number(it.vatAmount) > 0 ? round2(it.vatAmount) : null,
+        c.paidWithLabel ? c.paidWithLabel(it) : it.paidWith, it.paidPersonallyBy ? (c.personLabel ? c.personLabel(it.paidPersonallyBy) : it.paidPersonallyBy) : '',
+        docStatus(it).label, fileNames(it).join('\n')]),
   };
   const received = {
     name: 'Money received',
@@ -127,10 +124,10 @@ export function packSheets(selected, ctx) {
   const missing = {
     name: 'Missing documents',
     columns: [{ header: 'Date', width: 12 }, { header: 'Item', width: 30 }, { header: 'Supplier', width: 26 }, { header: 'Amount (EUR)', width: 14, fmt: 'money' }, { header: 'Problem', width: 26 }, { header: 'What to do', width: 60, fmt: 'wrap' }],
-    rows: [...exp, ...inc].filter((it) => docStatus(it).level === 'warn').map((it) => { const d = docStatus(it); return [it.date, it.name, it.kind === 'income' ? (it.counterparty || it.investorName || '') : it.supplierName, round2(it.amount), d.label, d.code === 'incomeMissing' ? `Send the ${d.need}.` : d.code === 'part' ? partHint(d) : FIX_HINT[d.code] || '']; }),
+    rows: [...exp, ...inc].filter((it) => docStatus(it).level === 'warn').map((it) => { const d = docStatus(it); return [it.date, describe(it), it.kind === 'income' ? (it.counterparty || it.investorName || '') : it.supplierName, round2(it.amount), d.label, d.code === 'incomeMissing' ? `Send the ${d.need}.` : d.code === 'part' ? partHint(d) : FIX_HINT[d.code] || '']; }),
   };
-  const totalExp = round2(exp.reduce((x, i) => x + i.amount, 0)), totalInc = round2(inc.reduce((x, i) => x + i.amount, 0));
-  const vat = round2(exp.reduce((x, i) => x + (Number(i.vatAmount) > 0 ? Number(i.vatAmount) : 0), 0));
+  const totalExp = round2(exp.reduce((x, i) => x + signed(i), 0)), totalInc = round2(inc.reduce((x, i) => x + i.amount, 0));
+  const vat = round2(exp.reduce((x, i) => x + (i.kind === 'expense' && Number(i.vatAmount) > 0 ? Number(i.vatAmount) : 0), 0));
   const co = c.company || {};
   const manifest = {
     name: 'Pack',
@@ -138,7 +135,7 @@ export function packSheets(selected, ctx) {
     rows: [
       ['Period', `${c.period?.from || ''} to ${c.period?.to || ''}`], ['Created on', String(c.createdAt || '').slice(0, 10)], ['Created by', c.createdBy || ''],
       ['Company', co.companyName || ''], ['Company NIF', co.companyNif || ''], ['Company address', co.companyAddress || ''],
-      ['Expenses', exp.length], ['Total expenses (EUR)', totalExp], ['VAT on those expenses (EUR)', vat],
+      ['Expense lines (supplier refunds included as minus lines)', exp.length], ['Total expenses, net of supplier refunds (EUR)', totalExp], ['VAT on those expenses (EUR)', vat],
       ['Money received lines', inc.length], ['Total money received (EUR)', totalInc], ['Bank lines in the period', mv.length],
       ['Receipt files', files.length], ['Expenses with missing or wrong paperwork', missing.rows.length],
     ],

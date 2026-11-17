@@ -11,7 +11,7 @@ import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDes
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
   DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, PAPER, paperOf, INCOME_DOC, incomeDocNeeded, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
-  docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, itemLines, companyIdsOf, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban, cleanBic, bicStatus,
+  docStatus, normalizeItem, overview, parseTags, tagTotals, refundTotals, isSupplierRefund, splitShares, itemLines, companyIdsOf, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban, cleanBic, bicStatus,
   last4, labelOf, mergeLists, activeOnly, newListId,
 } from './budget-lib.js';
 import {
@@ -238,6 +238,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   const purLabel = (id) => labelOf(S.lists.purposes, id, '');
   const personLabel = (key) => key === 'external' ? 'External' : (S.dir.find((m) => m.key === key)?.label || key);
   const accountOf = (id) => S.accounts.find((a) => a.id === id);
+  // An account named with the last 4 digits of its IBAN, so two accounts at the same bank are told apart (17 Nov 2026).
+  const accountLabel = (a) => (a ? `${a.name}${a.iban ? ' · ••' + cleanIban(a.iban).slice(-4) : ''}` : '');
+  // What each expense got back from supplier refunds, worked out once per list of items.
+  let refundCache = { src: null, n: -1, map: new Map() };
+  const refundMap = () => (refundCache.src === S.items && refundCache.n === S.items.length ? refundCache.map : (refundCache = { src: S.items, n: S.items.length, map: refundTotals(S.items) }).map);
+  const itemName = (id) => S.items.find((x) => x.id === id)?.name || '';
   const cardOf = (id) => S.cards.find((c) => c.id === id);
   function paidWithLabel(it) {
     const v = it.paidWith || '';
@@ -345,11 +351,11 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     return `<tr style="${i.archived ? 'opacity:.5' : ''}">
       <td class="chk"><input type="checkbox" data-sel="${i.id}" ${S.selected.has(i.id) ? 'checked' : ''} aria-label="Select"></td>
       <td style="white-space:nowrap">${fmtDate(i.date)}</td>
-      <td><strong>${esc(i.name || '—')}</strong>${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}${(() => { const cos = i.kind === 'expense' ? [...new Set(itemLines(i).map((l) => l.companyName).filter(Boolean))] : []; return cos.length ? `<div class="mini">Company: ${cos.map(esc).join(' · ')}</div>` : ''; })()}${i.counterparty ? `<div class="mini">${esc(i.counterparty)}</div>` : ''}${i.investorName ? `<div class="mini">Investor: ${esc(i.investorName)}</div>` : ''} ${rev}</td>
+      <td><strong>${esc(i.name || '—')}</strong>${isSupplierRefund(i) && i.refundOf && itemName(i.refundOf) ? `<div class="mini">Refund of: ${esc(itemName(i.refundOf))}</div>` : ''}${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}${(() => { const cos = i.kind === 'expense' ? [...new Set(itemLines(i).map((l) => l.companyName).filter(Boolean))] : []; return cos.length ? `<div class="mini">Company: ${cos.map(esc).join(' · ')}</div>` : ''; })()}${i.counterparty ? `<div class="mini">${esc(i.counterparty)}</div>` : ''}${i.investorName ? `<div class="mini">Investor: ${esc(i.investorName)}</div>` : ''} ${rev}</td>
       <td>${kindPill(i)}</td>
       <td>${i.kind === 'expense' ? (Array.isArray(i.lines) && i.lines.length > 1 ? `<span title="Shared between ${i.lines.length} lines">Split · ${i.lines.length} lines</span>` : esc(catLabel(i.categoryId))) : ''}${i.kind === 'expense' && i.subtype ? `<div class="mini">${esc(labelOf(TEAM_PAY_SUBTYPES, i.subtype))}</div>` : ''}</td>
       <td>${esc(purLabel(i.purposeId))}</td>
-      <td class="num ${i.kind === 'income' ? 'amt-in' : ''}">${sign}${eur.format(i.amount)}</td>
+      <td class="num ${i.kind === 'income' ? 'amt-in' : ''}">${sign}${eur.format(i.amount)}${(() => { const r = i.kind === 'expense' ? refundMap().get(i.id) : null; return r ? `<div class="mini" title="Supplier refunds linked to this expense">−${eur.format(r.total)} refunded · net ${eur.format(Math.round((i.amount - r.total) * 100) / 100)}</div>` : ''; })()}</td>
       <td>${i.kind === 'expense' ? paidWithLabel(i) : ''}${i.kind === 'expense' && i.paidPersonallyBy ? (i.reimbursement?.status === 'reimbursed' ? '<div class="mini" style="color:var(--secondary)" title="The company paid this back">✓ reimbursed</div>' : '<div class="mini" style="color:#8A5A00" title="The company still owes this to the partner">owed back</div>') : ''}</td>
       <td class="mini">${i.kind === 'expense' ? usedByLabel(i) : ''}</td>
       <td>${i.kind === 'expense' || (i.kind === 'income' && incomeDocNeeded(i.incomeType)) ? `<span class="badge-doc ${ds.level}" title="${esc(ds.missing.length ? 'Missing: ' + ds.missing.join(', ') : ds.label)}">${esc(ds.label)}</span>` : ''}</td>
@@ -537,8 +543,11 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div id="f-counterwrap">${fld('From', 'counterparty', `<input type="text" id="f-counter" value="${esc(d.counterparty || '')}" placeholder="e.g. the name in the bank line">`)}
           <div id="f-investorwrap" style="${capitalOn() ? '' : 'display:none'}">${fld('Investor', 'investor', `<select id="f-investor"><option value="">None (choose an investor from the Investor CRM)</option>${[...S.investors.map((x) => x.name), ...(d.investorName && !S.investors.some((x) => x.name === d.investorName) ? [d.investorName] : [])].map((n) => `<option value="${esc(n)}"${n === d.investorName ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`)}</div></div>
       </div>
-      <div class="sect" id="f-classify"><div class="sect-title">Classification</div>
-        <div class="form-row">${fld('Category', 'category', `<select id="f-category">${opts(activeOnly(S.lists.categories, d.categoryId), d.categoryId || (it ? 'other' : ''), it ? null : 'Choose…')}</select>`)}
+        <div id="f-refundwrap">${fld('Refund of', '', `<select id="f-refundof"><option value="">Not linked to an expense</option>${S.items.filter((x) => x.kind === 'expense' && (!x.archived || x.id === d.refundOf)).sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).map((x) => `<option value="${x.id}"${d.refundOf === x.id ? ' selected' : ''}>${esc(fmtDate(x.date))} · ${esc(x.name || '—')} · ${eur.format(x.amount)}${x.supplierName ? ' · ' + esc(x.supplierName) : ''}</option>`).join('')}</select><div class="hint">The expense this money comes back for. Picking it fills in From and the tags when they are empty.</div>`)}</div>
+        ${(() => { const r = it && it.kind === 'expense' ? refundMap().get(it.id) : null; return r ? `<div class="warnbox ok" style="margin-top:4px"><strong>Refunded ${eur.format(r.total)}</strong> by ${r.refunds.map((x) => `${esc(x.name || 'a refund')} (${esc(fmtDate(x.date))})`).join(', ')}. Net cost ${eur.format(Math.round((it.amount - r.total) * 100) / 100)}.</div>` : ''; })()}
+      </div>
+      <div class="sect" id="f-classify"><div class="sect-title" id="f-classtitle">Classification</div>
+        <div class="form-row" id="f-catrow">${fld('Category', 'category', `<select id="f-category">${opts(activeOnly(S.lists.categories, d.categoryId), d.categoryId || (it ? 'other' : ''), it ? null : 'Choose…')}</select>`)}
           ${fld('Purpose', 'purpose', `<select id="f-purpose">${opts(activeOnly(S.lists.purposes, d.purposeId), d.purposeId || '', 'None')}</select>`)}</div>
         <div id="f-subwrap">${fld('Team pay type', 'subtype', `<select id="f-subtype"><option value="">—</option>${sub.map((s) => `<option value="${s.id}"${d.subtype === s.id ? ' selected' : ''}>${s.label}</option>`).join('')}</select>`)}</div>
         ${fld('Connect cost to a company', 'company', `<input type="text" id="f-company" data-co-input data-cid="${esc(d.companyId || '')}" value="${esc(d.companyName || '')}" placeholder="Type a name or NIF to search the Search CRM" autocomplete="off"><div class="mini" data-co-results style="margin-top:6px"></div><div class="hint" data-co-hint>${d.companyId ? '✓ Linked to a company in the Search CRM.' : 'Optional. Pick a result to link the cost to the CRM company, or keep a typed name.'}</div>`, 'id="f-companywrap"')}
@@ -605,7 +614,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       $('f-partnerwrap').style.display = income && ['partner_loan', 'partner_reimbursement'].includes($('f-income').value) ? '' : 'none';
       $('f-reimb').closest('.checkline').style.display = $('f-paidwith').value === 'personal' ? '' : 'none';
       $('f-investorwrap').style.display = capitalOn() && income && $('f-income').value === 'capital_call' ? '' : 'none';
-      $('f-classify').style.display = expense || k === 'plan' ? '' : 'none';
+      $('f-classify').style.display = expense || k === 'plan' || income ? '' : 'none';   // money received shows only its tags here
+      $('f-catrow').style.display = income ? 'none' : ''; $('f-classtitle').textContent = income ? 'Tags' : 'Classification';
+      $('f-refundwrap').style.display = income && $('f-income').value === 'supplier_refund' ? '' : 'none';
       $('f-who').style.display = expense ? '' : 'none'; $('f-docsect').style.display = expense || (income && incomeDocNeeded($('f-income').value)) ? '' : 'none'; $('f-invfields').style.display = expense ? '' : 'none'; $('f-doctitle').textContent = expense ? 'Paperwork' : 'Supporting document';
       $('f-subwrap').style.display = expense && $('f-category').value === 'team-pay' ? '' : 'none';
       $('f-sharedwrap').style.display = k === 'plan' ? 'none' : '';
@@ -663,6 +674,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     $('f-addline').addEventListener('click', () => { S.edit.lines = readLines(); S.edit.lines.push({ weight: 1 }); $('f-lines').dataset.painted = ''; $('f-lines').innerHTML = ''; sync(); });
     $('f-lines').addEventListener('click', (e) => { const b = e.target.closest('[data-ldel]'); if (!b) return; S.edit.lines = readLines(); if (S.edit.lines.length <= 2) { alert('A split needs at least two lines. Untick "Split" to go back to one.'); return; } S.edit.lines.splice(Number(b.dataset.ldel), 1); $('f-lines').dataset.painted = ''; $('f-lines').innerHTML = ''; sync(); });
     m.addEventListener('input', sync); m.addEventListener('change', sync);
+    $('f-refundof').addEventListener('change', () => {   // fill what is empty from the expense picked; never overwrite
+      const e = S.items.find((x) => x.id === $('f-refundof').value); if (!e) return;
+      if (!$('f-counter').value.trim() && e.supplierName) $('f-counter').value = e.supplierName;
+      if (!$('f-tags').value.trim() && e.tags?.length) $('f-tags').value = e.tags.join(', ');
+      if (!$('f-name').value.trim()) $('f-name').value = `Refund: ${e.name || ''}`.trim();
+    });
     const renderAtt = () => {
       const el = $('f-attlist');
       el.innerHTML = S.edit.attachments.map((a, i) => `<span class="attach-chip"><a href="${esc(a.url || '#')}" target="_blank" rel="noopener">${esc(a.name || 'file')}</a><span class="rm" data-rm="${i}" title="Remove">×</span></span>`).join('')
@@ -752,6 +769,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         categoryId: expense || kind === 'plan' ? cat : '', subtype: expense && cat === 'team-pay' ? $('f-subtype').value : '',
         purposeId: expense || kind === 'plan' ? $('f-purpose').value : '',
         tags: parseTags($('f-tags').value),
+        refundOf: kind === 'income' && $('f-income').value === 'supplier_refund' ? $('f-refundof').value : '',
         incomeType: kind === 'income' ? $('f-income').value : '', counterparty: kind === 'income' ? $('f-counter').value.trim() : '',
         partnerKey: kind === 'income' && ['partner_loan', 'partner_reimbursement'].includes($('f-income').value) ? $('f-partner').value : '',
         ...(() => { const nm = capitalOn() && kind === 'income' && $('f-income').value === 'capital_call' ? $('f-investor').value.trim() : ''; const iv = nm ? S.investors.find((x) => x.name.toLowerCase() === nm.toLowerCase()) : null; return { investorId: iv ? iv.id : '', investorName: iv ? iv.name : '' }; })(),
@@ -1356,7 +1374,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       const partnerBtns = toPartner ? `<span data-perm="budget.edit budget.import">${[['loan', `<button class="btn btn--${pg.as === 'loan' ? 'primary' : 'ghost'} btn--sm" data-loan="${m.id}" title="The transfer pays back money the partner lent the company">Repays a loan</button>`], ['expenses', `<button class="btn btn--${pg.as === 'expenses' ? 'primary' : 'ghost'} btn--sm" data-settle="${m.id}" title="The transfer pays back expenses the partner paid with their own money">Pays back expenses…</button>`]].sort((a) => (a[0] === pg.as ? -1 : 1)).map((x) => x[1]).join(' ')}</span>` : '';
       return `<tr><td class="chk"><input type="checkbox" data-isel="${m.id}" ${inboxSel.has(m.id) ? 'checked' : ''} aria-label="Select"></td>
         <td style="white-space:nowrap">${fmtDate(m.posted)}</td>
-        <td><strong>${esc(g.name || cleanDescription(m.description))}</strong><div class="mini" title="As in the bank file">${esc(m.description)}</div></td>
+        <td><strong>${esc(g.name || cleanDescription(m.description))}</strong><div class="mini" title="As in the bank file">${esc(m.description)}</div>${S.accounts.length > 1 ? `<div class="mini">${esc(accountLabel(accountOf(m.accountId)) || 'Unknown account')}</div>` : ''}</td>
         <td class="num ${m.amount > 0 ? 'amt-in' : ''}">${m.amount > 0 ? '+' : ''}${fmtMoney(m.amount)}</td>
         <td>${sugPill(m)}</td>
         <td style="white-space:nowrap" data-perm="budget.edit">
@@ -1556,7 +1574,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     return {
       company: S.company || {}, createdBy: access.email, createdAt, period: range,
       catLabel: (id) => labelOf(S.lists.categories, id, ''), purLabel: (id) => labelOf(S.lists.purposes, id, ''), personLabel,
-      paidWithLabel: (it) => strip(paidWithLabel(it)).replace(/^—$/, ''), countryName: (c) => COUNTRY_NAME[c] || c || '', accountName: (id) => accountOf(id)?.name || '',
+      paidWithLabel: (it) => strip(paidWithLabel(it)).replace(/^—$/, ''), countryName: (c) => COUNTRY_NAME[c] || c || '', accountName: (id) => accountLabel(accountOf(id)), itemName,
       movements: can('budget.accounts') ? S.movements : undefined,
     };
   }

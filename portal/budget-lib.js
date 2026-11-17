@@ -283,6 +283,19 @@ export function tagTotals(items) {
   return [...m.values()].sort((a, b) => b.total - a.total || a.tag.localeCompare(b.tag));
 }
 
+// Supplier refunds linked to an expense ("Refund of", 17 Nov 2026): expense id → { total, refunds: [items] }. Archived refunds do not count.
+export const isSupplierRefund = (it) => !!it && it.kind === 'income' && it.incomeType === 'supplier_refund';
+export function refundTotals(items) {
+  const m = new Map();
+  for (const it of items || []) {
+    if (!isSupplierRefund(it) || it.archived || !it.refundOf) continue;
+    const cur = m.get(it.refundOf) || { total: 0, refunds: [] };
+    cur.total = round2(cur.total + (Number(it.amount) || 0)); cur.refunds.push(it);
+    m.set(it.refundOf, cur);
+  }
+  return m;
+}
+
 // ── Shares (steps 1.5 / 3.2): who used it, with weights ──
 // shares = [{ key, weight }]; weight defaults to 1. Cents are shared by largest remainder, so the parts always add up.
 export function splitShares(total, shares) {
