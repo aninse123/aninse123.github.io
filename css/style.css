@@ -733,7 +733,7 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
 .cookie-btn--decline:hover { color: var(--cream); border-color: var(--cream); }
 
 /* ===== RESPONSIVE ===== */
-/* Six menu entries: the menu folds into the hamburger below 1080px */
+/* Seven menu entries: the menu folds into the hamburger below 1080px */
 @media (max-width: 1080px) {
   .nav__hamburger { display: flex; }
   .nav__container { position: relative; }

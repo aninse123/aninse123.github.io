@@ -5,8 +5,9 @@ const translations = {
       lookFor: "What we look for",
       howWeWork: "How we work",
       team: "Who we are",
+      faq: "FAQ",
       contact: "Contact",
-      investorLogin: "Investor login"
+      investorLogin: "Portal"
     },
     hero: {
       title: "A new generation.<br>The same commitment.",
@@ -104,8 +105,9 @@ const translations = {
       lookFor: "O que procuramos",
       howWeWork: "Como trabalhamos",
       team: "Quem somos",
+      faq: "FAQ",
       contact: "Contacto",
-      investorLogin: "Área de Investidores"
+      investorLogin: "Portal"
     },
     hero: {
       title: "Uma nova geração.<br>O mesmo compromisso.",
