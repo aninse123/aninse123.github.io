@@ -97,17 +97,17 @@ export function packSheets(selected, ctx) {
     columns: [
       { header: 'Payment date', width: 12 }, { header: 'Invoice date', width: 12 }, { header: 'Supplier', width: 26 }, { header: 'Supplier NIF / VAT ID', width: 18 },
       { header: 'Invoice no.', width: 14 }, { header: 'ATCUD', width: 14 }, { header: 'Document', width: 18 }, { header: 'Invoice shows company NIF', width: 14 },
-      { header: 'Description', width: 30 }, { header: 'Category', width: 20 }, { header: 'Purpose', width: 20 }, { header: 'Tags', width: 24 },
+      { header: 'Description', width: 30 }, { header: 'Category', width: 20 }, { header: 'Purpose', width: 20 }, { header: 'Tags', width: 24 }, { header: 'Country', width: 12 },   // 17 Nov 2026: Country read next to what the item is
       { header: 'Total (EUR)', width: 12, fmt: 'money' }, { header: 'VAT %', width: 8, fmt: 'pct' }, { header: 'VAT (EUR)', width: 11, fmt: 'money' }, { header: 'VAT deductible', width: 14 },
-      { header: 'Country', width: 12 }, { header: 'Currency', width: 9 }, { header: 'Paid with', width: 20 }, { header: 'Paid personally by', width: 16 },
+      { header: 'Currency', width: 9 }, { header: 'Paid with', width: 20 }, { header: 'Paid personally by', width: 16 },
       { header: 'Paperwork', width: 22 }, { header: 'Files in the pack', width: 40 }, { header: 'Comments', width: 30, fmt: 'wrap' },
     ],
     rows: exp.map((it) => [
       it.date, it.invoiceDate, it.supplierName, it.supplierTaxId, it.docNumber, it.atcud, labelOf(DOC_TYPES, it.docType, ''),
-      ({ nif: 'Yes', part: 'Part', nonif: 'No', none: '' })[paperOf(it)], it.name, cat(it), purpose(it), tagsOf(it),
+      ({ nif: 'Yes', part: 'Part', nonif: 'No', none: '' })[paperOf(it)], it.name, cat(it), purpose(it), tagsOf(it), c.countryName ? c.countryName(it.country) : it.country,
       round2(it.amount), it.vatRate == null || it.vatRate === '' ? null : Number(it.vatRate), Number(it.vatAmount) > 0 ? round2(it.vatAmount) : null,
       it.vatDeductible === 'yes' ? 'Yes' : it.vatDeductible === 'no' ? 'No' : 'Ask accountant',
-      c.countryName ? c.countryName(it.country) : it.country, it.currency && it.currency !== 'EUR' ? it.currency : 'EUR',
+      it.currency && it.currency !== 'EUR' ? it.currency : 'EUR',
       c.paidWithLabel ? c.paidWithLabel(it) : it.paidWith, it.paidPersonallyBy ? (c.personLabel ? c.personLabel(it.paidPersonallyBy) : it.paidPersonallyBy) : '',
       docStatus(it).label, fileNames(it).join('\n'), it.comments,
     ]),

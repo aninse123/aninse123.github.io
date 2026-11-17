@@ -97,5 +97,8 @@ ok('T: Cost per tag is a table (tag, items, cost, top categories), every tag of 
 // 16 Nov 2026 — tags in the accountant pack
 ok('K: the pack shows each line\'s tags (Expenses after Purpose, Money received after Description); tags stay out of the fingerprint', /\{ header: 'Purpose', width: 20 \}, \{ header: 'Tags', width: 24 \}/.test(pack) && /it\.name, cat\(it\), purpose\(it\), tagsOf\(it\),/.test(pack) && /it\.name, tagsOf\(it\), round2\(it\.amount\)/.test(pack) && !/PACK_FIELDS = \[[^\]]*'tags'/.test(pack));
 
+// 17 Nov 2026 — Country sits right after Tags on the Expenses sheet (once only)
+ok('K: on Expenses, Country comes right after Tags and appears once', /\{ header: 'Tags', width: 24 \}, \{ header: 'Country', width: 12 \}/.test(pack) && (pack.match(/header: 'Country'/g) || []).length === 1 && /tagsOf\(it\), c\.countryName \? c\.countryName\(it\.country\) : it\.country,/.test(pack));
+
 console.log(fail ? `${fail} FAILED` : 'All passed');
 process.exit(fail ? 1 : 0);
