@@ -251,7 +251,7 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   margin-bottom: 36px;
   text-shadow: 0 1px 14px rgba(0, 0, 0, 0.3);
 }
-.goldline--hero { position: absolute; left: 0; right: 0; bottom: 18px; z-index: 2; }
+.goldline--hero { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; }
 
 /* Scroll-reveal (added via JS; absent → content just shows) */
 .reveal-target { opacity: 0; transform: translateY(26px); transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2,0.7,0.2,1); }
@@ -757,7 +757,7 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   }
   .hero__title { font-size: clamp(1.75rem, 7.6vw, 2.6rem); }
   .hero__subtitle { font-size: 1.05rem; }
-  .goldline--hero { height: 60px; bottom: 10px; }
+  .goldline--hero { height: 60px; }
 
   .nav__logo img, .nav.scrolled .nav__logo img { height: 46px; }
   .about__grid { grid-template-columns: 1fr; gap: 20px; }
