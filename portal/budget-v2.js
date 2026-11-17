@@ -615,7 +615,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       $('f-reimb').closest('.checkline').style.display = $('f-paidwith').value === 'personal' ? '' : 'none';
       $('f-investorwrap').style.display = capitalOn() && income && $('f-income').value === 'capital_call' ? '' : 'none';
       $('f-classify').style.display = expense || k === 'plan' || income ? '' : 'none';   // money received shows only its tags here
-      $('f-catrow').style.display = income ? 'none' : ''; $('f-classtitle').textContent = income ? 'Tags' : 'Classification';
+      $('f-catrow').style.display = income ? 'none' : ''; $('f-classtitle').style.display = income ? 'none' : '';   // the Tags field names itself; no second "Tags" title
       $('f-refundwrap').style.display = income && $('f-income').value === 'supplier_refund' ? '' : 'none';
       $('f-who').style.display = expense ? '' : 'none'; $('f-docsect').style.display = expense || (income && incomeDocNeeded($('f-income').value)) ? '' : 'none'; $('f-invfields').style.display = expense ? '' : 'none'; $('f-doctitle').textContent = expense ? 'Paperwork' : 'Supporting document';
       $('f-subwrap').style.display = expense && $('f-category').value === 'team-pay' ? '' : 'none';
