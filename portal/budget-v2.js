@@ -11,7 +11,7 @@ import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDes
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
   DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, PAPER, paperOf, INCOME_DOC, incomeDocNeeded, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
-  docStatus, normalizeItem, overview, parseTags, tagTotals, refundTotals, isSupplierRefund, splitShares, itemLines, companyIdsOf, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban, cleanBic, bicStatus,
+  docStatus, normalizeItem, overview, parseTags, tagTotals, refundTotals, isSupplierRefund, refundVatBucket, splitShares, itemLines, companyIdsOf, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban, cleanBic, bicStatus,
   last4, labelOf, mergeLists, activeOnly, newListId,
 } from './budget-lib.js';
 import {
@@ -359,7 +359,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <td>${i.kind === 'expense' ? paidWithLabel(i) : ''}${i.kind === 'expense' && i.paidPersonallyBy ? (i.reimbursement?.status === 'reimbursed' ? '<div class="mini" style="color:var(--secondary)" title="The company paid this back">✓ reimbursed</div>' : '<div class="mini" style="color:#8A5A00" title="The company still owes this to the partner">owed back</div>') : ''}</td>
       <td class="mini">${i.kind === 'expense' ? usedByLabel(i) : ''}</td>
       <td>${i.kind === 'expense' || (i.kind === 'income' && incomeDocNeeded(i.incomeType)) ? `<span class="badge-doc ${ds.level}" title="${esc(ds.missing.length ? 'Missing: ' + ds.missing.join(', ') : ds.label)}">${esc(ds.label)}</span>` : ''}</td>
-      <td class="num">${vatBucket(i) !== 'none' ? `<span title="${esc(VAT_BUCKETS[vatBucket(i)].label)}">${eur.format(Number(i.vatAmount))}</span>` : ''}</td>
+      <td class="num">${vatBucket(i) !== 'none' ? `<span title="${esc(VAT_BUCKETS[vatBucket(i)].label)}">${eur.format(Number(i.vatAmount))}</span>` : refundVatBucket(i, S.items) !== 'none' ? `<span title="VAT on the credit note: comes off ${esc(VAT_BUCKETS[refundVatBucket(i, S.items)].label)}">−${eur.format(Number(i.vatAmount))}</span>` : ''}</td>
       <td>${i.tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t)}">${esc(t)}</button>`).join('')}</td>
       <td>${i.sharedAt ? `<span title="Shared ${esc(String(i.sharedAt).slice(0, 10))} by ${esc(i.sharedBy || '')}" style="color:var(--secondary);font-weight:700">✓</span>${changedSince(i) ? '<span title="Changed since it was shared: it can go in the next pack" style="color:#8A5A00"> ⚠</span>' : ''}` : ''}</td>
       <td>${att}</td>
@@ -411,7 +411,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           <div class="table-wrap"><table>
             <thead><tr><th class="chk"><input type="checkbox" id="selAll" aria-label="Select all shown"></th>${th('date', 'Date')}${th('name', 'Item')}<th>Kind</th><th>Category</th><th>Purpose</th>${th('amount', 'Amount', 'num')}<th>Paid with</th><th>Used by</th><th>Paperwork</th><th class="num">VAT</th><th>Tags</th><th title="Shared with accountant">Shared</th><th>📎</th><th></th></tr></thead>
             <tbody>${list.length ? list.map(itemRow).join('') : '<tr class="empty-row"><td colspan="15">No items match the filter.</td></tr>'}</tbody>
-            <tfoot><tr><td colspan="6">Shown: ${list.length} item${list.length === 1 ? '' : 's'}</td><td class="num">${eur.format(costs)}</td><td colspan="3"></td><td class="num">${eur.format(list.reduce((s, i) => s + (vatBucket(i) !== 'none' ? Number(i.vatAmount) : 0), 0))}</td><td colspan="4" class="mini">VAT · expenses${recv ? ` · received ${eur.format(recv)}` : ''}</td></tr></tfoot>
+            <tfoot><tr><td colspan="6">Shown: ${list.length} item${list.length === 1 ? '' : 's'}</td><td class="num">${eur.format(costs)}</td><td colspan="3"></td><td class="num">${eur.format(list.reduce((s, i) => s + (vatBucket(i) !== 'none' ? Number(i.vatAmount) : refundVatBucket(i, S.items) !== 'none' ? -Number(i.vatAmount) : 0), 0))}</td><td colspan="4" class="mini">VAT · expenses${recv ? ` · received ${eur.format(recv)}` : ''}</td></tr></tfoot>
           </table></div>
         </div>
       </div>`;
@@ -543,7 +543,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div id="f-counterwrap">${fld('From', 'counterparty', `<input type="text" id="f-counter" value="${esc(d.counterparty || '')}" placeholder="e.g. the name in the bank line">`)}
           <div id="f-investorwrap" style="${capitalOn() ? '' : 'display:none'}">${fld('Investor', 'investor', `<select id="f-investor"><option value="">None (choose an investor from the Investor CRM)</option>${[...S.investors.map((x) => x.name), ...(d.investorName && !S.investors.some((x) => x.name === d.investorName) ? [d.investorName] : [])].map((n) => `<option value="${esc(n)}"${n === d.investorName ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`)}</div></div>
       </div>
-        <div id="f-refundwrap">${fld('Refund of', '', `<select id="f-refundof"><option value="">Not linked to an expense</option>${S.items.filter((x) => x.kind === 'expense' && (!x.archived || x.id === d.refundOf)).sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).map((x) => `<option value="${x.id}"${d.refundOf === x.id ? ' selected' : ''}>${esc(fmtDate(x.date))} · ${esc(x.name || '—')} · ${eur.format(x.amount)}${x.supplierName ? ' · ' + esc(x.supplierName) : ''}</option>`).join('')}</select><div class="hint">The expense this money comes back for. Picking it fills in From and the tags when they are empty.</div>`)}</div>
+        <div id="f-refundwrap">${fld('Refund of', '', `<select id="f-refundof"><option value="">Not linked to an expense</option>${S.items.filter((x) => x.kind === 'expense' && (!x.archived || x.id === d.refundOf)).sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).map((x) => `<option value="${x.id}"${d.refundOf === x.id ? ' selected' : ''}>${esc(fmtDate(x.date))} · ${esc(x.name || '—')} · ${eur.format(x.amount)}${x.supplierName ? ' · ' + esc(x.supplierName) : ''}</option>`).join('')}</select><div class="hint">The expense this money comes back for. Picking it fills in From and the tags when they are empty.</div>`)}
+          ${fld('VAT in the refund (€)', '', `<input type="number" id="f-refundvat" step="0.01" min="0" value="${esc(isSupplierRefund(d) && d.vatAmount != null ? d.vatAmount : '')}" placeholder="As on the credit note"><div class="hint">Type it from the supplier's credit note; nothing is worked out. It comes off the VAT of the expense above (off At risk when none is picked).</div>`)}</div>
         ${(() => { const r = it && it.kind === 'expense' ? refundMap().get(it.id) : null; return r ? `<div class="warnbox ok" style="margin-top:4px"><strong>Refunded ${eur.format(r.total)}</strong> by ${r.refunds.map((x) => `${esc(x.name || 'a refund')} (${esc(fmtDate(x.date))})`).join(', ')}. Net cost ${eur.format(Math.round((it.amount - r.total) * 100) / 100)}.</div>` : ''; })()}
       </div>
       <div class="sect" id="f-classify"><div class="sect-title" id="f-classtitle">Classification</div>
@@ -797,7 +798,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         supplierName, supplierTaxId: taxId, docNumber: expense ? $('f-docnum').value.trim() : '', atcud: expense ? $('f-atcud').value.trim() : '',
         invoiceDate: expense ? $('f-invdate').value || '' : '', country: expense ? $('f-country').value : '',
         vatRate: expense && $('f-vatrate').value !== '' ? Number($('f-vatrate').value) : null,
-        vatAmount: expense && $('f-vatamt').value !== '' ? Number($('f-vatamt').value) : null,
+        vatAmount: expense ? ($('f-vatamt').value !== '' ? Number($('f-vatamt').value) : null) : kind === 'income' && $('f-income').value === 'supplier_refund' && $('f-refundvat').value !== '' ? Number($('f-refundvat').value) : null,   // a refund keeps the VAT typed from its credit note
         vatDeductible: expense ? $('f-vatded').value : '',
         currency: expense ? $('f-currency').value : 'EUR', originalAmount: expense && $('f-currency').value !== 'EUR' && $('f-orig').value !== '' ? Number($('f-orig').value) : null,
         docWaived: (expense || kind === 'income') && $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
@@ -1496,7 +1497,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const rg = periodRange();
     const inPer = (d) => (!rg.from || (d && d >= rg.from)) && (!rg.to || (d && d <= rg.to));
     const items = S.items.filter((i) => i.kind === 'plan' || inPer(i.date));   // plan allocations have no period: "Plan used" compares the period's costs with the whole plan
-    const o = overview(items), vat = vatSummary(items);
+    const o = overview(items), vat = vatSummary(items, S.items);
     const costs = items.filter((i) => i.kind === 'expense' && !i.archived);
     const warn = S.items.filter((i) => i.kind === 'expense' && !i.archived && docStatus(i).level === 'warn').length;
     const incWarn = S.items.filter((i) => i.kind === 'income' && !i.archived && docStatus(i).level === 'warn').length;

@@ -90,6 +90,12 @@ ok('an empty workbook still opens (one empty sheet)', buildXlsx([]).length > 500
   ok('Money received keeps capital, loans and the rest, without supplier refunds', sh('Money received').rows.length === 1 && sh('Money received').rows[0][1] === 'Capital call');
   ok('totals and the preview: expenses net of refunds, money received without them', Q.totals.expenses === 5 && Q.totals.income === 500 && (() => { const s = packSummary(sel); return s.expenses === 3 && s.income === 1 && s.expenseTotal === 5 && s.incomeTotal === 500; })());
   ok('linking a refund to another expense after sending marks it as changed', packHash(rf) !== packHash({ ...rf, refundOf: 'x2' }));
+  // 17 Nov 2026: VAT typed on the refund (from the credit note) shows as a minus on its own line, the expense line keeps its VAT, the total adds the signs
+  const e2 = { ...ex({ id: 'u1', date: '2026-10-19', name: 'UBER TRIP' }), amount: 10.07, vatAmount: 0.57 }, r2 = normalizeItem({ id: 'r9', kind: 'income', incomeType: 'supplier_refund', amount: 2.13, vatAmount: 0.12, date: '2026-10-19', refundOf: 'u1' });
+  const V = packSheets([e2, r2].map((item) => ({ item, state: 'new' })), { ...ctx, itemName: () => 'UBER TRIP' });
+  const vr = V.sheets.find((s) => s.name === 'Expenses').rows;
+  ok('refund VAT: -0.12 on "Refund of: UBER TRIP", 0.57 stays on the Uber line, pack VAT 0.45, by date as in the bank', vr[0][1] === 'UBER TRIP' && vr[0][5] === 0.57 && vr[1][1] === 'Refund of: UBER TRIP' && vr[1][5] === -0.12 && V.totals.vat === 0.45 && packSummary([e2, r2].map((item) => ({ item, state: 'new' }))).vatTotal === 0.45);
+  ok('a refund with no VAT typed leaves the VAT column empty', V && packSheets([{ item: { ...r2, vatAmount: null }, state: 'new' }], ctx).sheets.find((s) => s.name === 'Expenses').rows[0][5] === null);
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nall budget stage 5a pack tests passed'); process.exit(fail ? 1 : 0);

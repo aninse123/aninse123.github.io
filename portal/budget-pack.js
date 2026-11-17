@@ -49,13 +49,15 @@ export function packCandidates(items, { from = '', to = '', includeSent = false 
 // A supplier refund is a credit note on an expense: it counts with the expenses (as a minus), not with the money received.
 const onExpenses = (it) => it.kind === 'expense' || isSupplierRefund(it);
 const signed = (it) => (isSupplierRefund(it) ? -1 : 1) * (Number(it.amount) || 0);
+// VAT on the line: an expense's VAT, or minus the VAT typed on a refund's credit note.
+const vatSigned = (it) => (Number(it.vatAmount) > 0 ? (isSupplierRefund(it) ? -1 : 1) * Number(it.vatAmount) : 0);
 export function packSummary(selected) {
   const exp = selected.filter((s) => onExpenses(s.item)), inc = selected.filter((s) => s.item.kind === 'income' && !isSupplierRefund(s.item));
   const warn = selected.filter((s) => (s.item.kind === 'expense' || s.item.kind === 'income') && docStatus(s.item).level === 'warn');
   return {
     expenses: exp.length, income: inc.length, files: selected.reduce((n, s) => n + (s.item.attachments || []).length, 0),
     expenseTotal: round2(exp.reduce((x, s) => x + signed(s.item), 0)), incomeTotal: round2(inc.reduce((x, s) => x + s.item.amount, 0)),
-    vatTotal: round2(exp.reduce((x, s) => x + (s.item.kind === 'expense' && Number(s.item.vatAmount) > 0 ? Number(s.item.vatAmount) : 0), 0)),
+    vatTotal: round2(exp.reduce((x, s) => x + vatSigned(s.item), 0)),
     warnCount: warn.length, warn,
     changed: selected.filter((s) => s.state === 'changed').length,
   };
@@ -104,7 +106,7 @@ export function packSheets(selected, ctx) {
       { header: 'Paperwork', width: 22 }, { header: 'Files in the pack', width: 40 },
     ],
     rows: exp.map((it) => isSupplierRefund(it)
-      ? [it.date, describe(it), tagsOf(it), '', round2(-it.amount), null, '', '', docStatus(it).label, fileNames(it).join('\n')]
+      ? [it.date, describe(it), tagsOf(it), '', round2(-it.amount), Number(it.vatAmount) > 0 ? round2(-it.vatAmount) : null, '', '', docStatus(it).label, fileNames(it).join('\n')]
       : [it.date, it.name, tagsOf(it), c.countryName ? c.countryName(it.country) : it.country, round2(it.amount), Number(it.vatAmount) > 0 ? round2(it.vatAmount) : null,
         c.paidWithLabel ? c.paidWithLabel(it) : it.paidWith, it.paidPersonallyBy ? (c.personLabel ? c.personLabel(it.paidPersonallyBy) : it.paidPersonallyBy) : '',
         docStatus(it).label, fileNames(it).join('\n')]),
@@ -127,7 +129,7 @@ export function packSheets(selected, ctx) {
     rows: [...exp, ...inc].filter((it) => docStatus(it).level === 'warn').map((it) => { const d = docStatus(it); return [it.date, describe(it), it.kind === 'income' ? (it.counterparty || it.investorName || '') : it.supplierName, round2(it.amount), d.label, d.code === 'incomeMissing' ? `Send the ${d.need}.` : d.code === 'part' ? partHint(d) : FIX_HINT[d.code] || '']; }),
   };
   const totalExp = round2(exp.reduce((x, i) => x + signed(i), 0)), totalInc = round2(inc.reduce((x, i) => x + i.amount, 0));
-  const vat = round2(exp.reduce((x, i) => x + (i.kind === 'expense' && Number(i.vatAmount) > 0 ? Number(i.vatAmount) : 0), 0));
+  const vat = round2(exp.reduce((x, i) => x + vatSigned(i), 0));
   const co = c.company || {};
   const manifest = {
     name: 'Pack',

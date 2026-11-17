@@ -230,11 +230,20 @@ export function vatBucket(item) {
   if (it.country && it.country !== 'PT') return 'foreign';
   return ['ok', 'part'].includes(docStatus(it).code) ? 'recoverable' : 'atRisk';   // on a partly invoiced item the VAT typed is the invoiced part's
 }
-export function vatSummary(items) {
+// VAT typed on a supplier refund (from the credit note, 17 Nov 2026) comes off the group of the expense it refunds, and off At risk when it
+// is not linked (or the expense has no VAT group). `all` finds an expense outside the list given (a period in Reports).
+export function refundVatBucket(refund, all) {
+  if (!isSupplierRefund(refund) || refund.archived || !(Number(refund.vatAmount) > 0)) return 'none';
+  const e = refund.refundOf ? (all || []).find((x) => x.id === refund.refundOf) : null;
+  const b = e ? vatBucket(e.legacy === undefined ? normalizeItem(e) : e) : 'none';
+  return b !== 'none' ? b : 'atRisk';
+}
+export function vatSummary(items, all = items) {
   const t = { recoverable: 0, atRisk: 0, foreign: 0, notDeductible: 0 };
   let missing = 0;
   for (const raw of items || []) {
     const it = raw.legacy === undefined ? normalizeItem(raw) : raw;
+    if (isSupplierRefund(it)) { const rb = refundVatBucket(it, all); if (rb !== 'none') t[rb] -= Number(it.vatAmount); continue; }
     if (it.kind !== 'expense' || it.archived) continue;
     const b = vatBucket(it);
     if (b !== 'none') t[b] += Number(it.vatAmount);
