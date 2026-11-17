@@ -139,14 +139,9 @@ const CSS = `
 @media (max-width:768px){ #v2root .summary-grid.three { grid-template-columns:1fr; } }
 #v2root .setjump { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
 #v2root .setjump .tagchip { font-size:0.8rem; padding:4px 12px; }
-#v2root .paperopts { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:8px; }
-#v2root .paperopt { display:flex; gap:10px; align-items:flex-start; border:1.5px solid var(--border); border-radius:var(--radius); padding:9px 12px; cursor:pointer; background:var(--white); }
-#v2root .paperopt span { display:flex; flex-direction:column; gap:2px; font-size:0.86rem; }
-#v2root .paperopt:has(input:checked) { border-color:var(--primary); background:#E8F0F8; }
-#v2root .paperopt input { margin-top:3px; }
-#v2root .form-group .paperopt { text-transform:none; letter-spacing:normal; font-size:0.88rem; font-weight:400; color:var(--text); margin-bottom:0; }   /* each choice is a label: it must not look like a field label */
-#v2root .paperopt strong { font-weight:600; }
-#v2root .paperopt .mini { text-transform:none; letter-spacing:normal; font-weight:400; }
+/* Paperwork: one chip per answer, like Used by (17 Nov 2026); the hint for the answer picked sits under the row. */
+#v2root .form-group .uchip { margin-bottom:0; }
+#v2root .uchip input[type="radio"] { position:absolute; opacity:0; width:1px; height:1px; margin:0; padding:0; border:0; pointer-events:none; }
 #v2root .linklike { background:none; border:none; padding:0; font:inherit; color:var(--primary); cursor:pointer; text-align:left; }
 #v2root .linklike:hover { text-decoration:underline; }
 #v2root .partrow { background:#F7F3EC; border-radius:var(--radius); padding:10px 12px 0; margin-bottom:14px; }
@@ -566,7 +561,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div class="warnbox" id="f-warn"></div>
         <div id="f-invfields">
         <div class="form-group"><label>Paperwork${tip('paper')}</label>
-          <div class="paperopts" role="radiogroup" aria-label="Paperwork">${PAPER.map((p) => `<label class="paperopt"><input type="radio" name="f-paper" value="${p.id}"${paperOf(d) === p.id ? ' checked' : ''}><span><strong>${p.label}</strong><span class="mini">${p.hint}</span></span></label>`).join('')}</div></div>
+          <div class="uchips" role="radiogroup" aria-label="Paperwork">${PAPER.map((p) => `<label class="uchip" title="${esc(p.hint)}"><input type="radio" name="f-paper" value="${p.id}"${paperOf(d) === p.id ? ' checked' : ''}><span>${p.label}</span></label>`).join('')}</div><div class="hint" id="f-paperhint"></div></div>
         <div class="form-row partrow" id="f-partwrap">${fld('Covered by the document with our NIF (€)', '', `<input type="number" id="f-partamt" step="0.01" min="0" value="${esc(d.docPartAmount ?? '')}"><div class="hint" id="f-parthint"></div>`)}
           ${fld('The rest has', '', `<select id="f-partrest"><option value="none">No document</option><option value="nonif"${d.docRest === 'nonif' ? ' selected' : ''}>A document without our NIF</option></select>`)}</div>
         <div class="form-row">${fld('Supplier', 'supplier', `<input type="text" id="f-supplier" list="f-suplist" value="${esc(d.supplierName || '')}" placeholder="Name"><datalist id="f-suplist">${S.suppliers.filter((s) => !s.archived).map((s) => `<option value="${esc(s.name)}">`).join('')}</datalist><div class="hint">Type to search the suppliers, or clear the box to see them all. A new name is saved for next time.</div>`)}
@@ -630,6 +625,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       const needsMore = more.country !== 'PT' || more.cur !== 'EUR' || more.ded !== 'ask' || $('f-atcud').value.trim() !== '';
       const paper = m.querySelector('input[name="f-paper"]:checked')?.value || 'none', amtNow = parseFloat($('f-amount').value) || 0, partNow = Number($('f-partamt').value) || 0;
       $('f-partwrap').style.display = paper === 'part' ? '' : 'none';
+      $('f-paperhint').textContent = PAPER.find((p) => p.id === paper)?.hint || '';
       $('f-parthint').textContent = `Of ${eur.format(amtNow)}. The rest: ${eur.format(Math.max(0, amtNow - partNow))}.`;
       if (needsMore && !$('f-more').open) $('f-more').open = true;
       const split = $('f-split').checked && expense;
