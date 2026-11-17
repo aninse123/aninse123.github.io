@@ -199,41 +199,46 @@
     <div class="container">
       <h2 class="section__title" data-i18n="contact.title">Fale connosco</h2>
       <p class="contact__subtitle" data-i18n="contact.subtitle">Se construiu uma empresa e está a pensar no próximo capítulo, gostávamos de conhecer a sua história. A conversa é confidencial e sem compromisso.</p>
-      <div class="contact__wrapper">
-        <div class="contact__info">
-          <p class="contact__info-label" data-i18n="contact.info_label">Reach us directly</p>
-          <div class="contact__info-divider"></div>
-          <a href="mailto:andre.rocha@douropartners.pt">andre.rocha@douropartners.pt</a>
-          <a href="mailto:antonio.carvalho@douropartners.pt">antonio.carvalho@douropartners.pt</a>
+      <div class="contact__people">
+        <div class="contact__person">
+          <img src="assets/andre.jpg" alt="" loading="lazy">
+          <div><b>André Rocha</b><a href="mailto:andre.rocha@douropartners.pt">andre.rocha<wbr>@douropartners.pt</a></div>
         </div>
-        <form id="contactForm" class="contact__form"
-              action="https://api.web3forms.com/submit"
-              method="POST">
-          <input type="hidden" name="access_key" value="a47f89a1-a294-4089-b09e-d17dd65f093d">
-          <input type="hidden" name="cc" value="antonio.carvalho@douropartners.pt">
-          <input type="hidden" name="subject" value="New message from douropartners.pt">
-          <input type="checkbox" name="botcheck" style="display:none">
-          <div class="form__group">
-            <label for="fname" data-i18n="contact.form.name">Name</label>
-            <input type="text" id="fname" name="name" autocomplete="name" required>
-          </div>
-          <div class="form__group">
-            <label for="femail" data-i18n="contact.form.email">Email</label>
-            <input type="email" id="femail" name="_replyto" autocomplete="email" required>
-          </div>
-          <div class="form__group">
-            <label for="fphone"><span data-i18n="contact.form.phone">Phone</span> <span class="form__optional" data-i18n="contact.form.optional">(optional)</span></label>
-            <input type="tel" id="fphone" name="phone" autocomplete="tel">
-          </div>
-          <div class="form__group">
-            <label for="fmessage" data-i18n="contact.form.message">Message</label>
-            <textarea id="fmessage" name="message" rows="5" required></textarea>
-          </div>
-          <div class="form__message form__message--success" id="formSuccess"></div>
-          <div class="form__message form__message--error" id="formError"></div>
-          <button type="submit" class="btn btn--primary" data-i18n="contact.form.submit">Enviar mensagem</button>
-        </form>
+        <div class="contact__person">
+          <img src="assets/antonio.jpg" alt="" loading="lazy">
+          <div><b>António Carvalho</b><a href="mailto:antonio.carvalho@douropartners.pt">antonio.carvalho<wbr>@douropartners.pt</a></div>
+        </div>
       </div>
+      <p class="contact__or" data-i18n="contact.or">ou deixe-nos uma mensagem</p>
+      <form id="contactForm" class="contact__form"
+            action="https://api.web3forms.com/submit"
+            method="POST">
+        <input type="hidden" name="access_key" value="a47f89a1-a294-4089-b09e-d17dd65f093d">
+        <input type="hidden" name="cc" value="antonio.carvalho@douropartners.pt">
+        <input type="hidden" name="subject" value="New message from douropartners.pt">
+        <input type="checkbox" name="botcheck" style="display:none">
+        <div class="form__group">
+          <label for="fname" data-i18n="contact.form.name">Name</label>
+          <input type="text" id="fname" name="name" autocomplete="name" required>
+        </div>
+        <div class="form__group">
+          <label for="femail" data-i18n="contact.form.email">Email</label>
+          <input type="email" id="femail" name="_replyto" autocomplete="email" required>
+        </div>
+        <div class="form__group form__group--full">
+          <label for="fphone"><span data-i18n="contact.form.phone">Phone</span> <span class="form__optional" data-i18n="contact.form.optional">(optional)</span></label>
+          <input type="tel" id="fphone" name="phone" autocomplete="tel">
+        </div>
+        <div class="form__group form__group--full">
+          <label for="fmessage" data-i18n="contact.form.message">Message</label>
+          <textarea id="fmessage" name="message" rows="5" required></textarea>
+        </div>
+        <div class="form__message form__message--success" id="formSuccess"></div>
+        <div class="form__message form__message--error" id="formError"></div>
+        <div class="form__actions">
+          <button type="submit" class="btn btn--primary" data-i18n="contact.form.submit">Enviar mensagem</button>
+        </div>
+      </form>
     </div>
   </section>
 

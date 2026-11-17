@@ -53,7 +53,7 @@ const translations = {
     contact: {
       title: "Talk to us",
       subtitle: "If you built a company and are thinking about its next chapter, we would like to hear its story. The conversation is confidential and carries no commitment.",
-      info_label: "Reach us directly",
+      or: "or leave us a message",
       form: {
         name: "Name",
         email: "Email",
@@ -130,7 +130,7 @@ const translations = {
     contact: {
       title: "Fale connosco",
       subtitle: "Se construiu uma empresa e está a pensar no próximo capítulo, gostávamos de conhecer a sua história. A conversa é confidencial e sem compromisso.",
-      info_label: "Contacte-nos diretamente",
+      or: "ou deixe-nos uma mensagem",
       form: {
         name: "Nome",
         email: "Email",

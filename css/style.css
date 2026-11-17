@@ -462,14 +462,74 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   margin-left: auto;
   margin-right: auto;
 }
-.contact__wrapper {
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 48px;
-  max-width: 900px;
+/* The two of us first, then "or leave us a message", then the form */
+.contact__people {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 20px;
+  max-width: 800px;
   margin: 0 auto;
 }
-.contact__form { display: flex; flex-direction: column; gap: 20px; }
+.contact__person {
+  flex: 1 1 320px;
+  max-width: 390px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  background: var(--cream);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.contact__person img {
+  width: 56px; height: 56px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--gold);
+}
+.contact__person div { min-width: 0; }
+.contact__person b {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  color: var(--navy);
+}
+.contact__person a {
+  font-size: 0.88rem;
+  color: var(--gold-ink);
+  font-weight: 500;
+  transition: var(--transition);
+}
+.contact__person a:hover { color: var(--navy); }
+.contact__or {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: 680px;
+  margin: 40px auto 28px;
+  color: var(--text-light);
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+.contact__or::before, .contact__or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--gold);
+  opacity: 0.6;
+}
+.contact__form {
+  max-width: 680px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.form__group--full, .contact__form .form__message, .form__actions { grid-column: 1 / -1; }
+.form__actions { display: flex; justify-content: flex-end; }
+
 .form__group { display: flex; flex-direction: column; gap: 7px; }
 .form__group label {
   font-size: 0.78rem;
@@ -519,39 +579,6 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   color: #B33A3A;
   border: 1px solid #F0C0C0;
 }
-.contact__info {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 32px 28px;
-  background: var(--cream);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  align-self: start;
-}
-.contact__info-label {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--text-light);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 4px;
-}
-.contact__info a {
-  font-size: 0.88rem;
-  color: var(--gold-ink);
-  font-weight: 500;
-  transition: var(--transition);
-  word-break: break-all;
-}
-.contact__info a:hover { color: var(--navy); }
-.contact__info-divider {
-  height: 1px;
-  background: var(--gold);
-  opacity: 0.5;
-  margin: 4px 0;
-}
-
 .nav__links--investor { display: none; }
 
 /* ===== FOOTER (navy, full gold line) ===== */
@@ -695,7 +722,6 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   }
   .how__step { padding-top: 0; }
   .how__num { top: 4px; left: -36px; }
-  .contact__wrapper { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 768px) {
@@ -714,6 +740,9 @@ h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; line-height: 1.2;
   .lookfor__list li { font-size: 1rem; }
   .how__note { margin-top: 40px; font-size: 1.12rem; }
   .team__grid { grid-template-columns: 1fr; max-width: 420px; }
+  .contact__form { grid-template-columns: 1fr; }
+  .form__actions .btn { width: 100%; }
+  .contact__or { margin: 32px auto 24px; }
   .team__intro { margin-bottom: 36px; }
   .goldline--footer { height: 50px; }
 }
