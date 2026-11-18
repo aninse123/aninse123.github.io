@@ -4,6 +4,16 @@
   publish = "."
   functions = "netlify/functions"
 
+# Staging and previews stay out of Google and Bing: on every deploy that is not
+# production (branch deploys such as staging, and deploy previews) the build
+# writes a _headers file that adds "X-Robots-Tag: noindex" to every response.
+# Production (main) has no build command, so douropartners.pt is unaffected.
+[context.branch-deploy]
+  command = "printf '/*\\n  X-Robots-Tag: noindex, nofollow\\n' > _headers"
+
+[context.deploy-preview]
+  command = "printf '/*\\n  X-Robots-Tag: noindex, nofollow\\n' > _headers"
+
 [build.environment]
   # Firebase Web API keys are intentionally public — security is enforced
   # via Firestore Security Rules, not by hiding the key. This disables

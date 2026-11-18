@@ -54,25 +54,44 @@ export const INCOME_TYPES = [
 const INCOME_BY_ID = Object.fromEntries(INCOME_TYPES.map((t) => [t.id, t]));
 
 // ── Documents (step 1.6) ──
+// The kind of document: optional since 16 Nov 2026, under "More invoice details". Only the `pick` ones are offered;
+// the others stay so items saved before still read (receipt, card slip and "none" now come from the Paperwork answer).
 export const DOC_TYPES = [
-  { id: 'invoice', label: 'Invoice (fatura)', invoice: true },
-  { id: 'invoice_receipt', label: 'Invoice-receipt (fatura-recibo)', invoice: true },
-  { id: 'green_receipt', label: 'Green receipt (recibo verde)', invoice: true },
-  { id: 'credit_note', label: 'Credit note', invoice: true },
-  { id: 'simplified', label: 'Simplified invoice', invoice: false },
+  { id: 'invoice', label: 'Fatura (invoice)', invoice: true, pick: true },
+  { id: 'invoice_receipt', label: 'Fatura-recibo (invoice-receipt)', invoice: true, pick: true },
+  { id: 'simplified', label: 'Fatura simplificada (simplified invoice)', invoice: true, pick: true },
+  { id: 'green_receipt', label: 'Recibo verde (green receipt)', invoice: true, pick: true },
+  { id: 'credit_note', label: 'Nota de crédito (credit note)', invoice: true, pick: true },
   { id: 'receipt', label: 'Receipt only', invoice: false },
   { id: 'card_slip', label: 'Card slip or bank line only', invoice: false },
   { id: 'none', label: 'No document yet', invoice: false },
 ];
+// 16 Nov 2026 (André): what matters is whether there is a document and whether it shows our NIF. One answer per expense.
+export const PAPER = [
+  { id: 'nif', label: 'Document with our NIF', hint: 'Fatura, fatura-recibo, recibo verde… showing the company NIF' },
+  { id: 'part', label: 'Part with our NIF', hint: 'The supplier invoiced only part of it' },
+  { id: 'nonif', label: 'Document without our NIF', hint: 'A receipt or talão, or an invoice in another name' },
+  { id: 'none', label: 'No document yet', hint: 'Nothing to attach for now' },
+];
+const PAPER_IDS = new Set(PAPER.map((p) => p.id));
+// The answer for an expense; items saved before the answer existed are read from their document type and "shows our NIF".
+export function paperOf(item) {
+  const it = item || {};
+  if (PAPER_IDS.has(it.paper)) return it.paper;
+  const t = DOC_BY_ID[it.docType];
+  if (!t || t.id === 'none' || t.id === 'card_slip') return 'none';
+  if (it.issuedToCompany === 'yes' && t.id !== 'receipt') return 'nif';
+  return 'nonif';
+}
+const eurLabel = (n) => '€' + (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const DOC_BY_ID = Object.fromEntries(DOC_TYPES.map((t) => [t.id, t]));
 export const NO_DOC_CATEGORIES = new Set(['bank-taxes']);
 
 export const DOC_STATUS = {
-  ok: { label: 'Invoice OK', level: 'ok' },
-  incomplete: { label: 'Invoice details missing', level: 'warn' },
-  noNif: { label: 'Invoice without our NIF', level: 'warn' },
-  receiptOnly: { label: 'Receipt only', level: 'warn' },
-  noDocument: { label: 'No document', level: 'warn' },
+  ok: { label: 'Doc + NIF', level: 'ok' },
+  part: { label: 'Part Doc + NIF', level: 'warn' },
+  noNif: { label: 'Doc, no NIF', level: 'warn' },
+  noDocument: { label: 'No doc', level: 'warn' },
   notRequired: { label: 'Not required', level: 'na' },
   attached: { label: 'Document attached', level: 'ok' },
   incomeMissing: { label: 'Document missing', level: 'warn' },
@@ -97,18 +116,19 @@ export function docStatus(item) {
   }
   if (kind !== 'expense') return { code: 'notRequired', ...DOC_STATUS.notRequired, missing: [] };
   if (it.docWaived || NO_DOC_CATEGORIES.has(it.categoryId)) return { code: 'notRequired', ...DOC_STATUS.notRequired, missing: [] };
-  const t = DOC_BY_ID[it.docType];
+  // Supplier, supplier NIF, invoice number, ATCUD and invoice date are optional: they are no longer a warning (16 Nov 2026).
+  const p = paperOf(it);
   const hasFile = Array.isArray(it.attachments) && it.attachments.length > 0;
-  if (!t || t.id === 'none' || t.id === 'card_slip' || !hasFile) {
-    return { code: 'noDocument', ...DOC_STATUS.noDocument, missing: !hasFile ? ['file'] : [] };
+  if (p === 'none' || !hasFile) return { code: 'noDocument', ...DOC_STATUS.noDocument, missing: !hasFile ? ['file'] : [] };
+  const noNif = { code: 'noNif', ...DOC_STATUS.noNif, missing: [] };
+  if (p === 'nonif') return noNif;
+  if (p === 'part') {
+    const total = Number(it.amount) || 0, part = Math.min(Math.max(Number(it.docPartAmount) || 0, 0), total), left = Math.round((total - part) * 100) / 100;
+    const rest = it.docRest === 'nonif' ? 'nonif' : 'none';
+    if (left < 0.005) return { code: 'ok', ...DOC_STATUS.ok, missing: [] };
+    if (part < 0.005) return rest === 'nonif' ? noNif : { code: 'noDocument', ...DOC_STATUS.noDocument, missing: [] };
+    return { code: 'part', ...DOC_STATUS.part, label: `Part Doc + NIF · ${eurLabel(part)} of ${eurLabel(total)}`, missing: [], part, left, rest };
   }
-  if (!t.invoice) return { code: 'receiptOnly', ...DOC_STATUS.receiptOnly, missing: [] };
-  if (it.issuedToCompany !== 'yes') return { code: 'noNif', ...DOC_STATUS.noNif, missing: ['issuedToCompany'] };
-  const missing = [];
-  if (!String(it.supplierName || '').trim()) missing.push('supplierName');
-  if (!String(it.supplierTaxId || '').trim()) missing.push('supplierTaxId');
-  if (!String(it.docNumber || '').trim()) missing.push('docNumber');
-  if (missing.length) return { code: 'incomplete', ...DOC_STATUS.incomplete, missing };
   return { code: 'ok', ...DOC_STATUS.ok, missing: [] };
 }
 
@@ -208,13 +228,22 @@ export function vatBucket(item) {
   if (!(v > 0)) return 'none';
   if (it.vatDeductible === 'no') return 'notDeductible';
   if (it.country && it.country !== 'PT') return 'foreign';
-  return docStatus(it).code === 'ok' ? 'recoverable' : 'atRisk';
+  return ['ok', 'part'].includes(docStatus(it).code) ? 'recoverable' : 'atRisk';   // on a partly invoiced item the VAT typed is the invoiced part's
 }
-export function vatSummary(items) {
+// VAT typed on a supplier refund (from the credit note, 17 Nov 2026) comes off the group of the expense it refunds, and off At risk when it
+// is not linked (or the expense has no VAT group). `all` finds an expense outside the list given (a period in Reports).
+export function refundVatBucket(refund, all) {
+  if (!isSupplierRefund(refund) || refund.archived || !(Number(refund.vatAmount) > 0)) return 'none';
+  const e = refund.refundOf ? (all || []).find((x) => x.id === refund.refundOf) : null;
+  const b = e ? vatBucket(e.legacy === undefined ? normalizeItem(e) : e) : 'none';
+  return b !== 'none' ? b : 'atRisk';
+}
+export function vatSummary(items, all = items) {
   const t = { recoverable: 0, atRisk: 0, foreign: 0, notDeductible: 0 };
   let missing = 0;
   for (const raw of items || []) {
     const it = raw.legacy === undefined ? normalizeItem(raw) : raw;
+    if (isSupplierRefund(it)) { const rb = refundVatBucket(it, all); if (rb !== 'none') t[rb] -= Number(it.vatAmount); continue; }
     if (it.kind !== 'expense' || it.archived) continue;
     const b = vatBucket(it);
     if (b !== 'none') t[b] += Number(it.vatAmount);
@@ -254,12 +283,26 @@ export function tagTotals(items) {
     if (!sign) continue;
     for (const tag of it.tags) {
       const k = tag.toLowerCase();
-      const cur = m.get(k) || { tag, total: 0, count: 0 };
+      const cur = m.get(k) || { tag, total: 0, count: 0, byCategory: {} };
       cur.total = round2(cur.total + sign * it.amount); cur.count++;
+      if (sign > 0) itemLines(it).forEach((l) => { cur.byCategory[l.categoryId] = round2((cur.byCategory[l.categoryId] || 0) + l.amount); });   // what the tag's money bought (refunds left out)
       m.set(k, cur);
     }
   }
   return [...m.values()].sort((a, b) => b.total - a.total || a.tag.localeCompare(b.tag));
+}
+
+// Supplier refunds linked to an expense ("Refund of", 17 Nov 2026): expense id → { total, refunds: [items] }. Archived refunds do not count.
+export const isSupplierRefund = (it) => !!it && it.kind === 'income' && it.incomeType === 'supplier_refund';
+export function refundTotals(items) {
+  const m = new Map();
+  for (const it of items || []) {
+    if (!isSupplierRefund(it) || it.archived || !it.refundOf) continue;
+    const cur = m.get(it.refundOf) || { total: 0, refunds: [] };
+    cur.total = round2(cur.total + (Number(it.amount) || 0)); cur.refunds.push(it);
+    m.set(it.refundOf, cur);
+  }
+  return m;
 }
 
 // ── Shares (steps 1.5 / 3.2): who used it, with weights ──

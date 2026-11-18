@@ -133,7 +133,7 @@ function declineCookies() {
 
 /* ===== SCROLL REVEAL ===== */
 function initReveals() {
-  const sel = '.about__text, .criteria__card, .approach__item, .team__card, .team__footnote, .contact__subtitle, .contact__wrapper, .section .section__title';
+  const sel = '.about__head, .about__text, .lookfor__figs, .lookfor__list, .how__step, .how__note, .team__intro, .team__card, .faq__list, .contact__subtitle, .contact__grid, .section .section__title';
   const els = [...document.querySelectorAll(sel)];
   if (!els.length) return;
   els.forEach(el => el.classList.add('reveal-target'));

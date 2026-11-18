@@ -162,7 +162,7 @@ function assertEnrollable(campaign) {
 function endEnrolmentWrites(tx, enrolRef, companyRef, companyData, status, reason, extra = {}) {
   tx.update(enrolRef, { status, stopReason: reason || null, endedAt: FieldValue.serverTimestamp(), nextActionAt: null, ...extra });
   if (companyData && companyData.activeEnrolmentId === enrolRef.id) {
-    tx.update(companyRef, { activeCampaignId: FieldValue.delete(), activeCampaignName: FieldValue.delete(), activeEnrolmentId: FieldValue.delete() });
+    tx.update(companyRef, { activeCampaignId: FieldValue.delete(), activeCampaignName: FieldValue.delete(), activeEnrolmentId: FieldValue.delete(), campaignChangedAt: FieldValue.serverTimestamp() });
   }
 }
 
@@ -537,7 +537,7 @@ async function enrolOne(companyId, campaign, ctx, source, onConflict, caller, ex
     });
     // A test campaign after go-live (22 Oct) doesn't take the company's campaign slot:
     // real campaigns can still add it, and the related-company flags ignore it.
-    if (!(campaign.isTest && !ctx.testMode)) tx.update(companyRef, { activeCampaignId: campaign.id, activeCampaignName: campaign.name, activeEnrolmentId: enrolRef.id });
+    if (!(campaign.isTest && !ctx.testMode)) tx.update(companyRef, { activeCampaignId: campaign.id, activeCampaignName: campaign.name, activeEnrolmentId: enrolRef.id, campaignChangedAt: FieldValue.serverTimestamp() });
     return { result: moveFrom ? "moved" : "enrolled" };
   });
 }
@@ -1737,7 +1737,7 @@ async function pathsPreview({ campaignId, paths, steps }) {
 // Team access: the permission each action needs. Starting a campaign sends
 // emails, so it needs "approve" like approving drafts.
 const CAMPAIGN_ACTION_PERM = {
-  save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns", recipientsPreview: "out.campaigns", recipientsFor: "out.campaigns", setRecipients: "out.campaigns", previewRecipient: "out.campaigns", tracksFor: "out.campaigns", restartCompany: "out.campaigns",
+  save: "out.campaigns", duplicate: "out.campaigns", delete: "out.campaigns", preview: "out.campaigns", enrol: "out.campaigns", recipientsPreview: "out.campaigns", recipientsFor: "out.campaigns", setRecipients: "out.campaigns", previewRecipient: "out.campaigns", tracksFor: "out.campaigns", restartCompany: "out.campaigns", retryAddress: "out.campaigns",
   enrolment: "out.campaigns", previewPeople: "out.campaigns", enrolPeople: "out.campaigns",
   requestStart: "out.campaigns", returnStart: "out.approve", runNow: "out.approve", sendNow: "out.approve",
   approve: "out.approve", skipDraft: "out.approve", unapprove: "out.approve", completeTask: "out.tasks", updateTask: "out.tasks", setDoNotContact: "search.edit",
@@ -1772,11 +1772,12 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
   if (data.action === "completeTask" && data.contact) await Feat.requireFeature(request, "outreach.taskContact"); // 5 Nov
   if (["completeTask", "logActivity"].includes(data.action) && (data.result || data.sequence || data.outcome === "answered")) await Feat.requireFeature(request, "outreach.callResults"); // 13 Nov
   if (["tracksFor", "restartCompany"].includes(data.action) || (data.action === "setRecipients" && data.all === true)) await Feat.requireFeature(request, "outreach.multiRecipient"); // 30 Oct
+  if (data.action === "retryAddress") await Feat.requireFeature(request, "outreach.multiRecipient", "outreach.bounceRetry", "contacts.trustLabels"); // 17 Nov: Try another address…
   if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
   if (data.action === "save" && Array.isArray(data.campaign?.cc) && data.campaign.cc.length) await Feat.requireFeature(request, "outreach.campaignCc"); // 28 Oct
   if (data.action === "updateTask" && (data.letterText !== undefined || data.signer === "both")) await Feat.requireFeature(request, "outreach.letterTools"); // 29 Oct: a letter's own text and envelope, signed by both
   if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
-    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "recipientsFor", "setRecipients", "previewRecipient", "tracksFor", "restartCompany", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
+    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "recipientsFor", "setRecipients", "previewRecipient", "tracksFor", "restartCompany", "retryAddress", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
       let aud = data.campaign?.audienceType;
       if (!aud && data.campaignId) { const c = await db().doc(`outreachCampaigns/${data.campaignId}`).get(); aud = c.exists ? c.data().audienceType : null; }
@@ -1789,7 +1790,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
   if (!canApprove) {
     const targets = [];
     if (["save", "enrol", "enrolPeople"].includes(data.action)) targets.push(data.campaignId);
-    if (["setRecipients", "restartCompany"].includes(data.action)) { const en = data.enrolmentId ? await db().doc(`outreachEnrolments/${data.enrolmentId}`).get() : null; if (en?.exists) targets.push(en.data().campaignId); }
+    if (["setRecipients", "restartCompany", "retryAddress"].includes(data.action)) { const en = data.enrolmentId ? await db().doc(`outreachEnrolments/${data.enrolmentId}`).get() : null; if (en?.exists) targets.push(en.data().campaignId); }
     if (data.action === "enrolment") {
       // Removing, pausing or moving someone in a running campaign is a change too.
       const en = data.enrolmentId ? await db().doc(`outreachEnrolments/${data.enrolmentId}`).get() : null;
@@ -1830,6 +1831,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
       case "previewRecipient": return await RL.previewRecipient(data);
       case "tracksFor": return await Tracks.tracksFor(data.enrolmentId);
       case "restartCompany": return await Tracks.restartCompany(data, caller);
+      case "retryAddress": return await Tracks.retryAddress(data, caller);
       case "runNow": return await runNow(data, caller);
       case "sendNow": return await sendNow(data, caller);
       case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware, relatedActivity, trust: await Feat.isOnFor(request, "contacts.trustLabels") });

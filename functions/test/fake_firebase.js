@@ -88,6 +88,8 @@ class Query {
   // Field projection (admin SDK select): reads the same documents; the fake
   // keeps whole bodies (tests only check which documents come back).
   select() { return this; }
+  // Aggregation count (admin SDK query.count().get()), 16 Nov.
+  count() { return { get: async () => { const s = await this.get(); return { data: () => ({ count: s.size }) }; } }; }
   async get() {
     let docs = [...store.keys()].filter((p) => p.startsWith(this.coll + "/") && p.split("/").length === this.coll.split("/").length + 1)
       .map((p) => new DocSnap(new DocRef(p)));

@@ -1,80 +1,61 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Page Not Found — Douro Partners</title>
-  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <meta name="robots" content="noindex">
+  <title>Página não encontrada | Douro Partners</title>
   <link rel="icon" href="/assets/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <meta name="theme-color" content="#1C2A39">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Gentium+Book+Plus:wght@700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --primary:    #4A6B8A;
-      --bg:         #F7F3EC;
-      --text:       #2C2C2C;
-      --text-light: #6B7280;
-      --font-serif: 'Playfair Display', Georgia, serif;
-      --font-sans:  'Inter', 'Helvetica Neue', sans-serif;
+      --navy: #1C2A39; --gold: #C4A676; --cream: #FAF8F3;
+      --font-serif: "Palatino Linotype", Palatino, "Book Antiqua", "Gentium Book Plus", Georgia, serif;
+      --font-sans: 'Inter', 'Helvetica Neue', sans-serif;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: var(--font-sans);
-      background: var(--bg);
       min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      padding: 24px;
-      color: var(--text);
-    }
-    .container { max-width: 480px; }
-    img.logo { height: 80px; margin: 0 auto 40px; }
-    h1 {
-      font-family: var(--font-serif);
-      font-size: 5rem;
-      color: var(--primary);
-      line-height: 1;
-      margin-bottom: 16px;
-      opacity: 0.25;
-    }
-    h2 {
-      font-family: var(--font-serif);
-      font-size: 1.75rem;
-      color: var(--primary);
-      margin-bottom: 12px;
-    }
-    p {
-      color: var(--text-light);
-      font-size: 1rem;
-      line-height: 1.7;
-      margin-bottom: 40px;
-    }
-    a.btn {
-      display: inline-block;
-      padding: 14px 36px;
-      background: var(--primary);
-      color: #fff;
-      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      padding: 48px 24px 140px;
+      background: linear-gradient(120deg, #121D29 0%, #1C2A39 55%, #2A3C4F 100%);
+      color: var(--cream);
       font-family: var(--font-sans);
-      font-size: 0.95rem;
-      font-weight: 600;
-      text-decoration: none;
+      text-align: center;
+      position: relative;
+      overflow-x: hidden;
+    }
+    .container { max-width: 520px; position: relative; z-index: 1; }
+    .logo { height: 96px; margin: 0 auto 40px; display: block; }
+    h1 { font-family: var(--font-serif); font-weight: 700; font-size: clamp(2rem, 6vw, 2.8rem); line-height: 1.15; margin-bottom: 14px; }
+    p { color: rgba(250, 248, 243, 0.78); line-height: 1.7; margin-bottom: 6px; }
+    p.en { font-size: 0.9rem; color: rgba(250, 248, 243, 0.55); margin-bottom: 36px; }
+    a.btn {
+      display: inline-block; padding: 14px 36px; border-radius: 6px;
+      background: var(--gold); color: #121D29; font-weight: 600; text-decoration: none;
       transition: background 0.3s ease;
     }
-    a.btn:hover { background: #3A5570; }
+    a.btn:hover { background: #D2B78A; }
+    a.btn:focus-visible { outline: 2px solid var(--cream); outline-offset: 3px; }
+    .goldline { position: absolute; left: 0; right: 0; bottom: 0; height: 90px; pointer-events: none; }
+    .goldline svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+    .goldline path { fill: none; stroke: var(--gold); stroke-width: 1.6; opacity: 0.9; }
+    .goldline i { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; background: #FFF8EC; box-shadow: 0 0 8px 2px rgba(250, 240, 220, 0.55); }
   </style>
 </head>
 <body>
   <div class="container">
-    <img src="/assets/logo.png" alt="Douro Partners" class="logo">
-    <h1>404</h1>
-    <h2>Page not found</h2>
-    <p>The page you're looking for doesn't exist or has been moved.</p>
-    <a href="/" class="btn">Back to Douro Partners</a>
+    <a href="/"><img src="/assets/logo-nav-cream.png" alt="Douro Partners" class="logo"></a>
+    <h1>Esta página não existe.</h1>
+    <p>O endereço pode estar errado ou a página pode ter mudado de sítio.</p>
+    <p class="en" lang="en">This page does not exist.</p>
+    <a href="/" class="btn">Voltar ao início</a>
   </div>
+  <div class="goldline" aria-hidden="true"><svg viewBox="0 0 1000 100" preserveAspectRatio="none" focusable="false"><path d="M0 100.0 L20 98.2 L40 96.6 L60 94.9 L80 93.3 L100 91.7 L120 90.2 L140 88.6 L160 87.0 L180 85.4 L200 83.7 L220 82.0 L240 80.2 L260 78.2 L280 76.1 L300 73.7 L320 71.2 L340 68.6 L360 65.8 L380 63.0 L400 60.1 L420 57.2 L440 54.4 L460 51.6 L480 49.0 L500 46.5 L520 44.1 L540 41.9 L560 39.8 L580 37.9 L600 36.1 L620 34.5 L640 33.0 L660 31.6 L680 30.3 L700 29.2 L720 28.1 L740 27.1 L760 26.1 L780 25.3 L800 24.4 L820 23.7 L840 22.9 L860 22.3 L880 21.6 L900 21.0 L920 20.4 L940 19.9 L960 19.4 L980 18.9 L1000 18.5" vector-effect="non-scaling-stroke"/></svg><i style="left:52%;top:44.1%"></i><i style="left:66%;top:31.6%"></i><i style="left:80%;top:24.4%"></i><i style="left:93%;top:20.2%"></i></div>
 </body>
 </html>

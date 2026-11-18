@@ -208,11 +208,14 @@ const DAY = 86400000;
   // Delete a draft
   await call({ action: "enrol", campaignId: c3, companyIds: ["f", "g"] });
   ok("draft holds f and g", get("searchCompanies/f").activeCampaignId === c3);
+  ok("joining a campaign stamps campaignChangedAt (16 Nov, read by the Claude connector's index)", !!get("searchCompanies/f").campaignChangedAt);
   const del = (await call({ action: "delete", campaignId: c3 })).res;
   ok("delete draft releases companies and removes docs", del.deleted && del.released === 2 && get("searchCompanies/f").activeCampaignId === undefined && !get(`outreachCampaigns/${c3}`) && !get(`outreachEnrolments/${c3}_f`));
 
   // Stop rules helper (wired into the webhook in step 2)
+  store.set("searchCompanies/a", { ...get("searchCompanies/a"), campaignChangedAt: null });
   const stopped = await stopCompanyEnrolments("a", "Bounced");
+  ok("leaving a campaign stamps campaignChangedAt", !!get("searchCompanies/a").campaignChangedAt);
   ok("stopCompanyEnrolments ends the company's enrolments", stopped === 1 && get(`outreachEnrolments/${c2}_a`).status === "stopped" && get("searchCompanies/a").activeCampaignId === undefined);
   ok("endEnrolment on an ended enrolment is a no-op", (await endEnrolment(F.fakeDb.doc(`outreachEnrolments/${c2}_a`), "removed", "x")) === false);
 

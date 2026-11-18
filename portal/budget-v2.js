@@ -10,8 +10,8 @@ import { buildXlsx, XLSX_MIME } from './xlsx-write.js';
 import { decodeBank, parseTabulado, fingerprint, planImport, recognise, cleanDescription, matchCandidates, findInvestor } from './budget-bank.js';
 import { nifStatus, normalizeNif, cleanCompanyDetails } from './budget-fiscal.js';
 import {
-  DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, INCOME_DOC, incomeDocNeeded, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
-  docStatus, normalizeItem, overview, parseTags, tagTotals, splitShares, itemLines, companyIdsOf, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban, cleanBic, bicStatus,
+  DEFAULT_CATEGORIES, DEFAULT_PURPOSES, TEAM_PAY_SUBTYPES, KINDS, INCOME_TYPES, DOC_TYPES, DOC_STATUS, PAPER, paperOf, INCOME_DOC, incomeDocNeeded, DEDUCTIBLE, VAT_BUCKETS, vatBucket, vatSummary,
+  docStatus, normalizeItem, overview, parseTags, tagTotals, refundTotals, isSupplierRefund, refundVatBucket, splitShares, itemLines, companyIdsOf, companyReport, personReport, planVsActual, partnerBalances, suggestSettlement, isValidIban, ibanStatus, formatIban, cleanIban, cleanBic, bicStatus,
   last4, labelOf, mergeLists, activeOnly, newListId,
 } from './budget-lib.js';
 import {
@@ -37,8 +37,8 @@ const TIPS = {
   paidPersonallyBy: 'The partner whose own money was used. Reports lists what the company still owes each of you.',
   bankNames: 'The name the bank writes on transfers from you, copied from a bank line. It lets the Inbox recognise money from you as a partner loan.',
   usedBy: 'Who the expense was for, not whose card paid. Click one or more names; with several, the cost is split equally. Use "Unequal split…" to give someone a bigger share: each name then gets a share, and you see their % and euros.',
-  docType: 'What paperwork you have. For tax the company needs an invoice with its NIF; a receipt or simplified invoice alone is not enough.',
-  issuedToCompany: 'Does the invoice show the company’s name and NIF? Choose Unknown until you have checked; Unknown counts as a warning.',
+  paper: 'What paperwork you have for this expense. For tax the company needs a document that shows its name and NIF. Choose "Part with our NIF" when the supplier invoiced only part of it.',
+  docType: 'Optional. The kind of document; a recibo verde matters to the accountant (withholding tax). The accountant can also read it from the file.',
   supplier: 'Who we paid. Pick a saved supplier to fill NIF, country and defaults, or type a new name and it is saved for next time.',
   supplierTaxId: 'The supplier’s NIF (Portugal) or VAT ID (abroad, for example ES B1234567). NIF and VAT are different: the NIF identifies a person or company, VAT (IVA) is the tax on the invoice.',
   docNumber: 'The invoice number printed on the document.',
@@ -139,6 +139,15 @@ const CSS = `
 @media (max-width:768px){ #v2root .summary-grid.three { grid-template-columns:1fr; } }
 #v2root .setjump { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
 #v2root .setjump .tagchip { font-size:0.8rem; padding:4px 12px; }
+/* Paperwork: one chip per answer, like Used by (17 Nov 2026); the hint for the answer picked sits under the row. */
+#v2root .form-group .uchip { margin-bottom:0; }
+#v2root .uchip input[type="radio"] { position:absolute; opacity:0; width:1px; height:1px; margin:0; padding:0; border:0; pointer-events:none; }
+#v2root .linklike { background:none; border:none; padding:0; font:inherit; color:var(--primary); cursor:pointer; text-align:left; }
+#v2root .linklike:hover { text-decoration:underline; }
+#v2root .partrow { background:#F7F3EC; border-radius:var(--radius); padding:10px 12px 0; margin-bottom:14px; }
+#v2root input[type=number] { -moz-appearance:textfield; appearance:textfield; }
+#v2root input[type=number]::-webkit-outer-spin-button, #v2root input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+#v2root .attach-chip--new { background:#E8F0F8; }
 #v2root .linekind { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:-10px 0 18px; }
 #v2root .banknote { background:#F0EDE8; border-radius:var(--radius); padding:8px 12px; font-size:0.8rem; color:var(--text-light); margin:-10px 0 18px; }
 #v2root .banknote .linkbtn { margin-left:6px; }
@@ -224,6 +233,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   const purLabel = (id) => labelOf(S.lists.purposes, id, '');
   const personLabel = (key) => key === 'external' ? 'External' : (S.dir.find((m) => m.key === key)?.label || key);
   const accountOf = (id) => S.accounts.find((a) => a.id === id);
+  // An account named with the last 4 digits of its IBAN, so two accounts at the same bank are told apart (17 Nov 2026).
+  const accountLabel = (a) => (a ? `${a.name}${a.iban ? ' · ••' + cleanIban(a.iban).slice(-4) : ''}` : '');
+  // What each expense got back from supplier refunds, worked out once per list of items.
+  let refundCache = { src: null, n: -1, map: new Map() };
+  const refundMap = () => (refundCache.src === S.items && refundCache.n === S.items.length ? refundCache.map : (refundCache = { src: S.items, n: S.items.length, map: refundTotals(S.items) }).map);
+  const itemName = (id) => S.items.find((x) => x.id === id)?.name || '';
   const cardOf = (id) => S.cards.find((c) => c.id === id);
   function paidWithLabel(it) {
     const v = it.paidWith || '';
@@ -331,15 +346,15 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     return `<tr style="${i.archived ? 'opacity:.5' : ''}">
       <td class="chk"><input type="checkbox" data-sel="${i.id}" ${S.selected.has(i.id) ? 'checked' : ''} aria-label="Select"></td>
       <td style="white-space:nowrap">${fmtDate(i.date)}</td>
-      <td><strong>${esc(i.name || '—')}</strong>${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}${(() => { const cos = i.kind === 'expense' ? [...new Set(itemLines(i).map((l) => l.companyName).filter(Boolean))] : []; return cos.length ? `<div class="mini">Company: ${cos.map(esc).join(' · ')}</div>` : ''; })()}${i.counterparty ? `<div class="mini">${esc(i.counterparty)}</div>` : ''}${i.investorName ? `<div class="mini">Investor: ${esc(i.investorName)}</div>` : ''} ${rev}</td>
+      <td><strong>${esc(i.name || '—')}</strong>${isSupplierRefund(i) && i.refundOf && itemName(i.refundOf) ? `<div class="mini">Refund of: ${esc(itemName(i.refundOf))}</div>` : ''}${i.supplierName ? `<div class="mini">${esc(i.supplierName)}</div>` : ''}${(() => { const cos = i.kind === 'expense' ? [...new Set(itemLines(i).map((l) => l.companyName).filter(Boolean))] : []; return cos.length ? `<div class="mini">Company: ${cos.map(esc).join(' · ')}</div>` : ''; })()}${i.counterparty ? `<div class="mini">${esc(i.counterparty)}</div>` : ''}${i.investorName ? `<div class="mini">Investor: ${esc(i.investorName)}</div>` : ''} ${rev}</td>
       <td>${kindPill(i)}</td>
       <td>${i.kind === 'expense' ? (Array.isArray(i.lines) && i.lines.length > 1 ? `<span title="Shared between ${i.lines.length} lines">Split · ${i.lines.length} lines</span>` : esc(catLabel(i.categoryId))) : ''}${i.kind === 'expense' && i.subtype ? `<div class="mini">${esc(labelOf(TEAM_PAY_SUBTYPES, i.subtype))}</div>` : ''}</td>
       <td>${esc(purLabel(i.purposeId))}</td>
-      <td class="num ${i.kind === 'income' ? 'amt-in' : ''}">${sign}${eur.format(i.amount)}</td>
+      <td class="num ${i.kind === 'income' ? 'amt-in' : ''}">${sign}${eur.format(i.amount)}${(() => { const r = i.kind === 'expense' ? refundMap().get(i.id) : null; return r ? `<div class="mini" title="Supplier refunds linked to this expense">−${eur.format(r.total)} refunded · net ${eur.format(Math.round((i.amount - r.total) * 100) / 100)}</div>` : ''; })()}</td>
       <td>${i.kind === 'expense' ? paidWithLabel(i) : ''}${i.kind === 'expense' && i.paidPersonallyBy ? (i.reimbursement?.status === 'reimbursed' ? '<div class="mini" style="color:var(--secondary)" title="The company paid this back">✓ reimbursed</div>' : '<div class="mini" style="color:#8A5A00" title="The company still owes this to the partner">owed back</div>') : ''}</td>
       <td class="mini">${i.kind === 'expense' ? usedByLabel(i) : ''}</td>
       <td>${i.kind === 'expense' || (i.kind === 'income' && incomeDocNeeded(i.incomeType)) ? `<span class="badge-doc ${ds.level}" title="${esc(ds.missing.length ? 'Missing: ' + ds.missing.join(', ') : ds.label)}">${esc(ds.label)}</span>` : ''}</td>
-      <td class="num">${vatBucket(i) !== 'none' ? `<span title="${esc(VAT_BUCKETS[vatBucket(i)].label)}">${eur.format(Number(i.vatAmount))}</span>` : ''}</td>
+      <td class="num">${vatBucket(i) !== 'none' ? `<span title="${esc(VAT_BUCKETS[vatBucket(i)].label)}">${eur.format(Number(i.vatAmount))}</span>` : refundVatBucket(i, S.items) !== 'none' ? `<span title="VAT on the credit note: comes off ${esc(VAT_BUCKETS[refundVatBucket(i, S.items)].label)}">−${eur.format(Number(i.vatAmount))}</span>` : ''}</td>
       <td>${i.tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t)}">${esc(t)}</button>`).join('')}</td>
       <td>${i.sharedAt ? `<span title="Shared ${esc(String(i.sharedAt).slice(0, 10))} by ${esc(i.sharedBy || '')}" style="color:var(--secondary);font-weight:700">✓</span>${changedSince(i) ? '<span title="Changed since it was shared: it can go in the next pack" style="color:#8A5A00"> ⚠</span>' : ''}` : ''}</td>
       <td>${att}</td>
@@ -391,7 +406,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           <div class="table-wrap"><table>
             <thead><tr><th class="chk"><input type="checkbox" id="selAll" aria-label="Select all shown"></th>${th('date', 'Date')}${th('name', 'Item')}<th>Kind</th><th>Category</th><th>Purpose</th>${th('amount', 'Amount', 'num')}<th>Paid with</th><th>Used by</th><th>Paperwork</th><th class="num">VAT</th><th>Tags</th><th title="Shared with accountant">Shared</th><th>📎</th><th></th></tr></thead>
             <tbody>${list.length ? list.map(itemRow).join('') : '<tr class="empty-row"><td colspan="15">No items match the filter.</td></tr>'}</tbody>
-            <tfoot><tr><td colspan="6">Shown: ${list.length} item${list.length === 1 ? '' : 's'}</td><td class="num">${eur.format(costs)}</td><td colspan="3"></td><td class="num">${eur.format(list.reduce((s, i) => s + (vatBucket(i) !== 'none' ? Number(i.vatAmount) : 0), 0))}</td><td colspan="4" class="mini">VAT · expenses${recv ? ` · received ${eur.format(recv)}` : ''}</td></tr></tfoot>
+            <tfoot><tr><td colspan="6">Shown: ${list.length} item${list.length === 1 ? '' : 's'}</td><td class="num">${eur.format(costs)}</td><td colspan="3"></td><td class="num">${eur.format(list.reduce((s, i) => s + (vatBucket(i) !== 'none' ? Number(i.vatAmount) : refundVatBucket(i, S.items) !== 'none' ? -Number(i.vatAmount) : 0), 0))}</td><td colspan="4" class="mini">VAT · expenses${recv ? ` · received ${eur.format(recv)}` : ''}</td></tr></tfoot>
           </table></div>
         </div>
       </div>`;
@@ -506,7 +521,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   const unequalWeights = (usedBy) => (usedBy || []).length > 1 && new Set(usedBy.map((u) => Number(u.weight) || 1)).size > 1;
   function openItem(id, preset) {
     const it = id ? S.items.find((x) => x.id === id) : null;
-    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [], movementId: preset?.movementId || null, unequal: unequalWeights((it || preset || {}).usedBy), lines: Array.isArray((it || preset || {}).lines) && (it || preset || {}).lines.length > 1 ? (it || preset).lines.map((l) => ({ ...l })) : [{ weight: 1 }, { weight: 1 }] };
+    S.edit = { id: id || null, attachments: it ? [...it.attachments] : [], pending: [], movementId: preset?.movementId || null, unequal: unequalWeights((it || preset || {}).usedBy), lines: Array.isArray((it || preset || {}).lines) && (it || preset || {}).lines.length > 1 ? (it || preset).lines.map((l) => ({ ...l })) : [{ weight: 1 }, { weight: 1 }] };
     const d = it || preset || { kind: 'expense', date: today(), country: 'PT', currency: 'EUR', issuedToCompany: 'unknown', docType: 'none', usedBy: [], tags: [], paidWith: '' };
     const sub = TEAM_PAY_SUBTYPES;
     openModal(`
@@ -523,8 +538,12 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <div id="f-counterwrap">${fld('From', 'counterparty', `<input type="text" id="f-counter" value="${esc(d.counterparty || '')}" placeholder="e.g. the name in the bank line">`)}
           <div id="f-investorwrap" style="${capitalOn() ? '' : 'display:none'}">${fld('Investor', 'investor', `<select id="f-investor"><option value="">None (choose an investor from the Investor CRM)</option>${[...S.investors.map((x) => x.name), ...(d.investorName && !S.investors.some((x) => x.name === d.investorName) ? [d.investorName] : [])].map((n) => `<option value="${esc(n)}"${n === d.investorName ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`)}</div></div>
       </div>
-      <div class="sect" id="f-classify"><div class="sect-title">Classification</div>
-        <div class="form-row">${fld('Category', 'category', `<select id="f-category">${opts(activeOnly(S.lists.categories, d.categoryId), d.categoryId || (it ? 'other' : ''), it ? null : 'Choose…')}</select>`)}
+        <div id="f-refundwrap">${fld('Refund of', '', `<select id="f-refundof"><option value="">Not linked to an expense</option>${S.items.filter((x) => x.kind === 'expense' && (!x.archived || x.id === d.refundOf)).sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).map((x) => `<option value="${x.id}"${d.refundOf === x.id ? ' selected' : ''}>${esc(fmtDate(x.date))} · ${esc(x.name || '—')} · ${eur.format(x.amount)}${x.supplierName ? ' · ' + esc(x.supplierName) : ''}</option>`).join('')}</select><div class="hint">The expense this money comes back for. Picking it fills in From and the tags when they are empty.</div>`)}
+          ${fld('VAT in the refund (€)', '', `<input type="number" id="f-refundvat" step="0.01" min="0" value="${esc(isSupplierRefund(d) && d.vatAmount != null ? d.vatAmount : '')}" placeholder="As on the credit note"><div class="hint">Type it from the supplier's credit note; nothing is worked out. It comes off the VAT of the expense above (off At risk when none is picked).</div>`)}</div>
+        ${(() => { const r = it && it.kind === 'expense' ? refundMap().get(it.id) : null; return r ? `<div class="warnbox ok" style="margin-top:4px"><strong>Refunded ${eur.format(r.total)}</strong> by ${r.refunds.map((x) => `${esc(x.name || 'a refund')} (${esc(fmtDate(x.date))})`).join(', ')}. Net cost ${eur.format(Math.round((it.amount - r.total) * 100) / 100)}.</div>` : ''; })()}
+      </div>
+      <div class="sect" id="f-classify"><div class="sect-title" id="f-classtitle">Classification</div>
+        <div class="form-row" id="f-catrow">${fld('Category', 'category', `<select id="f-category">${opts(activeOnly(S.lists.categories, d.categoryId), d.categoryId || (it ? 'other' : ''), it ? null : 'Choose…')}</select>`)}
           ${fld('Purpose', 'purpose', `<select id="f-purpose">${opts(activeOnly(S.lists.purposes, d.purposeId), d.purposeId || '', 'None')}</select>`)}</div>
         <div id="f-subwrap">${fld('Team pay type', 'subtype', `<select id="f-subtype"><option value="">—</option>${sub.map((s) => `<option value="${s.id}"${d.subtype === s.id ? ' selected' : ''}>${s.label}</option>`).join('')}</select>`)}</div>
         ${fld('Connect cost to a company', 'company', `<input type="text" id="f-company" data-co-input data-cid="${esc(d.companyId || '')}" value="${esc(d.companyName || '')}" placeholder="Type a name or NIF to search the Search CRM" autocomplete="off"><div class="mini" data-co-results style="margin-top:6px"></div><div class="hint" data-co-hint>${d.companyId ? '✓ Linked to a company in the Search CRM.' : 'Optional. Pick a result to link the cost to the CRM company, or keep a typed name.'}</div>`, 'id="f-companywrap"')}
@@ -541,11 +560,15 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       <div class="sect" id="f-docsect"><div class="sect-title" id="f-doctitle">Paperwork</div>
         <div class="warnbox" id="f-warn"></div>
         <div id="f-invfields">
-        <div class="form-row">${fld('Document', 'docType', `<select id="f-doctype">${DOC_TYPES.map((t) => `<option value="${t.id}"${d.docType === t.id ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
-          ${fld('Invoice shows our NIF', 'issuedToCompany', `<select id="f-issued"><option value="unknown"${d.issuedToCompany === 'unknown' || !d.issuedToCompany ? ' selected' : ''}>Unknown</option><option value="yes"${d.issuedToCompany === 'yes' ? ' selected' : ''}>Yes</option><option value="no"${d.issuedToCompany === 'no' ? ' selected' : ''}>No</option></select>`)}</div>
+        <div class="form-group"><label>Paperwork${tip('paper')}</label>
+          <div class="uchips" role="radiogroup" aria-label="Paperwork">${PAPER.map((p) => `<label class="uchip" title="${esc(p.hint)}"><input type="radio" name="f-paper" value="${p.id}"${paperOf(d) === p.id ? ' checked' : ''}><span>${p.label}</span></label>`).join('')}</div><div class="hint" id="f-paperhint"></div></div>
+        <div class="form-row partrow" id="f-partwrap">${fld('Covered by the document with our NIF (€)', '', `<input type="number" id="f-partamt" step="0.01" min="0" value="${esc(d.docPartAmount ?? '')}"><div class="hint" id="f-parthint"></div>`)}
+          ${fld('The rest has', '', `<select id="f-partrest"><option value="none">No document</option><option value="nonif"${d.docRest === 'nonif' ? ' selected' : ''}>A document without our NIF</option></select>`)}</div>
         <div class="form-row">${fld('Supplier', 'supplier', `<input type="text" id="f-supplier" list="f-suplist" value="${esc(d.supplierName || '')}" placeholder="Name"><datalist id="f-suplist">${S.suppliers.filter((s) => !s.archived).map((s) => `<option value="${esc(s.name)}">`).join('')}</datalist><div class="hint">Type to search the suppliers, or clear the box to see them all. A new name is saved for next time.</div>`)}
           ${fld('VAT amount', 'vatAmount', `<input type="number" id="f-vatamt" step="0.01" min="0" value="${esc(d.vatAmount ?? '')}">`)}</div>
         <details class="fold" id="f-more"><summary>More invoice details<span class="mini" id="f-moresum"></span></summary>
+        <p class="mini" style="margin:10px 0 0">All optional: none of these is a warning. Fill them in when you have them; the accountant can also read them from the file.</p>
+        ${fld('Type of document', 'docType', `<select id="f-doctype"><option value="">Not said</option>${DOC_TYPES.filter((t) => t.pick).map((t) => `<option value="${t.id}"${d.docType === t.id ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
         <div class="form-row">${fld('Supplier NIF / VAT ID', 'supplierTaxId', `<input type="text" id="f-taxid" value="${esc(d.supplierTaxId || '')}" placeholder="NIF or VAT ID">`)}
           ${fld('Invoice date', 'invoiceDate', `<input type="date" id="f-invdate" value="${esc(d.invoiceDate || '')}">`)}</div>
         <div class="form-row">${fld('Invoice number', 'docNumber', `<input type="text" id="f-docnum" value="${esc(d.docNumber || '')}">`)}${fld('ATCUD', 'atcud', `<input type="text" id="f-atcud" value="${esc(d.atcud || '')}" placeholder="Optional">`)}</div>
@@ -561,7 +584,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       </div>
       <div class="sect"><div class="sect-title">Notes and files</div>
         <div class="form-group"><label for="f-comments">Comments</label><textarea id="f-comments" placeholder="Optional notes…">${esc(d.comments || '')}</textarea></div>
-        <div class="form-group"><label>Files (PDF or image)</label><input type="file" id="f-files" accept="application/pdf,image/png,image/jpeg" multiple><div class="attach-list" id="f-attlist"></div>
+        <div class="form-group"><label for="f-files">Files (PDF or image)</label><input type="file" id="f-files" accept="application/pdf,image/png,image/jpeg" multiple><div class="hint">Pick several at once or one after another; they are uploaded when you save.</div><div class="attach-list" id="f-attlist"></div>
           <div class="upload-progress" id="f-up"><span class="hint" id="f-uptxt">Uploading…</span><div class="progress"><div class="progress__bar" id="f-upbar" style="width:0%"></div></div></div></div>
         <div class="form-group" id="f-sharedwrap"><label>Accountant${tip('shared')}</label><input type="checkbox" id="f-shared" ${d.sharedAt ? 'checked' : ''} hidden>
           <div class="mini" style="color:var(--text)"><span id="f-sharedtxt"></span> <button type="button" class="linkbtn" id="f-sharedbtn"></button></div></div>
@@ -576,9 +599,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const company = S.company || {};
     const readDraft = () => ({
       kind: $('f-kind').value, incomeType: $('f-income').value, categoryId: $('f-category').value, amount: parseFloat($('f-amount').value) || 0, docType: $('f-doctype').value,
-      issuedToCompany: $('f-issued').value, supplierName: $('f-supplier').value, supplierTaxId: $('f-taxid').value, docNumber: $('f-docnum').value,
+      paper: m.querySelector('input[name="f-paper"]:checked')?.value || 'none', docPartAmount: $('f-partamt').value === '' ? null : Number($('f-partamt').value), docRest: $('f-partrest').value, supplierName: $('f-supplier').value, supplierTaxId: $('f-taxid').value, docNumber: $('f-docnum').value,
       // Files picked but not saved yet count too, so the warning clears as soon as a file is chosen.
-      attachments: [...S.edit.attachments, ...Array.from($('f-files').files || []).map((f) => ({ name: f.name }))],
+      attachments: [...S.edit.attachments, ...S.edit.pending.map((f) => ({ name: f.name }))],
       docWaived: $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
     });
     const sync = () => {
@@ -587,7 +610,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       $('f-partnerwrap').style.display = income && ['partner_loan', 'partner_reimbursement'].includes($('f-income').value) ? '' : 'none';
       $('f-reimb').closest('.checkline').style.display = $('f-paidwith').value === 'personal' ? '' : 'none';
       $('f-investorwrap').style.display = capitalOn() && income && $('f-income').value === 'capital_call' ? '' : 'none';
-      $('f-classify').style.display = expense || k === 'plan' ? '' : 'none';
+      $('f-classify').style.display = expense || k === 'plan' || income ? '' : 'none';   // money received shows only its tags here
+      $('f-catrow').style.display = income ? 'none' : ''; $('f-classtitle').style.display = income ? 'none' : '';   // the Tags field names itself; no second "Tags" title
+      $('f-refundwrap').style.display = income && $('f-income').value === 'supplier_refund' ? '' : 'none';
       $('f-who').style.display = expense ? '' : 'none'; $('f-docsect').style.display = expense || (income && incomeDocNeeded($('f-income').value)) ? '' : 'none'; $('f-invfields').style.display = expense ? '' : 'none'; $('f-doctitle').textContent = expense ? 'Paperwork' : 'Supporting document';
       $('f-subwrap').style.display = expense && $('f-category').value === 'team-pay' ? '' : 'none';
       $('f-sharedwrap').style.display = k === 'plan' ? 'none' : '';
@@ -597,9 +622,11 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       // "More invoice details": a one-line summary while folded; it opens by itself when something inside needs you (it never closes by itself).
       const more = { taxid: $('f-taxid').value.trim(), num: $('f-docnum').value.trim(), date: $('f-invdate').value, country: $('f-country').value, rate: $('f-vatrate').value, ded: $('f-vatded').value, cur: $('f-currency').value };
       $('f-moresum').textContent = ` · ${more.country} · ${more.cur} · ${more.rate !== '' ? more.rate + '% VAT' : 'no VAT rate'}${more.taxid ? ' · NIF ' + more.taxid : ''}${more.num ? ' · No. ' + more.num : ''}${more.date ? ' · ' + fmtDate(more.date) : ''}`;
-      const dsMore = docStatus(readDraft());
-      const needsMore = more.country !== 'PT' || more.cur !== 'EUR' || more.ded !== 'ask' || $('f-atcud').value.trim() !== ''
-        || (dsMore.level === 'warn' && dsMore.missing.some((x) => x === 'supplierTaxId' || x === 'docNumber'));
+      const needsMore = more.country !== 'PT' || more.cur !== 'EUR' || more.ded !== 'ask' || $('f-atcud').value.trim() !== '';
+      const paper = m.querySelector('input[name="f-paper"]:checked')?.value || 'none', amtNow = parseFloat($('f-amount').value) || 0, partNow = Number($('f-partamt').value) || 0;
+      $('f-partwrap').style.display = paper === 'part' ? '' : 'none';
+      $('f-paperhint').textContent = PAPER.find((p) => p.id === paper)?.hint || '';
+      $('f-parthint').textContent = `Of ${eur.format(amtNow)}. The rest: ${eur.format(Math.max(0, amtNow - partNow))}.`;
       if (needsMore && !$('f-more').open) $('f-more').open = true;
       const split = $('f-split').checked && expense;
       $('f-splitwrap').style.display = split ? '' : 'none'; $('f-companywrap').style.display = expense && !split ? '' : 'none';
@@ -621,7 +648,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       $('f-usedhint').textContent = ticked === 0 ? 'Nobody chosen = a company cost (shown as "Company" in Reports).' : '';
       const ds = docStatus(readDraft()), box = $('f-warn');
       const reminder = company.companyName || company.companyNif ? `Ask for the invoice in the name of <strong>${esc(company.companyName || '')}</strong>${company.companyNif ? `, NIF <strong>${esc(company.companyNif)}</strong>` : ''}${company.companyAddress ? `, ${esc(String(company.companyAddress).replace(/\n/g, ', '))}` : ''}.` : 'Fill in Company details in Settings to see the name and NIF to ask for.';
-      const msgs = { ok: 'Invoice complete: file, our NIF, supplier, tax ID and number are all there.', incomplete: `Invoice details missing: ${ds.missing.map((x) => ({ supplierName: 'supplier name', supplierTaxId: 'supplier NIF / VAT ID', docNumber: 'invoice number' }[x] || x)).join(', ')}.`, noNif: 'The invoice must show our company NIF. Set “Invoice shows our NIF” to Yes once you have checked, or ask the supplier to reissue it.', receiptOnly: 'A receipt or simplified invoice is not enough for tax: ask the supplier for an invoice with our NIF.', noDocument: 'No document yet: attach the invoice (PDF or photo) and pick its type.', notRequired: 'No document needed for this item.', attached: 'A file is attached.', incomeMissing: `Attach the ${ds.need || 'supporting document'} (PDF or photo) under Notes and files, or tick “No document needed” and say why.` };
+      const msgs = { ok: 'Document with our NIF. The supplier, NIF and invoice number under "More invoice details" are optional.', part: `${eur.format(ds.part || 0)} is covered by the document with our NIF; ${eur.format(ds.left || 0)} ${ds.rest === 'nonif' ? 'has a document without our NIF' : 'has no document'}.`, noNif: 'The document does not show our company NIF: ask the supplier for one that does.', noDocument: ds.missing.includes('file') && (m.querySelector('input[name="f-paper"]:checked')?.value || 'none') !== 'none' ? 'Attach the document (PDF or photo) under Notes and files.' : 'No document yet: attach the invoice (PDF or photo) under Notes and files.', notRequired: 'No document needed for this item.', attached: 'A file is attached.', incomeMissing: `Attach the ${ds.need || 'supporting document'} (PDF or photo) under Notes and files, or tick “No document needed” and say why.` };
       box.className = 'warnbox ' + ds.level;
       box.innerHTML = `<strong>${esc(ds.label)}.</strong> ${msgs[ds.code]}${ds.level === 'warn' && $('f-kind').value === 'expense' ? `<div style="margin-top:4px">${reminder}</div>` : ''}`;
     };
@@ -644,12 +671,26 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     $('f-addline').addEventListener('click', () => { S.edit.lines = readLines(); S.edit.lines.push({ weight: 1 }); $('f-lines').dataset.painted = ''; $('f-lines').innerHTML = ''; sync(); });
     $('f-lines').addEventListener('click', (e) => { const b = e.target.closest('[data-ldel]'); if (!b) return; S.edit.lines = readLines(); if (S.edit.lines.length <= 2) { alert('A split needs at least two lines. Untick "Split" to go back to one.'); return; } S.edit.lines.splice(Number(b.dataset.ldel), 1); $('f-lines').dataset.painted = ''; $('f-lines').innerHTML = ''; sync(); });
     m.addEventListener('input', sync); m.addEventListener('change', sync);
+    $('f-refundof').addEventListener('change', () => {   // fill what is empty from the expense picked; never overwrite
+      const e = S.items.find((x) => x.id === $('f-refundof').value); if (!e) return;
+      if (!$('f-counter').value.trim() && e.supplierName) $('f-counter').value = e.supplierName;
+      if (!$('f-tags').value.trim() && e.tags?.length) $('f-tags').value = e.tags.join(', ');
+      if (!$('f-name').value.trim()) $('f-name').value = `Refund: ${e.name || ''}`.trim();
+    });
     const renderAtt = () => {
       const el = $('f-attlist');
-      el.innerHTML = S.edit.attachments.map((a, i) => `<span class="attach-chip"><a href="${esc(a.url || '#')}" target="_blank" rel="noopener">${esc(a.name || 'file')}</a><span class="rm" data-rm="${i}" title="Remove">×</span></span>`).join('');
-      el.querySelectorAll('.rm').forEach((r) => r.addEventListener('click', () => { S.edit.attachments.splice(Number(r.dataset.rm), 1); renderAtt(); sync(); }));
+      el.innerHTML = S.edit.attachments.map((a, i) => `<span class="attach-chip"><a href="${esc(a.url || '#')}" target="_blank" rel="noopener">${esc(a.name || 'file')}</a><span class="rm" data-rm="${i}" title="Remove">×</span></span>`).join('')
+        + S.edit.pending.map((f, i) => `<span class="attach-chip attach-chip--new">${esc(f.name)} <span class="mini">to upload</span><span class="rm" data-rmp="${i}" title="Remove">×</span></span>`).join('');
+      el.querySelectorAll('[data-rm]').forEach((r) => r.addEventListener('click', () => { S.edit.attachments.splice(Number(r.dataset.rm), 1); renderAtt(); sync(); }));
+      el.querySelectorAll('[data-rmp]').forEach((r) => r.addEventListener('click', () => { S.edit.pending.splice(Number(r.dataset.rmp), 1); renderAtt(); sync(); }));
     };
     renderAtt();
+    // 16 Nov 2026: picking files again adds to the list (the browser alone replaces the earlier pick); the same file twice is kept once.
+    $('f-files').addEventListener('change', () => {
+      const inp = $('f-files'), same = (a, b) => a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
+      Array.from(inp.files || []).forEach((f) => { if (!S.edit.pending.some((p) => same(p, f))) S.edit.pending.push(f); });
+      inp.value = ''; renderAtt(); sync();
+    });
     // Picking a saved supplier fills what is still empty.
     $('f-supplier').addEventListener('change', () => {
       const s = S.suppliers.find((x) => x.name.toLowerCase() === $('f-supplier').value.trim().toLowerCase()); if (!s) return;
@@ -706,7 +747,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     if (kind === 'expense' && !$('f-category').value) { alert('Choose a category.'); return; }
     const btn = $('f-save'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const files = $('f-files').files;
+      const files = S.edit.pending;
       const attachments = [...S.edit.attachments, ...(files.length ? await uploadFiles(files, m) : [])];
       // Equal split unless "Unequal split…" was chosen: then each weight as typed (1 if empty or zero).
       const usedBy = [...m.querySelectorAll('[data-used]:checked')].map((c) => { const w = Number(m.querySelector(`[data-weight="${c.dataset.used}"]`).value); return { key: c.dataset.used, weight: S.edit.unequal && w > 0 ? w : 1 }; });
@@ -725,6 +766,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         categoryId: expense || kind === 'plan' ? cat : '', subtype: expense && cat === 'team-pay' ? $('f-subtype').value : '',
         purposeId: expense || kind === 'plan' ? $('f-purpose').value : '',
         tags: parseTags($('f-tags').value),
+        refundOf: kind === 'income' && $('f-income').value === 'supplier_refund' ? $('f-refundof').value : '',
         incomeType: kind === 'income' ? $('f-income').value : '', counterparty: kind === 'income' ? $('f-counter').value.trim() : '',
         partnerKey: kind === 'income' && ['partner_loan', 'partner_reimbursement'].includes($('f-income').value) ? $('f-partner').value : '',
         ...(() => { const nm = capitalOn() && kind === 'income' && $('f-income').value === 'capital_call' ? $('f-investor').value.trim() : ''; const iv = nm ? S.investors.find((x) => x.name.toLowerCase() === nm.toLowerCase()) : null; return { investorId: iv ? iv.id : '', investorName: iv ? iv.name : '' }; })(),
@@ -743,11 +785,16 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
           }
           const co = $('f-company'), cid = co.dataset.cid || '', cname = co.value.trim(); return { lines: [], companyId: cid, companyName: cname, companyIds: cid ? [cid] : [] };
         })(),
-        docType: expense ? $('f-doctype').value : '', issuedToCompany: expense ? $('f-issued').value : '',
+        ...(() => {   // the Paperwork answer; "shows our NIF" is kept in step for the pack's Expenses sheet and older readers
+          if (!expense) return { docType: '', issuedToCompany: '', paper: '', docPartAmount: null, docRest: '' };
+          const paper = m.querySelector('input[name="f-paper"]:checked')?.value || 'none', part = $('f-partamt').value === '' ? null : Number($('f-partamt').value);
+          return { paper, docType: $('f-doctype').value || (paper === 'none' ? 'none' : ''), issuedToCompany: { nif: 'yes', part: 'yes', nonif: 'no', none: 'unknown' }[paper],
+            docPartAmount: paper === 'part' ? part : null, docRest: paper === 'part' ? $('f-partrest').value : '' };
+        })(),
         supplierName, supplierTaxId: taxId, docNumber: expense ? $('f-docnum').value.trim() : '', atcud: expense ? $('f-atcud').value.trim() : '',
         invoiceDate: expense ? $('f-invdate').value || '' : '', country: expense ? $('f-country').value : '',
         vatRate: expense && $('f-vatrate').value !== '' ? Number($('f-vatrate').value) : null,
-        vatAmount: expense && $('f-vatamt').value !== '' ? Number($('f-vatamt').value) : null,
+        vatAmount: expense ? ($('f-vatamt').value !== '' ? Number($('f-vatamt').value) : null) : kind === 'income' && $('f-income').value === 'supplier_refund' && $('f-refundvat').value !== '' ? Number($('f-refundvat').value) : null,   // a refund keeps the VAT typed from its credit note
         vatDeductible: expense ? $('f-vatded').value : '',
         currency: expense ? $('f-currency').value : 'EUR', originalAmount: expense && $('f-currency').value !== 'EUR' && $('f-orig').value !== '' ? Number($('f-orig').value) : null,
         docWaived: (expense || kind === 'income') && $('f-waived').checked ? ($('f-waivedwhy').value.trim() || true) : false,
@@ -1264,6 +1311,9 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
   // A money-out bank line can also be a transfer to a partner the app did not recognise: the item form and this window switch between the two.
   const lineOut = (preset) => { const m = preset?.movementId && S.movements.find((x) => x.id === preset.movementId); return !!m && m.amount < 0 && can('budget.import'); };
   const lineKindRow = (on) => `<div class="linekind" role="group" aria-label="What is this line?"><span class="lk-label">What is this line?</span><button type="button" class="btn btn--sm btn--${on === 'expense' ? 'primary' : 'ghost'}" data-linekind="expense" aria-pressed="${on === 'expense'}">An expense</button><button type="button" class="btn btn--sm btn--${on === 'partner' ? 'primary' : 'ghost'}" data-linekind="partner" aria-pressed="${on === 'partner'}">Went to a partner</button></div>`;
+  // 16 Nov 2026: an amount never changes by itself. The mouse wheel over a number box scrolls the page (the box lets go of the focus first) and the up/down keys do nothing.
+  root.addEventListener('wheel', (e) => { const t = e.target; if (t instanceof HTMLInputElement && t.type === 'number' && document.activeElement === t) t.blur(); }, { passive: true });
+  root.addEventListener('keydown', (e) => { const t = e.target; if (t instanceof HTMLInputElement && t.type === 'number' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) e.preventDefault(); });
   root.addEventListener('click', (e) => {
     const b = e.target.closest('[data-linekind]'); if (!b || !S.edit?.movementId && !S.lineChoice) return;
     const m = S.movements.find((x) => x.id === (S.edit?.movementId || S.lineChoice)); if (!m) return;   // the open item form wins over a partner window closed with Esc
@@ -1321,7 +1371,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
       const partnerBtns = toPartner ? `<span data-perm="budget.edit budget.import">${[['loan', `<button class="btn btn--${pg.as === 'loan' ? 'primary' : 'ghost'} btn--sm" data-loan="${m.id}" title="The transfer pays back money the partner lent the company">Repays a loan</button>`], ['expenses', `<button class="btn btn--${pg.as === 'expenses' ? 'primary' : 'ghost'} btn--sm" data-settle="${m.id}" title="The transfer pays back expenses the partner paid with their own money">Pays back expenses…</button>`]].sort((a) => (a[0] === pg.as ? -1 : 1)).map((x) => x[1]).join(' ')}</span>` : '';
       return `<tr><td class="chk"><input type="checkbox" data-isel="${m.id}" ${inboxSel.has(m.id) ? 'checked' : ''} aria-label="Select"></td>
         <td style="white-space:nowrap">${fmtDate(m.posted)}</td>
-        <td><strong>${esc(g.name || cleanDescription(m.description))}</strong><div class="mini" title="As in the bank file">${esc(m.description)}</div></td>
+        <td><strong>${esc(g.name || cleanDescription(m.description))}</strong><div class="mini" title="As in the bank file">${esc(m.description)}</div>${S.accounts.length > 1 ? `<div class="mini">${esc(accountLabel(accountOf(m.accountId)) || 'Unknown account')}</div>` : ''}</td>
         <td class="num ${m.amount > 0 ? 'amt-in' : ''}">${m.amount > 0 ? '+' : ''}${fmtMoney(m.amount)}</td>
         <td>${sugPill(m)}</td>
         <td style="white-space:nowrap" data-perm="budget.edit">
@@ -1443,7 +1493,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const rg = periodRange();
     const inPer = (d) => (!rg.from || (d && d >= rg.from)) && (!rg.to || (d && d <= rg.to));
     const items = S.items.filter((i) => i.kind === 'plan' || inPer(i.date));   // plan allocations have no period: "Plan used" compares the period's costs with the whole plan
-    const o = overview(items), vat = vatSummary(items);
+    const o = overview(items), vat = vatSummary(items, S.items);
     const costs = items.filter((i) => i.kind === 'expense' && !i.archived);
     const warn = S.items.filter((i) => i.kind === 'expense' && !i.archived && docStatus(i).level === 'warn').length;
     const incWarn = S.items.filter((i) => i.kind === 'income' && !i.archived && docStatus(i).level === 'warn').length;
@@ -1452,7 +1502,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     const byCat = {}, byPur = {};
     costs.forEach((i) => itemLines(i).forEach((l) => { byCat[l.categoryId || 'other'] = (byCat[l.categoryId || 'other'] || 0) + l.amount; byPur[l.purposeId || ''] = (byPur[l.purposeId || ''] || 0) + l.amount; }));
     const tbl = (m, lab) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(lab(k) || 'No purpose yet')}</td><td class="num">${eur.format(v)}</td></tr>`).join('') || '<tr class="empty-row"><td colspan="2">Nothing yet.</td></tr>';
-    const tags = tagTotals(items).slice(0, 12);
+    const tags = tagTotals(items);
     const r = companyReport(S.items, rg), pr = personReport(S.items, rg), pv = planVsActual(S.items, rg);
     const top = (m, n = 3) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${esc(catLabel(k))} ${eur.format(v)}`).join(' · ');
     const bar = (pct) => pct == null ? '' : `<div class="progress" style="margin-top:4px;width:120px"><div class="progress__bar" style="width:${Math.min(100, pct)}%;${pct > 100 ? 'background:var(--danger)' : ''}"></div></div>`;
@@ -1501,7 +1551,8 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
         <p class="mini" style="margin-top:8px">Only costs connected to a company count. Searcher salaries and shared overhead are not part of a company's cost. Use "Connect cost to a company" on an item.</p>
         <div class="card" style="margin-top:12px"><div class="table-wrap"><table><thead><tr><th>Company</th><th class="num">Items</th><th class="num">Cost</th><th>Mostly</th></tr></thead><tbody>${r.rows.length ? r.rows.map((x) => `<tr><td>${esc(x.name || '—')}${x.companyId ? '' : '<div class="mini">Not linked to a CRM company</div>'}</td><td class="num">${x.count}</td><td class="num">${eur.format(x.total)}</td><td class="mini">${top(x.byCategory, 2)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="4">No costs connected to a company in this period.</td></tr>'}</tbody></table></div></div></div>
       <div class="section" id="rep-tags"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Cost per tag</h2></div>
-        <div class="card" style="padding:14px 16px;">${tags.length ? tags.map((t) => `<button class="tagchip" data-tagfilter="${esc(t.tag)}">${esc(t.tag)} · ${eur.format(t.total)}<small>${t.count}</small></button>`).join('') : '<span class="mini">No tags yet. Add tags such as "Spain trip" on an item.</span>'}</div></div>      ${planOn() ? `<div class="two" id="rep-plan"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by category</h2></div>${planTable(pv.categories, catLabel)}</div>
+        ${tags.length ? `<div class="card"><div class="table-wrap"><table><thead><tr><th>Tag</th><th class="num">Items</th><th class="num">Cost</th><th>Mostly</th></tr></thead><tbody>${tags.map((t) => `<tr><td><button type="button" class="linklike" data-tagfilter="${esc(t.tag)}" title="Show these items">${esc(t.tag)}</button></td><td class="num">${t.count}</td><td class="num">${eur.format(t.total)}</td><td class="mini">${top(t.byCategory)}</td></tr>`).join('')}</tbody></table></div></div>
+        <p class="mini" style="margin-top:8px">Expenses with the tag, net of refunds that carry the same tag. An item with two tags counts in both rows. Click a tag to see its items.</p>` : '<div class="card" style="padding:14px 16px;"><span class="mini">No tags yet. Add tags such as "Spain trip" on an item.</span></div>'}</div>      ${planOn() ? `<div class="two" id="rep-plan"><div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by category</h2></div>${planTable(pv.categories, catLabel)}</div>
         <div class="section"><div class="section-header"><h2 class="section-title" style="font-size:1.15rem">Plan against actual, by purpose</h2></div>${planTable(pv.purposes, purLabel)}</div></div>
       <p class="mini">The plan is made of "Plan allocation" items with a category and/or a purpose. Add them in Items.</p>` : ''}`;
     body.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { S.filter = { ...S.filter, doc: b.dataset.go === 'doc' ? 'warn' : '', review: b.dataset.go === 'review', vat: b.dataset.go === 'vatrisk' ? 'atRisk' : '', reimb: b.dataset.go === 'owed' ? 'owed' : '' }; S.tab = 'items'; render(); }));
@@ -1520,7 +1571,7 @@ export async function mountBudgetV2({ root, access, logEvent, refreshReads }) {
     return {
       company: S.company || {}, createdBy: access.email, createdAt, period: range,
       catLabel: (id) => labelOf(S.lists.categories, id, ''), purLabel: (id) => labelOf(S.lists.purposes, id, ''), personLabel,
-      paidWithLabel: (it) => strip(paidWithLabel(it)).replace(/^—$/, ''), countryName: (c) => COUNTRY_NAME[c] || c || '', accountName: (id) => accountOf(id)?.name || '',
+      paidWithLabel: (it) => strip(paidWithLabel(it)).replace(/^—$/, ''), countryName: (c) => COUNTRY_NAME[c] || c || '', accountName: (id) => accountLabel(accountOf(id)), itemName,
       movements: can('budget.accounts') ? S.movements : undefined,
     };
   }
