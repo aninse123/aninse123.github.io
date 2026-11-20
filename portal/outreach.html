@@ -828,7 +828,7 @@
     import { guardPage } from './access.js';
     import { INSTANCE } from './instance-config.js';
     import { isOn, stateOf, currentFlags } from './features.js';
-    import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
+    import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText, relatedActLine, relatedRisk } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
     import { MAX_FILES, MAX_EACH, MAX_TOTAL, TYPES, extOf, safeName, contentTypeFor, fmtSize, fileProblem, ZONES, zoneToUtc, isEmail, mergeGuests, buildIcs } from './attachments.js'; // 3 Nov: files on outgoing email, calendar invites
     import { extractContacts, compareContacts, guessPerson } from './reply-contacts.js'; // 3 Nov: contact details found in a reply
@@ -6994,6 +6994,34 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       return lines.map(l => `<div>${l}</div>`).join('');
     }
 
+    // 20 Nov (switch outreach.taskRelated): the related companies on a task card, in the same box as a draft in To approve — red when one
+    // said no, amber when one is in conversation; open when there is a signal. Stored when the task was made; opening the box refreshes it.
+    const taskRelatedFresh = new Map(); // taskId → { related, flags } read again this session
+    const mayHaveRelatedCo = (c) => !!c && ((c.manualLinks || []).length > 0 || c.ownGraphAt == null || (c.ownGroupSize || 0) > 1 || (c.ownSubs || 0) > 0 || (c.ownParents || 0) > 0 || (c.ownOwnerOther || 0) > 0);
+    function taskRelatedHtml(t, c) {
+      if (!isOn('outreach.taskRelated') || !isOn('outreach.ownerAware') || !t.companyId) return '';
+      const rel = taskRelatedFresh.get(t.id) || t.related || null;
+      if (!rel && !mayHaveRelatedCo(c)) return '';
+      const list = rel?.related || [], risk = relatedRisk(rel?.flags);
+      if (rel && !list.length) return '';
+      const head = risk === 'red' ? '🚫 Same owner said no — check before you contact' : risk === 'amber' ? '💬 Same owner already in conversation — check before you contact' : 'Related companies';
+      return `<details class="owner-box${risk ? ' owner-box--' + risk : ''}" data-trel${risk ? ' open' : ''} style="margin-bottom:8px;">
+        <summary style="cursor:pointer;"><b>${head}${rel ? ` (${list.length})` : ''}</b>${list.slice(0, 3).map(r => ` <span class="hint">· ${esc(r.name)}</span>`).join('')}${rel ? '' : ' <span class="hint">· open to check</span>'}</summary>
+        <div data-trelbody>${rel ? `<ul>${list.map(r => `<li>${relatedActLine(r)} · <a href="/portal/search.html?company=${encodeURIComponent(r.companyId)}" target="_blank" rel="noopener" style="font-size:0.78rem;">open ↗</a></li>`).join('')}</ul>${rel.lead ? `<div class="hint" style="margin-top:4px;">Suggested lead company: ${leadText(rel.lead)}</div>` : ''}` : ''}</div>
+      </details>`;
+    }
+    async function refreshTaskRelated(t, el) {
+      if (taskRelatedFresh.has(t.id)) return;
+      taskRelatedFresh.set(t.id, t.related || { related: [], flags: [] }); // once per session
+      try {
+        const r = (await callCampaign({ action: 'related', companyId: t.companyId })).data;
+        if (r?.off) return;
+        taskRelatedFresh.set(t.id, { related: r.related || [], flags: r.flags || [], lead: r.lead || null });
+        const box = el.querySelector('[data-trel]'), wasOpen = box?.open;
+        const html = taskRelatedHtml(t, taskCo(t));
+        if (box) { if (html) { box.outerHTML = html; const nb = el.querySelector('[data-trel]'); if (nb && wasOpen) nb.open = true; nb?.addEventListener('toggle', () => refreshTaskRelated(t, el)); } else box.remove(); }
+      } catch (e) { /* the stored box stays */ }
+    }
     async function renderTodo() {
       if (document.activeElement?.closest?.('#todoView .task')) return;
       const open = tasks.filter(t => t.channel !== 'letter');
@@ -7030,6 +7058,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             ${txt ? `<span title="Name, phone and email in the ${t.channel === 'call' ? 'script' : 'text'}">signed by <select data-tsigner style="width:auto;padding:2px 6px;font-size:0.76rem;">${ownerOpts(signerFor(t, c))}</select></span>` : ''}
           </div>
           ${t.instructions ? `<div class="note" style="margin-bottom:8px;"><b>To do:</b> ${esc(t.instructions)}</div>` : ''}
+          ${taskRelatedHtml(t, c)}
           <div class="task__grid">
             <div class="task__box"><h4>Contact</h4>${contactBox(t, c)}</div>
             <div class="task__box"><h4>${t.channel === 'call' ? 'Script' : t.channel === 'letter' ? 'Letter' : 'Message'}${txt ? ` <span style="text-transform:none;letter-spacing:0;font-weight:400;">· ${esc(txt.name)}</span>` : ''}</h4>
@@ -7083,6 +7112,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       $('todoView').querySelectorAll('[data-topenthread]').forEach(b => b.addEventListener('click', () => { showTab('inbox'); openThread(b.dataset.topenthread); }));
       $('todoView').querySelectorAll('.task').forEach(el => {
         const t = tasks.find(x => x.id === el.dataset.tid);
+        const relBox = el.querySelector('[data-trel]'); // 20 Nov: opening the related box reads it again (an open one at once)
+        if (relBox) { relBox.addEventListener('toggle', () => { if (relBox.open) refreshTaskRelated(t, el); }); if (relBox.open) refreshTaskRelated(t, el); }
         el.querySelector('[data-tcopy]')?.addEventListener('click', async () => {
           try { await navigator.clipboard.writeText(el.querySelector('.task__text').textContent); toast('Copied.'); } catch (e) { toast('Copy failed — select the text instead.'); }
         });
