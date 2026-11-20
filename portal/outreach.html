@@ -4666,6 +4666,19 @@
       if (k.kind === 'email') {
         if (k.key.length < 3) return { ids: [], why, reads };
         const s = await getDocs(query(col, where('emailKeys', 'array-contains', k.key), limit(8))); reads += s.size || 1; add(s.docs, 'email');
+        // 20 Nov (staging): a person's address that is not in the company's emailKeys (enrichment) — People, then what campaigns wrote to
+        if (!why.size && k.key.includes('@') && !k.key.startsWith('@')) {
+          const ps = await getDocs(query(collection(db, 'searchPeople'), where('reachEmails', 'array-contains', k.key), limit(5))); reads += ps.size || 1;
+          if (ps.size) {
+            const ls = await getDocs(query(collection(db, 'searchPersonLinks'), where('personId', 'in', ps.docs.map(d => d.id)), limit(20))); reads += ls.size || 1;
+            const nameOf = new Map(ps.docs.map(d => [d.id, d.data().name || 'a person']));
+            ls.docs.forEach(l => { const x = l.data(); if (x.companyId && !why.has(x.companyId)) why.set(x.companyId, `email of ${nameOf.get(x.personId)}`); });
+          }
+          if (!why.size) {
+            const es = await getDocs(query(collection(db, 'outreachEnrolments'), where('recipientList', 'array-contains', k.key), limit(10))); reads += es.size || 1;
+            es.docs.forEach(d => { const x = d.data(); if (x.companyId && !why.has(x.companyId)) why.set(x.companyId, 'address written to'); });
+          }
+        }
       } else if (k.kind === 'nif') {
         const s = await getDocs(query(col, where('nif', '==', k.key), limit(5))); reads += s.size || 1; add(s.docs, 'NIF');
         if (!s.size && k.phone) await byPhone(k.phone);

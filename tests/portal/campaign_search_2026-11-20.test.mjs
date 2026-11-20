@@ -18,8 +18,9 @@ const DATA = {
     { id: 'co1', nif: '509111222', emailKeys: ['geral@flama.pt', 'flama.pt'], phoneKeys: ['222000111'], namePrefixes: ['fla', 'flam', 'flama'], nameKey: 'flama' },
     { id: 'co2', nif: '509333444', emailKeys: [], phoneKeys: [], namePrefixes: ['xdo', 'xdom', 'xdome'], nameKey: 'xdome' },
   ],
-  searchPeople: [{ id: 'p1', name: 'Paula Ribeiro', reachPhones: ['912345678'] }],
-  searchPersonLinks: [{ id: 'l1', personId: 'p1', companyId: 'co2' }],
+  searchPeople: [{ id: 'p1', name: 'Paula Ribeiro', reachPhones: ['912345678'] }, { id: 'p2', name: 'Manuel Eira', reachEmails: ['manueleira@flama.pt'] }],
+  searchPersonLinks: [{ id: 'l1', personId: 'p1', companyId: 'co2' }, { id: 'l2', personId: 'p2', companyId: 'co1' }],
+  outreachEnrolments: [{ id: 'k9_co2', companyId: 'co2', recipientList: ['rui@xdome.pt'] }],
 };
 const log = [];
 const where = (f, op, v) => ({ f, op, v });
@@ -42,6 +43,9 @@ ok('a 9-digit number is a NIF first, and keeps its phone key for a second try', 
 
 const f = await lib.findCampaignCompanies('geral@flama.pt');
 ok('by email: emailKeys', f.ids.join() === 'co1' && f.why.get('co1') === 'email');
+const pe = await lib.findCampaignCompanies('manueleira@flama.pt');
+ok('a person email that is not on the company (enrichment): through People', pe.ids.join() === 'co1' && pe.why.get('co1') === 'email of Manuel Eira');
+ok('…or an address a campaign wrote to', (await lib.findCampaignCompanies('rui@xdome.pt')).why.get('co2') === 'address written to');
 ok('by NIF', (await lib.findCampaignCompanies('509333444')).ids.join() === 'co2');
 log.length = 0;
 const ph = await lib.findCampaignCompanies('912 345 678');
