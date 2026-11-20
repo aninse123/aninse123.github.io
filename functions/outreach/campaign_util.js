@@ -307,6 +307,12 @@ function plannedPath(campaign, company, tierRules = [], now = Date.now()) {
   const p = choosePath(campaign, tierRules.length ? { ...company, targetTier: tierOf(company, tierRules) } : company, now).path;
   return { plannedPathId: p.id, plannedPathName: p.name || "Everyone else" };
 }
+// 20 Nov (switch outreach.pathOverride): a path set by hand on a company waiting to start — kept by the re-plan and taken at the
+// start, while that path still exists in the campaign. Returns the path, or null.
+function overridePath(campaign, e) {
+  const id = e?.pathOverride?.pathId;
+  return id ? pathsOf(campaign).find((p) => p.id === id) || null : null;
+}
 const pathsUseTier = (campaign) => pathsOf(campaign).some((p) => (p.filters || []).some((f) => f.field === "targetTier"));
 
 // ── Campaign paths (27 Oct 2026, switch outreach.paths) ─────────────────────
@@ -589,5 +595,5 @@ module.exports = {
   DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, normalizeCc, activationProblems, evaluateCompany,
   EXCLUSION_LABELS, enrolmentId, tsMillis, latestFilterSpec, matchesFilterSpec, tierOf, TIERS, personKey, personEnrolmentId, evaluatePerson,
   ELSE_PATH, MAX_PATHS, PATH_FIELDS, PATH_OPS, PATH_FIELD_LABEL, pathsOf, pathSteps, viewFor, choosePath, pathValueText, normalizePaths,
-  START_MODES, normalizeStartOrder, splitShares, plannedPath, pathsUseTier,
+  START_MODES, normalizeStartOrder, splitShares, plannedPath, pathsUseTier, overridePath,
 };

@@ -12129,7 +12129,9 @@ async function renderCampaignTimeline(c){
         : now && ['awaiting_task','awaiting_approval'].includes(e.status) ? 'now' : `~${fmtD(t)}`;
       future.push(`<li${now ? ' style="font-weight:600;"' : ''}>${TL_CHANNEL[st.channel || 'email']} · ${esc(st.name)} — ${when}${now ? ' <span class="badge badge-blue">next</span>' : ''}</li>`);
     }
-    box.innerHTML = `<div class="sec-title">Campaign — ${esc(camp.name)} <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);">(${esc(TL_STATUS[e.status] || e.status)}${camp.status !== 'active' ? ', campaign ' + esc(camp.status) : ''})</span></div>
+    // 20 Nov (outreach.pathOverride): a path set by hand says by whom and why
+    const po = e.pathOverride && isOn('outreach.pathOverride') ? `<div style="font-size:0.8rem;margin:2px 0 6px;">Path <b>${esc(e.pathName || e.plannedPathName || e.pathOverride.pathName || '')}</b> · <span class="badge badge-blue">set by hand</span> by ${esc(String(e.pathOverride.by || '').split('@')[0])}: ${esc(e.pathOverride.reason || '')}</div>` : '';
+    box.innerHTML = `<div class="sec-title">Campaign — ${esc(camp.name)} <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);">(${esc(TL_STATUS[e.status] || e.status)}${camp.status !== 'active' ? ', campaign ' + esc(camp.status) : ''})</span></div>${po}
       <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.7;">${done.join('')}${future.join('') || '<li>All steps done — waiting for a reply.</li>'}</ul>
       <div style="font-size:0.75rem;color:var(--text-light);margin-top:6px;">Dates after the next step are estimates (working days; the sending window and daily limits can push them). <a href="/portal/outreach.html" style="color:var(--primary);">Open in Outreach</a></div>`;
     if (isOn('outreach.multiRecipient')) await renderAlsoWrittenTo(box, eSnap.id, e);

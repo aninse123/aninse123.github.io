@@ -50,7 +50,7 @@ const Usage = require("../usage"); // Team & access → Usage (best-effort count
 const {
   LIVE_ENROLMENT, DEFAULT_CAMPAIGN, CampaignError, normalizeCampaign, activationProblems,
   evaluateCompany, enrolmentId, latestFilterSpec, matchesFilterSpec, personEnrolmentId, evaluatePerson, tierOf,
-  pathSteps, pathsOf, choosePath, ELSE_PATH, normalizePaths, plannedPath, pathsUseTier,
+  pathSteps, pathsOf, choosePath, ELSE_PATH, normalizePaths, plannedPath, pathsUseTier, overridePath,
 } = require("./campaign_util");
 
 const { db, FieldValue, Timestamp } = store;
@@ -1714,12 +1714,57 @@ async function planPending(campaignId) {
     const cos = multi ? await db().getAll(...part.map((d) => db().doc(`searchCompanies/${d.data().companyId}`))) : [];
     const batch = db().batch(); let n = 0;
     part.forEach((d, i) => {
-      const pl = multi ? plannedPath(campaign, cos[i].exists ? cos[i].data() : {}, rules) : { plannedPathId: null, plannedPathName: null };
-      if (pl.plannedPathId !== (d.data().plannedPathId ?? null) || pl.plannedPathName !== (d.data().plannedPathName ?? null)) { batch.update(d.ref, pl); n++; }
+      // 20 Nov (outreach.pathOverride): a path set by hand stays while the path exists; if it was deleted, the filters decide again
+      const own = d.data().pathOverride ? overridePath(campaign, d.data()) : null;
+      const pl = own && multi ? { plannedPathId: own.id, plannedPathName: own.id === ELSE_PATH ? "Everyone else" : own.name || "Everyone else" }
+        : multi ? plannedPath(campaign, cos[i].exists ? cos[i].data() : {}, rules) : { plannedPathId: null, plannedPathName: null };
+      const drop = d.data().pathOverride && !(own && multi) ? { pathOverride: null } : {};
+      if (pl.plannedPathId !== (d.data().plannedPathId ?? null) || pl.plannedPathName !== (d.data().plannedPathName ?? null) || drop.pathOverride === null) { batch.update(d.ref, { ...pl, ...drop }); n++; }
     });
     if (n) { await batch.commit(); changed += n; }
   }
   return changed;
+}
+
+// 20 Nov (switch outreach.pathOverride): change a company's path by hand, with a reason (3 to 300 characters), only before email 1
+// (the company is "Not started"). The re-plan on save and the start keep it; pathId "auto" gives the choice back to the filters.
+// A company Activity says who changed it and why.
+async function setPath({ enrolmentId: id, pathId, reason }, caller) {
+  if (!id || typeof id !== "string") fail("invalid-argument", "enrolment_required", "Choose a company in the campaign.");
+  const why = String(reason || "").replace(/\s+/g, " ").trim();
+  if (why.length < 3 || why.length > 300) fail("invalid-argument", "reason_required", "Write why (3 to 300 characters).");
+  const ref = db().doc(`outreachEnrolments/${id}`);
+  const snap = await ref.get();
+  if (!snap.exists) fail("not-found", "enrolment_not_found", "Enrolment not found.");
+  const e = snap.data();
+  if (!e.companyId || e.trackOf) fail("failed-precondition", "not_company", "Choose the company's row.");
+  if (e.status !== "pending" || e.threadId || (e.currentStep || 0) > 0) fail("failed-precondition", "already_started", "The path can only be changed before email 1 (the company is not started).");
+  const campaign = await getCampaign(e.campaignId);
+  if ((campaign.paths || []).length < 2) fail("failed-precondition", "no_paths", "This campaign has only one path.");
+  let upd, name;
+  if (pathId === "auto") {
+    const co = await db().doc(`searchCompanies/${e.companyId}`).get();
+    const rules = pathsUseTier(campaign) ? ((await db().doc("searchConfig/targetTiers").get()).data()?.rules || []) : [];
+    const pl = plannedPath(campaign, co.exists ? co.data() : {}, rules);
+    name = `${pl.plannedPathName} (by the filters)`;
+    upd = { ...pl, pathOverride: null };
+  } else {
+    const p = pathsOf(campaign).find((x) => x.id === pathId);
+    if (!p) fail("invalid-argument", "bad_path", "That path is not in this campaign.");
+    name = p.id === ELSE_PATH ? "Everyone else" : p.name || "Everyone else";
+    upd = { plannedPathId: p.id, plannedPathName: name, pathOverride: { pathId: p.id, pathName: name, reason: why, by: caller, at: Timestamp.now(), from: e.plannedPathName || null } };
+  }
+  await db().runTransaction(async (tx) => {
+    const cur = await tx.get(ref);
+    if (!cur.exists || cur.data().status !== "pending" || cur.data().threadId) fail("failed-precondition", "already_started", "The path can only be changed before email 1 (the company is not started).");
+    tx.update(ref, upd);
+  });
+  try {
+    await db().collection("searchActivities").add({ companyId: e.companyId, type: "outreach_campaign", date: Timestamp.now(), title: null,
+      content: `${e.isTest ? "[TEST] " : ""}Path changed to ${name} by ${caller}: ${why} (${campaign.name || "campaign"})`,
+      status: null, campaignId: e.campaignId, isTest: !!e.isTest, createdAt: FieldValue.serverTimestamp(), createdBy: caller });
+  } catch (err) { /* the note is best effort */ }
+  return { ok: true, plannedPathId: upd.plannedPathId, plannedPathName: upd.plannedPathName };
 }
 
 // Campaign paths (27 Oct, switch outreach.paths): "Check who goes where" — the
@@ -1739,7 +1784,7 @@ async function pathsPreview({ campaignId, paths, steps }) {
   const waiting = [], placed = [];
   for (const d of snap.docs) {
     const e = d.data();
-    if (e.status === "pending") { if (e.companyId) waiting.push(e.companyId); continue; }
+    if (e.status === "pending") { const own = overridePath(draft, e); if (own && counts[own.id]) counts[own.id].waiting++; else if (e.companyId) waiting.push(e.companyId); continue; } // 20 Nov: set by hand
     if (["removed", "moved"].includes(e.status)) continue;
     const id = counts[e.pathId || ELSE_PATH] ? (e.pathId || ELSE_PATH) : null;
     if (!id) continue;
@@ -1773,6 +1818,7 @@ const CAMPAIGN_ACTION_PERM = {
   related: "search.view", // owner-aware outreach (22 Oct): the company page's "related companies in outreach"
   emailName: "search.edit", // email name check (26 Oct)
   pathsPreview: "out.campaigns", // campaign paths (27 Oct)
+  setPath: "out.campaigns", // 20 Nov: path set by hand
 };
 function campaignActionPerm(data) {
   // Starting / resuming sends emails; finishing ends a live campaign.
@@ -1800,12 +1846,13 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
   if (data.action === "completeTask" && data.contact) await Feat.requireFeature(request, "outreach.taskContact"); // 5 Nov
   if (["completeTask", "logActivity"].includes(data.action) && (data.result || data.sequence || data.outcome === "answered")) await Feat.requireFeature(request, "outreach.callResults"); // 13 Nov
   if (["tracksFor", "restartCompany"].includes(data.action) || (data.action === "setRecipients" && data.all === true)) await Feat.requireFeature(request, "outreach.multiRecipient"); // 30 Oct
+  if (data.action === "setPath") await Feat.requireFeature(request, "outreach.paths", "outreach.pathOverride"); // 20 Nov
   if (data.action === "retryAddress") await Feat.requireFeature(request, "outreach.multiRecipient", "outreach.bounceRetry", "contacts.trustLabels"); // 17 Nov: Try another address…
   if (data.action === "sendNow" || (data.action === "save" && data.campaign?.sendAllAtOnce === true)) await Feat.requireFeature(request, "outreach.sendAllNow"); // 28 Oct
   if (data.action === "save" && Array.isArray(data.campaign?.cc) && data.campaign.cc.length) await Feat.requireFeature(request, "outreach.campaignCc"); // 28 Oct
   if (data.action === "updateTask" && (data.letterText !== undefined || data.signer === "both")) await Feat.requireFeature(request, "outreach.letterTools"); // 29 Oct: a letter's own text and envelope, signed by both
   if (!["setDoNotContact", "related", "emailName"].includes(data.action)) {
-    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "recipientsFor", "setRecipients", "previewRecipient", "tracksFor", "restartCompany", "retryAddress", "runNow"].includes(data.action) ? "outreach.campaigns" : null;
+    let sub = ["previewPeople", "enrolPeople"].includes(data.action) ? "outreach.people" : ["enrol", "preview", "recipientsPreview", "recipientsFor", "setRecipients", "previewRecipient", "tracksFor", "restartCompany", "retryAddress", "runNow", "setPath"].includes(data.action) ? "outreach.campaigns" : null;
     if (data.action === "save") {
       let aud = data.campaign?.audienceType;
       if (!aud && data.campaignId) { const c = await db().doc(`outreachCampaigns/${data.campaignId}`).get(); aud = c.exists ? c.data().audienceType : null; }
@@ -1818,7 +1865,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
   if (!canApprove) {
     const targets = [];
     if (["save", "enrol", "enrolPeople"].includes(data.action)) targets.push(data.campaignId);
-    if (["setRecipients", "restartCompany", "retryAddress"].includes(data.action)) { const en = data.enrolmentId ? await db().doc(`outreachEnrolments/${data.enrolmentId}`).get() : null; if (en?.exists) targets.push(en.data().campaignId); }
+    if (["setRecipients", "restartCompany", "retryAddress", "setPath"].includes(data.action)) { const en = data.enrolmentId ? await db().doc(`outreachEnrolments/${data.enrolmentId}`).get() : null; if (en?.exists) targets.push(en.data().campaignId); }
     if (data.action === "enrolment") {
       // Removing, pausing or moving someone in a running campaign is a change too.
       const en = data.enrolmentId ? await db().doc(`outreachEnrolments/${data.enrolmentId}`).get() : null;
@@ -1877,6 +1924,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
       case "setDoNotContact": return await setDoNotContact(data, caller);
       case "emailName": return await setEmailName(data, caller);
       case "pathsPreview": return await pathsPreview(data);
+      case "setPath": return await setPath(data, caller);
       default: fail("invalid-argument", "bad_action", `Unknown action "${data.action}".`);
     }
   } catch (e) {

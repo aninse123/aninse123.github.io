@@ -26,7 +26,7 @@ const Usage = require("../usage"); // Team & access → Usage
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience, resumeDuePauses } = require("./campaigns");
 const { runRecurring } = require("./recurring");
-const { LIVE_ENROLMENT: LIVE_STATUSES, ELSE_PATH, pathSteps, pathsOf, choosePath, tierOf, splitShares, plannedPath, pathsUseTier } = require("./campaign_util");
+const { LIVE_ENROLMENT: LIVE_STATUSES, ELSE_PATH, pathSteps, pathsOf, choosePath, tierOf, splitShares, plannedPath, pathsUseTier, overridePath } = require("./campaign_util");
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
@@ -146,7 +146,9 @@ async function startPending(campaign, now, report) {
   for (const d of docs) {
     if (n >= room) break;
     let path = { id: ELSE_PATH, name: null }, why = null;
-    if (usePaths && d.data().companyId) {
+    const own = usePaths ? overridePath(campaign, d.data()) : null; // 20 Nov (outreach.pathOverride): a path set by hand is taken as it is
+    if (own) { path = own; why = `set by hand: ${d.data().pathOverride.reason || ""}`.trim(); }
+    else if (usePaths && d.data().companyId) {
       const co = await db().doc(`searchCompanies/${d.data().companyId}`).get();
       const c = co.exists ? co.data() : {};
       await rulesFor();

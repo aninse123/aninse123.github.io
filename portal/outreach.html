@@ -4937,10 +4937,36 @@ Optional note for them:`, '');
     }
 
     // ── Companies (audience) ──
+    // 20 Nov (switch outreach.pathOverride): a path set by hand on a company, with who and why (shown on hover)
+    function handTag(e) {
+      const o = e?.pathOverride; if (!o || !isOn('outreach.pathOverride')) return '';
+      return ` <span class="pill pill--info" title="${esc(`Set by hand by ${localPart(o.by) || o.by || '?'}: ${o.reason || ''}${o.from ? ` (the filters chose ${o.from})` : ''}`)}">set by hand</span>`;
+    }
+    // Change… only before email 1, on the company's own row, in a campaign with paths
+    const canChangePath = (c, e) => isOn('outreach.pathOverride') && isOn('outreach.paths') && hasPaths(c) && !!e && !!e.companyId && !e.trackOf && e.status === 'pending' && !e.threadId && !(e.currentStep > 0) && ['draft', 'active', 'paused'].includes(c.status);
+    function openChangePath(e) {
+      const c = curCamp(); if (!c || !e) return;
+      const cur = e.pathOverride?.pathId || '';
+      openModal(`Path of ${e.companyName || 'company'}`, `
+        <p class="hint" style="margin-top:0;">Now: <b>${esc(e.plannedPathName || 'not planned yet')}</b>${e.pathOverride ? ' (set by hand)' : ' (by the filters)'}. The new path is kept when the campaign is saved and taken when the company starts. Only before email 1.</p>
+        <div class="field"><label for="cpPath">New path</label>
+          <select id="cpPath">${pathsOf(c).map(p => `<option value="${esc(p.id)}"${p.id === cur ? ' selected' : ''}>${esc(p.id === ELSE_PATH ? 'Everyone else' : p.name)}${stepsOfPath(c, p.id).length ? '' : ' (no steps: left out)'}</option>`).join('')}${e.pathOverride ? '<option value="auto">Back to the filters</option>' : ''}</select></div>
+        <div class="field"><label for="cpReason">Reason (required)</label>
+          <textarea id="cpReason" rows="3" maxlength="300" placeholder="e.g. the owner is a client of one of our investors"></textarea>
+          <span class="hint">3 to 300 characters. It goes to the company's Activities and shows on its row.</span></div>`,
+        async () => {
+          const reason = $('cpReason').value.replace(/\s+/g, ' ').trim();
+          if (reason.length < 3) { modalError('Write why (at least 3 characters).'); return false; }
+          const r = (await callCampaign({ action: 'setPath', enrolmentId: e.id, pathId: $('cpPath').value, reason })).data;
+          toast(`Path: ${r.plannedPathName}.`);
+          loadCampaignData();
+          return true;
+        }, 'Save');
+    }
     function stepLabel(e, c) {
       const steps = stepsFor(c, e); // 27 Oct: its path's steps
-      if (e.status === 'pending') return hasPaths(c) && e.plannedPathName ? `Not started <span class="hint">· planned: ${esc(e.plannedPathName)}</span>` : 'Not started'; // R11
-      if (hasPaths(c) && e.pathName) return `<span class="hint">${esc(e.pathName)} ·</span> ` + stepLabelIn(e, steps);
+      if (e.status === 'pending') return hasPaths(c) && e.plannedPathName ? `Not started <span class="hint">· planned: ${esc(e.plannedPathName)}</span>${handTag(e)}` : 'Not started'; // R11
+      if (hasPaths(c) && e.pathName) return `<span class="hint">${esc(e.pathName)} ·</span>${handTag(e)} ` + stepLabelIn(e, steps);
       return stepLabelIn(e, steps);
     }
     function stepLabelIn(e, steps) {
@@ -5005,7 +5031,7 @@ Optional note for them:`, '');
             <td>${n > 1 ? `<button class="btn btn--ghost btn--sm" data-cotoggle="${esc(key)}" data-open="${open ? 1 : 0}" aria-expanded="${open}" title="${open ? 'Hide' : 'Show'} the addresses" style="padding:0 6px;margin-right:4px;">${open ? '▾' : '▸'}</button>` : ''}<a href="/portal/search.html?company=${encodeURIComponent(root.companyId)}" style="color:var(--primary);">${esc(root.companyName || root.companyId)}</a>
               <div class="hint">${n > 1 ? `<b>${n} addresses</b>${parts ? ' · ' + parts : ''}` : lineOf(root)}</div></td>
             <td>${left ? '<span class="pill">Left out (paths)</span>' : pill(ENROL_PILL, r.status)}${r.answer ? ` <span class="pill pill--info" title="${esc(r.answer.line || '')}">${esc(r.answer.label)}</span>` : ''}${r.pausedUntil && r.status === 'paused' ? `<div class="hint">until ${esc(dayFmt.format(new Date(tsMs(r.pausedUntil))))}</div>` : ''}${live && liveG.length < n ? `<div class="hint">${liveG.length} of ${n} addresses active</div>` : ''}</td>
-            ${pathsView ? `<td style="font-size:0.78rem;">${esc(pathTxt)}</td>` : ''}
+            ${pathsView ? `<td style="font-size:0.78rem;">${esc(pathTxt)}${left ? '' : handTag(root)}${canChangePath(c, root) ? ` <button class="btn btn--ghost btn--sm" data-eop="path" data-perm="out.campaigns" data-eid="${esc(root.id)}" title="Put this company on another path, with a reason (only before email 1)">Change…</button>` : ''}</td>` : ''}
             <td style="font-size:0.8rem;">${r.status === 'pending' ? 'Not started' : stepLabelIn(top, stepsFor(c, top))}</td>
             <td style="font-size:0.78rem;">${live ? waitingFor(nextE, c) : ''}</td>
             <td style="font-size:0.8rem;">${esc(localPart(root.senderId) || '—')}</td>
@@ -5094,6 +5120,7 @@ Optional note for them:`, '');
         if (op === 'move') { openMoveCompany(e); return; }
         if (op === 'recipients') { openChooseRecipients(e); return; }
         if (op === 'retry') { openRetryAddress(e); return; }
+        if (op === 'path') { openChangePath(e); return; }
         if (op === 'restart') {
           if (!confirm(`${e.companyName || 'This company'} was stopped by a reply (${e.stopReason || 'replied'}). Restart it at the step it was on, from the next working day?`)) return;
           let r = await campCall({ action: 'restartCompany', enrolmentId: eid });
