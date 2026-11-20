@@ -1718,7 +1718,11 @@
       const others = partners.filter(m => m.key !== myOwner).map(m => [m.key, m.label]);
       const owners = hasAddress ? [['mine', 'Mine'], ...others, ['all', 'All']] : [['all', 'All'], ...others];
       $('ownerChips').innerHTML = owners.map(([k, l]) => `<button class="chip${k === ownerFilter ? ' on' : ''}" data-owner="${k}">${esc(l)}</button>`).join('');
-      const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['replied', 'Replied'], ['auto', 'Auto-reply'], ['closed', 'Closed'], ['bounced', 'Bounced'], ['unmatched', 'Unmatched']];
+      // 20 Nov (switch outreach.inboxTurns): the filters say whose turn it is
+      const states = isOn('outreach.inboxTurns')
+        ? [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs our reply'], ['theirs', 'Waiting for company'], ['replied', 'Company replied'], ['auto', 'Auto-reply'], ['closed', 'Closed'], ['bounced', 'Bounced'], ['unmatched', 'Unmatched']]
+        : [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['replied', 'Replied'], ['auto', 'Auto-reply'], ['closed', 'Closed'], ['bounced', 'Bounced'], ['unmatched', 'Unmatched']];
+      if (!states.some(([k]) => k === stateFilter)) stateFilter = 'all';
       $('stateChips').innerHTML = states.map(([k, l]) => `<button class="chip${k === stateFilter ? ' on' : ''}" data-state="${k}">${esc(l)}</button>`).join('');
       $('ownerChips').addEventListener('click', (e) => { const b = e.target.closest('[data-owner]'); if (!b) return; ownerFilter = b.dataset.owner; $('ownerChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
       // Z2: a 9-digit NIF finds the company (1 read) and shows its conversations.
@@ -1792,14 +1796,17 @@
     // 12 Oct: classification filter (dropdown) — "not classified" = they answered, nobody classified it yet.
     let catFilter = 'all';
     const catMatch = (t, k) => k === 'all' || (k === '__none' ? (!t.responseCategory && t.repliedAt) : t.responseCategory === k);
+    // 20 Nov (outreach.inboxTurns): the company replied at some point in this conversation (not an auto-reply)
+    const companyReplied = (t) => !!t.repliedAt || t.status === 'replied';
     function filteredThreads(owner, ignoreCat = false) {
-      const own = owner || ownerFilter;
+      const own = owner || ownerFilter, turns = isOn('outreach.inboxTurns');
       const q = norm($('inboxSearch')?.value || '').trim();
       return threads.filter(t => {
         if (q && !(nifSearch.ids && /^\d{9}$/.test(q) && nifSearch.ids.has(t.companyId)) && !(allSearch.ids && norm(allSearch.q) === q && allSearch.ids.has(t.companyId)) && ![t.companyName, t.contactEmail, ...(t.addresses || []), t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
         if (stateFilter === 'closed' && t.status !== 'closed') return false;
         if (stateFilter === 'bounced' && !['bounced', 'failed'].includes(t.status)) return false;
-        if (stateFilter === 'replied' && t.status !== 'replied') return false;
+        if (stateFilter === 'replied' && !(t.status === 'replied' || (turns && companyReplied(t) && !['closed', 'bounced', 'failed'].includes(t.status)))) return false;
+        if (stateFilter === 'theirs' && !(companyReplied(t) && t.lastDirection === 'out' && !['closed', 'bounced', 'failed'].includes(t.status))) return false;
         if (own === 'mine' && t.owner && t.owner !== myOwner) return false;
         if (own !== 'mine' && own !== 'all' && t.owner !== own) return false;
         if (stateFilter === 'unread' && !isUnread(t)) return false;
