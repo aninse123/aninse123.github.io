@@ -505,6 +505,13 @@
               <button class="btn btn--ghost btn--sm" id="campRefresh">Refresh counts</button>
               <button class="btn btn--primary btn--sm" id="campNew" data-perm="out.campaigns" style="margin-left:auto;">New campaign</button>
             </div>
+            <div data-feature="outreach.campaignSearch" style="padding:12px 14px 0;">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input type="search" id="campCoFind" class="field" placeholder="Find a company in all campaigns: name, NIF, email or phone" aria-label="Find a company in all campaigns" style="flex:1;min-width:220px;max-width:460px;padding:4px 8px;">
+                <span class="hint" id="campCoStatus"></span>
+              </div>
+              <div id="campCoOut" hidden style="margin-top:8px;"></div>
+            </div>
             <div class="toolbar" style="padding:14px;">
               <input type="search" id="campFind" class="field" placeholder="Search campaigns…" aria-label="Search campaigns" style="width:190px;padding:3px 8px;">
               <select id="campStatusF" class="field" aria-label="Status" style="width:auto;padding:3px 6px;"><option value="">Any status</option><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option><option value="finished">Finished</option></select>
@@ -4488,6 +4495,8 @@
       $('campShowArchived').addEventListener('change', renderCampList);
       ['campStatusF', 'campCreatorF', 'campTypeF', 'campAttn'].forEach(id => $(id).addEventListener('change', renderCampList));
       $('campFind').addEventListener('input', renderCampList); // 2 Nov: filters as you type
+      // 20 Nov (switch outreach.campaignSearch): find a company in every campaign, past ones too
+      let coFindT; $('campCoFind').addEventListener('input', () => { clearTimeout(coFindT); coFindT = setTimeout(runCampaignCompanySearch, 500); });
       $('campNav').addEventListener('click', (e) => { const b = e.target.closest('[data-csec]'); if (b) showCampSec(b.dataset.csec); });
       watchCampaigns(); watchDrafts(); watchTasks(); watchIssues(); watchRecurring();
     }
@@ -4624,6 +4633,92 @@
         }, 'Create');
       // Feature switches: company campaigns switched off → start on People.
       if (!isOn('outreach.campaigns')) { const p = document.querySelector('input[name="ncAud"][value="people"]'); if (p) p.checked = true; }
+    }
+
+    // 20 Nov (switch outreach.campaignSearch): a company across every campaign — name, NIF, email or phone, with the Search CRM's rules
+    // (phoneKey = 9 national digits; emailKeys; namePrefixes / nameKey). Reads: the companies found (up to 8; a phone also looks at
+    // People and their links) and their enrolments (one query). Campaign names and steps come from the campaigns already loaded.
+    function campaignSearchKind(raw) {
+      const q = String(raw || '').trim();
+      if (q.length < 3) return null;
+      if (q.includes('@')) return { kind: 'email', key: q.toLowerCase().replace(/\s/g, '').slice(0, 60) };
+      const digits = q.replace(/[\s.()-]/g, '');
+      const pk = phoneKey(q);
+      if (/^\d{9}$/.test(digits)) return { kind: 'nif', key: digits, phone: pk };
+      if (pk) return { kind: 'phone', key: pk };
+      if (/^[+\d\s.()-]+$/.test(q)) return null; // a number that is not a full phone or NIF
+      return { kind: 'name', key: q };
+    }
+    async function findCampaignCompanies(raw) {
+      const k = campaignSearchKind(raw); if (!k) return { ids: [], why: new Map(), reads: 0 };
+      const col = collection(db, 'searchCompanies'), why = new Map(); let reads = 0;
+      const add = (docs, label) => docs.forEach(d => { if (!why.has(d.id)) why.set(d.id, label); });
+      const byPhone = async (pk) => {
+        const cs = await getDocs(query(col, where('phoneKeys', 'array-contains', pk), limit(8))); reads += cs.size || 1; add(cs.docs, 'company phone');
+        const ps = await getDocs(query(collection(db, 'searchPeople'), where('reachPhones', 'array-contains', pk), limit(5))); reads += ps.size || 1;
+        if (ps.size) {
+          const ls = await getDocs(query(collection(db, 'searchPersonLinks'), where('personId', 'in', ps.docs.map(d => d.id)), limit(20))); reads += ls.size || 1;
+          const nameOf = new Map(ps.docs.map(d => [d.id, d.data().name || 'a person']));
+          ls.docs.forEach(l => { const x = l.data(); if (x.companyId && !why.has(x.companyId)) why.set(x.companyId, `phone of ${nameOf.get(x.personId)}`); });
+        }
+      };
+      if (k.kind === 'email') {
+        if (k.key.length < 3) return { ids: [], why, reads };
+        const s = await getDocs(query(col, where('emailKeys', 'array-contains', k.key), limit(8))); reads += s.size || 1; add(s.docs, 'email');
+      } else if (k.kind === 'nif') {
+        const s = await getDocs(query(col, where('nif', '==', k.key), limit(5))); reads += s.size || 1; add(s.docs, 'NIF');
+        if (!s.size && k.phone) await byPhone(k.phone);
+      } else if (k.kind === 'phone') await byPhone(k.key);
+      else {
+        const { tokens } = searchKeyOf(k.key);
+        if (!tokens.length) return { ids: [], why, reads };
+        const first = tokens.slice().sort((a, b) => b.length - a.length)[0];
+        const s = await getDocs(query(col, where('namePrefixes', 'array-contains', first), limit(8))); reads += s.size || 1;
+        add(s.docs.filter(d => tokens.every(tk => (d.data().namePrefixes || []).includes(tk) || String(d.data().nameKey || '').includes(tk))), 'name');
+      }
+      return { ids: [...why.keys()].slice(0, 10), why, reads };
+    }
+    // One row per company and campaign: its status (the best of its addresses), path, and what comes next.
+    function campaignSearchRows(enrols, campaignsById) {
+      const groups = new Map();
+      enrols.forEach(e => { const k = `${e.companyId}|${e.campaignId}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); });
+      const rows = [...groups.values()].map(g => {
+        const root = g.find(x => !x.trackOf) || g[0], c = campaignsById.get(root.campaignId) || null;
+        const live = g.filter(x => LIVE_ENROL.includes(x.status)).sort((a, b) => (tsMs(a.nextActionAt) || Infinity) - (tsMs(b.nextActionAt) || Infinity));
+        const top = live[0] || g.find(x => x.status === 'replied') || root;
+        return { root, top, live: live.length > 0, c, n: g.length, campaignId: root.campaignId, companyId: root.companyId, companyName: root.companyName || '', campaignName: c?.name || root.campaignName || root.campaignId, at: tsMs(root.enrolledAt) };
+      });
+      return rows.sort((a, b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || b.at - a.at);
+    }
+    async function runCampaignCompanySearch() {
+      const raw = $('campCoFind').value.trim(), out = $('campCoOut'), st = $('campCoStatus');
+      if (!campaignSearchKind(raw)) { out.hidden = true; out.innerHTML = ''; st.textContent = raw.length >= 3 ? 'Type a full NIF or phone (9 digits), a name or an email.' : ''; return; }
+      const seq = (runCampaignCompanySearch.seq = (runCampaignCompanySearch.seq || 0) + 1);
+      st.innerHTML = '<span class="spin-sm"></span> Searching…';
+      try {
+        const { ids, why, reads } = await findCampaignCompanies(raw);
+        let enrols = [], r2 = 0;
+        if (ids.length) { const s = await getDocs(query(collection(db, 'outreachEnrolments'), where('companyId', 'in', ids), limit(80))); r2 = s.size || 1; enrols = s.docs.map(d => ({ id: d.id, ...d.data() })); }
+        addReads(reads + r2); refreshReads();
+        if (seq !== runCampaignCompanySearch.seq) return;
+        const rows = campaignSearchRows(enrols, new Map(campaigns.map(c => [c.id, c])));
+        const notIn = ids.filter(id => !enrols.some(e => e.companyId === id)).length;
+        st.textContent = `${num(ids.length)} compan${ids.length === 1 ? 'y' : 'ies'} found${ids.length ? ` · ${num(rows.length)} in campaigns` : ''}${notIn ? ` · ${num(notIn)} never in a campaign` : ''}`;
+        out.hidden = !rows.length;
+        out.innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr><th>Company</th><th>Campaign</th><th>Status</th><th>Path</th><th>Next</th></tr></thead><tbody>${rows.map(x => {
+          const next = x.live ? (x.c ? `${x.top.status === 'pending' ? 'Not started' : stepLabelIn(x.top, stepsFor(x.c, x.top))}<div class="hint">${waitingFor(x.top, x.c)}</div>` : '') : esc(x.top.stopReason || '—');
+          return `<tr class="row-clickable" data-cofind="${esc(x.campaignId)}" data-coname="${esc(x.companyName)}" title="${x.c ? 'Open the campaign at this company' : 'This campaign is no longer in the list'}" style="cursor:${x.c ? 'pointer' : 'default'};">
+            <td><b>${esc(x.companyName || x.companyId)}</b><div class="hint">by ${esc(why.get(x.companyId) || '')}${x.n > 1 ? ` · ${num(x.n)} addresses` : ''}</div></td>
+            <td>${esc(x.campaignName)}${x.c?.isTest || x.root.isTest ? ' <span class="pill">Test</span>' : ''}${x.c && x.c.status !== 'active' ? ` <span class="hint">(${esc(x.c.status)})</span>` : ''}</td>
+            <td>${pill(ENROL_PILL, x.top.status)}</td>
+            <td style="font-size:0.8rem;">${esc((x.top.status === 'pending' ? x.root.plannedPathName : x.root.pathName) || '—')}${handTag(x.root)}</td>
+            <td style="font-size:0.8rem;">${next}</td></tr>`;
+        }).join('')}</tbody></table></div>` : '';
+        out.querySelectorAll('[data-cofind]').forEach(tr => tr.addEventListener('click', () => {
+          const id = tr.dataset.cofind; if (!campaigns.some(c => c.id === id)) return;
+          openCampaign(id, 'audience'); audSearch = tr.dataset.coname || ''; // the Companies list opens filtered on this company
+        }));
+      } catch (e) { if (seq === runCampaignCompanySearch.seq) st.textContent = errText(e); }
     }
 
     function openCampaign(id, sec = 'overview') {
