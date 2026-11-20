@@ -445,6 +445,8 @@ async function recipientsPreview({ campaignId }, caller, opts = {}) {
   const mode = opts.multi ? (campaign.addressMode || "one") : "one";
   const addr = { mode, companies: 0, multi: 0, emails: 0 }; // what "addresses per company" would do: companies, those with 2+, emails in all
   const counts = Object.fromEntries(POLICIES.map((p) => [p, { company: 0, contact: 0, person: 0, none: 0 }]));
+  // 20 Nov: the answer first — how many companies, how many first emails, and to whom (people, general addresses, nobody)
+  const reach = { companies: 0, emails: 0, people: 0, general: 0, nobody: 0 };
   let personal = 0, heldBack = 0; // heldBack: companies with a person address the campaign may not use (not verified)
   const updates = [];
   for (const group of chunks(todo, 10)) {
@@ -460,9 +462,16 @@ async function recipientsPreview({ campaignId }, caller, opts = {}) {
         preview[p] = pick ? { email: pick.email, kind: pick.kind, name: pick.name || "", personal: !!pick.personal, ...(pick.trust ? { trust: pick.trust } : {}) } : null;
       }
       if (preview[campaign.recipientPolicy || "company"]?.personal) personal++;
+      const policy = campaign.recipientPolicy || "company";
+      const chosenList = Array.isArray(d.data().recipientList) ? d.data().recipientList.map(normEmail).filter(Boolean) : [];
+      // the addresses this company's email 1 goes to: chosen by hand (that list stands), else what the campaign picks
+      const goes = chosenList.length ? chosenList.map((em) => rs.find((r) => normEmail(r.email) === em) || { email: em, kind: "contact" })
+        : mode !== "one" ? pickAddresses(rs, { mode, max: campaign.addressMax, policy }) : (preview[policy] ? [preview[policy]] : []);
+      reach.companies++; reach.emails += goes.length;
+      if (!goes.length) reach.nobody++;
+      goes.forEach((g) => { if (g.kind === "company") reach.general++; else reach.people++; });
       if (mode !== "one") {
-        const chosen = Array.isArray(d.data().recipientList) ? d.data().recipientList.length : 0; // chosen by hand: that list stands
-        const n = chosen || pickAddresses(rs, { mode, max: campaign.addressMax, policy: campaign.recipientPolicy || "company" }).length;
+        const n = goes.length;
         addr.companies++; addr.emails += n; if (n > 1) addr.multi++;
       }
       updates.push({ ref: d.ref, preview });
@@ -475,7 +484,7 @@ async function recipientsPreview({ campaignId }, caller, opts = {}) {
   }
   const sent = live.filter((d) => d.data().threadId || (d.data().currentStep || 0) > 0).length;          // email 1 has gone out: the address is fixed
   const byHand = live.filter((d) => !(d.data().threadId || (d.data().currentStep || 0) > 0) && Array.isArray(d.data().recipientList) && d.data().recipientList.length).length; // addresses chosen with Choose…
-  return { counts, checked: todo.length, total: live.length, decided: sent, sent, byHand, addresses: addr, personal, policy: campaign.recipientPolicy || "company", ...(opts.trust ? { heldBack } : {}) };
+  return { counts, reach, checked: todo.length, total: live.length, decided: sent, sent, byHand, addresses: addr, personal, policy: campaign.recipientPolicy || "company", ...(opts.trust ? { heldBack } : {}) };
 }
 
 async function enrolOne(companyId, campaign, ctx, source, onConflict, caller, extra = {}) {

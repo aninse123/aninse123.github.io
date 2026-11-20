@@ -136,11 +136,13 @@ function seed({ real = true } = {}) {
     rp.checked === 3 && rp.counts.company.company === 2 && rp.counts.company.none === 1
     && rp.counts.best_person.person === 1 && rp.counts.best_person.contact === 1 && rp.counts.best_person.company === 1
     && rp.counts.primary_contact.contact === 2 && rp.counts.primary_contact.company === 1);
+  ok("20 Nov: the first line — 3 companies, 3 first emails: 2 to people, 1 to a general address, 0 to nobody", JSON.stringify(rp.reach) === JSON.stringify({ companies: 3, emails: 3, people: 2, general: 1, nobody: 0 }));
   ok("I2: each company's pick kept on its enrolment for the Companies list", get(`outreachEnrolments/${cb2}_co1`).recipientPreview?.best_person?.email === "joao.silva@gmail.com" && get(`outreachEnrolments/${cb2}_co3`).recipientPreview?.company === null);
   // 2 Nov: "Check who it reaches" counts companies, not extra addresses, and says what is really fixed
   store.set(`outreachEnrolments/${cb2}_co1__t1`, { campaignId: cb2, companyId: "co1", companyName: "X", status: "pending", isTrack: true, isExtra: true, trackOf: `${cb2}_co1`, trackIndex: 1, recipient: { email: "geral@x.pt", kind: "company" }, recipientList: ["geral@x.pt"] });
   store.set(`outreachEnrolments/${cb2}_co2`, { ...get(`outreachEnrolments/${cb2}_co2`), recipient: { email: "a@x.pt", kind: "person" }, recipientList: ["a@x.pt", "b@x.pt"] }); // chosen by hand: nothing has been sent
   const rp2 = await camp({ action: "recipientsPreview", campaignId: cb2 });
+  ok("20 Nov: addresses chosen by hand count as first emails (2 for one company, in place of its general address), companies stay 3", JSON.stringify(rp2.reach) === JSON.stringify({ companies: 3, emails: 4, people: 4, general: 0, nobody: 0 }));
   ok("Check who it reaches: an extra address is not another company", rp2.total === 3 && rp2.checked === 3);
   ok("…\"already received email 1\" counts only addresses whose email 1 went out; chosen by hand is counted apart", rp2.sent === 0 && rp2.byHand === 1);
   const ra = await camp({ action: "save", campaign: { name: "Muitos", recipientPolicy: "best_person", addressMode: "person_company", steps: [{ templateId: "t1" }] } });
