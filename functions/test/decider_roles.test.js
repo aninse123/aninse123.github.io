@@ -28,7 +28,7 @@ ok("best person: an insolvency administrator is never picked (was ranked like a 
 ok("best person: the chairman of the audit board / fiscal council is never picked (was ranked like a president)", rankPerson(link(["Presidente do Conselho Fiscal"])) === 0 && rankPerson(link(["Chairman of the Audit Board"])) === 0);
 ok("best person: a representative or attorney is never picked", rankPerson(link(["Representante", "Representative"])) === 0 && rankPerson(link(["Procurador"])) === 0);
 ok("best person unchanged for real roles: gerente 100, board member 60, majority owner who manages 180", rankPerson(link(["Gerente"])) === 100 && rankPerson(link(["Voter of the Board of Directors"])) === 60 && Math.floor(rankPerson(link(["Gerente"], { shCurrent: true, shDirectPct: 60 }))) === 180);
-ok("R7: a Sócio with no recorded stake is a shareholder (120); with a management role an owner-manager (140)", Math.floor(rankPerson(link(["Sócio", "Partner"]))) === 120 && Math.floor(rankPerson(link(["Sócio", "Financial Director"]))) === 140);
+ok("R7: a Sócio with no recorded stake is a shareholder (120); with a top role an owner-manager (140), with a director role 130 (20 Nov)", Math.floor(rankPerson(link(["Sócio", "Partner"]))) === 120 && Math.floor(rankPerson(link(["Sócio", "Gerente"]))) === 140 && Math.floor(rankPerson(link(["Sócio", "Financial Director"]))) === 130);
 ok("…a Sócio role that is no longer current, or a former shareholder, doesn't count", rankPerson(link(["Sócio"], { mgmtCurrent: false })) === 0 && rankPerson(link(["Sócio"], { shCurrent: false })) < 60);
 
 // 20 Nov (André, 2830 prep): Orbis's English "Director General" is a top role; the certified accountant is not a decider
@@ -38,6 +38,16 @@ ok("best person: 'Director General' ranks as a top role (Marta Pereira Fernandes
 ok("best person: a certified accountant alone is never picked (was 60)", rankPerson(link(["Certified Accountant", "Contabilista Certificado"])) === 0 && rankPerson(link(["Técnico Oficial de Contas"])) === 0);
 ok("best person: accountant + a real role keeps the real role (Mario Reis, Joper: financial director 60)", rankPerson(mario) === 60 && deciderRoles(mario.mgmtRoles).join("|") === "Administrative and Financial Director|Director Administrativo Financeiro");
 ok("same owner: a certified accountant alone no longer relates two companies", !isDecider(link(["Certified Accountant", "Contabilista Certificado"])));
+
+// 20 Nov (André, 2830 prep): the stake outweighs the role, the role breaks the tie inside a stake level
+const f = (roles, pct) => Math.floor(rankPerson(link(roles, { shCurrent: true, shTotalPct: pct })));
+ok("some stake: top role 140 · director or board member 130 · no management role 120",
+  f(["Gerente"], 10) === 140 && f(["Vogal do Conselho de Administração"], 1) === 130 && f(["Procurement Director"], 1) === 130 && f([], 5) === 120 && f(["Sócio"], 5) === 120);
+ok("50% or more: top role 180 · director or board member 170 · no management role 160",
+  f(["Administrador"], 60) === 180 && f(["Voter of the Board of Directors"], 50) === 170 && f([], 70) === 160);
+ok("a board member with 1% (130) stays above a gerente with no stake (100); the GUO stays 200; no stake unchanged (100 / 60)",
+  f(["Vogal do Conselho de Administração"], 1) > rankPerson(link(["Gerente"])) && rankPerson(link(["Gerente"])) === 100 && rankPerson(link(["Voter of the Board of Directors"])) === 60);
+ok("ties inside a level still go to the larger stake", rankPerson(link(["Gerente"], { shCurrent: true, shTotalPct: 30 })) > rankPerson(link(["Gerente"], { shCurrent: true, shTotalPct: 10 })));
 
 // Same-owner rule
 ok("same owner: an insolvency administrator / supervisory board voter no longer relates two companies (the 28 Oct example)", !isDecider(link(["Insolvency Administrator", "Administrador da Insolvência"])) && !isDecider(link(["Voter of the General and Supervisory Board", "Vogal do Conselho Geral e de Supervisão"])) && !isDecider(link(["No specific function"])));
