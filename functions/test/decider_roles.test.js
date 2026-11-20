@@ -31,6 +31,14 @@ ok("best person unchanged for real roles: gerente 100, board member 60, majority
 ok("R7: a Sócio with no recorded stake is a shareholder (120); with a management role an owner-manager (140)", Math.floor(rankPerson(link(["Sócio", "Partner"]))) === 120 && Math.floor(rankPerson(link(["Sócio", "Financial Director"]))) === 140);
 ok("…a Sócio role that is no longer current, or a former shareholder, doesn't count", rankPerson(link(["Sócio"], { mgmtCurrent: false })) === 0 && rankPerson(link(["Sócio"], { shCurrent: false })) < 60);
 
+// 20 Nov (André, 2830 prep): Orbis's English "Director General" is a top role; the certified accountant is not a decider
+const marta = link(["President of the General Assembly", "Presidente da Assembleia Geral", "Director General", "Voter of the Board of Directors", "Vogal do Conselho de Administração"]);
+const mario = link(["Certified Accountant", "Contabilista Certificado", "Administrative and Financial Director", "Director Administrativo Financeiro"]);
+ok("best person: 'Director General' ranks as a top role (Marta Pereira Fernandes, Joper: 100, was 60)", rankPerson(marta) === 100 && rankPerson(link(["General Director"])) === 100);
+ok("best person: a certified accountant alone is never picked (was 60)", rankPerson(link(["Certified Accountant", "Contabilista Certificado"])) === 0 && rankPerson(link(["Técnico Oficial de Contas"])) === 0);
+ok("best person: accountant + a real role keeps the real role (Mario Reis, Joper: financial director 60)", rankPerson(mario) === 60 && deciderRoles(mario.mgmtRoles).join("|") === "Administrative and Financial Director|Director Administrativo Financeiro");
+ok("same owner: a certified accountant alone no longer relates two companies", !isDecider(link(["Certified Accountant", "Contabilista Certificado"])));
+
 // Same-owner rule
 ok("same owner: an insolvency administrator / supervisory board voter no longer relates two companies (the 28 Oct example)", !isDecider(link(["Insolvency Administrator", "Administrador da Insolvência"])) && !isDecider(link(["Voter of the General and Supervisory Board", "Vogal do Conselho Geral e de Supervisão"])) && !isDecider(link(["No specific function"])));
 ok("same owner: a sócio, a gerente and a board member still do", isDecider(link(["Sócio"])) && isDecider(link(["Gerente"])) && isDecider(link(["Vogal do Conselho de Administração"])) && deciderRank(link([], { shCurrent: true })) >= 120);

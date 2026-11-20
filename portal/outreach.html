@@ -3372,7 +3372,7 @@
     // ── People linked to a company (Phase 3b) — same ranking as the server
     // (functions/outreach/recipients.js): current sócio-gerente / gerente /
     // administrador / CEO first, then controlling shareholders, then managers.
-    const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|general manager|owner|propriet[áa]rio|founder|fundador)/i;
+    const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|director general|general director|general manager|owner|propriet[áa]rio|founder|fundador)/i;
     const MANAGER_RE = /(director|diretor|manager|board|conselho|administra)/i;
     const PERSONAL_DOMAIN_RE = /@(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me|mac|aol|sapo|iol|netcabo|clix|telepac|portugalmail|oninet|zonmail|vodafone|meo|netvisao|gmx|mail|protonmail|proton|zoho|yandex)\.[a-z.]+$/i;
     function rankLink(l) {

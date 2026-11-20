@@ -19,10 +19,10 @@ const PLAIN = 'text-transform:none;letter-spacing:normal;font-weight:400;color:i
 // advisory bodies, representatives… — 28 Oct) and "any other role" don't; a
 // "Sócio" with no recorded stake is a shareholder. Same rule as related.js
 // deciderRank (a test checks the two lists agree).
-export const EXCLUDED_ROLE = /fiscal|auditor|revisor|\bROC\b|statutory|\baudit\b|assembl|general meeting|secret[aá]ri|secretary|no specific function|sem fun[cç][aã]o|insolv|liquidat|administrador judicial|judicial administrator|supervis|conselho geral|general (and supervisory )?(board|council)|curador|trustee|conselho fundador|board of the foundation|provedor|\bprovider\b|consultiv|advisory|conselho t[eé]cnico|technical board|vencimentos|remunera|representative|representante|procurador|attorney|general contact|^none$/i;
+export const EXCLUDED_ROLE = /fiscal|auditor|revisor|\bROC\b|statutory|\baudit\b|assembl|general meeting|secret[aá]ri|secretary|no specific function|sem fun[cç][aã]o|insolv|liquidat|administrador judicial|judicial administrator|supervis|conselho geral|general (and supervisory )?(board|council)|curador|trustee|conselho fundador|board of the foundation|provedor|\bprovider\b|consultiv|advisory|conselho t[eé]cnico|technical board|vencimentos|remunera|representative|representante|procurador|attorney|general contact|^none$|contabilista|accountant|t[eé]cnico oficial de contas/i;
 const SOCIO_RE = /^\s*(s[óo]cio|partner)\s*$/i;
 const GUO_ROLE_RE = /ultimate owner|benefici[áa]rio efetivo|beneficial owner/i;
-const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|general manager|owner|propriet[áa]rio|founder|fundador)/i;
+const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|director general|general director|general manager|owner|propriet[áa]rio|founder|fundador)/i;
 const MANAGER_RE = /(director|diretor|manager|board|conselho|administra)/i;
 export function relatedRank(l) {
   if (!l || l.personEntityType === 'entity') return 0;

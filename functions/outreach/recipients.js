@@ -15,7 +15,7 @@ const { db } = store;
 const CORPORATE_HOLDER = ["entity", "company"];
 
 // Roles that make a person the natural addressee (PT and EN, Orbis wording).
-const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|general manager|owner|propriet[áa]rio|founder|fundador)/i;
+const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|director general|general director|general manager|owner|propriet[áa]rio|founder|fundador)/i;
 const MANAGER_RE = /(director|diretor|manager|board|conselho|administra)/i;
 
 // People contact data (search.html PERSON_CONTACT_FIELDS): what you typed
