@@ -24,7 +24,7 @@ const DATA = {
 const log = [];
 const where = (f, op, v) => ({ f, op, v });
 const env = {
-  searchKeyOf: (s) => ({ tokens: String(s).toLowerCase().split(' ').filter(Boolean) }), // the page's own (accents, legal forms) is tested elsewhere
+  searchKeyOf: (s) => ({ nameKey: String(s).toUpperCase(), tokens: String(s).toLowerCase().split(' ').filter(Boolean) }), orderBy: () => ({}), // the page's own (accents, legal forms) is tested elsewhere
   LIVE_ENROL: ['pending', 'active', 'awaiting_approval', 'awaiting_task', 'paused'], tsMs: (t) => (t?.toMillis ? t.toMillis() : 0),
   db: {}, collection: (db, name) => name, limit: (n) => ({ limit: n }), where,
   query: (col, ...cl) => ({ col, cl: cl.filter(c => c.f) }),
@@ -50,6 +50,9 @@ ok('a company phone', (await lib.findCampaignCompanies('222 000 111')).why.get('
 const nm = await lib.findCampaignCompanies('flama');
 ok('by name: namePrefixes, every word must match', nm.ids.join() === 'co1' && (await lib.findCampaignCompanies('flama xdome')).ids.length === 0);
 ok('reads stay small (one query per step)', nm.reads === 1 && ph.reads === 4);
+// 20 Nov (staging): FERNANDO fills a page of 25, so FERNANDO QUEIROZ is found through its other word
+DATA.searchCompanies.push(...Array.from({ length: 25 }, (_, n) => ({ id: 'f' + n, namePrefixes: ['fernando'], nameKey: 'fernando ' + n })), { id: 'fq', namePrefixes: ['fernando', 'queiroz'], nameKey: 'fernando queiroz' });
+ok('a common first name: the next word finds the company', (await lib.findCampaignCompanies('fernando queiroz')).ids.join() === 'fq');
 
 const C = new Map([['k1', { id: 'k1', name: 'Primavera' }], ['k2', { id: 'k2', name: 'Outono' }]]);
 const ts = (ms) => ({ toMillis: () => ms });

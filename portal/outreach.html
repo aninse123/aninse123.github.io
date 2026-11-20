@@ -4671,11 +4671,19 @@
         if (!s.size && k.phone) await byPhone(k.phone);
       } else if (k.kind === 'phone') await byPhone(k.key);
       else {
-        const { tokens } = searchKeyOf(k.key);
+        const { nameKey, tokens } = searchKeyOf(k.key);
         if (!tokens.length) return { ids: [], why, reads };
-        const first = tokens.slice().sort((a, b) => b.length - a.length)[0];
-        const s = await getDocs(query(col, where('namePrefixes', 'array-contains', first), limit(8))); reads += s.size || 1;
-        add(s.docs.filter(d => tokens.every(tk => (d.data().namePrefixes || []).includes(tk) || String(d.data().nameKey || '').includes(tk))), 'name');
+        // the longest word first (25 a query); a common first name (FERNANDO) can fill those 25, so the next word is tried too
+        const every = (d) => tokens.every(tk => (d.data().namePrefixes || []).includes(tk) || String(d.data().nameKey || '').includes(tk));
+        for (const tk of tokens.slice().sort((a, b) => b.length - a.length).slice(0, 2)) {
+          const s = await getDocs(query(col, where('namePrefixes', 'array-contains', tk), limit(25))); reads += s.size || 1;
+          add(s.docs.filter(every), 'name');
+          if (why.size || s.size < 25) break;
+        }
+        if (!why.size) { // companies indexed before the name index existed: the start of the legal name
+          const s = await getDocs(query(col, orderBy('nameKey'), where('nameKey', '>=', nameKey), where('nameKey', '<=', nameKey + '\uf8ff'), limit(8))); reads += s.size || 1;
+          add(s.docs, 'name');
+        }
       }
       return { ids: [...why.keys()].slice(0, 10), why, reads };
     }
