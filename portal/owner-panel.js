@@ -35,9 +35,9 @@ export function relatedRank(l) {
   const s = Math.min(share, 100) / 1000;
   let r = 0;
   if (GUO_ROLE_RE.test(all.join(' '))) r = 200 + s;
-  // 20 Nov: inside a stake level the role breaks the tie (top role, then director / board, then none) — as the server
-  else if (share >= 50) r = (manages && TOP_ROLE_RE.test(roles) ? 180 : manages && MANAGER_RE.test(roles) ? 170 : 160) + s;
-  else if (holds) r = (manages && TOP_ROLE_RE.test(roles) ? 140 : manages && MANAGER_RE.test(roles) ? 130 : 120) + s;
+  // 20 Nov: inside a stake level the role breaks the tie (top role, director / board, another role, none) — as the server
+  else if (share >= 50) r = (!manages ? 160 : TOP_ROLE_RE.test(roles) ? 180 : MANAGER_RE.test(roles) ? 170 : 165) + s;
+  else if (holds) r = (!manages ? 120 : TOP_ROLE_RE.test(roles) ? 140 : MANAGER_RE.test(roles) ? 130 : 125) + s;
   else if (manages && TOP_ROLE_RE.test(roles)) r = 100;
   else if (manages && MANAGER_RE.test(roles)) r = 60;
   else if (manages) r = 40;

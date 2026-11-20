@@ -63,10 +63,11 @@ function rankPerson(link, guoName = "") {
   if (isGuoPerson(link, guoName) && (share > 0 || manages || GUO_ROLE_RE.test((link.mgmtRoles || []).join(" ")))) return 200 + s;
   // 20 Nov (André, 2830 prep): the stake still outweighs the role ("é quem na vdd vende"), and inside a stake level the
   // role breaks the tie — a top role (gerente, administrador, CEO, director geral) first, then a director or board
-  // member, then no management role (or another role). Was: any role at all scored like a sócio-gerente.
-  const top = manages && TOP_ROLE_RE.test(roles), mid = manages && !top && MANAGER_RE.test(roles);
-  if (share >= 50) return (top ? 180 : mid ? 170 : 160) + s;
-  if (holds) return (top ? 140 : mid ? 130 : 120) + s;
+  // member, then another management role, then none. Was: any role at all scored like a sócio-gerente.
+  // A "Sócio" / "Partner" with no recorded stake holds a share (R7), so it is in the "some stake" level.
+  const top = manages && TOP_ROLE_RE.test(roles), mid = manages && !top && MANAGER_RE.test(roles), other = manages && !top && !mid;
+  if (share >= 50) return (top ? 180 : mid ? 170 : other ? 165 : 160) + s;
+  if (holds) return (top ? 140 : mid ? 130 : other ? 125 : 120) + s;
   if (manages && TOP_ROLE_RE.test(roles)) return 100;
   if (manages && MANAGER_RE.test(roles)) return 60;
   if (manages) return 40;

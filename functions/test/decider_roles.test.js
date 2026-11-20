@@ -47,6 +47,8 @@ ok("50% or more: top role 180 · director or board member 170 · no management r
   f(["Administrador"], 60) === 180 && f(["Voter of the Board of Directors"], 50) === 170 && f([], 70) === 160);
 ok("a board member with 1% (130) stays above a gerente with no stake (100); the GUO stays 200; no stake unchanged (100 / 60)",
   f(["Vogal do Conselho de Administração"], 1) > rankPerson(link(["Gerente"])) && rankPerson(link(["Gerente"])) === 100 && rankPerson(link(["Voter of the Board of Directors"])) === 60);
+ok("another management role sits between director and none: 165 with 50% or more, 125 with some stake",
+  f(["Engineer"], 60) === 165 && f(["Engineer"], 5) === 125 && Math.floor(rankPerson(link(["Sócio", "Engineer"]))) === 125 && Math.floor(rankPerson(link(["Engineer"]))) === 40);
 ok("ties inside a level still go to the larger stake", rankPerson(link(["Gerente"], { shCurrent: true, shTotalPct: 30 })) > rankPerson(link(["Gerente"], { shCurrent: true, shTotalPct: 10 })));
 
 // Same-owner rule
