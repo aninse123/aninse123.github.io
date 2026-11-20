@@ -361,7 +361,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
-  const [taskRelState, relActState] = await Promise.all([Feat.jobState("outreach.taskRelated"), Feat.jobState("outreach.relatedActivity")]); // 20 Nov
+  const [taskRelState, relActState, greetState] = await Promise.all([Feat.jobState("outreach.taskRelated"), Feat.jobState("outreach.relatedActivity"), Feat.jobState("outreach.recipientGreeting")]); // 20 Nov
   const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState, burstState, ccState, trustState, multiState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths"), Feat.jobState("outreach.sendAllNow"), Feat.jobState("outreach.campaignCc"), Feat.jobState("contacts.trustLabels"), Feat.jobState("outreach.multiRecipient")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
@@ -636,6 +636,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         templateId: step.templateId, variantKey,
         footer: campaign.footer, // CCSL: the campaign's choice, else the conversation's / Settings
         campaignFields: { sector: campaign.sector || "" }, // {{campaign.sector}}
+        recipientGreeting: allowed(greetState, campaign), // 20 Nov (outreach.recipientGreeting): production setting; Test = test campaigns only
         // 22 Oct (owner-aware): the related companies chosen to be mentioned ({{owner.otherCompanies}}).
         otherCompanies: allowed(ownerState, campaign) ? (e.mention || []).map((x) => x.name) : [],
         // 2 Nov: the related companies the email only says it knows of ({{owner.knownCompanyNames}}), not written to

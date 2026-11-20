@@ -104,9 +104,16 @@ async function previewRecipient({ enrolmentId, email }, { prepare } = {}) {
   if (!senderId) return { ok: false, error: "No active sender address to preview with." };
   try {
     const fn = prepare || require("./send_core").prepareEmail;
-    const p = await fn({ callerEmail: "preview", settings, messageRef: db().collection("outreachMessages").doc(), companyId: e.companyId, senderId, recipient: { email: normEmail(email) }, templateId: step.templateId, footer: camp.footer, campaignFields: { sector: camp.sector || "" } });
+    const p = await fn({ callerEmail: "preview", settings, messageRef: db().collection("outreachMessages").doc(), companyId: e.companyId, senderId, recipient: { email: normEmail(email) }, templateId: step.templateId, footer: camp.footer, campaignFields: { sector: camp.sector || "" }, recipientGreeting: await greetingFor(camp) });
     return { ok: true, to: normEmail(email), subject: p.subject, text: p.bodyText, sender: p.senderId, note: "Variant A of the first email. Wording can differ by variant." };
   } catch (err) { return { ok: false, error: err.message || String(err) }; }
+}
+
+// 20 Nov (outreach.recipientGreeting): the preview fills {{recipient.greeting}} only when the scheduler would (production setting; Test =
+// test campaigns), so it never shows a greeting the real email will not carry.
+async function greetingFor(camp) {
+  const st = await require("../features").jobState("outreach.recipientGreeting");
+  return st === "on" || (st === "test" && !!camp.isTest);
 }
 
 module.exports = { recipientsFor, setRecipients, previewRecipient, MAX_LIST };
