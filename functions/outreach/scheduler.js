@@ -26,7 +26,7 @@ const Usage = require("../usage"); // Team & access → Usage
 const { prepareEmail, deliverEmail, saveDraft } = require("./send_core");
 const { endEnrolment, runDynamicAudience, resumeDuePauses } = require("./campaigns");
 const { runRecurring } = require("./recurring");
-const { LIVE_ENROLMENT: LIVE_STATUSES, ELSE_PATH, pathSteps, pathsOf, choosePath, tierOf, splitShares, plannedPath, pathsUseTier } = require("./campaign_util");
+const { LIVE_ENROLMENT: LIVE_STATUSES, ELSE_PATH, pathSteps, pathsOf, choosePath, tierOf, splitShares, plannedPath, pathsUseTier, overridePath } = require("./campaign_util");
 const { stepTaskId } = require("./task_util");
 const { companyRecipients, pickByPolicy } = require("./recipients");
 const { getOpener, ANTHROPIC_API_KEY } = require("./ai");
@@ -146,7 +146,9 @@ async function startPending(campaign, now, report) {
   for (const d of docs) {
     if (n >= room) break;
     let path = { id: ELSE_PATH, name: null }, why = null;
-    if (usePaths && d.data().companyId) {
+    const own = usePaths ? overridePath(campaign, d.data()) : null; // 20 Nov (outreach.pathOverride): a path set by hand is taken as it is
+    if (own) { path = own; why = `set by hand: ${d.data().pathOverride.reason || ""}`.trim(); }
+    else if (usePaths && d.data().companyId) {
       const co = await db().doc(`searchCompanies/${d.data().companyId}`).get();
       const c = co.exists ? co.data() : {};
       await rulesFor();
@@ -218,6 +220,20 @@ async function ownerPanelOnDraft(messageRef, e, campaign, variantBody) {
 // not a name we know): the draft carries a warning so the wording (e.g. "ligado(a)") is checked in To approve.
 // 2 Nov (outreach.multiRecipient): who the draft is for, shown on the approval card — their level in the company (the best-person
 // ladder) and a warning when no role is recorded or the person is below manager level. Best effort.
+// 20 Nov (switch outreach.taskRelated): a task card gets the same related-companies box as a draft — each related company with its latest
+// contact (a call answered, a meeting, a reply, an email sent) and its date. Worked out when the task is made; the card refreshes it when
+// it is opened. Best effort.
+async function relatedOnTask(taskId, e, campaign, activity) {
+  try {
+    const entry = (await Related.relatedFor([e.companyId])).get(e.companyId);
+    if (!entry || !entry.related.length) return;
+    const flags = Related.flagsFor(entry, { campaignId: campaign.id, windowDays: campaign.exclusions?.contactedWithinDays || 30, activity });
+    const related = entry.related.slice(0, 6).map(slimRelatedForTask);
+    await db().doc(`outreachTasks/${taskId}`).update({ related: { related, flags, lead: entry.lead || null, at: ts(new Date()) } });
+  } catch (err) { logger.warn("outreachScheduler: related on task", { message: err.message }); }
+}
+const slimRelatedForTask = (r) => ({ companyId: r.companyId, name: r.name, why: r.why, campaignName: r.campaignName, lastOutreachAt: r.lastOutreachAt, lastReplyAt: r.lastReplyAt,
+  answeredAt: r.answeredAt || null, answeredVia: r.answeredVia || "", engaged: !!r.engaged, saidNo: r.saidNo, doNotContact: r.doNotContact, nextFollowUpAt: r.nextFollowUpAt || null });
 async function recipientCheckOnDraft(messageRef, e, recipient) {
   try {
     if (!recipient || recipient.kind === "company" || !recipient.personId || !e.companyId) return;
@@ -345,6 +361,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
   const report = { campaigns: 0, open: 0, started: 0, sent: 0, drafts: 0, tasks: 0, completed: 0, stopped: 0, deferred: 0, retried: 0, paused: 0, stoppedSends: null };
   // Kill switches (production setting — jobs serve both sites): Off stops
   // it all; Test moves / sends test campaigns only.
+  const [taskRelState, relActState, greetState] = await Promise.all([Feat.jobState("outreach.taskRelated"), Feat.jobState("outreach.relatedActivity"), Feat.jobState("outreach.recipientGreeting")]); // 20 Nov
   const [schedState, sendState, aiState, inboxState, peopleState, waitState, ownerState, nameState, pathsState, burstState, ccState, trustState, multiState] = await Promise.all([Feat.jobState("kill.outreach.scheduler"), Feat.jobState("kill.outreach.sending"), Feat.jobState("kill.ai"), Feat.jobState("outreach.oneInbox"), Feat.jobState("search.people"), Feat.jobState("outreach.waitFromWindowStart"), Feat.jobState("outreach.ownerAware"), Feat.jobState("search.emailNameCheck"), Feat.jobState("outreach.paths"), Feat.jobState("outreach.sendAllNow"), Feat.jobState("outreach.campaignCc"), Feat.jobState("contacts.trustLabels"), Feat.jobState("outreach.multiRecipient")]);
   if (schedState === "off") { report.killed = "scheduler"; return report; }
   const allowed = (state, campaign) => state === "on" || (state === "test" && !!campaign.isTest);
@@ -488,7 +505,8 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         continue;
       }
       if (report.tasks >= MAX_TASKS_PER_RUN) { await unlock(doc.ref); report.deferred++; continue; }
-      await createTask(doc.ref, e, campaign, step, now, rand);
+      const taskId = await createTask(doc.ref, e, campaign, step, now, rand);
+      if (taskId && e.companyId && allowed(taskRelState, campaign) && allowed(ownerState, campaign)) await relatedOnTask(taskId, e, campaign, allowed(relActState, campaign)); // 20 Nov (outreach.taskRelated)
       report.tasks++;
       continue;
     }
@@ -618,6 +636,7 @@ async function runScheduler({ now = new Date(), gap = randomGap, rand = Math.ran
         templateId: step.templateId, variantKey,
         footer: campaign.footer, // CCSL: the campaign's choice, else the conversation's / Settings
         campaignFields: { sector: campaign.sector || "" }, // {{campaign.sector}}
+        recipientGreeting: allowed(greetState, campaign), // 20 Nov (outreach.recipientGreeting): production setting; Test = test campaigns only
         // 22 Oct (owner-aware): the related companies chosen to be mentioned ({{owner.otherCompanies}}).
         otherCompanies: allowed(ownerState, campaign) ? (e.mention || []).map((x) => x.name) : [],
         // 2 Nov: the related companies the email only says it knows of ({{owner.knownCompanyNames}}), not written to

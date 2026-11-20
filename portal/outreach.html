@@ -505,6 +505,13 @@
               <button class="btn btn--ghost btn--sm" id="campRefresh">Refresh counts</button>
               <button class="btn btn--primary btn--sm" id="campNew" data-perm="out.campaigns" style="margin-left:auto;">New campaign</button>
             </div>
+            <div data-feature="outreach.campaignSearch" style="padding:12px 14px 0;">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input type="search" id="campCoFind" class="field" placeholder="Find a company in all campaigns: name, NIF, email or phone" aria-label="Find a company in all campaigns" style="flex:1;min-width:220px;max-width:460px;padding:4px 8px;">
+                <span class="hint" id="campCoStatus"></span>
+              </div>
+              <div id="campCoOut" hidden style="margin-top:8px;"></div>
+            </div>
             <div class="toolbar" style="padding:14px;">
               <input type="search" id="campFind" class="field" placeholder="Search campaigns…" aria-label="Search campaigns" style="width:190px;padding:3px 8px;">
               <select id="campStatusF" class="field" aria-label="Status" style="width:auto;padding:3px 6px;"><option value="">Any status</option><option value="draft">Draft</option><option value="active">Active</option><option value="paused">Paused</option><option value="finished">Finished</option></select>
@@ -821,7 +828,7 @@
     import { guardPage } from './access.js';
     import { INSTANCE } from './instance-config.js';
     import { isOn, stateOf, currentFlags } from './features.js';
-    import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
+    import { ownerPanelHtml, wireOwnerPanel, readOwnerChoices, readOwnerMentions, readOwnerKnown, relatedLine, leadText, relatedActLine, relatedRisk } from './owner-panel.js'; // 22 Oct (outreach.ownerAware)
     import { nameCheckPanelHtml, nameCheckLine, wireNameCheck } from './name-check-ui.js'; // 26 Oct (search.emailNameCheck)
     import { MAX_FILES, MAX_EACH, MAX_TOTAL, TYPES, extOf, safeName, contentTypeFor, fmtSize, fileProblem, ZONES, zoneToUtc, isEmail, mergeGuests, buildIcs } from './attachments.js'; // 3 Nov: files on outgoing email, calendar invites
     import { extractContacts, compareContacts, guessPerson } from './reply-contacts.js'; // 3 Nov: contact details found in a reply
@@ -867,7 +874,7 @@
       open: ['Sent', 'info'], waiting: ['Waiting', ''], replied: ['Replied', 'good'], closed: ['Closed', ''],
       bounced: ['Bounced', 'bad'], failed: ['Failed', 'bad'],
     };
-    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'recipient.firstName|Olá', 'recipient.role|responsável', 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'company.sectorWording|em que atua', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
+    const VARS = ['company.name', 'company.shortName', 'company.city', 'company.sector', 'company.cae', 'contact.firstName|Olá', 'sender.firstName', 'sender.fullName', 'sender.phone', 'sender.email', 'partner.firstName', 'partner.fullName', 'partners.firstNames', 'partners.fullNames', 'owner.of|da gerência', 'owner.with|a gerência', 'owner.names', 'owner.greeting|Exmos. Senhores', 'recipient.firstName|Olá', 'recipient.role|responsável', 'recipient.greeting|Bom dia', 'company.inCity|nas vossas instalações', 'company.toCity|às vossas instalações', 'campaign.sector', 'company.sectorWording|em que atua', 'sender.bookingLink', 'ai.opener|Escrevo-lhe a propósito da {{company.shortName}}.'];
     // 9 Oct: what each team field means (button tooltips).
     const VAR_HELP = {
       'sender.fullName': 'Full name of whoever sends (the address owner)',
@@ -881,6 +888,7 @@
       'owner.names': 'The owners\' names only: "A ou B"',
       'recipient.firstName|Olá': 'First name of the person this email goes to (empty for a general company address, so the fallback is used)',
       'recipient.role|responsável': 'Their role at the company, when we know a real one',
+      'recipient.greeting|Bom dia': 'Formal opening to a person: "Exmo. Senhor José Silva" / "Exma. Senhora Maria José Santos" (Owners in emails name, else first and last name). Empty when the gender is unknown or the switch "Formal greeting to a person" is off for this email, so the fallback is used — e.g. {{recipient.greeting|Bom dia, {{recipient.firstName}}}}',
       'recipient.isMale': 'Gender of the person: use {{?recipient.isMale|ligado}}{{?recipient.isFemale|ligada}}{{?recipient.isUnknown|ligado(a)}} for any word that agrees with it (from the owners list, else the first name)',
       'owner.greeting|Exmos. Senhores': 'A letter-style opening: "Exma. Senhora A e Exmo. Senhor B" (all owners named, with their gender). No names → "Exmos. Senhores"',
       'company.inCity|nas vossas instalações': '"em Setúbal", "no Porto", "na Maia" — the municipality with the right word before it (validated municipalities only). Otherwise the text after |',
@@ -1718,7 +1726,11 @@
       const others = partners.filter(m => m.key !== myOwner).map(m => [m.key, m.label]);
       const owners = hasAddress ? [['mine', 'Mine'], ...others, ['all', 'All']] : [['all', 'All'], ...others];
       $('ownerChips').innerHTML = owners.map(([k, l]) => `<button class="chip${k === ownerFilter ? ' on' : ''}" data-owner="${k}">${esc(l)}</button>`).join('');
-      const states = [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['replied', 'Replied'], ['auto', 'Auto-reply'], ['closed', 'Closed'], ['bounced', 'Bounced'], ['unmatched', 'Unmatched']];
+      // 20 Nov (switch outreach.inboxTurns): the filters say whose turn it is
+      const states = isOn('outreach.inboxTurns')
+        ? [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs our reply'], ['theirs', 'Waiting for company'], ['replied', 'Company replied'], ['auto', 'Auto-reply'], ['closed', 'Closed'], ['bounced', 'Bounced'], ['unmatched', 'Unmatched']]
+        : [['all', 'All'], ['unread', 'Unread'], ['needs', 'Needs reply'], ['replied', 'Replied'], ['auto', 'Auto-reply'], ['closed', 'Closed'], ['bounced', 'Bounced'], ['unmatched', 'Unmatched']];
+      if (!states.some(([k]) => k === stateFilter)) stateFilter = 'all';
       $('stateChips').innerHTML = states.map(([k, l]) => `<button class="chip${k === stateFilter ? ' on' : ''}" data-state="${k}">${esc(l)}</button>`).join('');
       $('ownerChips').addEventListener('click', (e) => { const b = e.target.closest('[data-owner]'); if (!b) return; ownerFilter = b.dataset.owner; $('ownerChips').querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b)); renderThreads(); });
       // Z2: a 9-digit NIF finds the company (1 read) and shows its conversations.
@@ -1792,14 +1804,17 @@
     // 12 Oct: classification filter (dropdown) — "not classified" = they answered, nobody classified it yet.
     let catFilter = 'all';
     const catMatch = (t, k) => k === 'all' || (k === '__none' ? (!t.responseCategory && t.repliedAt) : t.responseCategory === k);
+    // 20 Nov (outreach.inboxTurns): the company replied at some point in this conversation (not an auto-reply)
+    const companyReplied = (t) => !!t.repliedAt || t.status === 'replied';
     function filteredThreads(owner, ignoreCat = false) {
-      const own = owner || ownerFilter;
+      const own = owner || ownerFilter, turns = isOn('outreach.inboxTurns');
       const q = norm($('inboxSearch')?.value || '').trim();
       return threads.filter(t => {
         if (q && !(nifSearch.ids && /^\d{9}$/.test(q) && nifSearch.ids.has(t.companyId)) && !(allSearch.ids && norm(allSearch.q) === q && allSearch.ids.has(t.companyId)) && ![t.companyName, t.contactEmail, ...(t.addresses || []), t.contactName, t.subject, t.lastSnippet, t.snippet].some(v => norm(v).includes(q))) return false;
         if (stateFilter === 'closed' && t.status !== 'closed') return false;
         if (stateFilter === 'bounced' && !['bounced', 'failed'].includes(t.status)) return false;
-        if (stateFilter === 'replied' && t.status !== 'replied') return false;
+        if (stateFilter === 'replied' && !(t.status === 'replied' || (turns && companyReplied(t) && !['closed', 'bounced', 'failed'].includes(t.status)))) return false;
+        if (stateFilter === 'theirs' && !(companyReplied(t) && t.lastDirection === 'out' && !['closed', 'bounced', 'failed'].includes(t.status))) return false;
         if (own === 'mine' && t.owner && t.owner !== myOwner) return false;
         if (own !== 'mine' && own !== 'all' && t.owner !== own) return false;
         if (stateFilter === 'unread' && !isUnread(t)) return false;
@@ -4481,6 +4496,8 @@
       $('campShowArchived').addEventListener('change', renderCampList);
       ['campStatusF', 'campCreatorF', 'campTypeF', 'campAttn'].forEach(id => $(id).addEventListener('change', renderCampList));
       $('campFind').addEventListener('input', renderCampList); // 2 Nov: filters as you type
+      // 20 Nov (switch outreach.campaignSearch): find a company in every campaign, past ones too
+      let coFindT; $('campCoFind').addEventListener('input', () => { clearTimeout(coFindT); coFindT = setTimeout(runCampaignCompanySearch, 500); });
       $('campNav').addEventListener('click', (e) => { const b = e.target.closest('[data-csec]'); if (b) showCampSec(b.dataset.csec); });
       watchCampaigns(); watchDrafts(); watchTasks(); watchIssues(); watchRecurring();
     }
@@ -4617,6 +4634,113 @@
         }, 'Create');
       // Feature switches: company campaigns switched off → start on People.
       if (!isOn('outreach.campaigns')) { const p = document.querySelector('input[name="ncAud"][value="people"]'); if (p) p.checked = true; }
+    }
+
+    // 20 Nov (switch outreach.campaignSearch): a company across every campaign — name, NIF, email or phone, with the Search CRM's rules
+    // (phoneKey = 9 national digits; emailKeys; namePrefixes / nameKey). Reads: the companies found (up to 8; a phone also looks at
+    // People and their links) and their enrolments (one query). Campaign names and steps come from the campaigns already loaded.
+    function campaignSearchKind(raw) {
+      const q = String(raw || '').trim();
+      if (q.length < 3) return null;
+      if (q.includes('@')) return { kind: 'email', key: q.toLowerCase().replace(/\s/g, '').slice(0, 60) };
+      const digits = q.replace(/[\s.()-]/g, '');
+      const pk = phoneKey(q);
+      if (/^\d{9}$/.test(digits)) return { kind: 'nif', key: digits, phone: pk };
+      if (pk) return { kind: 'phone', key: pk };
+      if (/^[+\d\s.()-]+$/.test(q)) return null; // a number that is not a full phone or NIF
+      return { kind: 'name', key: q };
+    }
+    async function findCampaignCompanies(raw) {
+      const k = campaignSearchKind(raw); if (!k) return { ids: [], why: new Map(), reads: 0 };
+      const col = collection(db, 'searchCompanies'), why = new Map(); let reads = 0;
+      const add = (docs, label) => docs.forEach(d => { if (!why.has(d.id)) why.set(d.id, label); });
+      const byPhone = async (pk) => {
+        const cs = await getDocs(query(col, where('phoneKeys', 'array-contains', pk), limit(8))); reads += cs.size || 1; add(cs.docs, 'company phone');
+        const ps = await getDocs(query(collection(db, 'searchPeople'), where('reachPhones', 'array-contains', pk), limit(5))); reads += ps.size || 1;
+        if (ps.size) {
+          const ls = await getDocs(query(collection(db, 'searchPersonLinks'), where('personId', 'in', ps.docs.map(d => d.id)), limit(20))); reads += ls.size || 1;
+          const nameOf = new Map(ps.docs.map(d => [d.id, d.data().name || 'a person']));
+          ls.docs.forEach(l => { const x = l.data(); if (x.companyId && !why.has(x.companyId)) why.set(x.companyId, `phone of ${nameOf.get(x.personId)}`); });
+        }
+      };
+      if (k.kind === 'email') {
+        if (k.key.length < 3) return { ids: [], why, reads };
+        const s = await getDocs(query(col, where('emailKeys', 'array-contains', k.key), limit(8))); reads += s.size || 1; add(s.docs, 'email');
+        // 20 Nov (staging): a person's address that is not in the company's emailKeys (enrichment) — People, then what campaigns wrote to
+        if (!why.size && k.key.includes('@') && !k.key.startsWith('@')) {
+          const ps = await getDocs(query(collection(db, 'searchPeople'), where('reachEmails', 'array-contains', k.key), limit(5))); reads += ps.size || 1;
+          if (ps.size) {
+            const ls = await getDocs(query(collection(db, 'searchPersonLinks'), where('personId', 'in', ps.docs.map(d => d.id)), limit(20))); reads += ls.size || 1;
+            const nameOf = new Map(ps.docs.map(d => [d.id, d.data().name || 'a person']));
+            ls.docs.forEach(l => { const x = l.data(); if (x.companyId && !why.has(x.companyId)) why.set(x.companyId, `email of ${nameOf.get(x.personId)}`); });
+          }
+          if (!why.size) {
+            const es = await getDocs(query(collection(db, 'outreachEnrolments'), where('recipientList', 'array-contains', k.key), limit(10))); reads += es.size || 1;
+            es.docs.forEach(d => { const x = d.data(); if (x.companyId && !why.has(x.companyId)) why.set(x.companyId, 'address written to'); });
+          }
+        }
+      } else if (k.kind === 'nif') {
+        const s = await getDocs(query(col, where('nif', '==', k.key), limit(5))); reads += s.size || 1; add(s.docs, 'NIF');
+        if (!s.size && k.phone) await byPhone(k.phone);
+      } else if (k.kind === 'phone') await byPhone(k.key);
+      else {
+        const { nameKey, tokens } = searchKeyOf(k.key);
+        if (!tokens.length) return { ids: [], why, reads };
+        // the longest word first (25 a query); a common first name (FERNANDO) can fill those 25, so the next word is tried too
+        const every = (d) => tokens.every(tk => (d.data().namePrefixes || []).includes(tk) || String(d.data().nameKey || '').includes(tk));
+        for (const tk of tokens.slice().sort((a, b) => b.length - a.length).slice(0, 2)) {
+          const s = await getDocs(query(col, where('namePrefixes', 'array-contains', tk), limit(25))); reads += s.size || 1;
+          add(s.docs.filter(every), 'name');
+          if (why.size || s.size < 25) break;
+        }
+        if (!why.size) { // companies indexed before the name index existed: the start of the legal name
+          const s = await getDocs(query(col, orderBy('nameKey'), where('nameKey', '>=', nameKey), where('nameKey', '<=', nameKey + '\uf8ff'), limit(8))); reads += s.size || 1;
+          add(s.docs, 'name');
+        }
+      }
+      return { ids: [...why.keys()].slice(0, 10), why, reads };
+    }
+    // One row per company and campaign: its status (the best of its addresses), path, and what comes next.
+    function campaignSearchRows(enrols, campaignsById) {
+      const groups = new Map();
+      enrols.forEach(e => { const k = `${e.companyId}|${e.campaignId}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); });
+      const rows = [...groups.values()].map(g => {
+        const root = g.find(x => !x.trackOf) || g[0], c = campaignsById.get(root.campaignId) || null;
+        const live = g.filter(x => LIVE_ENROL.includes(x.status)).sort((a, b) => (tsMs(a.nextActionAt) || Infinity) - (tsMs(b.nextActionAt) || Infinity));
+        const top = live[0] || g.find(x => x.status === 'replied') || root;
+        return { root, top, live: live.length > 0, c, n: g.length, campaignId: root.campaignId, companyId: root.companyId, companyName: root.companyName || '', campaignName: c?.name || root.campaignName || root.campaignId, at: tsMs(root.enrolledAt) };
+      });
+      return rows.sort((a, b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || b.at - a.at);
+    }
+    async function runCampaignCompanySearch() {
+      const raw = $('campCoFind').value.trim(), out = $('campCoOut'), st = $('campCoStatus');
+      if (!campaignSearchKind(raw)) { out.hidden = true; out.innerHTML = ''; st.textContent = raw.length >= 3 ? 'Type a full NIF or phone (9 digits), a name or an email.' : ''; return; }
+      const seq = (runCampaignCompanySearch.seq = (runCampaignCompanySearch.seq || 0) + 1);
+      st.innerHTML = '<span class="spin-sm"></span> Searching…';
+      try {
+        const { ids, why, reads } = await findCampaignCompanies(raw);
+        let enrols = [], r2 = 0;
+        if (ids.length) { const s = await getDocs(query(collection(db, 'outreachEnrolments'), where('companyId', 'in', ids), limit(80))); r2 = s.size || 1; enrols = s.docs.map(d => ({ id: d.id, ...d.data() })); }
+        addReads(reads + r2); refreshReads();
+        if (seq !== runCampaignCompanySearch.seq) return;
+        const rows = campaignSearchRows(enrols, new Map(campaigns.map(c => [c.id, c])));
+        const notIn = ids.filter(id => !enrols.some(e => e.companyId === id)).length;
+        st.textContent = `${num(ids.length)} compan${ids.length === 1 ? 'y' : 'ies'} found${ids.length ? ` · ${num(rows.length)} in campaigns` : ''}${notIn ? ` · ${num(notIn)} never in a campaign` : ''}`;
+        out.hidden = !rows.length;
+        out.innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr><th>Company</th><th>Campaign</th><th>Status</th><th>Path</th><th>Next</th></tr></thead><tbody>${rows.map(x => {
+          const next = x.live ? (x.c ? `${x.top.status === 'pending' ? 'Not started' : stepLabelIn(x.top, stepsFor(x.c, x.top))}<div class="hint">${waitingFor(x.top, x.c)}</div>` : '') : esc(x.top.stopReason || '—');
+          return `<tr class="row-clickable" data-cofind="${esc(x.campaignId)}" data-coname="${esc(x.companyName)}" title="${x.c ? 'Open the campaign at this company' : 'This campaign is no longer in the list'}" style="cursor:${x.c ? 'pointer' : 'default'};">
+            <td><b>${esc(x.companyName || x.companyId)}</b><div class="hint">by ${esc(why.get(x.companyId) || '')}${x.n > 1 ? ` · ${num(x.n)} addresses` : ''}</div></td>
+            <td>${esc(x.campaignName)}${x.c?.isTest || x.root.isTest ? ' <span class="pill">Test</span>' : ''}${x.c && x.c.status !== 'active' ? ` <span class="hint">(${esc(x.c.status)})</span>` : ''}</td>
+            <td>${pill(ENROL_PILL, x.top.status)}</td>
+            <td style="font-size:0.8rem;">${esc((x.top.status === 'pending' ? x.root.plannedPathName : x.root.pathName) || '—')}${handTag(x.root)}</td>
+            <td style="font-size:0.8rem;">${next}</td></tr>`;
+        }).join('')}</tbody></table></div>` : '';
+        out.querySelectorAll('[data-cofind]').forEach(tr => tr.addEventListener('click', () => {
+          const id = tr.dataset.cofind; if (!campaigns.some(c => c.id === id)) return;
+          openCampaign(id, 'audience'); audSearch = tr.dataset.coname || ''; // the Companies list opens filtered on this company
+        }));
+      } catch (e) { if (seq === runCampaignCompanySearch.seq) st.textContent = errText(e); }
     }
 
     function openCampaign(id, sec = 'overview') {
@@ -4930,10 +5054,36 @@ Optional note for them:`, '');
     }
 
     // ── Companies (audience) ──
+    // 20 Nov (switch outreach.pathOverride): a path set by hand on a company, with who and why (shown on hover)
+    function handTag(e) {
+      const o = e?.pathOverride; if (!o || !isOn('outreach.pathOverride')) return '';
+      return ` <span class="pill pill--info" title="${esc(`Set by hand by ${localPart(o.by) || o.by || '?'}: ${o.reason || ''}${o.from ? ` (the filters chose ${o.from})` : ''}`)}">set by hand</span>`;
+    }
+    // Change… only before email 1, on the company's own row, in a campaign with paths
+    const canChangePath = (c, e) => isOn('outreach.pathOverride') && isOn('outreach.paths') && hasPaths(c) && !!e && !!e.companyId && !e.trackOf && e.status === 'pending' && !e.threadId && !(e.currentStep > 0) && ['draft', 'active', 'paused'].includes(c.status);
+    function openChangePath(e) {
+      const c = curCamp(); if (!c || !e) return;
+      const cur = e.pathOverride?.pathId || '';
+      openModal(`Path of ${e.companyName || 'company'}`, `
+        <p class="hint" style="margin-top:0;">Now: <b>${esc(e.plannedPathName || 'not planned yet')}</b>${e.pathOverride ? ' (set by hand)' : ' (by the filters)'}. The new path is kept when the campaign is saved and taken when the company starts. Only before email 1.</p>
+        <div class="field"><label for="cpPath">New path</label>
+          <select id="cpPath">${pathsOf(c).map(p => `<option value="${esc(p.id)}"${p.id === cur ? ' selected' : ''}>${esc(p.id === ELSE_PATH ? 'Everyone else' : p.name)}${stepsOfPath(c, p.id).length ? '' : ' (no steps: left out)'}</option>`).join('')}${e.pathOverride ? '<option value="auto">Back to the filters</option>' : ''}</select></div>
+        <div class="field"><label for="cpReason">Reason (required)</label>
+          <textarea id="cpReason" rows="3" maxlength="300" placeholder="e.g. the owner is a client of one of our investors"></textarea>
+          <span class="hint">3 to 300 characters. It goes to the company's Activities and shows on its row.</span></div>`,
+        async () => {
+          const reason = $('cpReason').value.replace(/\s+/g, ' ').trim();
+          if (reason.length < 3) { modalError('Write why (at least 3 characters).'); return false; }
+          const r = (await callCampaign({ action: 'setPath', enrolmentId: e.id, pathId: $('cpPath').value, reason })).data;
+          toast(`Path: ${r.plannedPathName}.`);
+          loadCampaignData();
+          return true;
+        }, 'Save');
+    }
     function stepLabel(e, c) {
       const steps = stepsFor(c, e); // 27 Oct: its path's steps
-      if (e.status === 'pending') return hasPaths(c) && e.plannedPathName ? `Not started <span class="hint">· planned: ${esc(e.plannedPathName)}</span>` : 'Not started'; // R11
-      if (hasPaths(c) && e.pathName) return `<span class="hint">${esc(e.pathName)} ·</span> ` + stepLabelIn(e, steps);
+      if (e.status === 'pending') return hasPaths(c) && e.plannedPathName ? `Not started <span class="hint">· planned: ${esc(e.plannedPathName)}</span>${handTag(e)}` : 'Not started'; // R11
+      if (hasPaths(c) && e.pathName) return `<span class="hint">${esc(e.pathName)} ·</span>${handTag(e)} ` + stepLabelIn(e, steps);
       return stepLabelIn(e, steps);
     }
     function stepLabelIn(e, steps) {
@@ -4998,7 +5148,7 @@ Optional note for them:`, '');
             <td>${n > 1 ? `<button class="btn btn--ghost btn--sm" data-cotoggle="${esc(key)}" data-open="${open ? 1 : 0}" aria-expanded="${open}" title="${open ? 'Hide' : 'Show'} the addresses" style="padding:0 6px;margin-right:4px;">${open ? '▾' : '▸'}</button>` : ''}<a href="/portal/search.html?company=${encodeURIComponent(root.companyId)}" style="color:var(--primary);">${esc(root.companyName || root.companyId)}</a>
               <div class="hint">${n > 1 ? `<b>${n} addresses</b>${parts ? ' · ' + parts : ''}` : lineOf(root)}</div></td>
             <td>${left ? '<span class="pill">Left out (paths)</span>' : pill(ENROL_PILL, r.status)}${r.answer ? ` <span class="pill pill--info" title="${esc(r.answer.line || '')}">${esc(r.answer.label)}</span>` : ''}${r.pausedUntil && r.status === 'paused' ? `<div class="hint">until ${esc(dayFmt.format(new Date(tsMs(r.pausedUntil))))}</div>` : ''}${live && liveG.length < n ? `<div class="hint">${liveG.length} of ${n} addresses active</div>` : ''}</td>
-            ${pathsView ? `<td style="font-size:0.78rem;">${esc(pathTxt)}</td>` : ''}
+            ${pathsView ? `<td style="font-size:0.78rem;">${esc(pathTxt)}${left ? '' : handTag(root)}${canChangePath(c, root) ? ` <button class="btn btn--ghost btn--sm" data-eop="path" data-perm="out.campaigns" data-eid="${esc(root.id)}" title="Put this company on another path, with a reason (only before email 1)">Change…</button>` : ''}</td>` : ''}
             <td style="font-size:0.8rem;">${r.status === 'pending' ? 'Not started' : stepLabelIn(top, stepsFor(c, top))}</td>
             <td style="font-size:0.78rem;">${live ? waitingFor(nextE, c) : ''}</td>
             <td style="font-size:0.8rem;">${esc(localPart(root.senderId) || '—')}</td>
@@ -5072,7 +5222,7 @@ Optional note for them:`, '');
         if (op === 'move') { if (liveG[0]) openMoveCompany(liveG[0], liveG.slice(1).map(x => x.id)); return; }
         let reason = null;
         if (op === 'remove') { reason = prompt(`Remove ${name} (${liveG.length} address${liveG.length === 1 ? '' : 'es'}) from the campaign? Optional reason:`, ''); if (reason === null) return; }
-        const targets = op === 'resume' ? g.filter(x => x.status === 'paused') : op === 'pause' ? liveG.filter(x => x.status !== 'paused') : liveG;
+        const targets = op === 'resume' ? g.filter(x => x.status === 'paused') : op === 'pause' ? liveG.filter(x => x.status !== 'paused') : op === 'remove' && isOn('outreach.removeCompany') ? liveG.slice(0, 1) : liveG; // 20 Nov: one Remove ends every address of the company here
         const unbusy = busyBtn(b, op === 'remove' ? 'Removing…' : op === 'pause' ? 'Pausing…' : 'Resuming…');
         try {
           for (const x of targets) await callCampaign({ action: 'enrolment', enrolmentId: x.id, op, reason });
@@ -5087,6 +5237,7 @@ Optional note for them:`, '');
         if (op === 'move') { openMoveCompany(e); return; }
         if (op === 'recipients') { openChooseRecipients(e); return; }
         if (op === 'retry') { openRetryAddress(e); return; }
+        if (op === 'path') { openChangePath(e); return; }
         if (op === 'restart') {
           if (!confirm(`${e.companyName || 'This company'} was stopped by a reply (${e.stopReason || 'replied'}). Restart it at the step it was on, from the next working day?`)) return;
           let r = await campCall({ action: 'restartCompany', enrolmentId: eid });
@@ -5097,7 +5248,7 @@ Optional note for them:`, '');
         let reason = null;
         if (op === 'remove') { reason = prompt(`Remove ${b.dataset.addr ? (e?.recipient?.email || e?.contactEmail || 'this address') : (e?.companyName || 'this company')} from the campaign? Optional reason:`, ''); if (reason === null) return; }
         const unbusy = busyBtn(b, op === 'remove' ? 'Removing…' : op === 'pause' ? 'Pausing…' : 'Resuming…');
-        const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? (b.dataset.addr ? 'Address removed from the campaign.' : 'Company removed from the campaign.') : op === 'pause' ? 'Company paused.' : (b.dataset.addr ? 'Address resumed.' : 'Company resumed.'));
+        const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason, ...(b.dataset.addr ? { onlyAddress: true } : {}) }, op === 'remove' ? (b.dataset.addr ? 'Address removed from the campaign.' : 'Company removed from the campaign.') : op === 'pause' ? 'Company paused.' : (b.dataset.addr ? 'Address resumed.' : 'Company resumed.'));
         if (r) loadCampaignData(); else unbusy();
       }));
     }
@@ -5248,7 +5399,7 @@ Optional note for them:`, '');
         <p class="hint">It leaves "${esc(c?.name || '')}" (its open task or draft there is cancelled) and starts the other campaign from the first step, if that campaign's rules allow it.</p>`,
         async () => {
           const r = (await callCampaign({ action: 'enrolment', enrolmentId: e.id, op: 'move', targetCampaignId: $('mvTarget').value })).data;
-          for (const id of alsoEnd) await callCampaign({ action: 'enrolment', enrolmentId: id, op: 'remove', reason: 'Moved with the company' }).catch(() => {}); // the company's other live addresses leave with it
+          for (const id of alsoEnd) await callCampaign({ action: 'enrolment', enrolmentId: id, op: 'remove', onlyAddress: true, reason: 'Moved with the company' }).catch(() => {}); // the company's other live addresses leave with it
           toast(`Moved to "${targets.find(x => x.id === r.targetCampaignId)?.name || 'the other campaign'}".`);
           loadCampaignData();
           return true;
@@ -6865,6 +7016,34 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       return lines.map(l => `<div>${l}</div>`).join('');
     }
 
+    // 20 Nov (switch outreach.taskRelated): the related companies on a task card, in the same box as a draft in To approve — red when one
+    // said no, amber when one is in conversation; open when there is a signal. Stored when the task was made; opening the box refreshes it.
+    const taskRelatedFresh = new Map(); // taskId → { related, flags } read again this session
+    const mayHaveRelatedCo = (c) => !!c && ((c.manualLinks || []).length > 0 || c.ownGraphAt == null || (c.ownGroupSize || 0) > 1 || (c.ownSubs || 0) > 0 || (c.ownParents || 0) > 0 || (c.ownOwnerOther || 0) > 0);
+    function taskRelatedHtml(t, c) {
+      if (!isOn('outreach.taskRelated') || !isOn('outreach.ownerAware') || !t.companyId) return '';
+      const rel = taskRelatedFresh.get(t.id) || t.related || null;
+      if (!rel && !mayHaveRelatedCo(c)) return '';
+      const list = rel?.related || [], risk = relatedRisk(rel?.flags);
+      if (rel && !list.length) return '';
+      const head = risk === 'red' ? '🚫 Same owner said no — check before you contact' : risk === 'amber' ? '💬 Same owner already in conversation — check before you contact' : 'Related companies';
+      return `<details class="owner-box${risk ? ' owner-box--' + risk : ''}" data-trel${risk ? ' open' : ''} style="margin-bottom:8px;">
+        <summary style="cursor:pointer;"><b>${head}${rel ? ` (${list.length})` : ''}</b>${list.slice(0, 3).map(r => ` <span class="hint">· ${esc(r.name)}</span>`).join('')}${rel ? '' : ' <span class="hint">· open to check</span>'}</summary>
+        <div data-trelbody>${rel ? `<ul>${list.map(r => `<li>${relatedActLine(r)} · <a href="/portal/search.html?company=${encodeURIComponent(r.companyId)}" target="_blank" rel="noopener" style="font-size:0.78rem;">open ↗</a></li>`).join('')}</ul>${rel.lead ? `<div class="hint" style="margin-top:4px;">Suggested lead company: ${leadText(rel.lead)}</div>` : ''}` : ''}</div>
+      </details>`;
+    }
+    async function refreshTaskRelated(t, el) {
+      if (taskRelatedFresh.has(t.id)) return;
+      taskRelatedFresh.set(t.id, t.related || { related: [], flags: [] }); // once per session
+      try {
+        const r = (await callCampaign({ action: 'related', companyId: t.companyId })).data;
+        if (r?.off) return;
+        taskRelatedFresh.set(t.id, { related: r.related || [], flags: r.flags || [], lead: r.lead || null });
+        const box = el.querySelector('[data-trel]'), wasOpen = box?.open;
+        const html = taskRelatedHtml(t, taskCo(t));
+        if (box) { if (html) { box.outerHTML = html; const nb = el.querySelector('[data-trel]'); if (nb && wasOpen) nb.open = true; nb?.addEventListener('toggle', () => refreshTaskRelated(t, el)); } else box.remove(); }
+      } catch (e) { /* the stored box stays */ }
+    }
     async function renderTodo() {
       if (document.activeElement?.closest?.('#todoView .task')) return;
       const open = tasks.filter(t => t.channel !== 'letter');
@@ -6901,6 +7080,7 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
             ${txt ? `<span title="Name, phone and email in the ${t.channel === 'call' ? 'script' : 'text'}">signed by <select data-tsigner style="width:auto;padding:2px 6px;font-size:0.76rem;">${ownerOpts(signerFor(t, c))}</select></span>` : ''}
           </div>
           ${t.instructions ? `<div class="note" style="margin-bottom:8px;"><b>To do:</b> ${esc(t.instructions)}</div>` : ''}
+          ${taskRelatedHtml(t, c)}
           <div class="task__grid">
             <div class="task__box"><h4>Contact</h4>${contactBox(t, c)}</div>
             <div class="task__box"><h4>${t.channel === 'call' ? 'Script' : t.channel === 'letter' ? 'Letter' : 'Message'}${txt ? ` <span style="text-transform:none;letter-spacing:0;font-weight:400;">· ${esc(txt.name)}</span>` : ''}</h4>
@@ -6954,6 +7134,8 @@ ${num(c.stats?.enrolled || 0)} ${c.audienceType === 'people' ? 'people' : 'compa
       $('todoView').querySelectorAll('[data-topenthread]').forEach(b => b.addEventListener('click', () => { showTab('inbox'); openThread(b.dataset.topenthread); }));
       $('todoView').querySelectorAll('.task').forEach(el => {
         const t = tasks.find(x => x.id === el.dataset.tid);
+        const relBox = el.querySelector('[data-trel]'); // 20 Nov: opening the related box reads it again (an open one at once)
+        if (relBox) { relBox.addEventListener('toggle', () => { if (relBox.open) refreshTaskRelated(t, el); }); if (relBox.open) refreshTaskRelated(t, el); }
         el.querySelector('[data-tcopy]')?.addEventListener('click', async () => {
           try { await navigator.clipboard.writeText(el.querySelector('.task__text').textContent); toast('Copied.'); } catch (e) { toast('Copy failed — select the text instead.'); }
         });
@@ -7672,11 +7854,15 @@ window.onload = () => { ${LT ? `buildLetters(${JSON.stringify(layoutCfg(letterWi
         b.disabled = true; out.innerHTML = '<span class="spin-sm"></span> Checking each company\'s contacts and People…';
         try {
           const r = (await callCampaign({ action: 'recipientsPreview', campaignId: c.id })).data;
-          const line = (k) => { const x = r.counts[k]; return [x.person && `${num(x.person)} to a person`, x.contact && `${num(x.contact)} to a contact`, x.company && `${num(x.company)} to the company address`, x.none && `<b>${num(x.none)} to nobody</b> (no address)`].filter(Boolean).join(', ') || '—'; };
-          out.innerHTML = `<b>Company address:</b> ${line('company')}<br><b>Primary contact:</b> ${line('primary_contact')}<br><b>Best person:</b> ${line('best_person')}`
-            + (r.heldBack ? `<br><b>${num(r.heldBack)} compan${r.heldBack === 1 ? 'y has' : 'ies have'} a person with an address that is not verified</b> and ${c.useUnverified ? 'is used because the campaign allows it' : 'is skipped (tick "Use not-verified addresses" in Settings to use them)'}.` : '')
-            + (r.addresses && r.addresses.mode !== 'one' ? `<br><b>Addresses per company:</b> ${num(r.addresses.multi)} of ${num(r.addresses.companies)} compan${r.addresses.companies === 1 ? 'y' : 'ies'} would get 2 or more addresses, ${num(r.addresses.emails)} first emails in all.` : '')
-            + `<br>${num(r.checked)} of ${num(r.total)} companies checked${r.total > r.checked ? ' (the first 300)' : ''}${r.sent ? ` · ${num(r.sent)} already received email 1 (their address is fixed)` : ''}${r.byHand ? ` · ${num(r.byHand)} with addresses you chose by hand (kept as chosen)` : ''}. The checks above show what each setting would pick; extra addresses are not counted as companies. See "Goes to" in Companies.`;
+          // 20 Nov: "companies" are companies and "emails" are addresses, never one for the other; the answer comes first
+          const cos = (n) => `${num(n)} compan${n === 1 ? 'y' : 'ies'}`, ems = (n) => `${num(n)} first email${n === 1 ? '' : 's'}`;
+          const line = (k) => { const x = r.counts[k]; return [x.person && `${cos(x.person)} to a person`, x.contact && `${cos(x.contact)} to a contact`, x.company && `${cos(x.company)} to the company address`, x.none && `<b>${cos(x.none)} to nobody</b> (no address)`].filter(Boolean).join(', ') || '—'; };
+          const rc = r.reach;
+          out.innerHTML = (rc ? `<div style="font-size:1rem;margin-bottom:6px;"><b>${cos(rc.companies)} · ${ems(rc.emails)}</b> <span class="hint">(${num(rc.people)} to people, ${num(rc.general)} to general addresses, ${rc.nobody ? `<b>${cos(rc.nobody)} to nobody</b>` : '0 to nobody'})</span></div><span class="hint">Below: what each "Emails go to" option would pick, counted in companies.</span><br>` : '')
+            + `<b>Company address:</b> ${line('company')}<br><b>Primary contact:</b> ${line('primary_contact')}<br><b>Best person:</b> ${line('best_person')}`
+            + (r.heldBack ? `<br><b>${cos(r.heldBack)} ${r.heldBack === 1 ? 'has' : 'have'} a person with an address that is not verified</b> and ${c.useUnverified ? 'is used because the campaign allows it' : 'is skipped (tick "Use not-verified addresses" in Settings to use them)'}.` : '')
+            + (r.addresses && r.addresses.mode !== 'one' ? `<br><b>Addresses per company:</b> ${num(r.addresses.multi)} of ${cos(r.addresses.companies)} would get 2 or more addresses, ${ems(r.addresses.emails)} in all.` : '')
+            + `<br>${num(r.checked)} of ${cos(r.total)} checked${r.total > r.checked ? ' (the first 300)' : ''}${r.sent ? ` · ${cos(r.sent)} already received email 1 (their address is fixed)` : ''}${r.byHand ? ` · ${cos(r.byHand)} with addresses you chose by hand (kept as chosen)` : ''}. The checks above show what each setting would pick; extra addresses are not counted as companies. See "Goes to" in Companies.`;
           loadCampaignData();
         } catch (e) { out.textContent = errText(e); }
         finally { b.disabled = false; }

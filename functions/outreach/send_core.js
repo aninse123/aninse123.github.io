@@ -60,6 +60,7 @@ const isOurAddress = (e) => { const d = domainOf(e); return d === senderDomain()
 //                              (investor, broker, journalist…). No company; {{company.*}} uses
 //                              the organisation; logged on the person's CRM / Network record.
 //   campaignFields           → { sector } of the campaign sending ({{campaign.sector}}, 9 Oct)
+//   recipientGreeting        → true: {{recipient.greeting}} is filled (20 Nov, switch outreach.recipientGreeting; else empty → fallback)
 //   footer                   → true / false: add the email footer (CCSL, 9 Oct); anything
 //                              else = the conversation's choice (replies), else Settings
 //   recipient                → Phase 3b: { email } of the person to write to (the company
@@ -212,7 +213,7 @@ async function prepareEmail(opts) {
   // {{sender.bookingLink}} (9 Oct) — their booking page, same place.
   let senderPhone = "", senderBooking = "";
   if (sender.owner) { try { const m = (await db().doc(`teamDirectory/${sender.owner}`).get()).data() || {}; senderPhone = m.contactPhone || ""; senderBooking = m.bookingLink || ""; } catch (e) { /* fields stay empty */ } }
-  const ctx = buildContext({ company: ctxCompany, contactName, recipientRole: recipient?.kind !== "company" ? recipient?.role || "" : "", recipientGender: recipient?.gender ? { gender: recipient.gender, source: recipient.genderSource || "" } : null, sender: { ...sender, email: senderId, phone: senderPhone, bookingLink: senderBooking }, unsubscribeUrl, aiOpener: opts.aiOpener || "", team: await teamDirectory(), senderKey: sender.owner || null, campaign: opts.campaignFields || {}, otherCompanies: opts.otherCompanies || [], knownCompanies: opts.knownCompanies || [] });
+  const ctx = buildContext({ company: ctxCompany, contactName, recipientRole: recipient?.kind !== "company" ? recipient?.role || "" : "", recipientGender: recipient?.gender ? { gender: recipient.gender, source: recipient.genderSource || "" } : null, sender: { ...sender, email: senderId, phone: senderPhone, bookingLink: senderBooking }, unsubscribeUrl, aiOpener: opts.aiOpener || "", team: await teamDirectory(), senderKey: sender.owner || null, campaign: opts.campaignFields || {}, otherCompanies: opts.otherCompanies || [], knownCompanies: opts.knownCompanies || [], greeting: !!opts.recipientGreeting });
 
   let subjectSrc = opts.subject, bodySrc = opts.body, templateId = null, variantKey = null, templateSigns = false, templateFiles = [];
   if (opts.templateId) {

@@ -1499,6 +1499,7 @@ const ACT = {
   outreach_hold:    { label:'Held: same email address', icon:'⏸', outreach:false },
   outreach_owner:   { label:'Owner-aware choice', icon:'🧭', outreach:false }, // 22 Oct: Skip for now / Proceed / mention
   outreach_group:   { label:'Related company contacted', icon:'🔗', outreach:false },    // 22 Oct: a related company got its first email
+  outreach_campaign: { label:'Campaign change', icon:'📋', outreach:false }, // 20 Nov: removed from a campaign, path changed by hand
 };
 // Set on searchCompanies by the Outreach Cloud Functions (spec §5).
 const OUTREACH_BADGE = {
@@ -12128,7 +12129,9 @@ async function renderCampaignTimeline(c){
         : now && ['awaiting_task','awaiting_approval'].includes(e.status) ? 'now' : `~${fmtD(t)}`;
       future.push(`<li${now ? ' style="font-weight:600;"' : ''}>${TL_CHANNEL[st.channel || 'email']} · ${esc(st.name)} — ${when}${now ? ' <span class="badge badge-blue">next</span>' : ''}</li>`);
     }
-    box.innerHTML = `<div class="sec-title">Campaign — ${esc(camp.name)} <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);">(${esc(TL_STATUS[e.status] || e.status)}${camp.status !== 'active' ? ', campaign ' + esc(camp.status) : ''})</span></div>
+    // 20 Nov (outreach.pathOverride): a path set by hand says by whom and why
+    const po = e.pathOverride && isOn('outreach.pathOverride') ? `<div style="font-size:0.8rem;margin:2px 0 6px;">Path <b>${esc(e.pathName || e.plannedPathName || e.pathOverride.pathName || '')}</b> · <span class="badge badge-blue">set by hand</span> by ${esc(String(e.pathOverride.by || '').split('@')[0])}: ${esc(e.pathOverride.reason || '')}</div>` : '';
+    box.innerHTML = `<div class="sec-title">Campaign — ${esc(camp.name)} <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-light);">(${esc(TL_STATUS[e.status] || e.status)}${camp.status !== 'active' ? ', campaign ' + esc(camp.status) : ''})</span></div>${po}
       <ul style="margin:0;padding-left:18px;font-size:0.85rem;line-height:1.7;">${done.join('')}${future.join('') || '<li>All steps done — waiting for a reply.</li>'}</ul>
       <div style="font-size:0.75rem;color:var(--text-light);margin-top:6px;">Dates after the next step are estimates (working days; the sending window and daily limits can push them). <a href="/portal/outreach.html" style="color:var(--primary);">Open in Outreach</a></div>`;
     if (isOn('outreach.multiRecipient')) await renderAlsoWrittenTo(box, eSnap.id, e);
@@ -12697,7 +12700,7 @@ async function recomputeActivityFields(c){
   // task_test: campaign tasks done in test mode (rehearsals) — not real touches either.
   const AUTO_TYPES = ['company_created','company_edited','stage_changed','file_added','file_removed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold','person_merged',
     'person_linked','person_updated','person_unlinked', // 21 Oct: adding, editing or removing a person isn't a touch either
-    'outreach_owner','outreach_group']; // 22 Oct (owner-aware): notes about related companies, never a touch
+    'outreach_owner','outreach_group','outreach_campaign']; // 22 Oct (owner-aware): notes about related companies, never a touch
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));

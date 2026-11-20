@@ -83,7 +83,55 @@ function cleanRole(role) {
   return !r || /shareholder|^contact$|company address|%/i.test(r) ? "" : r;
 }
 
-function recipientContext({ name = "", role = "", owners = [], stored = null } = {}) {
+// 20 Nov (switch outreach.recipientGreeting): {{recipient.greeting}} = "Exmo. Senhor José Silva" / "Exma. Senhora Maria José Santos" —
+// the formal opening of a first email to a person. The name as used in emails: the company's "Owners in emails" entry when the person
+// is one of them; else the first given name and the last surname of the CRM name (Maria and Ana keep their second given name — "Maria
+// José"; a compound surname is never cut — "Castelo Branco", "Silva e Costa", "Sousa-Tavares"). Empty when the gender is unknown (the
+// template's fallback is used) or when the switch is off for this send.
+const PARTICLE = new Set(["da", "de", "do", "das", "dos", "e", "d'"]);
+const COMPOUND_SURNAME = ["castelo branco", "corte real", "espirito santo", "vila nova", "monte real", "sa carneiro", "vaz pinto", "costa cabral", "pinto basto", "sousa coutinho", "mota amaral"];
+function properCase(w) {
+  const lower = String(w || "").toLowerCase();
+  if (PARTICLE.has(lower)) return lower;
+  return lower.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("-");
+}
+function ownerMatch(full, owners) {
+  const words = (s) => strip(s).replace(/[^a-z\s-]/g, " ").split(/\s+/).filter((x) => x && !PARTICLE.has(x));
+  const me = words(full);
+  if (!me.length) return null;
+  return (Array.isArray(owners) ? owners : []).find((o) => {
+    const ow = words(o?.name);
+    return ow.length >= 2 && ow[0] === me[0] && ow[ow.length - 1] === me[me.length - 1] && ow.every((x) => me.includes(x)); // "José Silva" is "JOSE MANUEL DA SILVA"
+  }) || null;
+}
+function greetingName(name, owners = []) {
+  const clean = String(name || "").replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  const own = ownerMatch(clean, owners);
+  if (own && String(own.name || "").trim()) return accentName(String(own.name).replace(/\s+/g, " ").trim());
+  const raw = clean.split(" ");
+  const cased = raw.map((w) => (w === w.toUpperCase() || w === w.toLowerCase() ? properCase(w) : w)); // ALL CAPS / all lower from Orbis; typed names stay
+  if (cased.length < 2) return accentName(cased.join(" "));
+  const first = [cased[0]];
+  let i = 1;
+  if (["maria", "ana"].includes(strip(cased[0])) && cased.length >= 3 && !PARTICLE.has(cased[1].toLowerCase())) { first.push(cased[1]); i = 2; }
+  else if (["maria", "ana"].includes(strip(cased[0])) && cased.length >= 4 && ["de", "da", "do", "das", "dos"].includes(cased[1].toLowerCase())) { first.push(cased[1], cased[2]); i = 3; } // Maria de Fátima, Maria do Céu
+  // the last surname, kept whole when it is compound
+  let j = cased.length - 1;
+  const two = strip(cased.slice(-2).join(" "));
+  if (cased.length - 2 >= i && COMPOUND_SURNAME.includes(two)) j = cased.length - 2;
+  else if (cased.length - 3 >= i && cased[cased.length - 2].toLowerCase() === "e") j = cased.length - 3; // "Silva e Costa"
+  return [...first.map((w) => accentName(w)), ...cased.slice(j)].join(" ");
+}
+function greetingOf({ name = "", owners = [], stored = null } = {}) {
+  const shown = greetingName(name, owners);
+  if (!shown) return "";
+  const own = ownerMatch(name, owners);
+  const g = own && (own.gender === "M" || own.gender === "F") && !(stored && stored.source === "typed") ? own.gender : genderOf(String(name).replace(/\s+/g, " ").trim(), owners, stored);
+  return g === "M" ? `Exmo. Senhor ${shown}` : g === "F" ? `Exma. Senhora ${shown}` : "";
+}
+
+function recipientContext({ name = "", role = "", owners = [], stored = null, greeting = false } = {}) {
   const full = accentName(String(name || "").replace(/\s+/g, " ").trim());
   const first = full.split(" ")[0] || "";
   const g = first ? genderOf(full, owners, stored) : "";
@@ -91,7 +139,8 @@ function recipientContext({ name = "", role = "", owners = [], stored = null } =
     firstName: first, role: first ? cleanRole(role) : "",
     gender: g, isMale: g === "M" ? "1" : "", isFemale: g === "F" ? "1" : "", isUnknown: first && !g ? "1" : "",
     isPerson: first ? "1" : "", isCompany: first ? "" : "1",
+    greeting: greeting && first ? greetingOf({ name, owners, stored }) : "",
   };
 }
 
-module.exports = { genderOfFirstName, genderOf, cleanRole, recipientContext, accentName };
+module.exports = { genderOfFirstName, genderOf, cleanRole, recipientContext, accentName, greetingName, greetingOf };

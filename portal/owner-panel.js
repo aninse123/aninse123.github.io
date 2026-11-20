@@ -53,6 +53,22 @@ export function leadText(lead) {
   return `${esc(lead.name)}${why ? ` <span style="color:#64748B;">(${esc(why)})</span>` : ''}`;
 }
 
+// 20 Nov (switch outreach.taskRelated): one related company on a task card — its latest contact first, with the date and the kind
+// ("SOMOBILIS — call answered 13 Nov"), then what else matters (said no, do not contact, its campaign, next follow-up) and why it is related.
+const ACT_WORD = { email: 'email reply', call: 'call answered', meeting: 'meeting', visit: 'visit', linkedin: 'LinkedIn reply', whatsapp: 'WhatsApp reply', letter: 'letter answer', intro: 'intro' };
+export function relatedActLine(r, now = Date.now()) {
+  const last = r.answeredAt && r.answeredAt >= (r.lastReplyAt || 0) ? `${ACT_WORD[r.answeredVia] || 'answered'} ${day(r.answeredAt)}`
+    : r.lastReplyAt ? `replied ${day(r.lastReplyAt)}` : r.lastOutreachAt ? `emailed ${day(r.lastOutreachAt)}, no reply` : r.engaged ? 'engaged' : 'not contacted';
+  const more = [r.doNotContact ? 'do not contact' : '', r.saidNo ? 'said no' : '', r.campaignName ? `campaign “${r.campaignName}”` : '',
+    r.nextFollowUpAt && r.nextFollowUpAt > now ? `next follow-up ${day(r.nextFollowUpAt)}` : ''].filter(Boolean);
+  return `<b>${esc(r.name)}</b> — ${esc(last)}${more.length ? ` · ${esc(more.join(' · '))}` : ''} <span style="color:#64748B;">(${esc((r.why || []).join('; '))})</span>`;
+}
+// red: a related company said no or is do not contact; amber: one is in conversation or has a follow-up waiting.
+export function relatedRisk(flags) {
+  const fl = flags || [];
+  return fl.some((f) => f.kind === 'said_no') ? 'red' : fl.some((f) => f.kind === 'in_conversation' || f.kind === 'follow_up') ? 'amber' : '';
+}
+
 // One related company: name, why, and what is happening with it.
 export function relatedLine(r) {
   const status = [
