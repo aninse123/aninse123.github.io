@@ -5072,7 +5072,7 @@ Optional note for them:`, '');
         if (op === 'move') { if (liveG[0]) openMoveCompany(liveG[0], liveG.slice(1).map(x => x.id)); return; }
         let reason = null;
         if (op === 'remove') { reason = prompt(`Remove ${name} (${liveG.length} address${liveG.length === 1 ? '' : 'es'}) from the campaign? Optional reason:`, ''); if (reason === null) return; }
-        const targets = op === 'resume' ? g.filter(x => x.status === 'paused') : op === 'pause' ? liveG.filter(x => x.status !== 'paused') : liveG;
+        const targets = op === 'resume' ? g.filter(x => x.status === 'paused') : op === 'pause' ? liveG.filter(x => x.status !== 'paused') : op === 'remove' && isOn('outreach.removeCompany') ? liveG.slice(0, 1) : liveG; // 20 Nov: one Remove ends every address of the company here
         const unbusy = busyBtn(b, op === 'remove' ? 'Removing…' : op === 'pause' ? 'Pausing…' : 'Resuming…');
         try {
           for (const x of targets) await callCampaign({ action: 'enrolment', enrolmentId: x.id, op, reason });
@@ -5097,7 +5097,7 @@ Optional note for them:`, '');
         let reason = null;
         if (op === 'remove') { reason = prompt(`Remove ${b.dataset.addr ? (e?.recipient?.email || e?.contactEmail || 'this address') : (e?.companyName || 'this company')} from the campaign? Optional reason:`, ''); if (reason === null) return; }
         const unbusy = busyBtn(b, op === 'remove' ? 'Removing…' : op === 'pause' ? 'Pausing…' : 'Resuming…');
-        const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason }, op === 'remove' ? (b.dataset.addr ? 'Address removed from the campaign.' : 'Company removed from the campaign.') : op === 'pause' ? 'Company paused.' : (b.dataset.addr ? 'Address resumed.' : 'Company resumed.'));
+        const r = await campCall({ action: 'enrolment', enrolmentId: eid, op, reason, ...(b.dataset.addr ? { onlyAddress: true } : {}) }, op === 'remove' ? (b.dataset.addr ? 'Address removed from the campaign.' : 'Company removed from the campaign.') : op === 'pause' ? 'Company paused.' : (b.dataset.addr ? 'Address resumed.' : 'Company resumed.'));
         if (r) loadCampaignData(); else unbusy();
       }));
     }
@@ -5248,7 +5248,7 @@ Optional note for them:`, '');
         <p class="hint">It leaves "${esc(c?.name || '')}" (its open task or draft there is cancelled) and starts the other campaign from the first step, if that campaign's rules allow it.</p>`,
         async () => {
           const r = (await callCampaign({ action: 'enrolment', enrolmentId: e.id, op: 'move', targetCampaignId: $('mvTarget').value })).data;
-          for (const id of alsoEnd) await callCampaign({ action: 'enrolment', enrolmentId: id, op: 'remove', reason: 'Moved with the company' }).catch(() => {}); // the company's other live addresses leave with it
+          for (const id of alsoEnd) await callCampaign({ action: 'enrolment', enrolmentId: id, op: 'remove', onlyAddress: true, reason: 'Moved with the company' }).catch(() => {}); // the company's other live addresses leave with it
           toast(`Moved to "${targets.find(x => x.id === r.targetCampaignId)?.name || 'the other campaign'}".`);
           loadCampaignData();
           return true;

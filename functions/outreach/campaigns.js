@@ -771,7 +771,7 @@ async function companyLiveRefs(companyId, isTest) {
   return snap.docs.filter((d) => LIVE_ENROLMENT.includes(d.data().status) && !!d.data().isTest === !!isTest).map((d) => d.ref);
 }
 
-async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId, wholeCompany }, caller) {
+async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId, wholeCompany, onlyAddress }, caller, opts = {}) {
   if (!id || typeof id !== "string") fail("invalid-argument", "enrolment_required", "Choose a company in the campaign.");
   const ref = db().doc(`outreachEnrolments/${id}`);
   // 13 Nov (B1): "Pause company" on a task card pauses every address of the company, not only this one.
@@ -785,7 +785,26 @@ async function enrolmentOp({ enrolmentId: id, op, reason, targetCampaignId, whol
     return { ok: true, status: "paused", paused };
   }
   if (op === "remove") {
-    const ok = await endEnrolment(ref, "removed", String(reason || "").slice(0, 200) || `Removed by ${caller}`);
+    const why = String(reason || "").trim().slice(0, 200);
+    // 20 Nov (switch outreach.removeCompany): Remove takes the whole company out of this campaign — every live address of it here
+    // (root + tracks), with their drafts and open tasks — and says so on the company. onlyAddress: the per-address Stop.
+    if (opts.removeCompany && !onlyAddress) {
+      const e = (await ref.get()).data();
+      if (!e) fail("not-found", "enrolment_not_found", "Enrolment not found.");
+      const refs = e.companyId ? (await companyLiveRefs(e.companyId, e.isTest)).filter((r) => r.id !== id) : [];
+      const same = refs.length ? (await db().getAll(...refs)).filter((s) => s.exists && s.data().campaignId === e.campaignId).map((s) => s.ref) : [];
+      const n = await endAll([ref, ...same], "removed", why || `Removed by ${caller}`);
+      if (!n) fail("failed-precondition", "not_live", "This company is no longer active in the campaign.");
+      if (e.companyId) {
+        try {
+          await db().collection("searchActivities").add({ companyId: e.companyId, type: "outreach_campaign", date: Timestamp.now(), title: null,
+            content: `${e.isTest ? "[TEST] " : ""}Removed from ${e.campaignName || "the campaign"} by ${caller}${why ? `: ${why}` : ""}${n > 1 ? ` (${n} addresses)` : ""}`,
+            status: null, campaignId: e.campaignId || null, isTest: !!e.isTest, createdAt: FieldValue.serverTimestamp(), createdBy: caller });
+        } catch (err) { /* the note is best effort */ }
+      }
+      return { ok: true, status: "removed", removed: n };
+    }
+    const ok = await endEnrolment(ref, "removed", why || `Removed by ${caller}`);
     if (!ok) fail("failed-precondition", "not_live", "This company is no longer active in the campaign.");
     return { ok: true, status: "removed" };
   }
@@ -1835,7 +1854,7 @@ exports.outreachCampaign = onCall({ region: REGION, timeoutSeconds: 300, memory:
       case "runNow": return await runNow(data, caller);
       case "sendNow": return await sendNow(data, caller);
       case "enrol": return await enrol(data, caller, { oneInbox, usePeople, ownerAware, relatedActivity, trust: await Feat.isOnFor(request, "contacts.trustLabels") });
-      case "enrolment": return await enrolmentOp(data, caller);
+      case "enrolment": return await enrolmentOp(data, caller, { removeCompany: data.op === "remove" && await Feat.isOnFor(request, "outreach.removeCompany") });
       case "setStatus": return await setStatus(data, caller);
       case "previewPeople": return await previewPeople(data, caller);
       case "enrolPeople": return await enrolPeople(data, caller);

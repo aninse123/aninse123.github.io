@@ -1499,6 +1499,7 @@ const ACT = {
   outreach_hold:    { label:'Held: same email address', icon:'⏸', outreach:false },
   outreach_owner:   { label:'Owner-aware choice', icon:'🧭', outreach:false }, // 22 Oct: Skip for now / Proceed / mention
   outreach_group:   { label:'Related company contacted', icon:'🔗', outreach:false },    // 22 Oct: a related company got its first email
+  outreach_campaign: { label:'Campaign change', icon:'📋', outreach:false }, // 20 Nov: removed from a campaign, path changed by hand
 };
 // Set on searchCompanies by the Outreach Cloud Functions (spec §5).
 const OUTREACH_BADGE = {
@@ -12697,7 +12698,7 @@ async function recomputeActivityFields(c){
   // task_test: campaign tasks done in test mode (rehearsals) — not real touches either.
   const AUTO_TYPES = ['company_created','company_edited','stage_changed','file_added','file_removed','deal_updated','financials_updated','contact_added','contact_edited','contact_removed','email_test','task_test','person_contact_edited','person_note','outreach_hold','person_merged',
     'person_linked','person_updated','person_unlinked', // 21 Oct: adding, editing or removing a person isn't a touch either
-    'outreach_owner','outreach_group']; // 22 Oct (owner-aware): notes about related companies, never a touch
+    'outreach_owner','outreach_group','outreach_campaign']; // 22 Oct (owner-aware): notes about related companies, never a touch
   const realActs = activities.filter(a => !AUTO_TYPES.includes(a.type));
   const past = realActs.filter(a => (tsToDate(a.date)?.getTime()||0) <= Date.now());
   past.sort((a,b)=>(tsToDate(b.date)?.getTime()||0)-(tsToDate(a.date)?.getTime()||0));
