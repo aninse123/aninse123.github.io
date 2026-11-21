@@ -97,6 +97,7 @@
     .adv-filters { display: none; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px; background: #FAFAF8; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
     .adv-filters.open { display: flex; }
     .results-count { font-size: 0.8rem; color: var(--text-light); }
+    .db-results-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface, #fff); font-size: 0.82rem; }
     .nace-label { font-size: 0.74rem; color: var(--primary); font-style: italic; }
 
     /* Table */
@@ -531,6 +532,15 @@
       <select class="filter-sel" id="sameEmailFilter" data-feature="search.sameEmail" title="Same company email address as another CRM company (the full address). Possible link = not the same group and not yet confirmed or dismissed; the company's Ownership tab also checks the people in Orbis."><option value="">Same email: Any</option><option value="possible">Possible same-email link</option><option value="confirmed">Same email, confirmed</option></select>
       <input type="hidden" id="groupKeyFilter"><span class="badge badge-blue" id="groupKeyChip" data-feature="search.ownership" style="display:none;align-self:center;"></span>
       <button class="btn btn--ghost btn--sm" id="clearFiltersBtn">Clear all</button>
+    </div>
+
+    <!-- 21 Nov (search.serverFilters): database results, shown only after 🔍 -->
+    <div class="db-results-bar" id="dbResultsBar" style="display:none;">
+      <span id="dbResultsLabel"></span>
+      <span style="display:flex;gap:6px;margin-left:auto;">
+        <button class="btn btn--ghost btn--sm" id="dbResultsExportBtn" data-perm="search.export">⬇ Export results</button>
+        <button class="btn btn--ghost btn--sm" id="dbResultsBackBtn" title="Show the loaded companies again; the ones found by this search stay in the list.">✕ Back to list</button>
+      </span>
     </div>
 
     <!-- Table (list mode) -->
@@ -1620,6 +1630,19 @@ let tierRulesStored = [];
 // Companies created in this tab: kept in the list even when they fall outside
 // the bounded "most recently touched" window (a new company has no last touch).
 const keepInView = new Set();
+// 21 Nov (search.serverFilters): the database results on show (see runDatabaseSearch), or null.
+let dbResults = null; // { label, kind, ids: Set, hits: Map, text, textBy, tokens, sig, at: Date, reads, capped, total }
+let dbSearchSeq = 0;
+let exportResultsOnly = false; // the Export fields dialog was opened from the results bar (D8)
+// The values of these filters in the whole base (read once on 21 Nov 2026), so a region or a legal form that is not
+// among the loaded companies can still be picked for a database search. Joined with the loaded values.
+const BASE_FILTER_VALUES = {
+  sector: ["Accommodation & food service","Administrative & support services","Agriculture, forestry and fishing","Arts, entertainment & recreation","Construction","Education","Electricity & gas supply","Extraterritorial organisations","Financial & insurance","Health & social work","Information & communication","Manufacturing","Mining and quarrying","Other service activities","Professional, scientific & technical","Public administration","Real estate","Transportation & storage","Water, sewerage & waste","Wholesale & retail trade"],
+  subSector: ["Accommodation","Activities auxiliary to financial services","Activities of membership organisations","Advertising and market research","Air transport","Architectural and engineering; testing","Civil engineering","Coke and refined petroleum products","Computer programming and consultancy","Computer, electronic and optical products","Construction of buildings","Creative, arts and entertainment","Crop and animal production","Education","Electricity, gas, steam and air conditioning","Employment activities","Extraction of petroleum and natural gas","Extraterritorial organisations and bodies","Fabricated metal products","Financial services (excl. insurance)","Fishing and aquaculture","Food and beverage service activities","Forestry and logging","Gambling and betting","Head offices and management consultancy","Human health activities","Information service activities","Insurance and pension funding","Land transport and transport via pipelines","Legal and accounting activities","Libraries, archives and museums","Manufacture of basic metals","Manufacture of beverages","Manufacture of chemicals","Manufacture of electrical equipment","Manufacture of food products","Manufacture of furniture","Manufacture of leather and related products","Manufacture of machinery and equipment n.e.c.","Manufacture of motor vehicles and trailers","Manufacture of paper and paper products","Manufacture of pharmaceuticals","Manufacture of rubber and plastic products","Manufacture of textiles","Manufacture of tobacco products","Manufacture of wearing apparel","Manufacture of wood and cork products","Mining of metal ores","Mining support services","Motion picture, video and TV production","Office administrative and business support","Other manufacturing","Other mining and quarrying","Other non-metallic mineral products","Other personal service activities","Other professional, scientific and technical","Other transport equipment","Postal and courier activities","Printing and reproduction of recorded media","Programming and broadcasting","Public administration and defence","Publishing activities","Real estate activities","Remediation and waste management","Rental and leasing activities","Repair and installation of machinery","Repair of computers and household goods","Residential care activities","Retail trade (excl. motor vehicles)","Scientific research and development","Security and investigation activities","Services to buildings and landscape","Sewerage","Social work without accommodation","Specialised construction activities","Sports, amusement and recreation","Telecommunications","Travel agency and tour operators","Veterinary activities","Warehousing and support for transportation","Waste collection and treatment","Water collection, treatment and supply","Water transport","Wholesale and retail of motor vehicles","Wholesale trade (excl. motor vehicles)"],
+  nuts2: ["PT11 - Norte","PT15 - Algarve","PT19 - Centro","PT1A - Grande Lisboa","PT1B - Peninsula de Setubal","PT1C - Alentejo","PT1D - Oeste e Vale do Tejo","PT20 - Regiao Autonoma dos Acores","PT30 - Regiao Autonoma da Madeira"],
+  nuts3: ["PT111 - Alto Minho","PT112 - Cavado","PT119 - Ave","PT11A - Area Metropolitana do Porto","PT11B - Alto Tamega e Barroso","PT11C - Tamega e Sousa","PT11D - Douro","PT11E - Terras de Tras-os-Montes","PT150 - Algarve","PT191 - Regiao de Aveiro","PT192 - Regiao de Coimbra","PT193 - Regiao de Leiria","PT194 - Viseu Dao Lafoes","PT195 - Beira Baixa","PT196 - Beiras e Serra da Estrela","PT1A0 - Grande Lisboa","PT1B0 - Peninsula de Setubal","PT1C1 - Alentejo Litoral","PT1C2 - Baixo Alentejo","PT1C3 - Alto Alentejo","PT1C4 - Alentejo Central","PT1D1 - Oeste","PT1D2 - Medio Tejo","PT1D3 - Leziria do Tejo","PT200 - Regiao Autonoma dos Acores","PT300 - Regiao Autonoma da Madeira"],
+  legalForm: ["Association","Body of public administration","Company with foreign rights","Cooperative company","County/region","Foreign company","Foreign foundation/association","Foundation","Insurance stock company","Limited liability company - LDA","One-person company with limited liability - LDA","Partnership","Public limited company - SA","Sports public limited company - SAD","State owned company"],
+};
 let tierRules = [];
 let activities = [];
 let currentCoId = null;
@@ -3319,10 +3342,12 @@ function buildStaticOptions(){
 // Data-derived options — refreshed on each live snapshot, preserving the user's
 // current selection so a background update never clears an active filter.
 function refreshSectorOptions(){
+  // 21 Nov (search.serverFilters, B3): the values of the whole base too, so a 🔍 can look for one that is not loaded.
+  const base = isOn('search.serverFilters') ? BASE_FILTER_VALUES : {};
   const keepSec = document.getElementById('sectorFilter').value;
   const keepSub = document.getElementById('subSectorFilter').value;
-  const sectors = [...new Set(companies.map(c=>c.sector).filter(Boolean))].sort();
-  const subSectors = [...new Set(companies.map(c=>c.subSector).filter(Boolean))].sort();
+  const sectors = [...new Set([...companies.map(c=>c.sector), ...(base.sector || [])].filter(Boolean))].sort();
+  const subSectors = [...new Set([...companies.map(c=>c.subSector), ...(base.subSector || [])].filter(Boolean))].sort();
   document.getElementById('sectorFilter').innerHTML = '<option value="">All Sectors</option>' + sectors.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   document.getElementById('subSectorFilter').innerHTML = '<option value="">All Sub-sectors</option>' + subSectors.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   document.getElementById('sectorList').innerHTML = sectors.map(s=>`<option value="${esc(s)}">`).join('');
@@ -3332,8 +3357,8 @@ function refreshSectorOptions(){
   // NUTS II / III filters — auto-populated from data, selection preserved
   const keepN2 = document.getElementById('nuts2Filter').value;
   const keepN3 = document.getElementById('nuts3Filter').value;
-  const nuts2 = [...new Set(companies.map(c=>c.nuts2).filter(Boolean))].sort();
-  const nuts3 = [...new Set(companies.map(c=>c.nuts3).filter(Boolean))].sort();
+  const nuts2 = [...new Set([...companies.map(c=>c.nuts2), ...(base.nuts2 || [])].filter(Boolean))].sort();
+  const nuts3 = [...new Set([...companies.map(c=>c.nuts3), ...(base.nuts3 || [])].filter(Boolean))].sort();
   document.getElementById('nuts2Filter').innerHTML = '<option value="">All NUTS II</option>' + nuts2.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   document.getElementById('nuts3Filter').innerHTML = '<option value="">All NUTS III</option>' + nuts3.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   if ([...document.getElementById('nuts2Filter').options].some(o=>o.value===keepN2)) document.getElementById('nuts2Filter').value = keepN2;
@@ -3342,7 +3367,7 @@ function refreshSectorOptions(){
   // enum (Orbis's nationalLegalForm carries whatever real Portuguese legal
   // forms actually show up, e.g. "Limited liability company - LDA").
   const keepLegal = document.getElementById('legalFormFilter').value;
-  const legalForms = [...new Set(companies.map(c=>legalFormOf(c)).filter(Boolean))].sort();
+  const legalForms = [...new Set([...companies.map(c=>legalFormOf(c)), ...(base.legalForm || [])].filter(Boolean))].sort();
   document.getElementById('legalFormFilter').innerHTML = '<option value="">All Legal Forms</option>' + legalForms.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   if ([...document.getElementById('legalFormFilter').options].some(o=>o.value===keepLegal)) document.getElementById('legalFormFilter').value = keepLegal;
 }
@@ -3354,22 +3379,25 @@ function renderSummary(){
   // True total from the server while only the bounded default window is
   // loaded (companies.length would otherwise read as ~300); once the full
   // dataset is loaded, the live array is authoritative and self-corrects.
-  const total = fullyLoaded ? companies.length : (cachedTotalCount ?? companies.length);
-  const active = companies.filter(c => !['pass','closed'].includes(c.stage)).length;
+  // 21 Nov (search.serverFilters, D9): in database results mode everything here counts what the table shows.
+  const dbr = activeDbResults();
+  const pool = dbr ? getFiltered() : companies;
+  const total = dbr ? pool.length : fullyLoaded ? companies.length : (cachedTotalCount ?? companies.length);
+  const active = pool.filter(c => !['pass','closed'].includes(c.stage)).length;
   // Averaged over companies.length (what's actually loaded and summed), not
   // `total` (the true server-side count while bounded) — self-corrects once
   // fullyLoaded, same as active/inDeal above.
-  const avgFit = companies.length ? (companies.reduce((s,c)=>s+(Number(c.fitScore)||0),0)/companies.length) : 0;
-  const inDeal = companies.filter(c => ['engaged','teaser_received','under_nda','cim_received','nbo','loi','due_diligence','financing','closing'].includes(c.stage)).length;
+  const avgFit = pool.length ? (pool.reduce((s,c)=>s+(Number(c.fitScore)||0),0)/pool.length) : 0;
+  const inDeal = pool.filter(c => ['engaged','teaser_received','under_nda','cim_received','nbo','loi','due_diligence','financing','closing'].includes(c.stage)).length;
   document.getElementById('summaryStats').innerHTML =
     `<span class="summary-stat"><strong>${total}</strong> total</span>
      <span class="summary-stat"><strong>${active}</strong> active</span>
      <span class="summary-stat"><strong>${inDeal}</strong> in deal pipeline</span>
      <span class="summary-stat">avg fit <strong>${avgFit.toFixed(1)}</strong></span>`;
-  document.getElementById('listSub').textContent = `${total} companies in pipeline`;
+  document.getElementById('listSub').textContent = dbr ? `Database results: ${dbr.label} · ${total} compan${total === 1 ? 'y' : 'ies'}` : `${total} companies in pipeline`;
 
   const counts = {};
-  companies.forEach(c => { const s = c.stage || 'universe'; counts[s] = (counts[s]||0)+1; });
+  pool.forEach(c => { const s = c.stage || 'universe'; counts[s] = (counts[s]||0)+1; });
   const pills = STAGE_ORDER.filter(s=>counts[s]).map(s =>
     `<span class="stage-pill ${STAGES[s].cls}" style="cursor:pointer;" data-stage="${s}">${STAGES[s].label} <strong style="margin-left:3px;">${counts[s]}</strong></span>`
   ).join('');
@@ -3395,9 +3423,27 @@ function renderResultsCount(n){
     : '';
   // 22 Oct: "Same email" needs every company to find the other one of a pair.
   const seHint = (!fullyLoaded && isOn('search.sameEmail') && document.getElementById('sameEmailFilter')?.value) ? ' · Same email: load all companies to see every pair' : '';
+  // 21 Nov (search.serverFilters): what the filters are looking at (D4).
+  if (isOn('search.serverFilters')) {
+    const dbr = dbResults;
+    if (dbr) {
+      const changed = serverFilterSig() !== dbr.sig ? ' · Filters changed · 🔍 to refresh' : '';
+      document.getElementById('resultsCount').textContent = `${n.toLocaleString('en')} of ${dbr.ids.size.toLocaleString('en')} database results${changed}${seHint}`;
+      return;
+    }
+    const scope = fullyLoaded ? '' : ` · Filtering the ${companies.length.toLocaleString('en')} loaded companies · 🔍 searches the whole database`;
+    document.getElementById('resultsCount').textContent = `${n.toLocaleString('en')} of ${companies.length.toLocaleString('en')}${suffix}${scope}${seHint}`;
+    return;
+  }
   document.getElementById('resultsCount').textContent = `${n.toLocaleString('en')} of ${companies.length.toLocaleString('en')}${suffix}${seHint}`;
 }
-function getFiltered(){
+function getFiltered({ ignoreResults = false } = {}){
+  // 21 Nov (search.serverFilters): in results mode only the results; text the database matched is not matched
+  // again (by its words for a name that fell back to a filter). Switch Off: dbr is null, nothing changes.
+  const dbr = ignoreResults ? null : activeDbResults();
+  const sOn = isOn('search.serverFilters');
+  const textBy = dbr && dbr.textBy && (document.getElementById('searchInput').value || '').trim() === dbr.text ? dbr.textBy : null;
+  const pool = dbr ? companies.filter(c => dbr.ids.has(c.id)) : companies;
   // deburr() (not plain toLowerCase()) so "texteis" matches "Têxteis" — company
   // names carry accents in the source data but people rarely type them.
   const search = deburr(document.getElementById('searchInput').value||'');
@@ -3438,8 +3484,9 @@ function getFiltered(){
   const gkF   = ownF ? document.getElementById('groupKeyFilter')?.value || '' : '';
   const { seF, seMap, enF } = extraFilters();
 
-  return companies.filter(c => {
-    if (search) {
+  return pool.filter(c => {
+    if (search && textBy === 'tokens') { if (!nameHasTokens(c, dbr.tokens)) return false; }
+    else if (search && textBy !== 'server') {
       const nameHit = deburr(c.name).includes(search);
       const nifHit  = searchDigits && String(c.nif||'').replace(/[^a-z0-9]/gi,'').toLowerCase().includes(searchDigits);
       const ftidHit = searchDigits && String(c.foreignTaxId||'').replace(/[^a-z0-9]/gi,'').toLowerCase().includes(searchDigits);
@@ -3460,7 +3507,7 @@ function getFiltered(){
     // falling back to the pre-Orbis legacy legalForm field, so a company
     // imported before the Legal shape existed still filters correctly.
     if (legalFormF && legalFormOf(c) !== legalFormF) return false;
-    if (naceF && !String(c.naceCode||'').startsWith(naceF)) return false;
+    if (naceF && !(sOn ? codeStarts(c.naceCode, naceF) : String(c.naceCode||'').startsWith(naceF))) return false; // 21 Nov: "2830" = "28.30"
     if (caeF && !String(c.caeCode||'').startsWith(caeF)) return false;
     if (!isNaN(revMin) && (c.computedRevenue==null || c.computedRevenue < revMin)) return false;
     if (!isNaN(revMax) && (c.computedRevenue==null || c.computedRevenue > revMax)) return false;
@@ -3526,6 +3573,9 @@ function showCompanyToolbar(show){
 }
 function renderList(){
   showCompanyToolbar(viewMode !== 'people');
+  // 21 Nov (search.serverFilters): the results bar and the Pipeline Overview follow the database results (D3, D9).
+  if (isOn('search.serverFilters')) { renderDbResultsBar(activeDbResults() ? getFiltered().length : 0); renderSummary(); }
+  else showEl('dbResultsBar', false);
   if (viewMode === 'people') return renderPeople();
   if (viewMode === 'grouped') return renderGrouped();
   if (viewMode === 'map') return renderMap();
@@ -11946,13 +11996,29 @@ async function openAddToCampaign(opts){
       body.innerHTML = '<p style="font-size:0.88rem;">No filter is set — this would add every company. Filter the list first (sector, CAE, region, revenue, stage…), then use <b>Add to campaign</b> again. To add a few companies, tick them in the list instead.</p>';
       return;
     }
-    body.innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);"><span class="spin-sm"></span>Loading every company that matches the filters…</div>';
-    try {
-      await loadCompaniesWithProgress(p => { body.innerHTML = `<div style="font-size:0.85rem;color:var(--text-light);"><span class="spin-sm"></span>Loading companies… ${fmtLoadProgress(p)}</div>`; });
-    } catch (e) { setErr('Could not load the companies: ' + (e.message || e)); return; }
-    ids = getFiltered().map(c => c.id);
+    // 21 Nov (search.serverFilters, D7): the database search instead of loading every company — the results on show
+    // when the filters have not changed (0 reads), else a new 🔍 search; only filters the database cannot search
+    // still load every company. Switch Off (or everything loaded): as before.
+    let viaDb = null, dbNote = '';
+    if (isOn('search.serverFilters') && !fullyLoaded) {
+      if (dbResults && serverFilterSig() === dbResults.sig) { viaDb = dbResults; dbNote = ` · from the database results on show (${fmt(dbResults.reads)} reads at ${dbResults.at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })})`; }
+      else if (serverSearchPlan(currentServerInputs()).length) {
+        body.innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);"><span class="spin-sm"></span>Searching the database…</div>';
+        const r = await runDatabaseSearch();
+        if (!r) { setErr('Could not search the database: ' + (document.getElementById('nifSearchStatus').textContent || 'see the console')); body.innerHTML = ''; return; }
+        if (r.capped) { body.innerHTML = `<p style="font-size:0.88rem;">More than ${fmt(r.nameCap ? SERVER_NAME_MAX : SERVER_SEARCH_MAX)} companies in the database match ${esc(r.label)}. Add a filter (CAE, region, legal form…), or use Load all companies first.</p>`; return; }
+        viaDb = r; dbNote = ` · searched the database: ${esc(r.label)}, ${fmt(r.reads)} reads`;
+      } else dbNote = ' · none of these filters can be searched in the database, so every company was loaded';
+    }
+    if (!viaDb) {
+      body.innerHTML = '<div style="font-size:0.85rem;color:var(--text-light);"><span class="spin-sm"></span>Loading every company that matches the filters…</div>';
+      try {
+        await loadCompaniesWithProgress(p => { body.innerHTML = `<div style="font-size:0.85rem;color:var(--text-light);"><span class="spin-sm"></span>Loading companies… ${fmtLoadProgress(p)}</div>`; });
+      } catch (e) { setErr('Could not load the companies: ' + (e.message || e)); return; }
+    }
+    ids = getFiltered({ ignoreResults: !viaDb }).map(c => c.id);
     source = { type: 'filters', filterSpec: spec, label: label.slice(0, 120) };
-    intro = `<p style="font-size:0.86rem;margin-bottom:12px;"><b>${fmt(ids.length)}</b> companies match the current filters: <span style="color:var(--text-light);">${esc(label)}</span></p>`;
+    intro = `<p style="font-size:0.86rem;margin-bottom:12px;"><b>${fmt(ids.length)}</b> companies match the current filters: <span style="color:var(--text-light);">${esc(label)}${dbNote}</span></p>`;
     if (!ids.length) { body.innerHTML = intro + '<p style="font-size:0.86rem;">Nothing to add.</p>'; return; }
     if (ids.length > 5000) { body.innerHTML = intro + '<p style="font-size:0.86rem;">That\'s more than 5,000 — narrow the filters and add them in parts.</p>'; return; }
   } else if (opts.mode === 'selected') {
@@ -13338,9 +13404,11 @@ function updateExportFieldsCount(){
 // built field def (not a COMPANY_EXPORT_FIELDS entry -- 14x10 possible
 // combinations is too many to list as static checkboxes), appended after the
 // picked static fields so the multi-year columns land at the end of the row.
-async function exportCsv(keys, finMetrics = [], finYears = [], onProgress){
-  await loadCompaniesWithProgress(onProgress);
-  const list = sortList(getFiltered());
+async function exportCsv(keys, finMetrics = [], finYears = [], onProgress, { resultsOnly = false } = {}){
+  // 21 Nov (search.serverFilters, D8): "Export results" exports what the table shows, without loading every company;
+  // the general Export loads every company and ignores the database results, as before.
+  if (!resultsOnly) await loadCompaniesWithProgress(onProgress);
+  const list = sortList(getFiltered({ ignoreResults: !resultsOnly }));
   const esc2 = v => { const s = String(v==null?'':v); const d = /^[=+\-@\t\r]/.test(s) && isNaN(s); return `"${(d ? "'" + s : s).replace(/"/g,'""')}"`; };
   const fieldByKey = new Map(COMPANY_EXPORT_FIELDS.flatMap(g => g.fields).map(f => [f.key, f]));
   const metricByKey = new Map(ORBIS_FIN_DISPLAY_METRICS.map(([key, label]) => [key, label]));
@@ -13355,9 +13423,9 @@ async function exportCsv(keys, finMetrics = [], finYears = [], onProgress){
   const rows = list.map(c => fields.map(f => f.get(c)).map(esc2).join(','));
   const csv = [headers.map(esc2).join(','), ...rows].join('\r\n');
   const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8;' });
-  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download:`douro-search-${todayStr()}.csv` });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download:`douro-search-${resultsOnly ? 'results-' : ''}${todayStr()}.csv` });
   a.click(); URL.revokeObjectURL(a.href);
-  logExport('Search CRM', list.length, `${fields.length} columns`);
+  logExport(resultsOnly ? 'Search CRM (database results)' : 'Search CRM', list.length, `${fields.length} columns`);
 }
 
 // ── Bulk import ──────────────────────────────────────────────────────────────
@@ -13935,7 +14003,7 @@ async function rebuildPhoneIndex(){
 document.getElementById('rebuildPhoneIndexBtn').addEventListener('click', rebuildPhoneIndex);
 document.getElementById('scanBadNifBtn').addEventListener('click', scanBadNif);
 document.getElementById('addBrokerBtn').addEventListener('click', addBroker);
-document.getElementById('exportBtn').addEventListener('click', openExportFields);
+document.getElementById('exportBtn').addEventListener('click', () => { exportResultsOnly = false; openExportFields(); });
 document.getElementById('exportSelectAllBtn').addEventListener('click', () => { document.querySelectorAll('.exportFieldChk').forEach(c => c.checked = true); updateExportFieldsCount(); });
 document.getElementById('exportSelectNoneBtn').addEventListener('click', () => { document.querySelectorAll('.exportFieldChk').forEach(c => c.checked = false); updateExportFieldsCount(); });
 document.getElementById('exportFieldsCancelBtn').addEventListener('click', () => showEl('exportFieldsModal', false));
@@ -13958,7 +14026,7 @@ document.getElementById('exportFieldsConfirmBtn').addEventListener('click', asyn
   try {
     await exportCsv(keys, finMetrics, finYears, p => {
       btn.innerHTML = `<span class="spin-sm"></span>Loading… ${fmtLoadProgress(p)}`;
-    });
+    }, { resultsOnly: exportResultsOnly && !!activeDbResults() });
   }
   finally { btn.disabled = false; btn.innerHTML = '⬇ Export CSV'; showEl('exportFieldsModal', false); }
 });
@@ -14156,8 +14224,10 @@ function triggerCompanySearch(){
   if (/^\d{10,14}$/.test(raw)) return searchForeignTaxIdSupplement(raw);
   return searchNameSupplement(raw);
 }
-document.getElementById('nifSearchBtn').addEventListener('click', triggerCompanySearch);
-document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') triggerCompanySearch(); });
+// 21 Nov (search.serverFilters, D1): only 🔍 reaches the database, with the text and the filters; Enter only filters
+// what is loaded (it already does as you type). Switch Off: both as before.
+document.getElementById('nifSearchBtn').addEventListener('click', () => { if (isOn('search.serverFilters')) runDatabaseSearch(); else triggerCompanySearch(); });
+document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !isOn('search.serverFilters')) triggerCompanySearch(); });
 document.getElementById('searchInput').addEventListener('input', () => { document.getElementById('nifSearchStatus').textContent = ''; });
 // 10 Nov (search.phoneSearch): a full Portuguese number ("+351 91 799 57 84", "917995784") is looked up when you press Enter or the magnifier:
 // the companies' own phones (phoneKeys) and the people's (reachPhones, through their links), so it works for companies not loaded yet.
@@ -14211,7 +14281,7 @@ async function searchPhoneSupplement(key){
   } catch (e) { console.error('phone search', e); if (seq === phoneSeq) statusEl.textContent = `Phone search failed: ${String(e?.message || e).replace(/^FirebaseError:\s*/, '').slice(0, 120)}`; }
 }
 document.getElementById('searchInput').addEventListener('input', () => { phoneSeq++; document.getElementById('phoneSearchStatus').textContent = ''; });
-onFeaturesChange(() => { document.getElementById('searchInput').placeholder = isOn('search.phoneSearch') ? 'Search by name, NIF or phone…' : 'Search by name or NIF…'; });
+onFeaturesChange(() => { document.getElementById('searchInput').placeholder = isOn('search.serverFilters') ? 'Name, NIF, phone or email · 🔍 searches the database' : isOn('search.phoneSearch') ? 'Search by name, NIF or phone…' : 'Search by name or NIF…'; });
 async function searchIdFieldSupplement(field, digits){
   const statusEl = document.getElementById('nifSearchStatus');
   statusEl.textContent = 'Checking…';
@@ -14272,6 +14342,278 @@ async function searchNameSupplement(text){
   statusEl.textContent = added ? `${added} match${added===1?'':'es'} found` : (matched.length ? 'Already loaded' : 'No match found');
   if (added) renderList();
 }
+// ── 21 Nov (search.serverFilters): database search with one magnifier ──────────────────────────────────────────────
+// Only 🔍 reaches the database (Enter and the filters only filter what is loaded). One condition goes to the server, the
+// most selective one (serverSearchPlan); getFiltered() applies every other filter in the browser over the answer. The
+// answer is shown as "Database results" (dbResults) until ✕ Back to list; the companies found stay loaded (keepInView).
+const SERVER_SEARCH_MAX = 2000; // companies per search (D6)
+const SERVER_NAME_MAX = 300;    // a name search (D6)
+function serverFiltersOn(){ return isOn('search.serverFilters'); }
+function activeDbResults(){ return serverFiltersOn() ? dbResults : null; }
+// NACE is stored as "28.30" (most companies) or "2830": a code typed either way searches both.
+function naceForms(v){
+  const d = String(v || '').replace(/\D/g, '');
+  if (!d) return [];
+  return [...new Set([d.length > 2 ? d.slice(0, 2) + '.' + d.slice(2) : d, d])];
+}
+// "Starts with", ignoring the dots (NACE "2830" finds "28.30" and the other way round).
+function codeStarts(code, typed){
+  const t = String(typed || '').replace(/\./g, '').trim();
+  return !t || String(code == null ? '' : code).replace(/\./g, '').startsWith(t);
+}
+// What the text in the box is, for the database: an email (has "@"), a NIF (3-9 digits), a foreign tax id (10-14
+// digits), a phone (phoneK: its national key, or null), else a name. A 9-digit number is both a NIF and a phone.
+function searchTextKind(raw, phoneK){
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  if (text.includes('@')) {
+    const v = text.toLowerCase().replace(/\s+/g, '');
+    if (v.length < 3) return null;
+    return { kind: 'email', value: v, full: /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v), label: `Email ${v}` };
+  }
+  if (/^\d{3,9}$/.test(text)) return { kind: 'nif', field: 'nif', value: text, phone: phoneK || null, label: `NIF ${text}*` };
+  if (/^\d{10,14}$/.test(text)) return { kind: 'nif', field: 'foreignTaxId', value: text, phone: phoneK || null, label: `Tax id ${text}*` };
+  if (phoneK) return { kind: 'phone', value: phoneK, label: `Phone ${text}` };
+  const { nameKey, nameTokens } = companySearchFields(text);
+  if (!nameTokens.length) return null;
+  return { kind: 'name', value: text, nameKey, tokens: nameTokens, label: `Name "${text}"` };
+}
+// The conditions the database can answer, most selective first (D2): the text, then CAE / NACE, then sub-sector /
+// NUTS III / legal form, then sector / NUTS II / source / stage / owner. steps[0] goes to the server; a name that fills
+// its 300 hands over to steps[1] and is then matched in the browser.
+function serverSearchPlan(f){
+  const steps = [];
+  const t = searchTextKind(f.text, f.phoneKey);
+  if (t) steps.push(t);
+  if (f.cae) steps.push({ kind: 'range', label: `CAE ${f.cae}*`, ranges: [['caeCode', String(f.cae).trim()]] });
+  if (f.nace) steps.push({ kind: 'range', label: `NACE ${f.nace}*`, ranges: naceForms(f.nace).map(v => ['naceCode', v]) });
+  const eq = (field, value, label) => { if (value) steps.push({ kind: 'eq', label, eq: [[field, value]] }); };
+  eq('subSector', f.subSector, f.subSector);
+  eq('nuts3', f.nuts3, f.nuts3);
+  if (f.legalForm) steps.push({ kind: 'eq', label: f.legalForm, eq: [['nationalLegalForm', f.legalForm], ['legalForm', f.legalForm]] });
+  eq('sector', f.sector, f.sector);
+  eq('nuts2', f.nuts2, f.nuts2);
+  eq('sourceType', f.source, f.source && `Source ${f.sourceLabel || f.source}`);
+  eq('stage', f.stage, f.stage && `Stage ${f.stageLabel || f.stage}`);
+  eq('owner', f.owner, f.owner && `Owner ${f.ownerLabel || f.owner}`);
+  return steps;
+}
+function currentServerInputs(){
+  const v = id => (document.getElementById(id)?.value || '').trim();
+  return {
+    text: v('searchInput'), phoneKey: currentPhoneKey(), cae: v('caeFilter'), nace: v('naceFilter'),
+    subSector: v('subSectorFilter'), nuts3: v('nuts3Filter'), legalForm: v('legalFormFilter'), sector: v('sectorFilter'), nuts2: v('nuts2Filter'),
+    source: v('sourceFilter'), sourceLabel: SOURCE_LABELS[v('sourceFilter')], stage: v('stageFilter'), stageLabel: STAGES[v('stageFilter')]?.label,
+    owner: v('ownerFilter'), ownerLabel: OWNER_LABELS[v('ownerFilter')],
+  };
+}
+// Every filter and the text, as one string: a change since the search shows "Filters changed · 🔍 to refresh".
+function serverFilterSig(){ return FILTER_INPUT_IDS.map(id => (document.getElementById(id)?.value || '').trim()).join('\u0001'); }
+// How many filters are set besides the one the server answered (for the label).
+function activeFilterCount(){ return FILTER_INPUT_IDS.filter(id => id !== 'searchInput' && (document.getElementById(id)?.value || '').trim()).length; }
+function nameHasTokens(c, tokens){ return (tokens || []).every(t => (c.nameTokens || []).includes(t) || String(c.nameKey || '').includes(t)); }
+
+// ── Database reads (REST, like the other look-ups) ──
+const restParent = () => `projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents`;
+const restDocToJs = d => ({ id: d.name.slice(d.name.lastIndexOf('/') + 1), ...restFieldsToJs(d.fields || {}) });
+const restRange = (field, prefix) => ({ compositeFilter: { op: 'AND', filters: [
+  { fieldFilter: { field: { fieldPath: field }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: prefix } } },
+  { fieldFilter: { field: { fieldPath: field }, op: 'LESS_THAN', value: { stringValue: prefix + '' } } },
+] } });
+const restArrayContains = (field, value) => ({ fieldFilter: { field: { fieldPath: field }, op: 'ARRAY_CONTAINS', value: { stringValue: value } } });
+// "Starts with" over every page: a range must be ordered by its own field (then the id) to page through it.
+async function restQueryRangeAll(collectionName, field, prefix, max){
+  const token = await auth.currentUser.getIdToken();
+  const out = []; let cursor = null;
+  for (;;) {
+    const structuredQuery = { from: [{ collectionId: collectionName }], where: restRange(field, prefix),
+      orderBy: [{ field: { fieldPath: field }, direction: 'ASCENDING' }, { field: { fieldPath: '__name__' }, direction: 'ASCENDING' }], limit: REST_PAGE_SIZE,
+      ...(cursor ? { startAt: { values: cursor, before: false } } : {}) };
+    const res = await fetch(`https://firestore.googleapis.com/v1/${restParent()}:runQuery`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery }) });
+    if (!res.ok) throw new Error(`Firestore REST range query of ${collectionName}.${field} failed (${res.status})`);
+    const docs = ((await res.json()) || []).filter(r => r.document).map(r => r.document);
+    addReads(docs.length || 1);
+    docs.forEach(d => out.push(restDocToJs(d)));
+    if (docs.length < REST_PAGE_SIZE || out.length >= max) break;
+    const last = docs[docs.length - 1];
+    cursor = [{ stringValue: last.fields?.[field]?.stringValue ?? '' }, { referenceValue: last.name }];
+  }
+  return out;
+}
+// How many documents match (billed 1 read per 1,000 matched): the true total when a search stops at its limit.
+async function restCount(collectionName, where){
+  const token = await auth.currentUser.getIdToken();
+  const res = await fetch(`https://firestore.googleapis.com/v1/${restParent()}:runAggregationQuery`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredAggregationQuery: { structuredQuery: { from: [{ collectionId: collectionName }], where }, aggregations: [{ alias: 'n', count: {} }] } }) });
+  if (!res.ok) throw new Error(`Firestore REST count of ${collectionName} failed (${res.status})`);
+  const n = Number((await res.json())?.[0]?.result?.aggregateFields?.n?.integerValue || 0);
+  addReads(Math.max(1, Math.ceil(n / 1000)));
+  return n;
+}
+// People who have this email / phone (field: reachEmails / reachPhones) -> their companies, current links first
+// (a person with no current company still leads to their old ones). companyId -> "Email of Manuel Eira".
+async function companiesViaPeople(field, value, what){
+  const out = new Map();
+  const ps = await restFetchArrayContains('searchPeople', field, value, 50);
+  const who = new Map(ps.map(d => [d.id, personDisplayName(d.name || '')]));
+  const ids = [...who.keys()], byPerson = new Map();
+  for (let i = 0; i < ids.length; i += 30) {
+    const ls = await restFetchWhereIn('searchPersonLinks', 'personId', ids.slice(i, i + 30));
+    ls.forEach(l => { (byPerson.get(l.personId) || byPerson.set(l.personId, []).get(l.personId)).push(l); });
+  }
+  for (const [pid, ls] of byPerson) {
+    const cur = ls.filter(linkCurrentAny);
+    for (const l of (cur.length ? cur : ls)) if (!out.has(l.companyId)) out.set(l.companyId, `${what} of ${who.get(pid) || 'a person'}`);
+  }
+  return out;
+}
+// One step of the plan against the database. { docs, hitIds: Map(id -> why), capped, total }; docs are full company
+// records, hitIds may name companies that are already loaded (not fetched again).
+async function runServerStep(step){
+  const docs = new Map(), hitIds = new Map();
+  const add = (list, why) => list.forEach(d => { if (!docs.has(d.id)) docs.set(d.id, d); if (!hitIds.has(d.id)) hitIds.set(d.id, why); });
+  const addVia = (m) => m.forEach((why, id) => { if (!hitIds.has(id)) hitIds.set(id, why); });
+  let capped = false, total = null;
+  const max = SERVER_SEARCH_MAX;
+  if (step.kind === 'email') {
+    add(await restQueryAll('searchCompanies', restArrayContains('emailKeys', step.value), { max: max + 1 }), 'Company email');
+    if (step.full) addVia(await companiesViaPeople('reachEmails', step.value, 'Email'));
+  } else if (step.kind === 'phone' || (step.kind === 'nif' && step.phone)) {
+    if (step.kind === 'nif') add(await restQueryDocs('searchCompanies', { where: restRange(step.field, step.value), limit: 50 }), step.field === 'nif' ? 'NIF' : 'Tax id');
+    const key = step.kind === 'phone' ? step.value : step.phone;
+    add(await restFetchArrayContains('searchCompanies', 'phoneKeys', key, 50), 'Company phone');
+    addVia(await companiesViaPeople('reachPhones', key, 'Phone'));
+  } else if (step.kind === 'nif') {
+    add(await restQueryDocs('searchCompanies', { where: restRange(step.field, step.value), limit: 50 }), step.field === 'nif' ? 'NIF' : 'Tax id');
+  } else if (step.kind === 'name') {
+    // namePrefixes for the first word; a common word that fills the 300 tries the longest other word and keeps the
+    // smaller answer; nothing at all tries the start of the name (nameKey). Then every word must match.
+    const byToken = t => restQueryDocs('searchCompanies', { where: restArrayContains('namePrefixes', t), limit: SERVER_NAME_MAX });
+    let got = await byToken(step.tokens[0]);
+    if (got.length >= SERVER_NAME_MAX && step.tokens.length > 1) {
+      const other = [...step.tokens.slice(1)].sort((a, b) => b.length - a.length)[0];
+      const alt = await byToken(other);
+      if (alt.length < got.length) got = alt;
+    }
+    if (!got.length) got = await restQueryDocs('searchCompanies', { where: { compositeFilter: { op: 'AND', filters: [
+      { fieldFilter: { field: { fieldPath: 'nameKey' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: step.nameKey } } },
+      { fieldFilter: { field: { fieldPath: 'nameKey' }, op: 'LESS_THAN_OR_EQUAL', value: { stringValue: step.nameKey + '' } } },
+    ] } }, orderBy: [{ field: { fieldPath: 'nameKey' }, direction: 'ASCENDING' }], limit: SERVER_NAME_MAX });
+    capped = got.length >= SERVER_NAME_MAX;
+    add(step.tokens.length > 1 ? got.filter(c => nameHasTokens(c, step.tokens)) : got, 'Name');
+    return { docs: [...docs.values()], hitIds, capped, total: null };
+  } else if (step.kind === 'range') {
+    for (const [field, prefix] of step.ranges) add(await restQueryRangeAll('searchCompanies', field, prefix, max + 1), step.label);
+  } else if (step.kind === 'eq') {
+    for (const [field, value] of step.eq) add(await restQueryAll('searchCompanies', restEq(field, value), { max: max + 1 }), step.label);
+  }
+  if (docs.size > max) {
+    capped = true;
+    const wheres = step.kind === 'range' ? step.ranges.map(([f, p]) => restRange(f, p)) : step.kind === 'eq' ? step.eq.map(([f, v]) => restEq(f, v)) : step.kind === 'email' ? [restArrayContains('emailKeys', step.value)] : [];
+    total = 0;
+    for (const w of wheres) total += await restCount('searchCompanies', w);
+    const keep = [...docs.keys()].slice(0, max);
+    for (const id of [...docs.keys()]) if (!keep.includes(id)) { docs.delete(id); hitIds.delete(id); }
+  }
+  return { docs: [...docs.values()], hitIds, capped, total };
+}
+// 🔍: the text and the filters together. Returns the new dbResults, or null (nothing to search, failed, superseded).
+async function runDatabaseSearch(){
+  const statusEl = document.getElementById('nifSearchStatus');
+  document.getElementById('phoneSearchStatus').textContent = '';
+  const inputs = currentServerInputs();
+  const steps = serverSearchPlan(inputs);
+  if (!steps.length) {
+    statusEl.textContent = 'Add a filter the database can search (CAE, NACE, sector, region, legal form, source, stage, owner) or use Load all';
+    return null;
+  }
+  const seq = ++dbSearchSeq;
+  const reads0 = getTodayReads();
+  const sig = serverFilterSig();
+  let step = steps[0], textBy = step.kind === 'name' || step.kind === 'email' || step.kind === 'phone' || step.kind === 'nif' ? 'server' : null;
+  let res;
+  statusEl.innerHTML = '<span class="spin-sm"></span>Searching the database…';
+  try {
+    // Everything loaded (Load all): the filters already see the whole base, only people's emails and phones need a read.
+    const needsPeople = step.kind === 'email' || step.kind === 'phone' || (step.kind === 'nif' && step.phone);
+    if (fullyLoaded && !needsPeople) {
+      res = { docs: [], hitIds: new Map(companies.map(c => [c.id, 'Loaded'])), capped: false, total: null, local: true };
+      textBy = null;
+    } else {
+      res = await runServerStep(step);
+      if (step.kind === 'name' && res.capped && steps[1]) {
+        // a name too common to answer in 300: ask for the next condition, match the name in the browser
+        const nameStep = step; step = steps[1];
+        res = await runServerStep(step);
+        step = { ...step, label: `${step.label} · ${nameStep.label}`, tokens: nameStep.tokens };
+        textBy = 'tokens';
+      }
+    }
+  } catch (e) {
+    console.error('database search', e);
+    if (seq === dbSearchSeq) statusEl.textContent = `Database search failed: ${String(e?.message || e).slice(0, 120)}`;
+    return null;
+  }
+  if (seq !== dbSearchSeq) return null; // a newer 🔍 superseded this one
+  const have = new Set(companies.map(c => c.id));
+  res.docs.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields(d)); have.add(d.id); } });
+  // companies of people (email / phone of a person) that are not loaded yet: fetch them by id
+  const missing = [...res.hitIds.keys()].filter(id => !have.has(id));
+  for (let i = 0; i < missing.length; i += 30) {
+    const got = await restFetchByIdsIn('searchCompanies', missing.slice(i, i + 30));
+    got.forEach(d => { if (!have.has(d.id)) { companies.push(computeFields(d)); have.add(d.id); } });
+  }
+  if (seq !== dbSearchSeq) return null;
+  const ids = new Set([...res.hitIds.keys()].filter(id => have.has(id)));
+  if (!res.local) ids.forEach(id => keepInView.add(id)); // the live window of recent companies keeps them
+  dbResults = {
+    label: step.label, kind: step.kind, ids, hits: res.hitIds, text: inputs.text, textBy, tokens: step.tokens || null,
+    sig, at: new Date(), reads: getTodayReads() - reads0, capped: res.capped, total: res.total, local: !!res.local,
+    nameCap: res.capped && step.kind === 'name',
+  };
+  statusEl.textContent = '';
+  refreshSectorOptions(); refreshReads();
+  visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE;
+  renderList();
+  return dbResults;
+}
+function leaveDbResults(){
+  dbSearchSeq++;
+  dbResults = null;
+  document.getElementById('nifSearchStatus').textContent = '';
+  visibleCount = PAGE; mapSidebarVisibleCount = MAP_SIDEBAR_PAGE;
+  renderList();
+}
+// The bar over the table while database results are shown (D3).
+function renderDbResultsBar(shown){
+  const bar = document.getElementById('dbResultsBar');
+  if (!bar) return;
+  const dbr = activeDbResults();
+  if (!dbr || viewMode === 'people') { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  const fmtN = n => Number(n).toLocaleString('en');
+  const extra = activeFilterCount() - (dbr.kind === 'range' || dbr.kind === 'eq' ? 1 : 0);
+  const time = dbr.at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const parts = [
+    `🔍 ${dbr.label}${extra > 0 ? ` + ${extra} filter${extra === 1 ? '' : 's'}` : ''}`,
+    `${fmtN(shown)} compan${shown === 1 ? 'y' : 'ies'}`,
+    dbr.local ? `from the ${fmtN(dbr.ids.size)} loaded` : `${fmtN(dbr.ids.size)} found in the database`,
+    time,
+    `${fmtN(dbr.reads)} read${dbr.reads === 1 ? '' : 's'}`,
+  ];
+  const cap = dbr.nameCap ? ` More than ${fmtN(SERVER_NAME_MAX)} companies have this name: add a filter.`
+    : dbr.capped ? ` Showing the first ${fmtN(SERVER_SEARCH_MAX)}${dbr.total ? ` of ${fmtN(dbr.total)}` : ''}: more than ${fmtN(SERVER_SEARCH_MAX)}, add a filter or use Load all.` : '';
+  const one = dbr.ids.size === 1 ? dbr.hits.get([...dbr.ids][0]) : '';
+  document.getElementById('dbResultsLabel').textContent = parts.join(' · ') + (one && !['Name', 'Loaded', dbr.label].includes(one) ? ` · ${one}` : '') + cap;
+}
+document.getElementById('dbResultsBackBtn').addEventListener('click', leaveDbResults);
+document.getElementById('dbResultsExportBtn').addEventListener('click', () => { exportResultsOnly = true; openExportFields(); });
+onFeaturesChange(() => {
+  if (!serverFiltersOn() && dbResults) { dbResults = null; renderList(); }
+  document.getElementById('nifSearchBtn').title = serverFiltersOn() ? 'Search the whole database with this text and the filters' : 'Check the full database for this name or NIF';
+  refreshSectorOptions();
+});
+
 document.getElementById('loadAllBtn').addEventListener('click', loadAllWithProgress);
 document.getElementById('advFilterBtn').addEventListener('click', () => document.getElementById('advFilters').classList.toggle('open'));
 document.getElementById('clearFiltersBtn').addEventListener('click', () => {
