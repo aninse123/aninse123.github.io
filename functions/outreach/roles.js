@@ -23,6 +23,9 @@ const NOT_DECIDER_RE = new RegExp([
   "curador", "trustee", "conselho fundador", "board of the foundation", "provedor", "\\bprovider\\b",
   "consultiv", "advisory", "conselho t[eé]cnico", "technical board", "vencimentos", "remunera",
   "representative", "representante", "procurador", "attorney", "general contact", "^none$",
+  // 20 Nov (André): the certified accountant is usually external — not a decider. A link that also has a real role
+  // (Mario Reis, Joper: "Certified Accountant" + "Administrative and Financial Director") keeps that other role.
+  "contabilista", "accountant", "t[eé]cnico oficial de contas",
 ].join("|"), "i");
 // R7 (28 Oct): "Sócio" / "Partner" with no recorded stake still holds a share.
 const SOCIO_RE = /^\s*(s[óo]cio|partner)\s*$/i;

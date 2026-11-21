@@ -15,7 +15,7 @@ const { db } = store;
 const CORPORATE_HOLDER = ["entity", "company"];
 
 // Roles that make a person the natural addressee (PT and EN, Orbis wording).
-const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|general manager|owner|propriet[áa]rio|founder|fundador)/i;
+const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|director general|general director|general manager|owner|propriet[áa]rio|founder|fundador)/i;
 const MANAGER_RE = /(director|diretor|manager|board|conselho|administra)/i;
 
 // People contact data (search.html PERSON_CONTACT_FIELDS): what you typed
@@ -61,10 +61,13 @@ function rankPerson(link, guoName = "") {
   const holds = share > 0 || (socio && link.shCurrent !== false);
   const s = Math.min(share, 100) / 1000; // tie-break inside a level: larger stake first
   if (isGuoPerson(link, guoName) && (share > 0 || manages || GUO_ROLE_RE.test((link.mgmtRoles || []).join(" ")))) return 200 + s;
-  if (share >= 50 && manages) return 180 + s;
-  if (share >= 50) return 160 + s;
-  if (holds && manages) return 140 + s;
-  if (holds) return 120 + s;
+  // 20 Nov (André, 2830 prep): the stake still outweighs the role ("é quem na vdd vende"), and inside a stake level the
+  // role breaks the tie — a top role (gerente, administrador, CEO, director geral) first, then a director or board
+  // member, then another management role, then none. Was: any role at all scored like a sócio-gerente.
+  // A "Sócio" / "Partner" with no recorded stake holds a share (R7), so it is in the "some stake" level.
+  const top = manages && TOP_ROLE_RE.test(roles), mid = manages && !top && MANAGER_RE.test(roles), other = manages && !top && !mid;
+  if (share >= 50) return (top ? 180 : mid ? 170 : other ? 165 : 160) + s;
+  if (holds) return (top ? 140 : mid ? 130 : other ? 125 : 120) + s;
   if (manages && TOP_ROLE_RE.test(roles)) return 100;
   if (manages && MANAGER_RE.test(roles)) return 60;
   if (manages) return 40;

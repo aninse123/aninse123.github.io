@@ -42,8 +42,10 @@ const isDecider = (l) => deciderRank(l) >= RELATED_MIN_RANK;
 function levelText(rank) {
   if (rank >= 200) return "ultimate owner";
   if (rank >= 180) return "majority owner, manages";
+  if (rank >= 170) return "majority owner, director or board";
   if (rank >= 160) return "majority owner";
   if (rank >= 140) return "owner-manager";
+  if (rank >= 130) return "shareholder, director or board";
   if (rank >= 120) return "shareholder";
   if (rank >= 100) return "gerente / CEO";
   if (rank >= 60) return "manager";

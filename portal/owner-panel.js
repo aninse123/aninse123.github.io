@@ -19,10 +19,10 @@ const PLAIN = 'text-transform:none;letter-spacing:normal;font-weight:400;color:i
 // advisory bodies, representatives… — 28 Oct) and "any other role" don't; a
 // "Sócio" with no recorded stake is a shareholder. Same rule as related.js
 // deciderRank (a test checks the two lists agree).
-export const EXCLUDED_ROLE = /fiscal|auditor|revisor|\bROC\b|statutory|\baudit\b|assembl|general meeting|secret[aá]ri|secretary|no specific function|sem fun[cç][aã]o|insolv|liquidat|administrador judicial|judicial administrator|supervis|conselho geral|general (and supervisory )?(board|council)|curador|trustee|conselho fundador|board of the foundation|provedor|\bprovider\b|consultiv|advisory|conselho t[eé]cnico|technical board|vencimentos|remunera|representative|representante|procurador|attorney|general contact|^none$/i;
+export const EXCLUDED_ROLE = /fiscal|auditor|revisor|\bROC\b|statutory|\baudit\b|assembl|general meeting|secret[aá]ri|secretary|no specific function|sem fun[cç][aã]o|insolv|liquidat|administrador judicial|judicial administrator|supervis|conselho geral|general (and supervisory )?(board|council)|curador|trustee|conselho fundador|board of the foundation|provedor|\bprovider\b|consultiv|advisory|conselho t[eé]cnico|technical board|vencimentos|remunera|representative|representante|procurador|attorney|general contact|^none$|contabilista|accountant|t[eé]cnico oficial de contas/i;
 const SOCIO_RE = /^\s*(s[óo]cio|partner)\s*$/i;
 const GUO_ROLE_RE = /ultimate owner|benefici[áa]rio efetivo|beneficial owner/i;
-const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|general manager|owner|propriet[áa]rio|founder|fundador)/i;
+const TOP_ROLE_RE = /(s[óo]cio[- ]?gerente|gerente|administrador|presidente|ceo|chief executive|managing director|director[- ]geral|diretor[- ]geral|director general|general director|general manager|owner|propriet[áa]rio|founder|fundador)/i;
 const MANAGER_RE = /(director|diretor|manager|board|conselho|administra)/i;
 export function relatedRank(l) {
   if (!l || l.personEntityType === 'entity') return 0;
@@ -35,10 +35,9 @@ export function relatedRank(l) {
   const s = Math.min(share, 100) / 1000;
   let r = 0;
   if (GUO_ROLE_RE.test(all.join(' '))) r = 200 + s;
-  else if (share >= 50 && manages) r = 180 + s;
-  else if (share >= 50) r = 160 + s;
-  else if (holds && manages) r = 140 + s;
-  else if (holds) r = 120 + s;
+  // 20 Nov: inside a stake level the role breaks the tie (top role, director / board, another role, none) — as the server
+  else if (share >= 50) r = (!manages ? 160 : TOP_ROLE_RE.test(roles) ? 180 : MANAGER_RE.test(roles) ? 170 : 165) + s;
+  else if (holds) r = (!manages ? 120 : TOP_ROLE_RE.test(roles) ? 140 : MANAGER_RE.test(roles) ? 130 : 125) + s;
   else if (manages && TOP_ROLE_RE.test(roles)) r = 100;
   else if (manages && MANAGER_RE.test(roles)) r = 60;
   else if (manages) r = 40;
